@@ -5,9 +5,9 @@ from accounts_staff.normalization import normalize_staff_email
 
 
 class StaffLoginSerializer(serializers.Serializer):
+    # 登录只接受邮箱+密码；历史 TOTP 设备不再参与登录校验。
     email = serializers.CharField(max_length=254)
     password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
-    totp_code = serializers.RegexField(r"^\d{6}$", required=False)
 
     def validate_email(self, value):
         try:

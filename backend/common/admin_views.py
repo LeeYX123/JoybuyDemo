@@ -241,6 +241,26 @@ class AdminReviewsView(StaffCsrfAPIView):
         )
 
 
+class AdminCrawlerSourceTreeView(StaffCsrfAPIView):
+    """Published Joybuy source category tree for the job-creation picker."""
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["crawler.jobs.manage"]
+
+    def get(self, request):
+        from catalog.models import SourceCatalog
+        from crawler_control.tree_sync import latest_published_tree, tree_to_payload
+
+        catalog = SourceCatalog.objects.filter(source_system="joybuy_uk").first()
+        if catalog is None:
+            return Response({"version": None, "categories": []})
+        tree_version = latest_published_tree(catalog)
+        if tree_version is None:
+            return Response({"version": None, "categories": []})
+        payload = tree_to_payload(tree_version)
+        return Response({"version": payload["version_key"], **payload})
+
+
 class AdminCrawlJobsView(StaffCsrfAPIView):
     permission_classes = [StaffRbacPermission]
     required_permissions = ["crawler.jobs.manage"]
@@ -262,36 +282,76 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
         return Response({"items": rows})
 
     def post(self, request):
+        from catalog.models import SourceCategory
         from crawler_control.models import CrawlJob
         from crawler_control.services import create_crawl_job, mark_job_ready
-
-        required = ("name", "source_category_public_id", "product_limit")
-        missing = [field for field in required if not request.data.get(field)]
-        if missing:
-            raise StaffApiError(
-                business_code="PARAMS_MISSING",
-                message=f"Missing: {', '.join(missing)}.",
-                status_code=400,
-            )
-        from catalog.models import SourceCategory
         from offers.models import Market
 
-        category = SourceCategory.objects.filter(
-            public_id=str(request.data["source_category_public_id"])
-        ).first()
-        if category is None:
+        name = request.data.get("name")
+        product_limit = request.data.get("product_limit")
+        category_ids = request.data.get("category_public_ids") or []
+        category_entries = request.data.get("categories") or []
+        legacy_category_id = request.data.get("source_category_public_id")
+        if not name or not product_limit or (
+            not category_ids and not category_entries and not legacy_category_id
+        ):
             raise StaffApiError(
-                business_code="CATEGORY_NOT_FOUND", message="Unknown category.", status_code=404
+                business_code="PARAMS_MISSING",
+                message="Missing: name, product_limit and at least one category.",
+                status_code=400,
             )
+
+        public_ids = [str(item) for item in category_ids]
+        entries = [
+            {
+                "public_id": str(entry.get("public_id")),
+                "include_descendants": bool(entry.get("include_descendants", True)),
+            }
+            for entry in category_entries
+            if entry.get("public_id")
+        ]
+        if legacy_category_id:
+            public_ids.append(str(legacy_category_id))
+        if not public_ids and not entries:
+            raise StaffApiError(
+                business_code="PARAMS_MISSING", message="No category selected.", status_code=400
+            )
+
+        wanted_ids = {entry["public_id"] for entry in entries} | set(public_ids)
+        categories = {
+            str(category.public_id): category
+            for category in SourceCategory.objects.filter(public_id__in=wanted_ids)
+        }
+        unknown = sorted(wanted_ids - set(categories))
+        if unknown:
+            raise StaffApiError(
+                business_code="CATEGORY_NOT_FOUND",
+                message=f"Unknown category ids: {', '.join(unknown[:5])}.",
+                status_code=404,
+            )
+        include_default = request.data.get("include_subcategories")
+        if include_default is None:
+            include_default = True
+        selections = [
+            {"category": categories[pid], "include_descendants": bool(include_default)}
+            for pid in public_ids
+        ]
+        for entry in entries:
+            selections.append(
+                {
+                    "category": categories[entry["public_id"]],
+                    "include_descendants": entry["include_descendants"],
+                }
+            )
+
         market = Market.objects.filter(code="GB", is_active=True).first()
         try:
             job = create_crawl_job(
-                name=str(request.data["name"]),
+                name=str(name),
                 market=market,
-                source_catalog=category.catalog,
-                source_category=category,
-                product_limit=int(request.data["product_limit"]),
-                include_subcategories=request.data.get("include_subcategories"),
+                source_catalog=selections[0]["category"].catalog,
+                source_categories=selections,
+                product_limit=int(product_limit),
                 listing_sort=request.data.get("listing_sort", CrawlJob.ListingSort.SOURCE_DEFAULT),
                 sync_mode=request.data.get("sync_mode", CrawlJob.SyncMode.INCREMENTAL),
                 review_target=request.data.get("review_target", 50),
@@ -308,9 +368,92 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
             target_id=str(job.public_id),
             reason=str(request.data.get("reason") or "Created from admin"),
             before_state={},
-            after_state={"status": job.status, "name": job.name},
+            after_state={
+                "status": job.status,
+                "name": job.name,
+                "categories": [entry["category"].source_id for entry in selections],
+            },
         )
         return Response({"public_id": str(job.public_id), "status": job.status}, status=201)
+
+
+class AdminCrawlJobDetailView(StaffCsrfAPIView):
+    """Job detail: frozen category selections, runs and recent events."""
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["crawler.jobs.manage"]
+
+    def get(self, request, job_public_id):
+        from crawler_control.models import CrawlJob
+
+        job = (
+            CrawlJob.objects.filter(public_id=job_public_id)
+            .select_related("source_tree_version")
+            .first()
+        )
+        if job is None:
+            raise StaffApiError(
+                business_code="JOB_NOT_FOUND", message="Unknown job.", status_code=404
+            )
+        selections = []
+        for selection in job.source_selections.select_related(
+            "source_category", "source_tree_version"
+        ).order_by("sort_order", "pk"):
+            snapshot = selection.source_category.snapshots.filter(
+                tree_version=selection.source_tree_version
+            ).first()
+            selections.append(
+                {
+                    "source_id": selection.source_category.source_id,
+                    "name": snapshot.name if snapshot else selection.source_category.source_id,
+                    "include_descendants": selection.include_descendants,
+                }
+            )
+        runs = [
+            {
+                "public_id": str(run.public_id),
+                "status": run.status,
+                "pause_reason": run.pause_reason,
+                "discovered_count": run.discovered_count,
+                "downloaded_count": run.downloaded_count,
+                "succeeded_count": run.succeeded_count,
+                "failed_count": run.failed_count,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+            for run in job.runs.order_by("-created_at")[:10]
+        ]
+        latest_run = job.runs.order_by("-created_at").first()
+        events = []
+        if latest_run is not None:
+            events = [
+                {
+                    "level": event.level,
+                    "code": event.code,
+                    "message": event.message,
+                    "source_url": event.source_url,
+                    "created_at": event.created_at.isoformat(),
+                }
+                for event in latest_run.events.order_by("-created_at")[:50]
+            ]
+        return Response(
+            {
+                "public_id": str(job.public_id),
+                "name": job.name,
+                "status": job.status,
+                "product_limit": job.product_limit,
+                "sync_mode": job.sync_mode,
+                "review_target": job.review_target,
+                "listing_sort": job.listing_sort,
+                "category_mode": job.category_mode,
+                "source_tree_version": job.source_tree_version.version_key
+                if job.source_tree_version
+                else None,
+                "categories": selections,
+                "runs": runs,
+                "events": events,
+            }
+        )
 
 
 class AdminCrawlJobActionsView(StaffCsrfAPIView):

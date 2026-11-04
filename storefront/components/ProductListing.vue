@@ -88,103 +88,116 @@ useHead(() => ({ title: heading.value }))
 </script>
 
 <template>
-  <AppContainer>
-    <div class="listing-layout">
-      <!-- Left filter sidebar (joybuy /s?k= spec: 234px column). -->
-      <aside class="listing-sidebar">
-        <section class="filter-card">
-          <h2 class="filter-card__title">Category</h2>
-          <ul class="filter-card__list">
-            <li v-for="category in categories" :key="category.slug">
-              <NuxtLink
-                class="filter-card__item"
-                :class="{ 'filter-card__item--active': category.slug === props.slug }"
-                :to="`/s?category=${category.slug}`"
-              >
-                {{ categoryName(category) }}
-              </NuxtLink>
+  <!-- Full-bleed white row (real listing pages are white edge to edge). -->
+  <div class="listing-page-bg">
+    <AppContainer>
+      <div class="listing-layout">
+        <!-- Left filter sidebar (joybuy /s?k= spec: 234px column). -->
+        <aside class="listing-sidebar">
+          <section class="filter-card">
+            <h2 class="filter-card__title">Category</h2>
+            <ul class="filter-card__list">
+              <li v-for="category in categories" :key="category.slug">
+                <NuxtLink
+                  class="filter-card__item"
+                  :class="{ 'filter-card__item--active': category.slug === props.slug }"
+                  :to="`/s?category=${category.slug}`"
+                >
+                  {{ categoryName(category) }}
+                </NuxtLink>
+              </li>
+            </ul>
+          </section>
+
+          <section class="filter-card">
+            <h2 class="filter-card__title">Price</h2>
+            <form class="filter-card__price" @submit="applyPriceFilter">
+              <input
+                name="min_price"
+                type="number"
+                min="0"
+                step="0.01"
+                :value="minPrice"
+                aria-label="Min price"
+              />
+              <span aria-hidden="true">–</span>
+              <input
+                name="max_price"
+                type="number"
+                min="0"
+                step="0.01"
+                :value="maxPrice"
+                aria-label="Max price"
+              />
+              <button type="submit">Go</button>
+            </form>
+          </section>
+        </aside>
+
+        <div class="listing-main">
+          <header class="listing-head">
+            <h1>{{ heading }}</h1>
+            <p class="listing-head__count" role="status">
+              {{ total }} product{{ total === 1 ? '' : 's' }}
+            </p>
+          </header>
+
+          <div class="listing-toolbar">
+            <span class="listing-toolbar__spacer" aria-hidden="true"></span>
+            <label class="sort-control">
+              <span>Sort by:</span>
+              <select :value="activeSort" @change="onSortChange">
+                <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div v-if="error" class="listing-state" role="alert">
+            <p>Could not load products. Please try again shortly.</p>
+          </div>
+
+          <ul v-else-if="items.length > 0" class="listing-grid">
+            <li v-for="item in items" :key="item.spu_public_id">
+              <ProductCard :product="item" />
             </li>
           </ul>
-        </section>
 
-        <section class="filter-card">
-          <h2 class="filter-card__title">Price</h2>
-          <form class="filter-card__price" @submit="applyPriceFilter">
-            <input
-              name="min_price"
-              type="number"
-              min="0"
-              step="0.01"
-              :value="minPrice"
-              aria-label="Min price"
-            />
-            <span aria-hidden="true">–</span>
-            <input
-              name="max_price"
-              type="number"
-              min="0"
-              step="0.01"
-              :value="maxPrice"
-              aria-label="Max price"
-            />
-            <button type="submit">Go</button>
-          </form>
-        </section>
-      </aside>
+          <div v-else-if="status !== 'pending'" class="listing-state" role="status">
+            <p>
+              No products match your filters yet. Try clearing the price range or another search.
+            </p>
+          </div>
 
-      <div class="listing-main">
-        <header class="listing-head">
-          <h1>{{ heading }}</h1>
-          <p class="listing-head__count" role="status">
-            {{ total }} product{{ total === 1 ? '' : 's' }}
-          </p>
-        </header>
-
-        <div class="listing-toolbar">
-          <span class="listing-toolbar__spacer" aria-hidden="true"></span>
-          <label class="sort-control">
-            <span>Sort by:</span>
-            <select :value="activeSort" @change="onSortChange">
-              <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
+          <nav v-if="totalPages > 1" class="pagination" aria-label="Pagination">
+            <button type="button" :disabled="activePage <= 1" @click="goToPage(activePage - 1)">
+              Previous
+            </button>
+            <span aria-current="page">Page {{ activePage }} of {{ totalPages }}</span>
+            <button
+              type="button"
+              :disabled="activePage >= totalPages"
+              @click="goToPage(activePage + 1)"
+            >
+              Next
+            </button>
+          </nav>
         </div>
-
-        <div v-if="error" class="listing-state" role="alert">
-          <p>Could not load products. Please try again shortly.</p>
-        </div>
-
-        <ul v-else-if="items.length > 0" class="listing-grid">
-          <li v-for="item in items" :key="item.spu_public_id">
-            <ProductCard :product="item" />
-          </li>
-        </ul>
-
-        <div v-else-if="status !== 'pending'" class="listing-state" role="status">
-          <p>No products match your filters yet. Try clearing the price range or another search.</p>
-        </div>
-
-        <nav v-if="totalPages > 1" class="pagination" aria-label="Pagination">
-          <button type="button" :disabled="activePage <= 1" @click="goToPage(activePage - 1)">
-            Previous
-          </button>
-          <span aria-current="page">Page {{ activePage }} of {{ totalPages }}</span>
-          <button
-            type="button"
-            :disabled="activePage >= totalPages"
-            @click="goToPage(activePage + 1)"
-          >
-            Next
-          </button>
-        </nav>
       </div>
-    </div>
-  </AppContainer>
+    </AppContainer>
+  </div>
 </template>
 
 <style scoped>
+/* Full-bleed white: escapes the centered container so ultra-wide strips are
+ * white too (scoped attr beats the .app-main > * margin rule). */
+.listing-page-bg {
+  margin-top: 0;
+  margin-inline: calc(50% - 50vw);
+  background: #ffffff;
+}
+
 /* Two-column layout per the joybuy /s?k= spec: 234px sidebar + results. */
 .listing-layout {
   display: grid;

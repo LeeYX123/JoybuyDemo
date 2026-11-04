@@ -56,9 +56,19 @@ urlpatterns = [
     ),
     path("api/v1/admin/reviews", admin_views.AdminReviewsView.as_view(), name="admin-reviews"),
     path(
+        "api/v1/admin/crawlers/source-tree",
+        admin_views.AdminCrawlerSourceTreeView.as_view(),
+        name="admin-crawl-source-tree",
+    ),
+    path(
         "api/v1/admin/crawlers/jobs",
         admin_views.AdminCrawlJobsView.as_view(),
         name="admin-crawl-jobs",
+    ),
+    path(
+        "api/v1/admin/crawlers/jobs/<uuid:job_public_id>",
+        admin_views.AdminCrawlJobDetailView.as_view(),
+        name="admin-crawl-job-detail",
     ),
     path(
         "api/v1/admin/crawlers/jobs/<uuid:job_public_id>/actions",

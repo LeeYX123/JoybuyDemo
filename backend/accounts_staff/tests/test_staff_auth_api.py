@@ -1,7 +1,6 @@
 import json
 import uuid
 
-from audit.models import AuditLog
 from django.conf import settings
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
@@ -11,12 +10,10 @@ from accounts_staff.models import (
     StaffAccount,
     StaffRoleAssignment,
     StaffSession,
+    StaffTotpDevice,
 )
-from accounts_staff.services import (
-    create_staff_session,
-    current_totp_code,
-    provision_totp_device,
-)
+from accounts_staff.services import create_staff_session
+from audit.models import AuditLog
 
 SESSION_URL = "/api/v1/admin/auth/session"
 LOGIN_URL = "/api/v1/admin/auth/login"
@@ -72,58 +69,38 @@ class StaffAuthApiTests(TestCase):
             )
         return staff
 
-    def login(self, staff, *, secret=None, code=None):
+    def login(self, staff):
         payload = {"email": staff.email, "password": "StrongPass!234"}
-        if code is not None:
-            payload["totp_code"] = code
-        elif secret is not None:
-            payload["totp_code"] = current_totp_code(secret)
         return self.request_json("post", LOGIN_URL, payload)
 
-    def test_platform_admin_requires_enrolled_totp_and_current_code(self):
+    def test_platform_admin_logs_in_with_email_and_password_only(self):
+        # 登录已移除验证器要求：平台管理员无需 TOTP 设备即可密码直登。
         staff = self.create_staff(role_code="platform_admin")
+        self.assertFalse(StaffTotpDevice.objects.filter(staff=staff).exists())
 
-        not_enrolled = self.login(staff)
-        self.assertEqual(not_enrolled.status_code, 403)
-        self.assertEqual(not_enrolled.json()["error"]["code"], "STAFF_TOTP_NOT_ENROLLED")
+        response = self.login(staff)
 
-        device, secret, _ = provision_totp_device(staff)
-        missing_code = self.login(staff)
-        self.assertEqual(missing_code.status_code, 401)
-        self.assertEqual(missing_code.json()["error"]["code"], "STAFF_TOTP_REQUIRED")
-
-        invalid_code = "000000"
-        if invalid_code == current_totp_code(secret):
-            invalid_code = "000001"
-        invalid = self.login(staff, code=invalid_code)
-        self.assertEqual(invalid.status_code, 401)
-        self.assertEqual(invalid.json()["error"]["code"], "INVALID_STAFF_TOTP")
-
-        response = self.login(staff, secret=secret)
         self.assertEqual(response.status_code, 200)
         self.assertIn(settings.STAFF_SESSION_COOKIE_NAME, response.cookies)
         self.assertNotIn(settings.BUYER_SESSION_COOKIE_NAME, response.cookies)
         self.assertTrue(response.cookies[settings.STAFF_SESSION_COOKIE_NAME]["httponly"])
-        self.assertTrue(response.json()["staff"]["totp_required"])
+        self.assertIn("catalog.products.manage", response.json()["staff"]["permissions"])
         self.assertEqual(self.client.get(ME_URL).status_code, 200)
 
-        device.refresh_from_db()
-        self.assertNotIn(secret, device.secret_ciphertext)
-        self.assertIsNotNone(device.last_verified_counter)
-
-    def test_totp_code_cannot_be_replayed(self):
+    def test_login_ignores_a_totp_code_if_one_is_sent(self):
+        # 兼容旧客户端：请求里带上 totp_code 也只按邮箱+密码校验。
         staff = self.create_staff(role_code="platform_admin")
-        _, secret, _ = provision_totp_device(staff)
-        code = current_totp_code(secret)
 
-        first = self.login(staff, code=code)
-        second = self.login(staff, code=code)
+        response = self.request_json(
+            "post",
+            LOGIN_URL,
+            {"email": staff.email, "password": "StrongPass!234", "totp_code": "123456"},
+        )
 
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 401)
-        self.assertEqual(second.json()["error"]["code"], "STAFF_TOTP_REPLAYED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get(ME_URL).status_code, 200)
 
-    def test_non_admin_without_totp_can_login_but_cannot_manage_roles(self):
+    def test_non_admin_can_login_but_cannot_manage_roles(self):
         limited_role = PlatformRole.objects.create(code="catalog_viewer", name="Catalog viewer")
         staff = self.create_staff()
         StaffRoleAssignment.objects.create(staff=staff, role=limited_role)
@@ -162,8 +139,7 @@ class StaffAuthApiTests(TestCase):
 
     def test_role_assignment_records_actor_request_and_change_details(self):
         admin = self.create_staff(role_code="platform_admin")
-        _, secret, _ = provision_totp_device(admin)
-        self.assertEqual(self.login(admin, secret=secret).status_code, 200)
+        self.assertEqual(self.login(admin).status_code, 200)
         target = self.create_staff(email="target@example.test", role_code="platform_auditor")
         request_id = str(uuid.uuid4())
 

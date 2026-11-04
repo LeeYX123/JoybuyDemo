@@ -54,7 +54,7 @@ WP-06 提供独立于买家和 Django 管理站点的员工认证边界：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/api/v1/admin/auth/session` | 获取员工登录状态及 CSRF 令牌 |
-| `POST` | `/api/v1/admin/auth/login` | 密码及按需 TOTP 登录 |
+| `POST` | `/api/v1/admin/auth/login` | 邮箱+密码登录（不要求验证器） |
 | `POST` | `/api/v1/admin/auth/logout` | 吊销当前员工会话 |
 | `GET` | `/api/v1/admin/rbac/me` | 获取当前员工的全局角色和权限 |
 | `PUT` | `/api/v1/admin/staff/{staff_id}/roles` | 需要 `staff.roles.manage` 权限，更新角色并写审计日志 |
@@ -69,11 +69,9 @@ WP-06 提供独立于买家和 Django 管理站点的员工认证边界：
   --display-name "Platform Admin"
 ```
 
-命令会安全地提示输入密码，并仅在本次执行中显示 TOTP Base32 密钥和 `otpauth://` URI。立即将其加入验证器；平台管理员没有已配置的 TOTP 设备时不能登录。TOTP 密钥使用 `STAFF_TOTP_ENCRYPTION_KEY` 加密后存储，验证码不可重放。
+命令会安全地提示输入密码并创建账号。登录只校验邮箱+密码，不要求验证器动态码（2026-11-05 起）；历史 `StaffTotpDevice` 模型与引导命令中的 TOTP 预配逻辑保留但不再参与登录。
 
-员工会话 HMAC 密钥、TOTP 加密密钥、会话时长、时间步容差和登录限流配置均列在根目录 `.env.example`。生产环境要求员工会话和 TOTP 使用彼此独立且不同于 `DJANGO_SECRET_KEY` 的密钥。
-
-本地开发可设 `STAFF_TOTP_LOGIN_ENFORCED=false` 跳过验证器（密码直登，会话标记为已验证）；生产保持默认 `true` 强制 TOTP。
+员工会话 HMAC 密钥、会话时长和登录限流配置均列在根目录 `.env.example`。生产环境要求员工会话使用独立且不同于 `DJANGO_SECRET_KEY` 的密钥。
 
 ## 商家领域基础
 

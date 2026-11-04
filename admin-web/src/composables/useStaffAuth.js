@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 
 import { apiRequest } from '@/lib/api'
 
-// Staff session state backed by WP-06 cookie sessions and TOTP flow.
+// Staff session state backed by WP-06 cookie sessions (email + password login).
 const session = ref({ authenticated: false, staff: null, permissions: [] })
 const loaded = ref(false)
 
@@ -21,20 +21,18 @@ export function useStaffAuth() {
     return session.value
   }
 
-  async function login(email, password, totpCode = '') {
+  async function login(email, password) {
     // The login page is a public route, so the guard never loaded a session;
     // load it first to set the csrftoken cookie and obtain the CSRF token
     // (WP-06 requires CSRF on all admin writes).
     const fresh = await loadSession()
-    const payload = { email, password }
-    if (totpCode) payload.totp_code = totpCode
     const response = await apiRequest('/auth/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-CSRFToken': fresh.csrf_token || '',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ email, password }),
     })
     await loadSession()
     return response

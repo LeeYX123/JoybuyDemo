@@ -4,7 +4,8 @@
 
 ## 1. 我们在做什么
 
-- 当前任务（2026-11-04，**已完成**）：补齐商城端【畅销榜单】11 个标准类目的公开 Joybuy 演示商品。已从 `joybuy.co.uk` 中文浏览器会话和固定公开榜单页采集 11 类 × 3 条，全部通过 staging 导入、激活并建立 GB 搜索文档；33/33 fixture 商品均已下载到本地媒体库，榜单接口现在返回本地 `/media/...` 首图，页面已抽查美妆与游戏类目正常显示。服装是唯一例外：Joybuy 畅销榜侧栏没有服装一级榜，fixture 明确标记使用“时装配饰频道 → 爆款直降”替代来源，绝不能伪装成官方 bestseller 子榜。
+- 当前任务（2026-11-05，**已完成**）：应用户要求**移除平台管理端登录的验证器（TOTP），只保留邮箱+密码登录**。后端 `StaffLoginView` 删除全部 TOTP 校验分支（登录成功即创建 `totp_verified=True` 会话，RBAC 链一致），`StaffLoginSerializer` 移除 `totp_code` 字段（旧客户端多传会被 DRF 忽略），`settings.py` 删除 `STAFF_TOTP_LOGIN_ENFORCED`（`.env.example` 同步删除）；`StaffTotpDevice` 模型、`provision_totp_device` 服务与 `bootstrap_platform_admin` 引导命令**保留为休眠代码**（无迁移改动），权限层对 `totp_verified_at` 的既有检查不变。admin-web 登录页移除动态码输入与 STAFF_TOTP_REQUIRED 分支，`useStaffAuth.login(email, password)` 去掉第三参。测试同步：后端 TOTP 强制/重放两用例替换为"密码直登"+"忽略多余 totp_code"两用例；LoginView 组件测试改为密码直登+错误提示两用例；E2E `admin-login.spec.js` 移除 RFC 6238 动态码生成与环境自适应分支。文档：`backend/README.md`（登录接口表+引导命令说明）、`docs/08`（新增 2026-11-05 变更补记，历史记录保留）。**注意**：期间发现 8000 端口旧后端进程（21:51 启动的 --noreload）仍执行旧 TOTP 逻辑导致 e2e 首跑失败，已杀掉并重启后端后全部通过。
+- 上一任务（2026-11-04，已完成）：补齐商城端【畅销榜单】11 个标准类目的公开 Joybuy 演示商品。已从 `joybuy.co.uk` 中文浏览器会话和固定公开榜单页采集 11 类 × 3 条，全部通过 staging 导入、激活并建立 GB 搜索文档；33/33 fixture 商品均已下载到本地媒体库，榜单接口现在返回本地 `/media/...` 首图，页面已抽查美妆与游戏类目正常显示。服装是唯一例外：Joybuy 畅销榜侧栏没有服装一级榜，fixture 明确标记使用“时装配饰频道 → 爆款直降”替代来源，绝不能伪装成官方 bestseller 子榜。
 - 当前任务（2026-11-04 夜间自动执行，**已完成**）：按用户指令"参照 joybuy.co.uk 逐元素视觉对齐全部文档页面"的全自动流程执行完毕。四份交付物在 `var/ui-alignment/deliverables.md`（页面清单+基准规格表+代码修改记录+复核差异清单 D-01~D-14）。覆盖：全局头部（logo 图片化/搜索框/圆形按钮/类目行）、首页、Categories 面板、列表页（234px 左栏+274px 卡重写）、**畅销榜单页新建**（/promo/best-seller，hero 384px/11 品类无箭头/仅价格筛选/排名徽章 32×32 #E4E6EB）、详情页重写（Buy now #E1251B hover #D14335 / Add to cart #1A1A1A hover #282828 / 数量步进器 47×34 / 白名单拦截弹窗 / 服务保障纯文本行）、结算页两步化（3 字段地址表单→支付步骤：余额支付置顶+精简 Summary+精简页脚）。后端最小支撑：`BuyerAccount.purchase_whitelisted`（迁移 0004，默认 True=开发阶段放行，session payload 返回）。E2E purchase-funnel 的结算步骤已同步新流程；funnel 在 dev 水合竞态下仍偶发超时（差异清单 D-14），全流程已浏览器人工验证（含下单 201）。
 - 下一轮（待用户确认后）：第 2 轮榜单后台配置（RankingList/管理端 RankingsView，见更下方计划）；第 3 轮钱包/白名单 admin/直购参数/地址后端校验放宽（对应差异清单 D-07~D-10）。
 - 当前任务（三轮制，**已完成第 1 轮，待用户确认后进入第 2 轮**）：按 `docs/12-joybuy-co-uk-ui-spec.md`（目标状态规格，对应 `功能需求清单.md` 8 组需求）实施改造。用户已确认两个口径：**界面语言中英文可配置**（EN/ZH 双语，storefront 轻量 i18n + 后端双语数据）、**分三轮逐轮确认**（第 1 轮全局头部+类目体系+首页 CMS → 第 2 轮畅销榜单页+后台榜单配置 → 第 3 轮详情页购买改造+地址页+支付页+白名单/钱包后台）。完整计划见本会话已批准的实施计划；第 1 轮成果见下方"2026-11-04"节。
@@ -224,6 +225,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-05：/s 列表页全幅白底
+
+- 用户要求 /s?category= 页面背景 #FFFFFF。ProductListing 根部加全幅包裹 `.listing-page-bg`（margin-inline calc(50%-50vw)、bg #FFFFFF、覆写 .app-main 子项顶距）——/s、/search、/c 三个路由统一生效。
+- 踩坑：脚本对 .vue 先 ast.parse 校验会在写入前中断（.vue 非 Python），导致模板替换丢失——改为先写文件再校验/或只校验 .py。
+- 验证：vitest 45/45；浏览器复核 bg rgb(255,255,255)、全幅 1512、无横向滚动 ✓。
+
 ### 2026-11-04（续 11）：详情页五项（隐藏类目行/加粗面包屑/白底/#EEEFF0/粗边框）
 
 - 详情页隐藏全局类目行：AppHeader `useRoute` 判 `/p/` 前缀时 v-if 关闭 category-nav（真实站行为）；vitest stub 的 useRoute 补 `path: '/'`（此前桩缺 path 导致 AppHeader 测试 5 连挂）。
@@ -310,6 +317,15 @@
 
 ## 6. 验证记录
 
+### 2026-11-05 管理端登录移除验证器（按验证纪律仅做针对性验证）
+
+- ruff check --fix + format：`accounts_staff/views.py`、`serializers.py`、`tests/test_staff_auth_api.py`、`config/settings.py` 全部干净（顺带修复两个文件既有 import 顺序，最终 0 error）。
+- `APP_ENV=development DEBUG=true DJANGO_DATABASE_ENGINE=mysql DJANGO_CACHE_BACKEND=redis ./.venv/Scripts/python.exe backend/manage.py test accounts_staff --verbosity 1`：11/11 通过（含新增"密码直登"与"忽略多余 totp_code"两用例）。
+- `./node_modules/.bin/vitest.CMD run --config admin-web/vitest.config.js`：3/3 通过（LoginView 2 用例重写 + 路由守卫 1 项）。
+- eslint（LoginView.vue/LoginView.test.js/useStaffAuth.js/admin-login.spec.js）：0 错误；prettier --check 全部改动前端文件 + README/docs：通过（`.env.example` 无 parser，不适用 prettier，人工核对仅删除 2 行）。
+- e2e `./node_modules/.bin/playwright.CMD test tests/e2e/admin-login.spec.js`：首跑 1 失败——8000 端口是 21:51 启动的旧 `--noreload` 后端，仍在返回 STAFF_TOTP_REQUIRED；杀掉 38960 进程并重启后端后复跑 **2/2 通过**（管理员邮箱+密码直登到仪表盘并遍历五个管理页、审计员 RBAC 菜单隐藏）。curl 直测登录接口确认 200 返回 staff payload。
+- 按纪律未跑全量后端、全部组件或全部 e2e。
+
 ### 2026-11-04 畅销榜单 11 类数据补齐（按验证纪律仅做针对性验证）
 
 - `ruff format` + `ruff check`（仅 4 个改动 Python 文件）：通过；顺带修复 `search_services.py`/`test_search.py` 原有 import 顺序，最终 `All checks passed`。
@@ -322,6 +338,12 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05：/s 列表页全幅白底
+
+- 用户要求 /s?category= 页面背景 #FFFFFF。ProductListing 根部加全幅包裹 `.listing-page-bg`（margin-inline calc(50%-50vw)、bg #FFFFFF、覆写 .app-main 子项顶距）——/s、/search、/c 三个路由统一生效。
+- 踩坑：脚本对 .vue 先 ast.parse 校验会在写入前中断（.vue 非 Python），导致模板替换丢失——改为先写文件再校验/或只校验 .py。
+- 验证：vitest 45/45；浏览器复核 bg rgb(255,255,255)、全幅 1512、无横向滚动 ✓。
 
 ### 2026-11-04（续 11）：详情页五项（隐藏类目行/加粗面包屑/白底/#EEEFF0/粗边框）
 

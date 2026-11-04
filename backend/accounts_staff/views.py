@@ -1,5 +1,3 @@
-from audit.services import record_audit
-from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.middleware.csrf import get_token
@@ -11,7 +9,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts_staff.api_exceptions import StaffApiError
-from accounts_staff.domain import TotpInvalid, TotpNotEnrolled, TotpReplay
 from accounts_staff.models import (
     PlatformRole,
     StaffAccount,
@@ -30,8 +27,8 @@ from accounts_staff.services import (
     rate_limit_reached,
     revoke_staff_session,
     set_staff_session_cookie,
-    verify_totp,
 )
+from audit.services import record_audit
 
 DUMMY_PASSWORD_HASH = make_password(None)
 
@@ -100,52 +97,8 @@ class StaffLoginView(StaffCsrfAPIView):
                 status_code=403,
             )
 
-        has_totp = StaffTotpDevice.objects.filter(
-            staff=staff,
-            disabled_at__isnull=True,
-        ).exists()
-        totp_enforced = getattr(settings, "STAFF_TOTP_LOGIN_ENFORCED", True)
-        totp_required = totp_enforced and (staff.requires_totp or has_totp)
-        # When the deployment waives TOTP, the session is marked verified so
-        # downstream RBAC stays consistent; production keeps the default.
-        totp_verified = not totp_required
-        if totp_required:
-            if not has_totp:
-                raise StaffApiError(
-                    business_code="STAFF_TOTP_NOT_ENROLLED",
-                    message="A TOTP device must be provisioned before this account can sign in.",
-                    status_code=403,
-                )
-            if "totp_code" not in data:
-                raise StaffApiError(
-                    business_code="STAFF_TOTP_REQUIRED",
-                    message="A current TOTP code is required.",
-                    status_code=401,
-                )
-            try:
-                verify_totp(staff, data["totp_code"])
-            except TotpNotEnrolled as exc:
-                raise StaffApiError(
-                    business_code="STAFF_TOTP_NOT_ENROLLED",
-                    message="No active TOTP device is enrolled.",
-                    status_code=403,
-                ) from exc
-            except TotpReplay as exc:
-                increment_rate_limit(limit_key)
-                raise StaffApiError(
-                    business_code="STAFF_TOTP_REPLAYED",
-                    message="This TOTP code has already been used.",
-                    status_code=401,
-                ) from exc
-            except TotpInvalid as exc:
-                increment_rate_limit(limit_key)
-                raise StaffApiError(
-                    business_code="INVALID_STAFF_TOTP",
-                    message="The TOTP code is invalid.",
-                    status_code=401,
-                ) from exc
-            totp_verified = True
-
+        # 登录只校验邮箱+密码；历史 TOTP 设备记录保留但不再参与登录。
+        # 会话标记为已验证，保证下游 RBAC 链一致。
         clear_rate_limit(limit_key)
         staff.last_login_at = timezone.now()
         staff.save(update_fields=["last_login_at", "updated_at"])
@@ -153,7 +106,7 @@ class StaffLoginView(StaffCsrfAPIView):
             staff=staff,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("User-Agent", ""),
-            totp_verified=totp_verified,
+            totp_verified=True,
         )
         response = Response({"staff": _staff_payload(staff)})
         set_staff_session_cookie(response, token)

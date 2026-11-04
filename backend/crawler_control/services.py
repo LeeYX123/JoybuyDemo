@@ -22,7 +22,14 @@ from crawler_control.domain import (
     RawResponseInvalid,
     RiskControlPaused,
 )
-from crawler_control.models import CrawlerAccount, CrawlJob, CrawlRun, RawResponse
+from crawler_control.models import (
+    CrawlJob,
+    CrawlJobSourceSelection,
+    CrawlRun,
+    CrawlRunEvent,
+    CrawlerAccount,
+    RawResponse,
+)
 
 PASSWORD_LIKE_KEY_PARTS = ("password", "passwd")
 
@@ -183,8 +190,16 @@ def reactivate_account(account: CrawlerAccount, *, note: str = "", observed_at=N
     return account
 
 
-def _select_account_for_run(account_group: str) -> CrawlerAccount:
-    account = (
+def _select_account_for_run(account_group: str) -> CrawlerAccount | None:
+    """Pick the least-recently-used selectable account, or None.
+
+    Since unauthenticated crawling is supported (2026-11-05), a group with
+    no valid session no longer blocks a run: the run proceeds without a
+    stored session and switches to account cookies only when the source
+    demands a login (requirement: try logged-out first).
+    """
+
+    return (
         CrawlerAccount.objects.filter(
             account_group=account_group,
             status=CrawlerAccount.Status.ACTIVE,
@@ -193,11 +208,6 @@ def _select_account_for_run(account_group: str) -> CrawlerAccount:
         .order_by("last_used_at", "pk")
         .first()
     )
-    if account is None:
-        raise CrawlAccountStateInvalid(
-            f"No selectable crawler account with a valid session in group '{account_group}'."
-        )
-    return account
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +233,9 @@ def create_crawl_job(
     name: str,
     market,
     source_catalog,
-    source_category,
+    source_category=None,
     product_limit: int,
+    source_categories: list[dict] | None = None,
     include_subcategories=None,
     listing_sort: str = CrawlJob.ListingSort.SOURCE_DEFAULT,
     sync_mode: str = CrawlJob.SyncMode.INCREMENTAL,
@@ -244,6 +255,16 @@ def create_crawl_job(
     download_detail_media: bool = False,
     created_by=None,
 ) -> CrawlJob:
+    """Create a crawl job with one or more frozen source-category selections.
+
+    ``source_categories`` is the multi-category form: a list of
+    ``{"category": SourceCategory, "include_descendants": bool}`` dicts.
+    The single ``source_category`` argument remains for legacy callers and
+    is wrapped into one selection. Every selection pins
+    ``source_tree_version`` (the latest published version when not given)
+    so later tree syncs never change what the job crawls.
+    """
+
     if not name.strip():
         raise CrawlJobParamsInvalid("A job name is required.")
     if isinstance(product_limit, bool) or not isinstance(product_limit, int) or product_limit < 1:
@@ -263,49 +284,114 @@ def create_crawl_job(
     if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
         raise CrawlJobParamsInvalid("concurrency must be a positive integer.")
 
-    if include_subcategories is None:
-        category_mode = (
-            CrawlJob.CategoryMode.INCLUDE_SUBCATEGORIES
-            if _infer_include_subcategories(source_category)
-            else CrawlJob.CategoryMode.CURRENT_ONLY
+    selections = []
+    for entry in source_categories or []:
+        category = (entry or {}).get("category")
+        if category is None:
+            raise CrawlJobParamsInvalid("Every source selection needs a category.")
+        include = (entry or {}).get("include_descendants")
+        if include is None:
+            include = include_subcategories
+        if include is None:
+            include = _infer_include_subcategories(category)
+        selections.append({"category": category, "include_descendants": bool(include)})
+    if source_category is not None and not selections:
+        include = include_subcategories
+        if include is None:
+            include = _infer_include_subcategories(source_category)
+        selections = [{"category": source_category, "include_descendants": bool(include)}]
+    if not selections:
+        raise CrawlJobParamsInvalid("At least one source category selection is required.")
+    seen_category_pks = set()
+    for entry in selections:
+        if entry["category"].catalog_id != source_catalog.pk:
+            raise CrawlJobParamsInvalid("A selected category belongs to a different catalog.")
+        if entry["category"].pk in seen_category_pks:
+            raise CrawlJobParamsInvalid("Duplicate source category selection.")
+        seen_category_pks.add(entry["category"].pk)
+
+    if source_tree_version is None:
+        source_tree_version = (
+            SourceCategoryTreeVersion.objects.filter(
+                catalog=source_catalog,
+                status=SourceCategoryTreeVersion.Status.PUBLISHED,
+            )
+            .order_by("-captured_at", "-pk")
+            .first()
         )
-    elif include_subcategories is True:
-        category_mode = CrawlJob.CategoryMode.INCLUDE_SUBCATEGORIES
-    elif include_subcategories is False:
-        category_mode = CrawlJob.CategoryMode.CURRENT_ONLY
-    else:
-        raise CrawlJobParamsInvalid("include_subcategories must be a boolean or None.")
+    if source_tree_version is None:
+        raise CrawlJobParamsInvalid(
+            f"Source catalog '{source_catalog.source_system}' has no published tree version."
+        )
+    from catalog.models import SourceCategorySnapshot
+
+    covered_pks = set(
+        SourceCategorySnapshot.objects.filter(tree_version=source_tree_version).values_list(
+            "category_id", flat=True
+        )
+    )
+    missing = [
+        entry["category"].source_id
+        for entry in selections
+        if entry["category"].pk not in covered_pks
+    ]
+    if missing:
+        raise CrawlJobParamsInvalid(
+            "Categories missing from the frozen tree version: " + ", ".join(missing)
+        )
+
+    category_mode = (
+        CrawlJob.CategoryMode.INCLUDE_SUBCATEGORIES
+        if any(entry["include_descendants"] for entry in selections)
+        else CrawlJob.CategoryMode.CURRENT_ONLY
+    )
 
     random_seed = None
     if listing_sort == CrawlJob.ListingSort.RANDOM:
         random_seed = secrets.randbits(48)
 
-    return CrawlJob.objects.create(
-        name=name.strip(),
-        priority=priority,
-        market=market,
-        currency=currency,
-        locale=locale.strip() or "en-GB",
-        source_catalog=source_catalog,
-        source_category=source_category,
-        source_tree_version=source_tree_version,
-        category_mode=category_mode,
-        product_limit=product_limit,
-        listing_sort=listing_sort,
-        random_seed=random_seed,
-        sync_mode=sync_mode,
-        review_target=review_target,
-        download_product_media=download_product_media,
-        download_review_media=download_review_media,
-        download_detail_media=download_detail_media,
-        scheduled_at=scheduled_at,
-        concurrency=concurrency,
-        rate_limit_per_minute=rate_limit_per_minute,
-        account_group=account_group.strip() or "default",
-        failure_strategy=failure_strategy,
-        allow_manual_resume=allow_manual_resume,
-        created_by=created_by,
-    )
+    # Legacy single-category column keeps the first selection so old reads
+    # keep working; the authoritative scope lives in CrawlJobSourceSelection.
+    with transaction.atomic():
+        job = CrawlJob.objects.create(
+            name=name.strip(),
+            priority=priority,
+            market=market,
+            currency=currency,
+            locale=locale.strip() or "en-GB",
+            source_catalog=source_catalog,
+            source_category=selections[0]["category"],
+            source_tree_version=source_tree_version,
+            category_mode=category_mode,
+            product_limit=product_limit,
+            listing_sort=listing_sort,
+            random_seed=random_seed,
+            sync_mode=sync_mode,
+            review_target=review_target,
+            download_product_media=download_product_media,
+            download_review_media=download_review_media,
+            download_detail_media=download_detail_media,
+            scheduled_at=scheduled_at,
+            concurrency=concurrency,
+            rate_limit_per_minute=rate_limit_per_minute,
+            account_group=account_group.strip() or "default",
+            failure_strategy=failure_strategy,
+            allow_manual_resume=allow_manual_resume,
+            created_by=created_by,
+        )
+        CrawlJobSourceSelection.objects.bulk_create(
+            [
+                CrawlJobSourceSelection(
+                    job=job,
+                    source_category=entry["category"],
+                    source_tree_version=source_tree_version,
+                    include_descendants=entry["include_descendants"],
+                    sort_order=index,
+                )
+                for index, entry in enumerate(selections)
+            ]
+        )
+    return job
 
 
 def mark_job_ready(job: CrawlJob) -> CrawlJob:
@@ -346,12 +432,22 @@ def _transition_job(job: CrawlJob, target: str) -> CrawlJob:
 
 
 def _job_params_snapshot(job: CrawlJob) -> dict:
+    selections = [
+        {
+            "source_category_id": selection.source_category.source_id,
+            "include_descendants": selection.include_descendants,
+        }
+        for selection in job.source_selections.select_related("source_category").order_by(
+            "sort_order", "pk"
+        )
+    ]
     return {
         "market": job.market.code,
         "currency": job.currency.code if job.currency else job.market.default_currency.code,
         "locale": job.locale,
         "source_catalog": job.source_catalog.source_system,
         "source_category_id": job.source_category.source_id,
+        "source_categories": selections,
         "source_tree_version": job.source_tree_version.version_key
         if job.source_tree_version
         else None,
@@ -391,15 +487,25 @@ def start_run(job: CrawlJob, *, started_at=None) -> CrawlRun:
             raise CrawlJobStateInvalid(f"Job in status {job.status} cannot start a run.")
         _transition_job(job, CrawlJob.Status.RUNNING)
         account = _select_account_for_run(job.account_group)
-        account.last_used_at = started_at
-        account.save(update_fields=["last_used_at", "updated_at"])
-        return CrawlRun.objects.create(
+        if account is not None:
+            account.last_used_at = started_at
+            account.save(update_fields=["last_used_at", "updated_at"])
+        run = CrawlRun.objects.create(
             job=job,
             account=account,
             status=CrawlRun.Status.RUNNING,
             params_snapshot=_job_params_snapshot(job),
             started_at=started_at,
         )
+        if account is None:
+            record_run_event(
+                run,
+                level=CrawlRunEvent.Level.INFO,
+                code="RUN_UNAUTHENTICATED",
+                message="No crawler account with a valid session in this group; "
+                "the run starts without a stored session (logged-out first).",
+            )
+        return run
 
 
 def pause_run(run: CrawlRun, *, reason: str, observed_at=None) -> CrawlRun:
@@ -558,6 +664,43 @@ def update_run_progress(
             fields.append(field)
     run.save(update_fields=fields)
     return run
+
+
+def record_run_event(
+    run: CrawlRun,
+    *,
+    level: str = CrawlRunEvent.Level.INFO,
+    code: str = "",
+    message: str,
+    source_url: str = "",
+) -> CrawlRunEvent:
+    """Append one progress/diagnostic event for the run (admin UI reads these)."""
+
+    if level not in CrawlRunEvent.Level.values:
+        raise CrawlRunStateInvalid(f"Unknown run event level: {level}.")
+    message = (message or "").strip()
+    if not message:
+        raise CrawlRunStateInvalid("A run event requires a message.")
+    return CrawlRunEvent.objects.create(
+        run=run,
+        level=level,
+        code=(code or "").strip()[:64],
+        message=message[:1000],
+        source_url=(source_url or "").strip()[:2000],
+    )
+
+
+def complete_run_failed(run: CrawlRun, *, reason: str, source_url: str = "") -> CrawlRun:
+    """Fail a running run with a recorded reason; the job follows its policy."""
+
+    record_run_event(
+        run,
+        level=CrawlRunEvent.Level.ERROR,
+        code="RUN_FAILED",
+        message=reason,
+        source_url=source_url,
+    )
+    return complete_run(run, outcome=CrawlRun.Status.FAILED)
 
 
 # ---------------------------------------------------------------------------

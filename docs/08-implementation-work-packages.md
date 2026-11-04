@@ -184,6 +184,7 @@ flowchart LR
 - 范围确认：未实现平台端登录页面、商家成员关系、员工管理 UI 或业务管理 API；这些分别属于 WP-30、WP-07 和后续平台管理工作包。
 - 遗留问题：无。初始管理员 TOTP 属于部署时的带外引导流程，密钥只在创建命令成功时显示一次。
 - 联调补记（2026-11-03，应用户要求提供本地开发免 TOTP 登录）：新增环境变量 `STAFF_TOTP_LOGIN_ENFORCED`（默认 `true`，生产行为不变）；设为 `false` 时密码登录即视为完成验证（会话 `totp_verified_at` 记为已验证，RBAC 链一致），仅限本地开发关闭验证器依赖。`.env.example` 与部署手册需保留默认 `true`。
+- 变更补记（2026-11-05，应用户要求移除验证器）：管理端登录**只保留邮箱+密码**，不再要求 TOTP。`StaffLoginView` 删除全部 TOTP 校验分支（登录即创建 `totp_verified` 会话，RBAC 链一致），`StaffLoginSerializer` 移除 `totp_code` 字段（旧客户端多传该字段会被忽略），设置项 `STAFF_TOTP_LOGIN_ENFORCED` 删除。`StaffTotpDevice` 模型、`provision_totp_device` 服务与引导命令保留为休眠代码；权限层对 `totp_verified_at` 的既有检查不变（登录创建的会话恒为已验证）。相关 TOTP 登录/重放后端测试已替换为密码直登与“忽略多余 totp_code”用例；admin-web 登录页移除动态码输入，E2E 移除 RFC 6238 动态码生成。
 - 下一包：状态表顺序的下一包为 WP-07；其 WP-06 依赖已满足。
 
 ### WP-07 商家基础领域模型

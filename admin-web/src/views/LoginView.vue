@@ -4,15 +4,12 @@ import { useRouter } from 'vue-router'
 
 import { useStaffAuth } from '@/composables/useStaffAuth'
 
-// 平台员工登录。平台管理员额外要求验证器动态码；
-// 未携带有效动态码的首次尝试会被后端拒绝。
+// 平台员工登录：只使用邮箱+密码，不再需要验证器动态码。
 const { login, isAuthenticated } = useStaffAuth()
 const router = useRouter()
 
 const email = ref('')
 const password = ref('')
-const totpCode = ref('')
-const needsTotp = ref(false)
 const error = ref('')
 const submitting = ref(false)
 
@@ -28,14 +25,9 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    await login(email.value.trim(), password.value, totpCode.value.trim())
+    await login(email.value.trim(), password.value)
   } catch (caught) {
-    if (caught.code === 'STAFF_TOTP_REQUIRED') {
-      needsTotp.value = true
-      error.value = '请输入验证器上的动态码继续登录。'
-    } else {
-      error.value = ERROR_ZH[caught.code] || caught.message || '登录失败，请稍后再试。'
-    }
+    error.value = ERROR_ZH[caught.code] || caught.message || '登录失败，请稍后再试。'
     return
   } finally {
     submitting.value = false
@@ -61,10 +53,6 @@ async function submit() {
       <label>
         <span>密码</span>
         <input v-model="password" type="password" autocomplete="current-password" required />
-      </label>
-      <label v-if="needsTotp">
-        <span>验证器动态码</span>
-        <input v-model="totpCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
       </label>
       <p v-if="error" class="login__error" role="alert">{{ error }}</p>
       <button type="submit" :disabled="submitting">

@@ -175,6 +175,44 @@ class CrawlJob(models.Model):
         return f"{self.name} [{self.status}]"
 
 
+class CrawlJobSourceSelection(models.Model):
+    """One selected source category of a multi-category crawl job.
+
+    Created when the job is saved: the tree version is frozen so later tree
+    syncs never change what an existing job crawls. The legacy single
+    ``CrawlJob.source_category`` field stays for jobs created before
+    multi-category selection existed.
+    """
+
+    job = models.ForeignKey(CrawlJob, on_delete=models.CASCADE, related_name="source_selections")
+    source_category = models.ForeignKey(
+        "catalog.SourceCategory",
+        on_delete=models.PROTECT,
+        related_name="job_selections",
+    )
+    source_tree_version = models.ForeignKey(
+        "catalog.SourceCategoryTreeVersion",
+        on_delete=models.PROTECT,
+        related_name="job_source_selections",
+    )
+    include_descendants = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "crawl_job_source_selection"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "source_category"],
+                name="crawl_job_source_selection_unique",
+            )
+        ]
+        ordering = ["sort_order", "pk"]
+
+    def __str__(self):
+        return f"{self.job_id}:{self.source_category_id} descendants={self.include_descendants}"
+
+
 class CrawlRun(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -382,3 +420,35 @@ class CrawlerCircuitBreaker(models.Model):
 
     def __str__(self):
         return f"CircuitBreaker tripped={self.is_tripped}"
+
+
+class CrawlRunEvent(models.Model):
+    """One progress/diagnostic event emitted by the live run executor.
+
+    Per-item successes, parse failures, risk-control downgrades and the
+    final outcome all land here so the admin UI can show what happened
+    without reading logs.
+    """
+
+    class Level(models.TextChoices):
+        INFO = "INFO", "Info"
+        WARNING = "WARNING", "Warning"
+        ERROR = "ERROR", "Error"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    run = models.ForeignKey(CrawlRun, on_delete=models.CASCADE, related_name="events")
+    level = models.CharField(max_length=16, choices=Level.choices, default=Level.INFO)
+    code = models.CharField(max_length=64, blank=True, default="")
+    message = models.CharField(max_length=1000)
+    source_url = models.URLField(max_length=2000, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "crawl_run_event"
+        indexes = [
+            models.Index(fields=["run", "created_at"], name="run_event_run_created_idx"),
+            models.Index(fields=["level", "created_at"], name="run_event_level_idx"),
+        ]
+
+    def __str__(self):
+        return f"[{self.level}] {self.code or 'EVENT'}: {self.message[:60]}"
