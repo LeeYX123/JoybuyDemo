@@ -231,6 +231,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-05（续 3）：排序触发器不换行 + 侧栏选中色去红
+
+- 触发器 `width: 172px` → `min-width: 172px + white-space: nowrap`（"Price: High to low" 单行显示，高度保持 40px）。
+- 侧栏选中类目去红：`--colour-accent-soft/--colour-accent` → bg #F7F7F7 + color #1A1A1A + font-weight 700（与分类面板 hover 一致）。
+- 验证：vitest 45/45；浏览器复核 noWrap/40px、选中 rgb(26,26,26)/rgb(247,247,247)/700 ✓（截图）。
+
 ### 2026-11-05（续 2）：排序控件改自定义下拉（左置/去蓝色）
 
 - 用户反馈：排序应在左侧（原右对齐）；外边框与选项 hover/选中出现蓝色——根源是原生 `<select>` 的下拉弹层由 OS 渲染（Windows Chrome 蓝色高亮），CSS 无法自定义。
@@ -363,6 +369,12 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05（续 3）：排序触发器不换行 + 侧栏选中色去红
+
+- 触发器 `width: 172px` → `min-width: 172px + white-space: nowrap`（"Price: High to low" 单行显示，高度保持 40px）。
+- 侧栏选中类目去红：`--colour-accent-soft/--colour-accent` → bg #F7F7F7 + color #1A1A1A + font-weight 700（与分类面板 hover 一致）。
+- 验证：vitest 45/45；浏览器复核 noWrap/40px、选中 rgb(26,26,26)/rgb(247,247,247)/700 ✓（截图）。
 
 ### 2026-11-05（续 2）：排序控件改自定义下拉（左置/去蓝色）
 

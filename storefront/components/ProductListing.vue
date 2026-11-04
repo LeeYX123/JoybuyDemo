@@ -298,9 +298,9 @@ useHead(() => ({ title: heading.value }))
 }
 
 .filter-card__item--active {
-  background: var(--colour-accent-soft);
-  color: var(--colour-accent);
-  font-weight: var(--font-weight-semibold);
+  background: #f7f7f7;
+  color: #1a1a1a;
+  font-weight: var(--font-weight-bold);
 }
 
 .filter-card__price {
@@ -367,7 +367,8 @@ useHead(() => ({ title: heading.value }))
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  width: 172px;
+  min-width: 172px;
+  white-space: nowrap;
   min-height: 40px;
   padding: 0 var(--space-3);
   border: 1px solid #1a1a1a;
