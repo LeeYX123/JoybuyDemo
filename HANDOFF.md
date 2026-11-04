@@ -224,6 +224,11 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 8）：首页整行背景 #FFFFFF
+
+- 用户指定 `.home-page`（畅销榜单/品类发现/心选品牌模块外围）背景为 #FFFFFF。原页面继承 canvas 灰底，且容器 max-width 1440 居中后超宽视口两侧仍露灰条。
+- index.vue 模板加全幅包裹层 `.home-page-bg`（margin-inline calc(50%-50vw) 撑满视口、bg #FFFFFF、覆写 .app-main 子项顶距），原容器嵌套其内。复核：bg rgb(255,255,255)、全幅 1512=viewport、无横向滚动、活动区仍与头部无缝。
+
 ### 2026-11-04（续 7）：榜单卡透明图数据源（UK 商品入库）+ multiply 底色
 
 - 诊断：用户指出商品图背后应为 #F5F5F5 透明效果。查证：代码侧 #F5F5F5 已生效；白底来自数据——原 load_joybuy_demo 的商品图是 joybuy.com flight 的 **jpg 白底图（无 alpha）**，且 CDN 上该批图**无透明变体**（.png.webp 404 实测）。真实站榜单卡 img 无 mix-blend-mode、直接白底显示（240px jpg）。
@@ -296,6 +301,11 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-04（续 8）：首页整行背景 #FFFFFF
+
+- 用户指定 `.home-page`（畅销榜单/品类发现/心选品牌模块外围）背景为 #FFFFFF。原页面继承 canvas 灰底，且容器 max-width 1440 居中后超宽视口两侧仍露灰条。
+- index.vue 模板加全幅包裹层 `.home-page-bg`（margin-inline calc(50%-50vw) 撑满视口、bg #FFFFFF、覆写 .app-main 子项顶距），原容器嵌套其内。复核：bg rgb(255,255,255)、全幅 1512=viewport、无横向滚动、活动区仍与头部无缝。
 
 ### 2026-11-04（续 7）：榜单卡透明图数据源（UK 商品入库）+ multiply 底色
 

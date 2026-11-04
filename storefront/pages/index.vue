@@ -23,27 +23,37 @@ useHead(() => ({ title: pageTitle.value }))
 </script>
 
 <template>
-  <!-- The campaign floor must sit flush against the header (real site: no
-       gap), so the page container itself carries no top margin here. -->
-  <AppContainer class="home-page">
-    <div class="home-content">
-      <template v-if="modules.length > 0">
-        <CmsRenderer :modules="mainModules" />
-        <!-- Bestsellers floor with category tabs (docs/12 §1), before the
-             trailing info note. -->
-        <HomeBestsellers class="home-bestsellers-floor" />
-        <CmsRenderer :modules="tailModules" />
-      </template>
-      <section v-else-if="error" class="home-unavailable" role="status">
-        <p>The home page is temporarily unavailable. Please try again shortly.</p>
-      </section>
-    </div>
-  </AppContainer>
+  <!-- The whole home row is white (#FFFFFF) behind every floor, and the
+       campaign floor sits flush against the header (real site: no gap), so
+       this full-bleed wrapper carries the background and kills the top
+       margin that .app-main applies to its children. -->
+  <div class="home-page-bg">
+    <AppContainer class="home-page">
+      <div class="home-content">
+        <template v-if="modules.length > 0">
+          <CmsRenderer :modules="mainModules" />
+          <!-- Bestsellers floor with category tabs (docs/12 §1), before the
+               trailing info note. -->
+          <HomeBestsellers class="home-bestsellers-floor" />
+          <CmsRenderer :modules="tailModules" />
+        </template>
+        <section v-else-if="error" class="home-unavailable" role="status">
+          <p>The home page is temporarily unavailable. Please try again shortly.</p>
+        </section>
+      </div>
+    </AppContainer>
+  </div>
 </template>
 
 <style scoped>
-/* Override the global .app-main > * top margin so the full-bleed campaign
- * floor touches the header shadow (scoped attr raises specificity). */
+/* Full-bleed white row: escapes the centered container so the strips on
+ * ultra-wide viewports are white too (scoped attr beats .app-main > *). */
+.home-page-bg {
+  margin-top: 0;
+  margin-inline: calc(50% - 50vw);
+  background: #ffffff;
+}
+
 .home-page {
   margin-top: 0;
 }
