@@ -140,9 +140,11 @@ describe('CmsRenderer', () => {
       '/media/discovery/home.png',
     )
     expect(cards[0].attributes('href')).toBe('/s?category=home-living')
-    // Brand cards: circle logo + name, rendered as static spans (no links).
+    // Brand marquee: one animated track with the items rendered twice for the
+    // seamless right→left loop; cards are static (no links).
+    expect(wrapper.find('.brand-marquee__track').exists()).toBe(true)
     const brands = wrapper.findAll('.brand-card')
-    expect(brands).toHaveLength(1)
+    expect(brands).toHaveLength(2)
     expect(brands[0].find('img').attributes('src')).toBe('/media/brands/midea.png')
     expect(brands[0].find('.brand-card__name').text()).toBe('Midea')
     expect(brands[0].find('a').exists()).toBe(false)

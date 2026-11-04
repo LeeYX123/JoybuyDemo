@@ -80,23 +80,39 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
         </span>
       </li>
     </ul>
-    <!-- Featured brands: circular logo + name, never clickable. -->
-    <ul
+    <!-- Featured brands: one marquee row scrolling right→left with fading
+         edges; circular logo + name, never clickable. The track renders the
+         items twice so translateX(-50%) loops seamlessly. -->
+    <div
       v-else-if="props.payload.variant === 'brand_logos'"
-      class="cms-link-grid__row cms-link-grid__row--brands"
+      class="brand-marquee"
+      role="list"
+      :aria-label="heading || 'Featured brands'"
     >
-      <li v-for="item in items" :key="item.label" class="brand-card">
-        <span class="brand-card__circle">
-          <img
-            v-if="item.icon_path"
-            :src="item.icon_path"
-            :alt="displayLabel(item)"
-            loading="lazy"
-          />
-        </span>
-        <span class="brand-card__name">{{ displayLabel(item) }}</span>
-      </li>
-    </ul>
+      <div class="brand-marquee__track">
+        <ul class="brand-marquee__segment">
+          <li v-for="item in items" :key="item.label" class="brand-card" role="listitem">
+            <span class="brand-card__circle">
+              <img
+                v-if="item.icon_path"
+                :src="item.icon_path"
+                :alt="displayLabel(item)"
+                loading="lazy"
+              />
+            </span>
+            <span class="brand-card__name">{{ displayLabel(item) }}</span>
+          </li>
+        </ul>
+        <ul class="brand-marquee__segment" aria-hidden="true">
+          <li v-for="item in items" :key="`dup-${item.label}`" class="brand-card">
+            <span class="brand-card__circle">
+              <img v-if="item.icon_path" :src="item.icon_path" alt="" loading="lazy" />
+            </span>
+            <span class="brand-card__name">{{ displayLabel(item) }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
     <!-- Default pill grid (text tiles / brand wall). -->
     <ul v-else class="cms-link-grid__row" :class="variantClass">
       <li v-for="item in items" :key="item.label">
@@ -174,22 +190,45 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   border-radius: var(--radius-sm);
 }
 
-/* Category discovery: 6 vertical cards per row (289×366 at 1512, fluid). */
+/* Category discovery: stacked deck — fixed-width cards where each card
+ * overlaps the previous one (real site: card 289px, step 222px ≈ 67px
+ * overlap); later cards sit on top, shadows under the stack, and a hovered
+ * card lifts above its neighbours. */
 .cms-link-grid__row--tiles {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: var(--space-3);
+  display: flex;
+  padding-block: var(--space-2) var(--space-4);
+}
+
+.cms-link-grid__row--tiles li {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.cms-link-grid__row--tiles li + li {
+  margin-left: -72px;
 }
 
 .discovery-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  aspect-ratio: 289 / 366;
+  width: 289px;
+  height: 366px;
   overflow: hidden;
   border-radius: 16px;
   background: var(--colour-surface-soft);
   text-decoration: none;
   color: var(--colour-text);
+  box-shadow: 0 10px 24px rgb(23 32 42 / 14%);
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.discovery-card:hover {
+  transform: translateY(-12px);
+  z-index: 10;
+  box-shadow: 0 18px 36px rgb(23 32 42 / 22%);
 }
 
 .discovery-card__label {
@@ -217,11 +256,47 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   text-decoration: underline;
 }
 
-/* Featured brands: circle logo (real card 194px at 1512) + name below. */
-.cms-link-grid__row--brands {
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: var(--space-6) var(--space-4);
-  margin-top: var(--space-5);
+/* Featured brands: single marquee row scrolling right→left, both edges fade
+ * out via a gradient mask. Hover pauses the scroll; reduced motion disables
+ * it entirely. */
+.brand-marquee {
+  overflow: hidden;
+  margin-top: var(--space-4);
+  padding-block: var(--space-2);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+}
+
+.brand-marquee__track {
+  display: flex;
+  width: max-content;
+  animation: cms-brand-scroll 48s linear infinite;
+}
+
+.brand-marquee:hover .brand-marquee__track {
+  animation-play-state: paused;
+}
+
+@keyframes cms-brand-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-marquee__track {
+    animation: none;
+  }
+}
+
+.brand-marquee__segment {
+  display: flex;
+  gap: var(--space-8);
+  padding-right: var(--space-8);
 }
 
 .brand-card {
@@ -249,7 +324,7 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
 }
 
 .brand-card__name {
-  max-width: 100%;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -259,8 +334,21 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
 }
 
 @media (max-width: 80rem) {
+  /* Narrow screens: drop the deck overlap and use a wrapped grid. */
   .cms-link-grid__row--tiles {
+    display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .cms-link-grid__row--tiles li + li {
+    margin-left: 0;
+  }
+
+  .discovery-card {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 289 / 366;
   }
 }
 
@@ -269,13 +357,13 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .cms-link-grid__row--brands {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .brand-card__circle {
     width: 120px;
     height: 120px;
+  }
+
+  .brand-card__name {
+    max-width: 120px;
   }
 }
 </style>
