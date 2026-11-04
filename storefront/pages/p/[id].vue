@@ -125,13 +125,19 @@ const categoryTrail = computed(() => {
 // the main image while the cursor moves over it.
 const zoomVisible = ref(false)
 const zoomPos = ref({ x: 50, y: 50 })
+// The blue dotted selection mask marks the region shown in the zoom panel:
+// mask is 40% of the image (1 / 2.5 zoom), centred on the cursor, clamped.
+const zoomMaskStyle = ref({})
 
 function onZoomMove(event) {
   const rect = event.currentTarget.getBoundingClientRect()
-  zoomPos.value = {
-    x: Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100)),
-    y: Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100)),
-  }
+  const xPct = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100))
+  const yPct = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100))
+  zoomPos.value = { x: xPct, y: yPct }
+  const half = 20 // 40% mask, centred on the cursor
+  const left = Math.min(100 - half * 2, Math.max(0, xPct - half))
+  const top = Math.min(100 - half * 2, Math.max(0, yPct - half))
+  zoomMaskStyle.value = { left: `${left}%`, top: `${top}%` }
 }
 
 // Service guarantees: plain text rows, no accordion (requirement 6-4).
@@ -194,6 +200,13 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
         >
           <img v-if="currentImage" :src="currentImage" :alt="data?.title" />
           <BaseSkeleton v-else variant="block" class="detail__image-placeholder" />
+          <!-- Blue dotted selection mask over the hovered region (real site). -->
+          <div
+            v-if="zoomVisible && currentImage"
+            class="detail__zoom-mask"
+            :style="zoomMaskStyle"
+            aria-hidden="true"
+          ></div>
           <!-- Enlarged detail view shown to the right of the main image on
                hover (real-site magnifier). -->
           <div
@@ -316,7 +329,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   min-height: 24px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: var(--font-size-md);
+  font-size: 14px;
   color: #1a1a1a;
 }
 
@@ -398,6 +411,19 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   aspect-ratio: 1;
   object-fit: cover;
   background: var(--colour-surface-soft);
+}
+
+/* Blue dotted selection mask (real-site hover affordance): 40% box, dense
+ * blue dot grid over a translucent blue wash. */
+.detail__zoom-mask {
+  position: absolute;
+  width: 40%;
+  aspect-ratio: 1;
+  z-index: 5;
+  pointer-events: none;
+  background-color: rgb(26 115 232 / 14%);
+  background-image: radial-gradient(rgb(0 102 255 / 60%) 1px, transparent 1.5px);
+  background-size: 7px 7px;
 }
 
 /* Enlarged hover view: 2.5x detail panel floated over the buy panel side. */
