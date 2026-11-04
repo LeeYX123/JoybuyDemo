@@ -155,7 +155,7 @@ const badge = computed(() => {
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 0;
-  background: var(--colour-surface-soft);
+  background: #f5f5f5;
 }
 
 .product-card__body {
@@ -184,10 +184,10 @@ const badge = computed(() => {
   overflow: hidden;
   min-height: 44px;
   margin: 0;
-  font-size: var(--font-size-md);
+  font-size: 16px;
   font-weight: var(--font-weight-medium);
   line-height: 22px;
-  color: var(--colour-text);
+  color: #1a1a1a;
 }
 
 .product-card__title-link {
@@ -210,9 +210,8 @@ const badge = computed(() => {
   padding-top: var(--space-2);
 }
 
-/* Price: red like the real card (original-price-only display rule). */
 .product-card__price {
-  color: var(--colour-accent);
+  color: #1a1a1a;
   font-size: 1.125rem;
   font-weight: var(--font-weight-bold);
 }

@@ -224,7 +224,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
-### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/红价/图贴顶）
+### 2026-11-04（续 6）：榜单卡三处颜色/字号按用户指定修正
+
+- 图片区域背景 #F5F5F5（原 surface-soft #F5F6F7）；标题字号 16px（原 --font-size-md=14px，真实站实测 16px，用户指出的字号问题根源即 token 差异）+ 颜色 #1A1A1A（原 #17202A）；价格颜色 #1A1A1A（用户指定深色，替换此前误加的红色——真实站红价是折扣价语义，我们单一原价按用户口径用深色）。
+- 浏览器复核：imgBg rgb(245,245,245)、title 16px/#1A1A1A/clamp 2、price #1A1A1A ✓；vitest 45/45。
+
+### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/图贴顶）
 
 - 实测真实站 Bestsellers 卡（首页楼层 261 宽 + 列表卡 267）：图全宽贴卡顶（无内边距、radius 由卡整体裁切）、文字区 6px 内边距、品牌粗体、标题 16px/500 行高 22px **两行截断（h44）**、红色价格粗体、40px 圆形加购钮、榜单卡无星级。
 - ProductCard 重写：结构改为图贴顶（`.product-card` overflow hidden radius 12，图 radius 0）+ `product-card__body` 内边距 8/6/6；标题 clamp 移入组件自身样式（`-webkit-line-clamp: 2`、line-height 22px、min-height 44px——此前依赖全局 `.truncate-2`，实测在卡内未生效出现三行硬切）；价格改红色（--colour-accent，1.125rem/700，与真实站红价一致，仍为单一原价规则）；榜单模式（rank>0）隐藏星级、可选 `viewed_count` 渲染 "x people viewed in 72 hours" 行（搜索接口暂无该字段=数据缺失，不编造）；徽章降级为价格旁小灰签。
@@ -284,7 +289,12 @@
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
 
-### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/红价/图贴顶）
+### 2026-11-04（续 6）：榜单卡三处颜色/字号按用户指定修正
+
+- 图片区域背景 #F5F5F5（原 surface-soft #F5F6F7）；标题字号 16px（原 --font-size-md=14px，真实站实测 16px，用户指出的字号问题根源即 token 差异）+ 颜色 #1A1A1A（原 #17202A）；价格颜色 #1A1A1A（用户指定深色，替换此前误加的红色——真实站红价是折扣价语义，我们单一原价按用户口径用深色）。
+- 浏览器复核：imgBg rgb(245,245,245)、title 16px/#1A1A1A/clamp 2、price #1A1A1A ✓；vitest 45/45。
+
+### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/图贴顶）
 
 - 实测真实站 Bestsellers 卡（首页楼层 261 宽 + 列表卡 267）：图全宽贴卡顶（无内边距、radius 由卡整体裁切）、文字区 6px 内边距、品牌粗体、标题 16px/500 行高 22px **两行截断（h44）**、红色价格粗体、40px 圆形加购钮、榜单卡无星级。
 - ProductCard 重写：结构改为图贴顶（`.product-card` overflow hidden radius 12，图 radius 0）+ `product-card__body` 内边距 8/6/6；标题 clamp 移入组件自身样式（`-webkit-line-clamp: 2`、line-height 22px、min-height 44px——此前依赖全局 `.truncate-2`，实测在卡内未生效出现三行硬切）；价格改红色（--colour-accent，1.125rem/700，与真实站红价一致，仍为单一原价规则）；榜单模式（rank>0）隐藏星级、可选 `viewed_count` 渲染 "x people viewed in 72 hours" 行（搜索接口暂无该字段=数据缺失，不编造）；徽章降级为价格旁小灰签。
