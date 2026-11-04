@@ -22,7 +22,7 @@ export const useRuntimeConfig = () => ({
   apiBaseInternal: 'http://127.0.0.1:8000/api/v1',
   public: { apiBase: '/api/v1' },
 })
-export const useRoute = () => ({ params: {}, query: {} })
+export const useRoute = () => ({ params: {}, query: {}, path: '/' })
 export const useRouter = () => ({ push: () => {} })
 export const navigateTo = recorder('navigateTo')
 export const useHead = recorder('useHead')

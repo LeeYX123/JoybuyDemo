@@ -224,6 +224,15 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 11）：详情页五项（隐藏类目行/加粗面包屑/白底/#EEEFF0/粗边框）
+
+- 详情页隐藏全局类目行：AppHeader `useRoute` 判 `/p/` 前缀时 v-if 关闭 category-nav（真实站行为）；vitest stub 的 useRoute 补 `path: '/'`（此前桩缺 path 导致 AppHeader 测试 5 连挂）。
+- 面包屑加粗：14px 不变 + font-weight 700（用户参考图观感加粗）。
+- 详情页整页背景 #FFFFFF：新增全幅包裹 `.detail-page-bg`（margin-inline calc(50%-50vw)）。
+- 图片区背景 #EEEFF0：主图容器/img/放大面板底色统一（原 #F5F5F5）。
+- 缩略图边框 1px→2px（激活态仍深色 #17202A 覆盖）。
+- 验证：vitest 45/45；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器复核五项 computed 全过（截图）。
+
 ### 2026-11-04（续 10）：主图蓝色网点遮罩 + 面包屑 14px
 
 - 用户提供真实站参考图：hover 主图时主图上出现**蓝色网点选择遮罩**（配合右侧放大图）。实现：`.detail__zoom-mask`（40%×40% = 1/2.5 放大倍率反算、中心跟随光标并 clamp 图内、蓝色半透明底 rgba(26,115,232,.14) + radial-gradient 蓝色点阵 7px 网格、pointer-events none）；onZoomMove 同步遮罩位置。
@@ -313,6 +322,15 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-04（续 11）：详情页五项（隐藏类目行/加粗面包屑/白底/#EEEFF0/粗边框）
+
+- 详情页隐藏全局类目行：AppHeader `useRoute` 判 `/p/` 前缀时 v-if 关闭 category-nav（真实站行为）；vitest stub 的 useRoute 补 `path: '/'`（此前桩缺 path 导致 AppHeader 测试 5 连挂）。
+- 面包屑加粗：14px 不变 + font-weight 700（用户参考图观感加粗）。
+- 详情页整页背景 #FFFFFF：新增全幅包裹 `.detail-page-bg`（margin-inline calc(50%-50vw)）。
+- 图片区背景 #EEEFF0：主图容器/img/放大面板底色统一（原 #F5F5F5）。
+- 缩略图边框 1px→2px（激活态仍深色 #17202A 覆盖）。
+- 验证：vitest 45/45；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器复核五项 computed 全过（截图）。
 
 ### 2026-11-04（续 10）：主图蓝色网点遮罩 + 面包屑 14px
 

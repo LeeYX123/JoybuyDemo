@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from '#imports'
 
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 import { useCategoryTree } from '../composables/useCategoryTree'
@@ -14,9 +15,14 @@ const props = defineProps({
   },
 })
 
+const route = useRoute()
 const { t, locale, toggleLocale, categoryName } = useLocale()
 const { categories } = useCategoryTree()
 const { isAuthenticated, account, logout } = useBuyerAuth()
+
+// The product detail page has its own top nav (breadcrumb); the global
+// category row stays hidden there (real-site behaviour).
+const showCategoryNav = computed(() => !route.path.startsWith('/p/'))
 
 // Notice strip (docs/12 global): the "Same-day & Next-day Delivery" and
 // "Download App for Welcome Offers" lines are removed per requirement 1-5,
@@ -270,7 +276,7 @@ const brandLogoUrl = '/images/logo.png'
         </nav>
       </div>
 
-      <nav class="category-nav" :aria-label="t('header.allCategories')">
+      <nav v-if="showCategoryNav" class="category-nav" :aria-label="t('header.allCategories')">
         <ul class="category-nav__list">
           <li v-for="item in items" :key="item.to">
             <NuxtLink class="category-nav__link" :to="item.to">{{ item.label }}</NuxtLink>

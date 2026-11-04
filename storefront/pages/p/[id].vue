@@ -155,168 +155,181 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 </script>
 
 <template>
-  <AppContainer>
-    <div v-if="error" class="detail-state" role="alert">
-      <p>This product is not available.</p>
-      <NuxtLink to="/">Continue shopping</NuxtLink>
-    </div>
+  <div class="detail-page-bg">
+    <AppContainer>
+      <div v-if="error" class="detail-state" role="alert">
+        <p>This product is not available.</p>
+        <NuxtLink to="/">Continue shopping</NuxtLink>
+      </div>
 
-    <section v-else class="detail">
-      <!-- Clickable top nav: Home / root category / child category / product
+      <section v-else class="detail">
+        <!-- Clickable top nav: Home / root category / child category / product
            (real-site breadcrumb, 16px, dark). -->
-      <nav class="detail__crumbs" aria-label="Breadcrumb">
-        <NuxtLink class="detail__crumb" to="/">Home</NuxtLink>
-        <template v-for="node in categoryTrail" :key="node.slug">
+        <nav class="detail__crumbs" aria-label="Breadcrumb">
+          <NuxtLink class="detail__crumb" to="/">Home</NuxtLink>
+          <template v-for="node in categoryTrail" :key="node.slug">
+            <span class="detail__crumb-sep" aria-hidden="true">/</span>
+            <NuxtLink class="detail__crumb" :to="`/c/${node.slug}`">{{
+              categoryName(node)
+            }}</NuxtLink>
+          </template>
           <span class="detail__crumb-sep" aria-hidden="true">/</span>
-          <NuxtLink class="detail__crumb" :to="`/c/${node.slug}`">{{
-            categoryName(node)
-          }}</NuxtLink>
-        </template>
-        <span class="detail__crumb-sep" aria-hidden="true">/</span>
-        <span class="detail__crumb detail__crumb--current">{{ data?.title }}</span>
-      </nav>
-      <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
-      <h1 class="detail__title">{{ data?.title }}</h1>
+          <span class="detail__crumb detail__crumb--current">{{ data?.title }}</span>
+        </nav>
+        <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
+        <h1 class="detail__title">{{ data?.title }}</h1>
 
-      <div class="detail__main">
-        <div class="detail__thumbs">
-          <button
-            v-for="(asset, index) in gallery"
-            :key="asset.url"
-            type="button"
-            class="detail__thumb"
-            :class="{ 'detail__thumb--active': currentImage === asset.url }"
-            @click="activeImage = asset.url"
-          >
-            <img :src="asset.url" :alt="`${data?.title} thumbnail ${index + 1}`" />
-          </button>
-        </div>
-
-        <div
-          class="detail__image"
-          @mouseenter="zoomVisible = true"
-          @mousemove="onZoomMove"
-          @mouseleave="zoomVisible = false"
-        >
-          <img v-if="currentImage" :src="currentImage" :alt="data?.title" />
-          <BaseSkeleton v-else variant="block" class="detail__image-placeholder" />
-          <!-- Blue dotted selection mask over the hovered region (real site). -->
-          <div
-            v-if="zoomVisible && currentImage"
-            class="detail__zoom-mask"
-            :style="zoomMaskStyle"
-            aria-hidden="true"
-          ></div>
-          <!-- Enlarged detail view shown to the right of the main image on
-               hover (real-site magnifier). -->
-          <div
-            v-if="zoomVisible && currentImage"
-            class="detail__zoom"
-            :style="{
-              backgroundImage: `url(${currentImage})`,
-              backgroundPosition: `${zoomPos.x}% ${zoomPos.y}%`,
-            }"
-            aria-hidden="true"
-          ></div>
-        </div>
-
-        <div class="detail__panel">
-          <div v-if="offer" class="detail__price-block">
-            <p class="detail__price">{{ price }}</p>
-            <BaseBadge
-              v-if="offer.promotion_label && !isDeliveryLabel(offer.promotion_label)"
-              tone="promo"
-            >
-              {{ offer.promotion_label }}
-            </BaseBadge>
-          </div>
-          <p v-if="offer" class="detail__inventory">{{ offer.inventory_display }} in stock</p>
-          <p v-else class="detail__inventory detail__inventory--out" role="status">
-            Currently unavailable
-          </p>
-
-          <div v-for="axis in variantAxes" :key="axis.name" class="detail__axis">
-            <h2 class="detail__axis-name">{{ axis.name }}</h2>
-            <div class="detail__axis-values">
-              <button
-                v-for="value in axis.values"
-                :key="value"
-                type="button"
-                class="detail__variant"
-                :class="{
-                  'detail__variant--active':
-                    String(selectedSku?.specification?.[axis.name]) === value,
-                }"
-                @click="selectVariant(axis.name, value)"
-              >
-                {{ value }}
-              </button>
-            </div>
-          </div>
-
-          <div class="detail__quantity">
-            <span class="detail__quantity-label">Quantity</span>
-            <div class="detail__stepper">
-              <button type="button" aria-label="Decrease quantity" @click="changeQuantity(-1)">
-                −
-              </button>
-              <span class="detail__stepper-value" aria-live="polite">{{ quantity }}</span>
-              <button type="button" aria-label="Increase quantity" @click="changeQuantity(1)">
-                +
-              </button>
-            </div>
-          </div>
-
-          <div class="detail__actions">
-            <button class="detail__buy" type="button" :disabled="!offer" @click="onBuyNow">
-              Buy now
-            </button>
+        <div class="detail__main">
+          <div class="detail__thumbs">
             <button
-              class="detail__add"
+              v-for="(asset, index) in gallery"
+              :key="asset.url"
               type="button"
-              :disabled="!offer?.is_purchasable || addState === 'adding'"
-              @click="onAddToCart"
+              class="detail__thumb"
+              :class="{ 'detail__thumb--active': currentImage === asset.url }"
+              @click="activeImage = asset.url"
             >
-              {{
-                addState === 'added'
-                  ? 'Added to cart'
-                  : addState === 'error'
-                    ? 'Could not add'
-                    : 'Add to cart'
-              }}
+              <img :src="asset.url" :alt="`${data?.title} thumbnail ${index + 1}`" />
             </button>
           </div>
 
-          <ul class="detail__guarantees">
-            <li v-for="line in guarantees" :key="line">{{ line }}</li>
-          </ul>
+          <div
+            class="detail__image"
+            @mouseenter="zoomVisible = true"
+            @mousemove="onZoomMove"
+            @mouseleave="zoomVisible = false"
+          >
+            <img v-if="currentImage" :src="currentImage" :alt="data?.title" />
+            <BaseSkeleton v-else variant="block" class="detail__image-placeholder" />
+            <!-- Blue dotted selection mask over the hovered region (real site). -->
+            <div
+              v-if="zoomVisible && currentImage"
+              class="detail__zoom-mask"
+              :style="zoomMaskStyle"
+              aria-hidden="true"
+            ></div>
+            <!-- Enlarged detail view shown to the right of the main image on
+               hover (real-site magnifier). -->
+            <div
+              v-if="zoomVisible && currentImage"
+              class="detail__zoom"
+              :style="{
+                backgroundImage: `url(${currentImage})`,
+                backgroundPosition: `${zoomPos.x}% ${zoomPos.y}%`,
+              }"
+              aria-hidden="true"
+            ></div>
+          </div>
+
+          <div class="detail__panel">
+            <div v-if="offer" class="detail__price-block">
+              <p class="detail__price">{{ price }}</p>
+              <BaseBadge
+                v-if="offer.promotion_label && !isDeliveryLabel(offer.promotion_label)"
+                tone="promo"
+              >
+                {{ offer.promotion_label }}
+              </BaseBadge>
+            </div>
+            <p v-if="offer" class="detail__inventory">{{ offer.inventory_display }} in stock</p>
+            <p v-else class="detail__inventory detail__inventory--out" role="status">
+              Currently unavailable
+            </p>
+
+            <div v-for="axis in variantAxes" :key="axis.name" class="detail__axis">
+              <h2 class="detail__axis-name">{{ axis.name }}</h2>
+              <div class="detail__axis-values">
+                <button
+                  v-for="value in axis.values"
+                  :key="value"
+                  type="button"
+                  class="detail__variant"
+                  :class="{
+                    'detail__variant--active':
+                      String(selectedSku?.specification?.[axis.name]) === value,
+                  }"
+                  @click="selectVariant(axis.name, value)"
+                >
+                  {{ value }}
+                </button>
+              </div>
+            </div>
+
+            <div class="detail__quantity">
+              <span class="detail__quantity-label">Quantity</span>
+              <div class="detail__stepper">
+                <button type="button" aria-label="Decrease quantity" @click="changeQuantity(-1)">
+                  −
+                </button>
+                <span class="detail__stepper-value" aria-live="polite">{{ quantity }}</span>
+                <button type="button" aria-label="Increase quantity" @click="changeQuantity(1)">
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div class="detail__actions">
+              <button class="detail__buy" type="button" :disabled="!offer" @click="onBuyNow">
+                Buy now
+              </button>
+              <button
+                class="detail__add"
+                type="button"
+                :disabled="!offer?.is_purchasable || addState === 'adding'"
+                @click="onAddToCart"
+              >
+                {{
+                  addState === 'added'
+                    ? 'Added to cart'
+                    : addState === 'error'
+                      ? 'Could not add'
+                      : 'Add to cart'
+                }}
+              </button>
+            </div>
+
+            <ul class="detail__guarantees">
+              <li v-for="line in guarantees" :key="line">{{ line }}</li>
+            </ul>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <ProductReviews v-if="publicId && data" :product-id="publicId" />
+      <ProductReviews v-if="publicId && data" :product-id="publicId" />
 
-    <section v-if="data?.description" class="detail__description" aria-labelledby="detail-heading">
-      <h2 id="detail-heading">Product details</h2>
-      <p>{{ data.description }}</p>
-    </section>
+      <section
+        v-if="data?.description"
+        class="detail__description"
+        aria-labelledby="detail-heading"
+      >
+        <h2 id="detail-heading">Product details</h2>
+        <p>{{ data.description }}</p>
+      </section>
 
-    <!-- Purchase gate popup (requirement 6-6): non-whitelisted accounts. -->
-    <Teleport to="body">
-      <div v-if="showGatePopup" class="gate-popup" role="dialog" aria-modal="true">
-        <div class="gate-popup__backdrop" @click="showGatePopup = false"></div>
-        <div class="gate-popup__card">
-          <p class="gate-popup__text">{{ t('gate.message') }}</p>
-          <button class="gate-popup__ok" type="button" @click="showGatePopup = false">
-            {{ t('gate.confirm') }}
-          </button>
+      <!-- Purchase gate popup (requirement 6-6): non-whitelisted accounts. -->
+      <Teleport to="body">
+        <div v-if="showGatePopup" class="gate-popup" role="dialog" aria-modal="true">
+          <div class="gate-popup__backdrop" @click="showGatePopup = false"></div>
+          <div class="gate-popup__card">
+            <p class="gate-popup__text">{{ t('gate.message') }}</p>
+            <button class="gate-popup__ok" type="button" @click="showGatePopup = false">
+              {{ t('gate.confirm') }}
+            </button>
+          </div>
         </div>
-      </div>
-    </Teleport>
-  </AppContainer>
+      </Teleport>
+    </AppContainer>
+  </div>
 </template>
 
 <style scoped>
+.detail-page-bg {
+  /* Detail page area is white, full-bleed (real site). */
+  margin-top: 0;
+  margin-inline: calc(50% - 50vw);
+  background: #ffffff;
+}
+
 .detail {
   margin-block: var(--space-4);
 }
@@ -330,6 +343,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   overflow: hidden;
   white-space: nowrap;
   font-size: 14px;
+  font-weight: var(--font-weight-bold);
   color: #1a1a1a;
 }
 
@@ -383,7 +397,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   width: 56px;
   height: 56px;
   padding: 0;
-  border: 1px solid var(--colour-border);
+  border: 2px solid var(--colour-border);
   border-radius: 4px;
   background: var(--colour-surface);
   cursor: pointer;
@@ -403,6 +417,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 
 .detail__image {
   position: relative;
+  background: #eeeff0;
 }
 
 .detail__image img {
@@ -410,7 +425,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  background: var(--colour-surface-soft);
+  background: #eeeff0;
 }
 
 /* Blue dotted selection mask (real-site hover affordance): 40% box, dense
@@ -436,7 +451,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   z-index: 20;
   border: 1px solid var(--colour-border);
   border-radius: 8px;
-  background-color: #f5f5f5;
+  background-color: #eeeff0;
   background-repeat: no-repeat;
   background-size: 250%;
   pointer-events: none;
