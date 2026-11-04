@@ -74,13 +74,49 @@ CAMPAIGN_BG_URL = (
 # Category discovery tiles (requirement 3, docs/12 global convention #2):
 # fixed 6 categories, bilingual labels, landing on /s?category=<slug>.
 CATEGORY_DISCOVERY_TILES = [
-    ("home-living", "Home", "家居"),
-    ("electronics", "Electronics", "电子产品"),
-    ("clothing-accessories", "Clothing & Accessories", "服装以及配饰"),
-    ("games-accessories", "Games", "游戏"),
-    ("outdoor-sports", "Outdoor & Sports", "户外运动"),
-    ("small-home-appliances", "Small Home Appliances", "小家电"),
+    # (slug, label_en, label_zh, discovery image sampled from the live
+    # joybuy.co.uk discovery carousel, 2026-11-04; admin reconfigures freely).
+    ("home-living", "Home", "家居",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/5308416/10161432272242740/135890/68f563d2Edaa06d68/4c765c6ab87a3a67.png.webp"),
+    ("electronics", "Electronics", "电子产品",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/3801088/10161432272242369/186716/68f276ceE499d6cee/4c765c6ab87a3a67.png.webp"),
+    ("clothing-accessories", "Clothing & Accessories", "服装以及配饰",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/4915200/1016145512242644/68705/68f55d1aEd020bb22/4c765c6ab87a3a67.png.webp"),
+    ("games-accessories", "Games", "游戏",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/6356992/61097966203569/147538/69ab3148Eb2afce62/4c765c6ab87a3a67.png.webp"),
+    ("outdoor-sports", "Outdoor & Sports", "户外运动",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8060928/1016145512242609/63724/68f538caE36d3bf11/4c765c6ab87a3a67.png.webp"),
+    ("small-home-appliances", "Small Home Appliances", "小家电",
+     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8257536/1016145512244632/22745/6900ada5E63223e54/4c765c6ab87a3a67.png.webp"),
 ]
+# Featured brands (心选品牌 / "Brands we love"): circular logo cards,
+# rendered static (not clickable). Logos sampled from the live homepage.
+FEATURED_BRANDS = [
+    ("McCormick", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/4784128/620722011367887/22992/6a914cdaE882ad2fb/4c765c6ab87a3a67.jpg!q70.webp"),
+    ("Celeplate", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5177344/62073711069147/42278/6a7c2473E11e8fde4/4c765c6ab87a3a67.png.webp"),
+    ("Encona", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/7143424/10161455133581/6594/67c9af04Eb2402a90/b853b8a46c93f496.png.webp"),
+    ("eufy", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/6356992/62073702236/19726/69f1ac1aE02121017/de925bbe628751df.jpg!q70.webp"),
+    ("Tapo", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5636096/10161432272503/3693/682c8d92Eb52fb0e8/b853b8a46c93f496.png.webp"),
+    ("Nando's", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5701632/6207370721314/36393/6a5aa4ddEaf3a0ead/b853b8a46c93f496.jpg!q70.webp"),
+    ("C&S", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/393216/6207370860098/34260/6a63682fE22cdbd65/4c765c6ab87a3a67.png.webp"),
+    ("TCL", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2883584/610979661137159/34305/6a8154f5Ed28c0707/4c765c6ab87a3a67.jpg!q70.webp"),
+    ("CJ", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4128768/101614551440/37764/676b01b3E3cc60f6d/b853b8a46c93f496.png.webp"),
+    ("Bc Babycare", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2031616/6109817860618/12623/6a6369baE4fef6171/4c765c6ab87a3a67.png.webp"),
+    ("Midea", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/524288/6109796674463/4992/6a9a7beaE2ba420fc/4c765c6ab87a3a67.png.webp"),
+    ("Healthy Boy Brand", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1179648/62073701366812/38787/6a9147d4Eea26fcb3/4c765c6ab87a3a67.jpg!q70.webp"),
+    ("Fairy Non Bio", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/6881280/6207370327063/10970/6a337df0E5f726993/4c765c6ab87a3a67.jpg!q70.webp"),
+    ("CaiLab", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/262144/1016159612139/19436/69f1a282E8ba4cc5a/de925bbe628751df.jpg!q70.webp"),
+    ("Obento", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/4259840/610979662280/22540/69f1a6e3E1b0381c0/de925bbe628751df.jpg!q70.webp"),
+    ("Kinda", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5242880/6109817878071/50878/6a684b36E70cde242/4c765c6ab87a3a67.png.webp"),
+    ("Dove", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4194304/101614322725745/136445/67bd9a3bE86c48336/b853b8a46c93f496.jpg!q70.webp"),
+    ("Highland Spring", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/3932160/61098360977642/14067/6a748b65E50417f45/4c765c6ab87a3a67.jpg!q70.webp"),
+    ("Garnier", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/3407872/101614322725740/109643/67bd99f5Eed4245c4/b853b8a46c93f496.jpg!q70.webp"),
+    ("L'Oréal Paris", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1966080/62072201273164/11176/6a2bb482E9be773f4/4c765c6ab87a3a67.png.webp"),
+]
+MAX_FEATURED_BRANDS = 12
+# Localized (var/media) paths filled by handle() on each run.
+CATEGORY_DISCOVERY_LOCAL_IMAGES = {}
+FEATURED_BRAND_LOCAL_LOGOS = {}
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0 Safari/537.36"
@@ -553,13 +589,37 @@ class Command(BaseCommand):
                         {
                             "label": label_en,
                             "label_zh": label_zh,
+                            "icon_path": CATEGORY_DISCOVERY_LOCAL_IMAGES.get(index, ""),
                             "href": f"/s?category={slug}",
                         }
-                        for slug, label_en, label_zh in CATEGORY_DISCOVERY_TILES
+                        for index, (slug, label_en, label_zh, _img) in enumerate(
+                            CATEGORY_DISCOVERY_TILES
+                        )
                     ],
                 },
             }
         )
+        # Featured brands (心选品牌, "Brands we love"): static logo circles
+        # right below category discovery, mirroring the real homepage order.
+        brand_items = [
+            {
+                "label": name,
+                "icon_path": FEATURED_BRAND_LOCAL_LOGOS.get(index, ""),
+            }
+            for index, (name, _logo) in enumerate(FEATURED_BRANDS[:MAX_FEATURED_BRANDS])
+        ]
+        if any(item["icon_path"] for item in brand_items):
+            modules.append(
+                {
+                    "module_type": "link_grid",
+                    "payload": {
+                        "title": "Brands we love",
+                        "title_zh": "心选品牌",
+                        "variant": "brand_logos",
+                        "items": brand_items,
+                    },
+                }
+            )
         for section in sections:
             products = []
             for item in section["items"]:
@@ -649,6 +709,15 @@ class Command(BaseCommand):
             for tile in campaign["tiles"]:
                 tile["image_url"] = self.localize_cms_image(tile["image_path"], variant="tile")
             campaign["background_url"] = self.localize_cms_image(CAMPAIGN_BG_URL, variant="tile")
+            # tuple entries can't hold the localized path; collect separately.
+            for index, (_slug, _en, _zh, image_url) in enumerate(CATEGORY_DISCOVERY_TILES):
+                CATEGORY_DISCOVERY_LOCAL_IMAGES[index] = self.localize_cms_image(
+                    image_url, variant="tile"
+                )
+            for index, (_name, logo_url) in enumerate(FEATURED_BRANDS):
+                FEATURED_BRAND_LOCAL_LOGOS[index] = self.localize_cms_image(
+                    logo_url, variant="thumb"
+                )
 
         spu_by_sku, image_by_sku, image_failures = self.import_products(
             sections, market=market, skip_images=skip_images

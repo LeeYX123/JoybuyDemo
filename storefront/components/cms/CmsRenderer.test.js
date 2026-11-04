@@ -107,6 +107,47 @@ describe('CmsRenderer', () => {
     expect(wrapper.get('.cms-campaign').attributes('style')).toContain('/media/cms/campaign-bg.png')
   })
 
+  it('renders discovery cards with label + image and brand logos statically', () => {
+    const wrapper = mountRenderer([
+      {
+        type: 'link_grid',
+        payload: {
+          title: 'Category discovery',
+          variant: 'tiles',
+          items: [
+            {
+              label: 'Home',
+              label_zh: '家居',
+              icon_path: '/media/discovery/home.png',
+              href: '/s?category=home-living',
+            },
+          ],
+        },
+      },
+      {
+        type: 'link_grid',
+        payload: {
+          title: 'Brands we love',
+          title_zh: '心选品牌',
+          variant: 'brand_logos',
+          items: [{ label: 'Midea', icon_path: '/media/brands/midea.png' }],
+        },
+      },
+    ])
+    const cards = wrapper.findAll('.discovery-card')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].find('.discovery-card__image').attributes('src')).toBe(
+      '/media/discovery/home.png',
+    )
+    expect(cards[0].attributes('href')).toBe('/s?category=home-living')
+    // Brand cards: circle logo + name, rendered as static spans (no links).
+    const brands = wrapper.findAll('.brand-card')
+    expect(brands).toHaveLength(1)
+    expect(brands[0].find('img').attributes('src')).toBe('/media/brands/midea.png')
+    expect(brands[0].find('.brand-card__name').text()).toBe('Midea')
+    expect(brands[0].find('a').exists()).toBe(false)
+  })
+
   it('drops link_grid items without labels and renders static tiles without hrefs', () => {
     const wrapper = mountRenderer([
       {

@@ -53,6 +53,8 @@ function select(index) {
               class="category-panel__root"
               :class="{ 'category-panel__root--active': index === selectedIndex }"
               type="button"
+              @mouseenter="select(index)"
+              @focus="select(index)"
               @click="select(index)"
             >
               {{ categoryName(root) }}
@@ -93,7 +95,7 @@ function select(index) {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(56rem, calc(100vw - 4rem));
+  width: min(800px, calc(100vw - 4rem));
   max-height: min(42rem, calc(100vh - 8rem));
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-lg);
@@ -132,42 +134,46 @@ function select(index) {
   flex: 1;
 }
 
+/* Left rail: 184px column, 36px rows with 16px gaps; label 14px. Hover and
+ * the selected row both use the #F7F7F7 pill with bold black text (real-site
+ * behaviour — no accent red). */
 .category-panel__roots {
   overflow-y: auto;
-  padding: var(--space-3);
-  border-right: 1px solid var(--colour-border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: var(--space-4) 0 var(--space-4) var(--space-4);
   background: var(--colour-surface);
 }
 
 .category-panel__root {
   display: flex;
   align-items: center;
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0 var(--space-3);
+  width: 184px;
+  min-height: 36px;
+  padding: 8px 12px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   cursor: pointer;
   background: transparent;
   text-align: left;
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: 14px;
+  font-weight: var(--font-weight-regular);
+  color: var(--colour-text);
+  line-height: var(--line-height-tight);
+}
+
+.category-panel__root:hover,
+.category-panel__root--active {
+  background: #f7f7f7;
   font-weight: var(--font-weight-semibold);
   color: var(--colour-text);
 }
 
-.category-panel__root:hover {
-  background: var(--colour-hover);
-}
-
-.category-panel__root--active {
-  background: var(--colour-hover);
-  color: var(--colour-accent);
-}
-
 .category-panel__detail {
   overflow-y: auto;
-  padding: var(--space-5);
+  padding: var(--space-4) var(--space-5);
 }
 
 .category-panel__heading {

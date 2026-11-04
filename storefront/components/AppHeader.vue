@@ -43,7 +43,7 @@ onBeforeUnmount(() => {
   if (noticeTimer) clearInterval(noticeTimer)
 })
 
-const regionLabel = computed(() => (locale.value === 'zh' ? '英国 | 中文' : 'UK | English'))
+const regionLabel = computed(() => (locale.value === 'zh' ? 'UK | 中文(简体)' : 'UK | English'))
 
 // Category row: the 11 standard categories from the API (requirement 1-1),
 // spread edge to edge like the real header.
@@ -279,11 +279,11 @@ const brandLogoUrl = '/images/logo.png'
     rgb(0 0 0 / 6%) 0 1px 4px 0;
 }
 
-/* Black notice strip: 40px, #17202A, content centred like the page. */
+/* Black notice strip: 40px tall, #1A1A1A (sampled from the real header). */
 .top-strip {
   min-height: 40px;
   color: var(--colour-white);
-  background: var(--colour-text);
+  background: #1a1a1a;
   font-size: var(--font-size-xs);
 }
 
@@ -292,6 +292,7 @@ const brandLogoUrl = '/images/logo.png'
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  min-height: 40px;
   max-width: var(--container-max);
   margin-inline: auto;
   padding-inline: var(--container-pad);
@@ -459,7 +460,7 @@ const brandLogoUrl = '/images/logo.png'
   border-radius: var(--radius-pill);
   cursor: pointer;
   color: var(--colour-white);
-  background: var(--colour-text);
+  background: #1a1a1a;
 }
 
 .search__submit:hover {

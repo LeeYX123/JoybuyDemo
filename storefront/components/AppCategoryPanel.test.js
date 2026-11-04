@@ -49,11 +49,22 @@ describe('AppCategoryPanel', () => {
       'Bedding & Textiles',
     ])
 
-    await wrapper.findAll('.category-panel__root')[1].trigger('click')
+    // Hover switches the children too (real-site behaviour), click works as
+    // well; the hovered/active row is bold black, never the accent red.
+    await wrapper.findAll('.category-panel__root')[1].trigger('mouseenter')
     expect(wrapper.findAll('.category-panel__child').map((link) => link.text())).toEqual([
       'TV & Audio',
     ])
     expect(wrapper.findAll('.category-panel__child')[0].attributes('href')).toBe('/c/tv-audio')
+
+    await wrapper.findAll('.category-panel__root')[0].trigger('click')
+    expect(wrapper.findAll('.category-panel__child').map((link) => link.text())).toEqual([
+      'Kitchen Essentials',
+      'Bedding & Textiles',
+    ])
+    const active = wrapper.get('.category-panel__root--active')
+    expect(active.classes()).not.toContain('category-panel__root--red')
+    expect(active.text()).toBe('Home & Living')
   })
 
   it('renders nothing when closed and emits close from the close button', async () => {

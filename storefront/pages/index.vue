@@ -18,8 +18,9 @@ useHead(() => ({ title: pageTitle.value }))
 </script>
 
 <template>
-  <AppContainer>
-    <!-- Content area: 24px breathing room above/below the floors (docs/12). -->
+  <!-- The campaign floor must sit flush against the header (real site: no
+       gap), so the page container itself carries no top margin here. -->
+  <AppContainer class="home-page">
     <div class="home-content">
       <CmsRenderer v-if="modules.length > 0" :modules="modules" />
       <section v-else-if="error" class="home-unavailable" role="status">
@@ -30,8 +31,14 @@ useHead(() => ({ title: pageTitle.value }))
 </template>
 
 <style scoped>
+/* Override the global .app-main > * top margin so the full-bleed campaign
+ * floor touches the header shadow (scoped attr raises specificity). */
+.home-page {
+  margin-top: 0;
+}
+
 .home-content {
-  margin-block: 24px;
+  margin-block: 0 24px;
 }
 
 .home-unavailable {
