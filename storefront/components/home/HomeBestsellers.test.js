@@ -61,7 +61,7 @@ describe('HomeBestsellers', () => {
       'home-bestsellers__tab--active',
     )
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/search?category=electronics&sort=rating_desc&page=1',
+      '/api/v1/search?category=electronics&sort=newest&page=1',
     )
     // View all follows the active tab.
     expect(wrapper.get('.home-bestsellers__view-all').attributes('href')).toBe(

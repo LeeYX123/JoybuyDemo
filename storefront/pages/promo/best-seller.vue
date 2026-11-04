@@ -20,7 +20,7 @@ const minPrice = computed(() => String(route.query.min_price || ''))
 const maxPrice = computed(() => String(route.query.max_price || ''))
 
 const params = computed(() => {
-  const base = { category: activeSlug.value, sort: 'rating_desc', page: '1' }
+  const base = { category: activeSlug.value, sort: 'newest', page: '1' }
   if (minPrice.value) base.min_price = minPrice.value
   if (maxPrice.value) base.max_price = maxPrice.value
   return base

@@ -18,7 +18,7 @@ const config = useRuntimeConfig()
 const activeSlug = ref(categories.value[0]?.slug || 'home-living')
 
 function searchUrl(slug) {
-  const query = `category=${encodeURIComponent(slug)}&sort=rating_desc&page=1`
+  const query = `category=${encodeURIComponent(slug)}&sort=newest&page=1`
   return import.meta.server
     ? `${config.apiBaseInternal}/search?${query}`
     : `/api/v1/search?${query}`

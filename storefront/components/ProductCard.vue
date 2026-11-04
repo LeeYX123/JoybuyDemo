@@ -148,6 +148,12 @@ const badge = computed(() => {
   flex-shrink: 0;
 }
 
+/* Image area bg #F5F5F5; multiply blend turns baked-in white backgrounds
+ * into the same grey while transparent images show it through directly. */
+.product-card__media {
+  background: #f5f5f5;
+}
+
 .product-card__media img,
 .product-card__media :deep(*) {
   display: block;
@@ -155,7 +161,7 @@ const badge = computed(() => {
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 0;
-  background: #f5f5f5;
+  mix-blend-mode: multiply;
 }
 
 .product-card__body {

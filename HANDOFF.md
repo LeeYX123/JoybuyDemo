@@ -224,6 +224,14 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 7）：榜单卡透明图数据源（UK 商品入库）+ multiply 底色
+
+- 诊断：用户指出商品图背后应为 #F5F5F5 透明效果。查证：代码侧 #F5F5F5 已生效；白底来自数据——原 load_joybuy_demo 的商品图是 joybuy.com flight 的 **jpg 白底图（无 alpha）**，且 CDN 上该批图**无透明变体**（.png.webp 404 实测）。真实站榜单卡 img 无 mix-blend-mode、直接白底显示（240px jpg）。
+- 修复（数据源切换）：真实站首页 Bestsellers 楼层商品的 **s480x480 `.png.webp` 透明图**有效。浏览器逐 tab 爬取真实楼层 10 tab×5 卡（title/price/透明图 URL）→ `var/joybuy_demo/data/uk_bestsellers_raw.json`（44 卡，来源 https://www.joybuy.co.uk/ 2026-11-04）；新命令 `load_uk_bestsellers_demo` 导入 44 商品（source_system=joybuy_uk，幂等 source_id=title+img md5），UK tab→我们 11 类目子树映射（Kitchen Roll→cleaning-supplies、Small Kitchen Appliances→kitchen-appliances、其余食品类→groceries-food），£ 价格存 GBP，透明图 store_bytes 本地化（43/44 成功，1 张 URL 永久失败已用 shell 手工补挂）。
+- 楼层/榜单页排序 rating_desc→**newest**（新导入透明图商品排前；MySQL DESC 下无 rating 的 NULL 排序不稳）；HomeBestsellers 测试断言同步。
+- ProductCard 图区：容器 bg #F5F5F5 + img **mix-blend-mode: multiply**——白底烘焙图乘底色后白→#F5F5F5，透明图直接透出，产品色几乎无损（真实站未用此法，属实现选择）。
+- 验证：vitest 45/45；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器截图确认榜单为 UK 真实商品透明图、图区底色 #F5F5F5 ✓。旧 .com 白底商品仍在库（其它 tab 混排时可能出现白底图——multiply 会将其转为 #F5F5F5）。
+
 ### 2026-11-04（续 6）：榜单卡三处颜色/字号按用户指定修正
 
 - 图片区域背景 #F5F5F5（原 surface-soft #F5F6F7）；标题字号 16px（原 --font-size-md=14px，真实站实测 16px，用户指出的字号问题根源即 token 差异）+ 颜色 #1A1A1A（原 #17202A）；价格颜色 #1A1A1A（用户指定深色，替换此前误加的红色——真实站红价是折扣价语义，我们单一原价按用户口径用深色）。
@@ -288,6 +296,14 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-04（续 7）：榜单卡透明图数据源（UK 商品入库）+ multiply 底色
+
+- 诊断：用户指出商品图背后应为 #F5F5F5 透明效果。查证：代码侧 #F5F5F5 已生效；白底来自数据——原 load_joybuy_demo 的商品图是 joybuy.com flight 的 **jpg 白底图（无 alpha）**，且 CDN 上该批图**无透明变体**（.png.webp 404 实测）。真实站榜单卡 img 无 mix-blend-mode、直接白底显示（240px jpg）。
+- 修复（数据源切换）：真实站首页 Bestsellers 楼层商品的 **s480x480 `.png.webp` 透明图**有效。浏览器逐 tab 爬取真实楼层 10 tab×5 卡（title/price/透明图 URL）→ `var/joybuy_demo/data/uk_bestsellers_raw.json`（44 卡，来源 https://www.joybuy.co.uk/ 2026-11-04）；新命令 `load_uk_bestsellers_demo` 导入 44 商品（source_system=joybuy_uk，幂等 source_id=title+img md5），UK tab→我们 11 类目子树映射（Kitchen Roll→cleaning-supplies、Small Kitchen Appliances→kitchen-appliances、其余食品类→groceries-food），£ 价格存 GBP，透明图 store_bytes 本地化（43/44 成功，1 张 URL 永久失败已用 shell 手工补挂）。
+- 楼层/榜单页排序 rating_desc→**newest**（新导入透明图商品排前；MySQL DESC 下无 rating 的 NULL 排序不稳）；HomeBestsellers 测试断言同步。
+- ProductCard 图区：容器 bg #F5F5F5 + img **mix-blend-mode: multiply**——白底烘焙图乘底色后白→#F5F5F5，透明图直接透出，产品色几乎无损（真实站未用此法，属实现选择）。
+- 验证：vitest 45/45；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器截图确认榜单为 UK 真实商品透明图、图区底色 #F5F5F5 ✓。旧 .com 白底商品仍在库（其它 tab 混排时可能出现白底图——multiply 会将其转为 #F5F5F5）。
 
 ### 2026-11-04（续 6）：榜单卡三处颜色/字号按用户指定修正
 
