@@ -179,7 +179,21 @@ const brandLogoUrl = '/images/logo.png'
         </form>
 
         <nav class="account-nav" :aria-label="t('header.accountAndCart')">
-          <span class="account-nav__deliver">{{ t('header.deliverTo') }} SW1A 1AA</span>
+          <button class="account-nav__deliver" type="button">
+            <svg
+              class="account-nav__deliver-icon"
+              viewBox="0 0 24 24"
+              width="24"
+              height="24"
+              aria-hidden="true"
+            >
+              <path
+                d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3.2 5.7L12 22l-3.8-7.3A6.98 6.98 0 0 1 5 9a7 7 0 0 1 7-7Zm0 2a5 5 0 0 0-5 5c0 1.8.9 3.3 2.3 4.2l.7.5L12 18l2-4.3.7-.5A4.98 4.98 0 0 0 17 9a5 5 0 0 0-5-5Zm0 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"
+                fill="currentColor"
+              />
+            </svg>
+            <span class="account-nav__deliver-text">{{ t('header.deliverTo') }} SW1A 1AA</span>
+          </button>
 
           <div v-if="isAuthenticated" class="account-menu">
             <button
@@ -284,7 +298,7 @@ const brandLogoUrl = '/images/logo.png'
   min-height: 40px;
   color: var(--colour-white);
   background: #1a1a1a;
-  font-size: var(--font-size-xs);
+  font-size: 14px;
 }
 
 .top-strip__inner {
@@ -474,21 +488,37 @@ const brandLogoUrl = '/images/logo.png'
   flex-shrink: 0;
 }
 
-/* Deliver-to entry with the soft hover surface (#F0F1F4, sampled). */
+/* Deliver-to entry (real site): 24px grey pin + 16px/600 label; hover is a
+ * translucent navy pill (rgba(0,16,71,.06), radius 50px, no shadow). */
 .account-nav__deliver {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-2);
   height: 52px;
   padding: 8px 16px;
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: 50px;
+  background: transparent;
   color: var(--colour-text);
+  font: inherit;
+  font-size: 16px;
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   cursor: pointer;
 }
 
+.account-nav__deliver-icon {
+  color: #55565b;
+  flex-shrink: 0;
+}
+
+.account-nav__deliver-text {
+  min-width: 110px;
+  text-align: left;
+}
+
 .account-nav__deliver:hover {
-  background: var(--colour-hover);
+  background: rgb(0 16 71 / 6%);
 }
 
 /* Round 52px icon buttons for account and cart (real header). */

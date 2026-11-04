@@ -26,6 +26,10 @@ useHead(() => ({ title: pageTitle.value }))
       <section v-else-if="error" class="home-unavailable" role="status">
         <p>The home page is temporarily unavailable. Please try again shortly.</p>
       </section>
+      <!-- Bestsellers floor with category tabs (docs/12 §1), after the CMS
+           floors — mirrors the real homepage order (discovery → brands → …
+           → Bestsellers). -->
+      <HomeBestsellers class="home-bestsellers-floor" />
     </div>
   </AppContainer>
 </template>

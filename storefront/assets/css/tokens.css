@@ -40,7 +40,8 @@
 
   /* ---- Typography ---- */
   --font-stack:
-    'Segoe UI', 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    'Barlow', 'Segoe UI', 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
   --font-size-xs: 0.75rem; /* 12px */
   --font-size-sm: 0.8125rem; /* 13px */
   --font-size-md: 0.875rem; /* 14px: body default */
