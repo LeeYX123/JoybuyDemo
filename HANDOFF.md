@@ -4,7 +4,8 @@
 
 ## 1. 我们在做什么
 
-- 当前任务（2026-11-05，**已完成**）：应用户要求**移除平台管理端登录的验证器（TOTP），只保留邮箱+密码登录**。后端 `StaffLoginView` 删除全部 TOTP 校验分支（登录成功即创建 `totp_verified=True` 会话，RBAC 链一致），`StaffLoginSerializer` 移除 `totp_code` 字段（旧客户端多传会被 DRF 忽略），`settings.py` 删除 `STAFF_TOTP_LOGIN_ENFORCED`（`.env.example` 同步删除）；`StaffTotpDevice` 模型、`provision_totp_device` 服务与 `bootstrap_platform_admin` 引导命令**保留为休眠代码**（无迁移改动），权限层对 `totp_verified_at` 的既有检查不变。admin-web 登录页移除动态码输入与 STAFF_TOTP_REQUIRED 分支，`useStaffAuth.login(email, password)` 去掉第三参。测试同步：后端 TOTP 强制/重放两用例替换为"密码直登"+"忽略多余 totp_code"两用例；LoginView 组件测试改为密码直登+错误提示两用例；E2E `admin-login.spec.js` 移除 RFC 6238 动态码生成与环境自适应分支。文档：`backend/README.md`（登录接口表+引导命令说明）、`docs/08`（新增 2026-11-05 变更补记，历史记录保留）。**注意**：期间发现 8000 端口旧后端进程（21:51 启动的 --noreload）仍执行旧 TOTP 逻辑导致 e2e 首跑失败，已杀掉并重启后端后全部通过。
+- 当前任务（2026-11-05，**已完成**）：应用户要求产出数据库说明文档 `docs/13-database-schema.md`——以本地开发库实际结构为准（information_schema 快照，79 表 759 字段），结合 `backend/*/models.py` 逐表逐字段中文说明（通用约定、按业务域分组的表清单、每张表的用途与字段表、Django 内置表）。纯文档任务，未改任何代码与数据库。文档编号避开了已被占用的 12（UI 规格），索引 `docs/README.md` 已同步补 11/12/13 三条。
+- 上一任务（2026-11-05，**已完成**）：应用户要求**移除平台管理端登录的验证器（TOTP），只保留邮箱+密码登录**。后端 `StaffLoginView` 删除全部 TOTP 校验分支（登录成功即创建 `totp_verified=True` 会话，RBAC 链一致），`StaffLoginSerializer` 移除 `totp_code` 字段（旧客户端多传会被 DRF 忽略），`settings.py` 删除 `STAFF_TOTP_LOGIN_ENFORCED`（`.env.example` 同步删除）；`StaffTotpDevice` 模型、`provision_totp_device` 服务与 `bootstrap_platform_admin` 引导命令**保留为休眠代码**（无迁移改动），权限层对 `totp_verified_at` 的既有检查不变。admin-web 登录页移除动态码输入与 STAFF_TOTP_REQUIRED 分支，`useStaffAuth.login(email, password)` 去掉第三参。测试同步：后端 TOTP 强制/重放两用例替换为"密码直登"+"忽略多余 totp_code"两用例；LoginView 组件测试改为密码直登+错误提示两用例；E2E `admin-login.spec.js` 移除 RFC 6238 动态码生成与环境自适应分支。文档：`backend/README.md`（登录接口表+引导命令说明）、`docs/08`（新增 2026-11-05 变更补记，历史记录保留）。**注意**：期间发现 8000 端口旧后端进程（21:51 启动的 --noreload）仍执行旧 TOTP 逻辑导致 e2e 首跑失败，已杀掉并重启后端后全部通过。
 - 上一任务（2026-11-04，已完成）：补齐商城端【畅销榜单】11 个标准类目的公开 Joybuy 演示商品。已从 `joybuy.co.uk` 中文浏览器会话和固定公开榜单页采集 11 类 × 3 条，全部通过 staging 导入、激活并建立 GB 搜索文档；33/33 fixture 商品均已下载到本地媒体库，榜单接口现在返回本地 `/media/...` 首图，页面已抽查美妆与游戏类目正常显示。服装是唯一例外：Joybuy 畅销榜侧栏没有服装一级榜，fixture 明确标记使用“时装配饰频道 → 爆款直降”替代来源，绝不能伪装成官方 bestseller 子榜。
 - 当前任务（2026-11-04 夜间自动执行，**已完成**）：按用户指令"参照 joybuy.co.uk 逐元素视觉对齐全部文档页面"的全自动流程执行完毕。四份交付物在 `var/ui-alignment/deliverables.md`（页面清单+基准规格表+代码修改记录+复核差异清单 D-01~D-14）。覆盖：全局头部（logo 图片化/搜索框/圆形按钮/类目行）、首页、Categories 面板、列表页（234px 左栏+274px 卡重写）、**畅销榜单页新建**（/promo/best-seller，hero 384px/11 品类无箭头/仅价格筛选/排名徽章 32×32 #E4E6EB）、详情页重写（Buy now #E1251B hover #D14335 / Add to cart #1A1A1A hover #282828 / 数量步进器 47×34 / 白名单拦截弹窗 / 服务保障纯文本行）、结算页两步化（3 字段地址表单→支付步骤：余额支付置顶+精简 Summary+精简页脚）。后端最小支撑：`BuyerAccount.purchase_whitelisted`（迁移 0004，默认 True=开发阶段放行，session payload 返回）。E2E purchase-funnel 的结算步骤已同步新流程；funnel 在 dev 水合竞态下仍偶发超时（差异清单 D-14），全流程已浏览器人工验证（含下单 201）。
 - 下一轮（待用户确认后）：第 2 轮榜单后台配置（RankingList/管理端 RankingsView，见更下方计划）；第 3 轮钱包/白名单 admin/直购参数/地址后端校验放宽（对应差异清单 D-07~D-10）。
@@ -19,12 +20,17 @@
 - 当前任务：让商城端首页贴近真实 Joybuy 主页并填充真实爬取内容做效果展示——已对齐真实首页结构：顶部黑色通知条、红色字标头部（圆搜索按钮+配送至）、"Offers for you" 2×5 活动砖石区（真实图片，替代原红色 hero）、6 个圆形快捷入口、品类发现磁贴行、6 个真实商品楼层（53 商品仅原价、图片全本地化）。浏览器截图对比通过，首页 CMS 现为 v4。
 - 新验证纪律（用户 2026-11-03 确定，已写入 `AGENTS.md`）：开发阶段每次任务只做针对性验证（仅覆盖本次改动的模块/文件），全量验证只在功能全部开发完成或用户明确要求时跑。不得每轮默认全量。
 - 用户明确分工（上一轮）：原价规则是爬虫职责；“今日送达”标签过滤与 `$` 符号只是页面展示层职责，与爬虫无关。
-- 新验证纪律（用户 2026-11-03 确定，已写入 `AGENTS.md`）：开发阶段每次任务只做针对性验证（仅覆盖本次改动的模块/文件），全量验证只在功能全部开发完成或用户明确要求时跑。不得每轮默认全量。
-- 用户明确分工（上一轮）：原价规则是爬虫职责；“今日送达”标签过滤与 `$` 符号只是页面展示层职责，与爬虫无关。
 - 此前任务“Joybuy 中文会话与多语言内容方案”的口径仍然有效：切换国家/语言后所有内容自动刷新，德英混合是正确来源状态；类目分析仍暂停，须用已保存的中文会话重新分析。
 - 上一任务“平台管理端全面中文化（仅保留 Joybuy 标识）”已完成并通过验证，历史记录保留在下方。
 
 ## 2. 已经完成了什么
+
+### 2026-11-05：数据库说明文档（docs/13）
+
+- 数据来源：`information_schema.COLUMNS` 全量快照（79 表 759 字段，TSV 存 `var/joybuy_demo/data/db_columns.tsv`）+ 通读 `backend/` 全部 14 个 models.py 确认字段语义。
+- 产出 `docs/13-database-schema.md`：通用约定（id/public_id/外键/时间戳/枚举/金额规则）、按 15 个业务域的表清单、每张表用途说明 + 逐字段表（列名/类型/说明，含唯一约束、CHECK 约束、枚举取值）、Django 内置表一节。关键业务规则均就地标注（如 offer 价格 CHECK、staging 幂等键、fingerprint HMAC、purchase_whitelisted 白名单）。
+- 文档编号注意：`docs/12` 已被 UI 规格文档占用，本任务新建文档顺延为 13；`docs/README.md` 索引补齐 11/12/13。
+- 验证（按纪律仅针对性）：prettier --check 两份文档通过；无代码改动，无后端/前端验证需要。
 
 ### 2026-11-04：畅销榜单 11 类公开数据补齐
 
@@ -225,6 +231,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-05（续 2）：排序控件改自定义下拉（左置/去蓝色）
+
+- 用户反馈：排序应在左侧（原右对齐）；外边框与选项 hover/选中出现蓝色——根源是原生 `<select>` 的下拉弹层由 OS 渲染（Windows Chrome 蓝色高亮），CSS 无法自定义。
+- 重做为自定义下拉：trigger（"Sort by:" 16px/500 + 172×40 深色描边按钮 + ⌄）左置（删除右侧 spacer）；菜单白底 1px 灰边 + overlay 阴影，选项 40px 行、hover #F0F1F4 灰、选中 #EEF1F5 灰加粗（全灰系无蓝）；点击选项 updateQuery、点击外部自动关闭（document click 监听，onMounted/onBeforeUnmount 挂载）。
+- 验证：vitest 45/45；浏览器复核 triggerOnLeft ✓、菜单白底、hover rgb(240,241,244) 无蓝、选中项高亮 ✓（截图）。
+
 ### 2026-11-05（续）：列表页排序控件对齐真实站
 
 - 实测真实站（/s?k=noodles）：标签 "Sort by:" 16px/500 #1A1A1A；触发器白底 **1px #1A1A1A 深色描边**、radius 4、高 40、16px 字；展开菜单白底、选中项浅灰高亮；选项顺序 Relevance → Price: High to low → Price: Low to high（→ Sales: High to low，后端无销量排序）。
@@ -351,6 +363,12 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05（续 2）：排序控件改自定义下拉（左置/去蓝色）
+
+- 用户反馈：排序应在左侧（原右对齐）；外边框与选项 hover/选中出现蓝色——根源是原生 `<select>` 的下拉弹层由 OS 渲染（Windows Chrome 蓝色高亮），CSS 无法自定义。
+- 重做为自定义下拉：trigger（"Sort by:" 16px/500 + 172×40 深色描边按钮 + ⌄）左置（删除右侧 spacer）；菜单白底 1px 灰边 + overlay 阴影，选项 40px 行、hover #F0F1F4 灰、选中 #EEF1F5 灰加粗（全灰系无蓝）；点击选项 updateQuery、点击外部自动关闭（document click 监听，onMounted/onBeforeUnmount 挂载）。
+- 验证：vitest 45/45；浏览器复核 triggerOnLeft ✓、菜单白底、hover rgb(240,241,244) 无蓝、选中项高亮 ✓（截图）。
 
 ### 2026-11-05（续）：列表页排序控件对齐真实站
 

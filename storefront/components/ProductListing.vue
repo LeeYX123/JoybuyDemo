@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 // Category/search listing page shared by /c/[slug] and /search.
 const props = defineProps({
@@ -68,9 +68,28 @@ function updateQuery(patch) {
   router.push({ query: { ...route.query, page: undefined, ...patch } })
 }
 
-function onSortChange(event) {
-  updateQuery({ sort: event.target.value })
+// Custom sort dropdown state (click-outside closes it).
+const sortOpen = ref(false)
+const sortRoot = ref(null)
+const activeLabel = computed(
+  () => sortOptions.find((option) => option.value === activeSort.value)?.label || 'Relevance',
+)
+
+function pickSort(value) {
+  sortOpen.value = false
+  if (value !== activeSort.value) {
+    updateQuery({ sort: value })
+  }
 }
+
+function onDocClick(event) {
+  if (sortOpen.value && sortRoot.value && !sortRoot.value.contains(event.target)) {
+    sortOpen.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('click', onDocClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 function applyPriceFilter(event) {
   event.preventDefault()
@@ -143,15 +162,36 @@ useHead(() => ({ title: heading.value }))
           </header>
 
           <div class="listing-toolbar">
-            <span class="listing-toolbar__spacer" aria-hidden="true"></span>
-            <label class="sort-control">
-              <span>Sort by:</span>
-              <select :value="activeSort" @change="onSortChange">
-                <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
-            </label>
+            <div ref="sortRoot" class="sort-control">
+              <span class="sort-control__label">Sort by:</span>
+              <!-- Custom dropdown (native select popups are OS-rendered blue):
+                   white menu, grey hover, dark-border trigger. -->
+              <button
+                class="sort-control__trigger"
+                type="button"
+                :aria-expanded="sortOpen"
+                @click="sortOpen = !sortOpen"
+              >
+                <span>{{ activeLabel }}</span>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="m12 15-5-5h10l-5 5Z" fill="currentColor" />
+                </svg>
+              </button>
+              <ul v-if="sortOpen" class="sort-control__menu" role="listbox">
+                <li v-for="option in sortOptions" :key="option.value">
+                  <button
+                    class="sort-control__option"
+                    :class="{ 'sort-control__option--active': option.value === activeSort }"
+                    type="button"
+                    role="option"
+                    :aria-selected="option.value === activeSort"
+                    @click="pickSort(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </li>
+              </ul>
+            </div>
           </div>
 
           <div v-if="error" class="listing-state" role="alert">
@@ -308,12 +348,12 @@ useHead(() => ({ title: heading.value }))
 .listing-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
   margin-block: var(--space-4);
 }
 
+/* Sort sits on the left, right after the heading block (real site). */
 .sort-control {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -322,17 +362,64 @@ useHead(() => ({ title: heading.value }))
   color: #1a1a1a;
 }
 
-/* Trigger matches the real dropdown: dark 1px border, 4px radius, 40px. */
-.sort-control select {
+.sort-control__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 172px;
   min-height: 40px;
   padding: 0 var(--space-3);
   border: 1px solid #1a1a1a;
   border-radius: var(--radius-sm);
+  background: var(--colour-surface);
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.sort-control__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  z-index: var(--z-overlay);
+  min-width: max-content;
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: 1px solid var(--colour-border);
+  border-radius: var(--radius-sm);
+  background: var(--colour-surface);
+  box-shadow: var(--shadow-overlay);
+  list-style: none;
+  margin: 0;
+}
+
+.sort-control__option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  text-align: left;
   font: inherit;
   font-size: 16px;
   color: #1a1a1a;
-  background: var(--colour-surface);
   cursor: pointer;
+}
+
+/* Hover/selected: light grey — never the OS blue. */
+.sort-control__option:hover {
+  background: var(--colour-hover);
+}
+
+.sort-control__option--active,
+.sort-control__option--active:hover {
+  background: var(--colour-surface-muted);
+  font-weight: var(--font-weight-semibold);
 }
 
 .listing-grid {
