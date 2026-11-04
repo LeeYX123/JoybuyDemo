@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useFetch, useRuntimeConfig } from '#imports'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
+import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useCart } from '../../composables/useCart'
 import { useLocale } from '../../composables/useLocale'
 import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
@@ -12,7 +13,7 @@ import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
 // cart / quantity stepper / plain service-guarantee rows). Purchase actions
 // are gated by the account whitelist flag (requirement 6-6).
 const route = useRoute()
-const { t } = useLocale()
+const { t, categoryName } = useLocale()
 
 const publicId = computed(() => String(route.params.id || ''))
 const config = useRuntimeConfig()
@@ -104,6 +105,35 @@ const gallery = computed(() => (Array.isArray(data.value?.gallery) ? data.value.
 const activeImage = ref('')
 const currentImage = computed(() => activeImage.value || gallery.value[0]?.url || '')
 
+// Breadcrumb from the shared category tree: root -> child -> product title
+// (the API returns the product's own category slug; every level links to its
+// listing page like the real top nav).
+const { categories } = useCategoryTree()
+const categoryTrail = computed(() => {
+  const slug = data.value?.category_slug
+  if (!slug) return []
+  for (const root of categories.value) {
+    if (root.slug === slug) return [root]
+    for (const child of root.children || []) {
+      if (child.slug === slug) return [root, child]
+    }
+  }
+  return []
+})
+
+// Hover zoom: the real site shows an enlarged detail view to the right of
+// the main image while the cursor moves over it.
+const zoomVisible = ref(false)
+const zoomPos = ref({ x: 50, y: 50 })
+
+function onZoomMove(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  zoomPos.value = {
+    x: Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100)),
+    y: Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100)),
+  }
+}
+
 // Service guarantees: plain text rows, no accordion (requirement 6-4).
 const guarantees = computed(() => [
   t('detail.guaranteeReturns'),
@@ -126,7 +156,20 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
     </div>
 
     <section v-else class="detail">
-      <p class="detail__breadcrumb">{{ data?.brand || 'Joybuy' }} / {{ data?.title }}</p>
+      <!-- Clickable top nav: Home / root category / child category / product
+           (real-site breadcrumb, 16px, dark). -->
+      <nav class="detail__crumbs" aria-label="Breadcrumb">
+        <NuxtLink class="detail__crumb" to="/">Home</NuxtLink>
+        <template v-for="node in categoryTrail" :key="node.slug">
+          <span class="detail__crumb-sep" aria-hidden="true">/</span>
+          <NuxtLink class="detail__crumb" :to="`/c/${node.slug}`">{{
+            categoryName(node)
+          }}</NuxtLink>
+        </template>
+        <span class="detail__crumb-sep" aria-hidden="true">/</span>
+        <span class="detail__crumb detail__crumb--current">{{ data?.title }}</span>
+      </nav>
+      <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
       <h1 class="detail__title">{{ data?.title }}</h1>
 
       <div class="detail__main">
@@ -143,9 +186,25 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
           </button>
         </div>
 
-        <div class="detail__image">
+        <div
+          class="detail__image"
+          @mouseenter="zoomVisible = true"
+          @mousemove="onZoomMove"
+          @mouseleave="zoomVisible = false"
+        >
           <img v-if="currentImage" :src="currentImage" :alt="data?.title" />
           <BaseSkeleton v-else variant="block" class="detail__image-placeholder" />
+          <!-- Enlarged detail view shown to the right of the main image on
+               hover (real-site magnifier). -->
+          <div
+            v-if="zoomVisible && currentImage"
+            class="detail__zoom"
+            :style="{
+              backgroundImage: `url(${currentImage})`,
+              backgroundPosition: `${zoomPos.x}% ${zoomPos.y}%`,
+            }"
+            aria-hidden="true"
+          ></div>
         </div>
 
         <div class="detail__panel">
@@ -249,13 +308,40 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   margin-block: var(--space-4);
 }
 
-.detail__breadcrumb {
-  margin: 0;
+/* Top nav: Home / categories / product, clickable like the real site. */
+.detail__crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--font-size-md);
+  color: #1a1a1a;
+}
+
+.detail__crumb {
+  color: #1a1a1a;
+  text-decoration: none;
+}
+
+.detail__crumb:hover {
+  text-decoration: underline;
+}
+
+.detail__crumb--current {
+  cursor: default;
+}
+
+.detail__crumb-sep {
   color: var(--colour-muted);
-  font-size: var(--font-size-sm);
+}
+
+.detail__brandline {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: #1a1a1a;
 }
 
 /* Full-width 24px/700 title (docs/12 §6 baseline). */
@@ -266,9 +352,10 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   line-height: var(--line-height-tight);
 }
 
+/* Real layout: 56px thumb rail, fluid main image, 671px buy panel. */
 .detail__main {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 480px;
+  grid-template-columns: 56px minmax(0, 1fr) 671px;
   gap: var(--space-4);
   align-items: start;
 }
@@ -301,12 +388,33 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   object-fit: cover;
 }
 
+.detail__image {
+  position: relative;
+}
+
 .detail__image img {
   display: block;
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
   background: var(--colour-surface-soft);
+}
+
+/* Enlarged hover view: 2.5x detail panel floated over the buy panel side. */
+.detail__zoom {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 16px);
+  width: 100%;
+  aspect-ratio: 1;
+  z-index: 20;
+  border: 1px solid var(--colour-border);
+  border-radius: 8px;
+  background-color: #f5f5f5;
+  background-repeat: no-repeat;
+  background-size: 250%;
+  pointer-events: none;
+  box-shadow: var(--shadow-overlay);
 }
 
 .detail__image-placeholder {

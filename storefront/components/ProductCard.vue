@@ -160,7 +160,8 @@ const badge = computed(() => {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 0;
+  /* Real card: the image carries its own 12px radius on all four corners. */
+  border-radius: 12px;
   mix-blend-mode: multiply;
 }
 

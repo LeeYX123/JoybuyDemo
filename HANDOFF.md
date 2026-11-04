@@ -224,6 +224,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 9）：首页榜单四项 + 详情页面包屑/布局/放大镜
+
+- 首页（实测 18px 规格）：榜单 tab 18px（未选中 400/选中 700 #1A1A1A）、间距 32px、高 42px；View all 18px/600 下划线；榜单卡图自带四角 12px 圆角（img 自身 radius，不再依赖卡裁切）；心选品牌→畅销榜单楼层间距 48px（原 24）；【About this study build】尾注模块删除（loader 不再 append rich_text，index.vue 移除 tail 渲染，home v9=3 模块）。
+- 详情页：顶部导航改真实站式可点击面包屑——Home / 类目树父链（useCategoryTree 反查 category_slug，双语 categoryName）/ 商品名，16px #1A1A1A、hover 下划线；布局列宽对齐实测（56px 缩略图轨 + 流体主图 + 671px 购买面板，主图≈617 vs 真实 591）；主图 hover **放大镜**——右侧浮出 617×617 面板（background-size 250%、position 跟随光标百分比、z-20 覆盖购买面板侧、mouseleave 关闭）。
+- 验证：vitest 45/45；eslint/prettier 通过；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器复核全部通过（截图）。期间后端 runserver 再次静默退出（本日第 3 次，后台任务稳定性问题）已重启；HomeBestsellers/Promo 排序 sort=newest 同步。
+
 ### 2026-11-04（续 8）：首页整行背景 #FFFFFF
 
 - 用户指定 `.home-page`（畅销榜单/品类发现/心选品牌模块外围）背景为 #FFFFFF。原页面继承 canvas 灰底，且容器 max-width 1440 居中后超宽视口两侧仍露灰条。
@@ -301,6 +307,12 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-04（续 9）：首页榜单四项 + 详情页面包屑/布局/放大镜
+
+- 首页（实测 18px 规格）：榜单 tab 18px（未选中 400/选中 700 #1A1A1A）、间距 32px、高 42px；View all 18px/600 下划线；榜单卡图自带四角 12px 圆角（img 自身 radius，不再依赖卡裁切）；心选品牌→畅销榜单楼层间距 48px（原 24）；【About this study build】尾注模块删除（loader 不再 append rich_text，index.vue 移除 tail 渲染，home v9=3 模块）。
+- 详情页：顶部导航改真实站式可点击面包屑——Home / 类目树父链（useCategoryTree 反查 category_slug，双语 categoryName）/ 商品名，16px #1A1A1A、hover 下划线；布局列宽对齐实测（56px 缩略图轨 + 流体主图 + 671px 购买面板，主图≈617 vs 真实 591）；主图 hover **放大镜**——右侧浮出 617×617 面板（background-size 250%、position 跟随光标百分比、z-20 覆盖购买面板侧、mouseleave 关闭）。
+- 验证：vitest 45/45；eslint/prettier 通过；e2e 快照重基线 9/10（funnel 仍 D-14）；浏览器复核全部通过（截图）。期间后端 runserver 再次静默退出（本日第 3 次，后台任务稳定性问题）已重启；HomeBestsellers/Promo 排序 sort=newest 同步。
 
 ### 2026-11-04（续 8）：首页整行背景 #FFFFFF
 

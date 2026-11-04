@@ -79,7 +79,12 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
 </template>
 
 <style scoped>
-/* Real floor: 28px/700 title left, underlined View all right. */
+/* Floor spacing below the featured-brands row is larger, per the real page. */
+.home-bestsellers {
+  margin-top: 48px;
+}
+
+/* Real floor: 28px/600 title left, 18px/600 underlined View all right. */
 .home-bestsellers__head {
   display: flex;
   align-items: center;
@@ -90,12 +95,12 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
 .home-bestsellers__title {
   margin: 0;
   font-size: 1.75rem;
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-semibold);
 }
 
 .home-bestsellers__view-all {
-  color: var(--colour-text);
-  font-size: var(--font-size-md);
+  color: #1a1a1a;
+  font-size: 18px;
   font-weight: var(--font-weight-semibold);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -108,7 +113,7 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
 /* Tab row: horizontal scroll, active tab = bold black + black underline. */
 .home-bestsellers__tabs {
   display: flex;
-  gap: var(--space-6);
+  gap: 32px;
   margin-top: var(--space-3);
   overflow-x: auto;
   scrollbar-width: none;
@@ -119,22 +124,22 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
 }
 
 .home-bestsellers__tab {
-  min-height: 40px;
-  padding: 0 var(--space-1);
+  min-height: 42px;
+  padding: 0;
   flex-shrink: 0;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   white-space: nowrap;
   font: inherit;
-  font-size: var(--font-size-md);
+  font-size: 18px;
   font-weight: var(--font-weight-regular);
-  color: var(--colour-text);
+  color: #1a1a1a;
   cursor: pointer;
 }
 
 .home-bestsellers__tab--active {
-  border-bottom: 2px solid var(--colour-text);
+  border-bottom: 2px solid #1a1a1a;
   font-weight: var(--font-weight-bold);
 }
 

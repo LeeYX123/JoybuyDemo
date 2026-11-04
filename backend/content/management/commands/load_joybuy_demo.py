@@ -626,20 +626,6 @@ class Command(BaseCommand):
         # storefront serves from the search API per active tab. The old text
         # pill brand wall is superseded by the featured-brands module above.
         del spu_by_sku, image_by_sku, market
-        modules.append(
-            {
-                "module_type": "rich_text",
-                "payload": {
-                    "heading": "About this study build",
-                    "body": (
-                        "Product cards, prices and images on this page were crawled from the "
-                        "public Joybuy homepage for layout study. Only original prices are "
-                        "shown; images are stored locally. Editors and previews arrive with "
-                        "WP-34."
-                    ),
-                },
-            }
-        )
         return modules
 
     def handle(self, *args, **options):
