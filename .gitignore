@@ -1,0 +1,85 @@
+# Environment and secret files (keep public templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python / Django
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.sqlite3
+*.db
+staticfiles/
+
+# Node / Nuxt / Vite
+node_modules/
+.nuxt/
+.output/
+.vite/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Browser and end-to-end test artifacts
+playwright-report/
+test-results/
+blob-report/
+screenshots/
+
+# Local runtime data and generated media
+var/*
+!var/README.md
+backend/media/
+backend/raw/
+media/
+raw/
+exports/
+tmp/
+
+# Database dumps, archives, and backups
+*.sql
+*.sql.gz
+*.dump
+*.bak
+backups/
+
+# Logs, task state, and caches
+*.log
+logs/
+celerybeat-schedule*
+.scrapy/
+.cache/
+
+# Agent/tool local state
+.workbuddy/
+.zcode/
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+

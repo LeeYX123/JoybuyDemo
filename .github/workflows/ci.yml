@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4.7
+        env:
+          MYSQL_DATABASE: joybuy
+          MYSQL_ROOT_PASSWORD: ci_root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pci_root_password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=24
+      redis:
+        image: redis:7.4.6-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+    env:
+      APP_ENV: test
+      DEBUG: 'false'
+      DJANGO_SECRET_KEY: ci-only-not-a-production-secret
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: '3306'
+      MYSQL_DATABASE: joybuy
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ci_root_password
+      REDIS_URL: redis://127.0.0.1:6379/0
+      DJANGO_DATABASE_ENGINE: mysql
+      DJANGO_CACHE_BACKEND: redis
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements/*.txt
+            crawler/requirements.txt
+      - run: python -m pip install -r backend/requirements/dev.txt
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+      - run: python -m ruff check --config backend/pyproject.toml backend crawler
+      - run: python -m ruff format --check --config backend/pyproject.toml backend crawler
+      - run: python backend/manage.py check
+      - run: python backend/manage.py makemigrations --check --dry-run
+      - run: python backend/manage.py migrate --noinput
+      - run: python backend/manage.py test
+
+  frontends:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm peers check
+      - run: pnpm lint:frontends
+      - run: pnpm format:check
+      - run: pnpm test:components
+      - run: pnpm build:frontends
+
+  e2e:
+    name: Chromium smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: var/playwright-report
+          if-no-files-found: ignore

@@ -1,0 +1,12 @@
+packages:
+  - storefront
+  - admin-web
+
+allowBuilds:
+  esbuild: true
+
+peerDependencyRules:
+  allowedVersions:
+    '@nuxt/schema': '3.21.11'
+minimumReleaseAgeExclude:
+  - globals@17.14.0

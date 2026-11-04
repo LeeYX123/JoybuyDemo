@@ -1,0 +1,127 @@
+/* Design tokens (WP-20).
+   Single source of truth for colour, spacing, typography and breakpoints.
+   Every rule elsewhere in the app must reference tokens, never raw values. */
+
+:root {
+  /* ---- Colour: primitives ---- */
+  --colour-white: #ffffff;
+  --colour-canvas: #f6f7f9;
+  --colour-surface: #ffffff;
+  --colour-surface-muted: #eef1f5;
+  /* Header controls sampled from joybuy.co.uk (docs/12 global header). */
+  --colour-surface-soft: #f5f6f7;
+  --colour-hover: #f0f1f4;
+  --colour-search-border: #c2c4cc;
+  --colour-text: #17202a;
+  --colour-text-secondary: #3d4854;
+  --colour-muted: #5b6673;
+  --colour-border: #d9dee5;
+  --colour-border-strong: #b9c1cb;
+
+  /* Brand */
+  --colour-accent: #c8102e;
+  --colour-accent-dark: #9f0c24;
+  --colour-accent-soft: #fdecee;
+  --colour-focus-ring: #175cd3;
+
+  /* Feedback */
+  --colour-success: #0e7a3d;
+  --colour-success-soft: #e7f6ec;
+  --colour-warning: #8a5a00;
+  --colour-warning-soft: #fdf3dc;
+  --colour-error: #b42318;
+  --colour-error-soft: #fdecea;
+  --colour-info: #175cd3;
+  --colour-info-soft: #e8f0fe;
+
+  /* Rating stars, promo tags */
+  --colour-star: #f5a623;
+  --colour-promo: #c8102e;
+
+  /* ---- Typography ---- */
+  --font-stack:
+    'Segoe UI', 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-size-xs: 0.75rem; /* 12px */
+  --font-size-sm: 0.8125rem; /* 13px */
+  --font-size-md: 0.875rem; /* 14px: body default */
+  --font-size-lg: 1rem; /* 16px */
+  --font-size-xl: 1.25rem; /* 20px */
+  --font-size-2xl: 1.5rem; /* 24px */
+  --font-size-3xl: 2rem; /* 32px */
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ---- Spacing scale (4px base) ---- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* ---- Radii & shadows ---- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.875rem;
+  --radius-pill: 999px;
+  --shadow-card: 0 0.25rem 1rem rgb(23 32 42 / 8%);
+  --shadow-overlay: 0 0.5rem 2rem rgb(23 32 42 / 16%);
+
+  /* ---- Layout ---- */
+  --container-max: 90rem; /* 1440px */
+  --container-pad: var(--space-4);
+  --header-height: 4rem;
+  --nav-height: 2.75rem;
+
+  /* ---- Breakpoints (docs/01 §9: 1440 / 1280 / 390 / 375) ---- */
+  --bp-wide: 90rem; /* 1440 */
+  --bp-desktop: 80rem; /* 1280 */
+  --bp-tablet: 48rem; /* 768 */
+  --bp-mobile: 24.375rem; /* 390 */
+  --bp-mobile-sm: 23.4375rem; /* 375 */
+
+  /* ---- Motion (reduced-motion safe) ---- */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+
+  /* ---- Z-index layers ---- */
+  --z-skip-link: 100;
+  --z-header: 50;
+  --z-overlay: 40;
+
+  color-scheme: light;
+  font-family: var(--font-stack);
+  color: var(--colour-text);
+  background: var(--colour-canvas);
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --container-pad: var(--space-6);
+  }
+}
+
+@media (min-width: 80rem) {
+  :root {
+    --container-pad: var(--space-8);
+  }
+}
+
+/* Reduced motion: every transition/animation collapses to instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

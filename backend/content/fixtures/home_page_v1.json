@@ -1,0 +1,80 @@
+{
+  "page_key": "home",
+  "title": "Joybuy home",
+  "modules": [
+    {
+      "module_type": "hero",
+      "payload": {
+        "heading": "Joybuy demo storefront",
+        "subheading": "Replica study build: browsing is real, checkout is not.",
+        "cta_label": "Browse electronics",
+        "cta_href": "/c/electronics",
+        "theme": "primary"
+      }
+    },
+    {
+      "module_type": "banner",
+      "payload": {
+        "label": "Free delivery",
+        "alt": "Free UK delivery banner",
+        "href": "/c/free-delivery",
+        "theme": "info"
+      }
+    },
+    {
+      "module_type": "product_pool",
+      "payload": {
+        "title": "Popular right now",
+        "href": "/c/popular",
+        "products": [
+          {
+            "public_id": "01926c1e-1000-7000-8000-000000000001",
+            "title": "Wireless Earbuds Pro",
+            "price": "19.99",
+            "currency": "GBP",
+            "rating": 4.6,
+            "review_count": 123,
+            "badge": "Flash sale",
+            "href": "/p/01926c1e-1000-7000-8000-000000000001"
+          },
+          {
+            "public_id": "01926c1e-1000-7000-8000-000000000002",
+            "title": "Smart Watch S2",
+            "price": "39.50",
+            "currency": "GBP",
+            "rating": 4.2,
+            "review_count": 57,
+            "badge": "New",
+            "href": "/p/01926c1e-1000-7000-8000-000000000002"
+          },
+          {
+            "public_id": "01926c1e-1000-7000-8000-000000000003",
+            "title": "USB-C Charging Cable 2m",
+            "price": "4.99",
+            "currency": "GBP",
+            "rating": 4.8,
+            "review_count": 310,
+            "href": "/p/01926c1e-1000-7000-8000-000000000003"
+          },
+          {
+            "public_id": "01926c1e-1000-7000-8000-000000000004",
+            "title": "Noise Cancelling Headphones",
+            "price": "54.00",
+            "currency": "GBP",
+            "rating": 4.1,
+            "review_count": 89,
+            "badge": "999+ sold",
+            "href": "/p/01926c1e-1000-7000-8000-000000000004"
+          }
+        ]
+      }
+    },
+    {
+      "module_type": "rich_text",
+      "payload": {
+        "heading": "About this study build",
+        "body": "This page renders a fixed CMS fixture. Editors, previews and scheduled publishing arrive with WP-34; product data comes from the WP-16 import pipeline."
+      }
+    }
+  ]
+}

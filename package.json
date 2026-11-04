@@ -1,0 +1,35 @@
+{
+  "name": "joybuy-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev:storefront": "pnpm --filter @joybuy/storefront dev",
+    "dev:admin": "pnpm --filter @joybuy/admin-web dev",
+    "build:storefront": "pnpm --filter @joybuy/storefront build",
+    "build:admin": "pnpm --filter @joybuy/admin-web build",
+    "build:frontends": "pnpm run build:storefront && pnpm run build:admin",
+    "lint:frontends": "eslint storefront admin-web playwright.config.js tests/e2e",
+    "format:check": "prettier --check package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web tests/e2e .github/workflows",
+    "format:write": "prettier --write package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web tests/e2e .github/workflows",
+    "test:components": "vitest run --config storefront/vitest.config.js && vitest run --config admin-web/vitest.config.js",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "@vitejs/plugin-vue": "6.0.10",
+    "@vue/test-utils": "2.5.1",
+    "eslint": "10.14.0",
+    "eslint-plugin-vue": "10.12.0",
+    "globals": "17.14.0",
+    "happy-dom": "21.0.4",
+    "prettier": "3.9.10",
+    "vitest": "5.0.5",
+    "vue": "3.5.44"
+  }
+}
