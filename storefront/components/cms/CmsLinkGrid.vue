@@ -225,10 +225,55 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
     box-shadow 0.25s ease;
 }
 
-.discovery-card:hover {
-  transform: translateY(-12px);
+/* Hover lift sampled from the live site (2026-11-04): hovered -40px,
+ * immediate neighbours -8px, second neighbours stay put; the stack z-order
+ * is fixed 1..12 by position, so the right card always keeps covering the
+ * lifted card's edge. */
+.cms-link-grid__row--tiles li:nth-child(1) {
+  z-index: 1;
+}
+.cms-link-grid__row--tiles li:nth-child(2) {
+  z-index: 2;
+}
+.cms-link-grid__row--tiles li:nth-child(3) {
+  z-index: 3;
+}
+.cms-link-grid__row--tiles li:nth-child(4) {
+  z-index: 4;
+}
+.cms-link-grid__row--tiles li:nth-child(5) {
+  z-index: 5;
+}
+.cms-link-grid__row--tiles li:nth-child(6) {
+  z-index: 6;
+}
+.cms-link-grid__row--tiles li:nth-child(7) {
+  z-index: 7;
+}
+.cms-link-grid__row--tiles li:nth-child(8) {
+  z-index: 8;
+}
+.cms-link-grid__row--tiles li:nth-child(9) {
+  z-index: 9;
+}
+.cms-link-grid__row--tiles li:nth-child(10) {
   z-index: 10;
+}
+.cms-link-grid__row--tiles li:nth-child(11) {
+  z-index: 11;
+}
+.cms-link-grid__row--tiles li:nth-child(12) {
+  z-index: 12;
+}
+
+.discovery-card:hover {
+  transform: translateY(-40px);
   box-shadow: 0 18px 36px rgb(23 32 42 / 22%);
+}
+
+.cms-link-grid__row--tiles li:hover + li .discovery-card,
+.cms-link-grid__row--tiles li:has(+ li:hover) .discovery-card {
+  transform: translateY(-8px);
 }
 
 .discovery-card__label {
