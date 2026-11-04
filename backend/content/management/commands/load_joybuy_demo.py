@@ -620,43 +620,12 @@ class Command(BaseCommand):
                     },
                 }
             )
-        for section in sections:
-            products = []
-            for item in section["items"]:
-                spu = spu_by_sku.get(item["sku_id"])
-                if spu is None:
-                    continue
-                products.append(
-                    {
-                        "public_id": str(spu.public_id),
-                        "title": item["title"],
-                        "price": item["original_price"],
-                        "currency": market.default_currency.code,
-                        "image_path": image_by_sku.get(item["sku_id"], ""),
-                        "href": f"/p/{spu.public_id}",
-                    }
-                )
-            if not products:
-                continue
-            modules.append(
-                {
-                    "module_type": "product_pool",
-                    "payload": {
-                        "title": section["title"],
-                        "href": "/search",
-                        "products": products,
-                    },
-                }
-            )
-        modules.append(
-            {
-                "module_type": "link_grid",
-                "payload": {
-                    "title": "Brands we love",
-                    "items": [{"label": brand} for brand in BRANDS],
-                },
-            }
-        )
+        # The crawled bestseller sections are NOT rendered as standalone
+        # product floors: on the real homepage that data lives inside the
+        # Bestsellers floor (category tabs + ranked cards), which the
+        # storefront serves from the search API per active tab. The old text
+        # pill brand wall is superseded by the featured-brands module above.
+        del spu_by_sku, image_by_sku, market
         modules.append(
             {
                 "module_type": "rich_text",

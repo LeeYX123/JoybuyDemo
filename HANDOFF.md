@@ -201,6 +201,13 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 4）：独立商品楼层并入畅销榜单（home v8）
+
+- 用户指出：心选品牌与畅销榜单之间的 6 个独立商品楼层（Kitchen Roll…/Food Cupboard/Beverages/Rice…/Small Kitchen Appliances/Instant Noodle——即爬取的 bestseller 分区）应属畅销榜单数据，不应单独铺开；真实站这些分区本来就是 Bestsellers 楼层的 tab 分区。
+- loader build_modules：删除 product_pool 楼层循环与旧文字品牌墙（"Brands we love" pills——被心选品牌 brand_logos 取代，二者重复）；保留 import（商品仍在库，畅销榜单经搜索接口消费）。发布 home v8：4 模块（campaign/discovery/brands(心选)/rich_text）。
+- index.vue：拆分 CMS 渲染——rich_text 尾注排到畅销榜单之后（真实顺序：…心选品牌 → 畅销榜单 → 尾注），SSR h2 序实测 Category discovery→Brands we love→Bestsellers→About ✓，.cms-pool=0。
+- foundation.spec 首页断言更新：'Food Cupboard' 楼层标题断言改为畅销榜单标题（/Bestsellers|畅销榜单/）+ 首个类目 tab 可见；e2e 快照重基线 9/10（funnel 仍 D-14），foundation 复跑 5/5。vitest 45/45。
+
 ### 2026-11-04（续 3）：配送至/通告条字体/首页畅销榜单楼层
 
 - Barlow 站点字体本地化：实测 joybuy.co.uk 全站字体为 Barlow（Next local font），下载 400/600/700 三个 woff2 到 storefront/public/fonts/（自托管合规），base.css 注入 @font-face，tokens --font-stack 前置 'Barlow'（design-tokens 测试允许：禁 @font-face 仅限 tokens.css、禁 http 外链，相对路径 /fonts/ 均合规）。
@@ -234,6 +241,13 @@
 - 浏览器量测复核：strip 40px 居中/#1A1A1A/标签 ✓、campaign y160==header bottom ✓、发现卡 radius16 带图 ✓、品牌 12 圆卡 50% 不可点击图加载 ✓、面板 hover bg #F7F7F7 fw600 黑色 + 子类目联动 ✓。
 
 ## 6. 验证记录
+
+### 2026-11-04（续 4）：独立商品楼层并入畅销榜单（home v8）
+
+- 用户指出：心选品牌与畅销榜单之间的 6 个独立商品楼层（Kitchen Roll…/Food Cupboard/Beverages/Rice…/Small Kitchen Appliances/Instant Noodle——即爬取的 bestseller 分区）应属畅销榜单数据，不应单独铺开；真实站这些分区本来就是 Bestsellers 楼层的 tab 分区。
+- loader build_modules：删除 product_pool 楼层循环与旧文字品牌墙（"Brands we love" pills——被心选品牌 brand_logos 取代，二者重复）；保留 import（商品仍在库，畅销榜单经搜索接口消费）。发布 home v8：4 模块（campaign/discovery/brands(心选)/rich_text）。
+- index.vue：拆分 CMS 渲染——rich_text 尾注排到畅销榜单之后（真实顺序：…心选品牌 → 畅销榜单 → 尾注），SSR h2 序实测 Category discovery→Brands we love→Bestsellers→About ✓，.cms-pool=0。
+- foundation.spec 首页断言更新：'Food Cupboard' 楼层标题断言改为畅销榜单标题（/Bestsellers|畅销榜单/）+ 首个类目 tab 可见；e2e 快照重基线 9/10（funnel 仍 D-14），foundation 复跑 5/5。vitest 45/45。
 
 ### 2026-11-04（续 3）：配送至/通告条字体/首页畅销榜单楼层
 

@@ -12,6 +12,11 @@ const { data, error } = await useFetch(`${apiBase}/storefront/home`, {
 })
 
 const modules = computed(() => (Array.isArray(data.value?.modules) ? data.value.modules : []))
+// The Bestsellers floor sits between the shopping floors and the trailing
+// info note (real homepage order: discovery → brands → … → Bestsellers →
+// recommended), so rich-text modules render after it.
+const mainModules = computed(() => modules.value.filter((module) => module.type !== 'rich_text'))
+const tailModules = computed(() => modules.value.filter((module) => module.type === 'rich_text'))
 const pageTitle = computed(() => data.value?.page?.title || 'Joybuy')
 
 useHead(() => ({ title: pageTitle.value }))
@@ -22,14 +27,16 @@ useHead(() => ({ title: pageTitle.value }))
        gap), so the page container itself carries no top margin here. -->
   <AppContainer class="home-page">
     <div class="home-content">
-      <CmsRenderer v-if="modules.length > 0" :modules="modules" />
+      <template v-if="modules.length > 0">
+        <CmsRenderer :modules="mainModules" />
+        <!-- Bestsellers floor with category tabs (docs/12 §1), before the
+             trailing info note. -->
+        <HomeBestsellers class="home-bestsellers-floor" />
+        <CmsRenderer :modules="tailModules" />
+      </template>
       <section v-else-if="error" class="home-unavailable" role="status">
         <p>The home page is temporarily unavailable. Please try again shortly.</p>
       </section>
-      <!-- Bestsellers floor with category tabs (docs/12 §1), after the CMS
-           floors — mirrors the real homepage order (discovery → brands → …
-           → Bestsellers). -->
-      <HomeBestsellers class="home-bestsellers-floor" />
     </div>
   </AppContainer>
 </template>

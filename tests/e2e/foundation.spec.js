@@ -7,7 +7,10 @@ test.describe('frontend foundations', () => {
     expect(response?.status()).toBe(200)
     // The campaign floor has no heading (docs/12); its tiles carry the links.
     await expect(page.getByRole('link', { name: /Welcome Offers/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Food Cupboard' })).toBeVisible()
+    // Product floors live inside the Bestsellers floor (category tabs), not
+    // as standalone headings.
+    await expect(page.getByRole('heading', { name: /Bestsellers|畅销榜单/ })).toBeVisible()
+    await expect(page.locator('.home-bestsellers__tab').first()).toBeVisible()
     await expect(page.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute(
       'href',
       '#main-content',
