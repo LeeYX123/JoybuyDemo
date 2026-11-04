@@ -47,9 +47,8 @@ def rebuild_search_documents(*, market, full: bool = True) -> int:
     ``rebuild_search_document(spu, market)`` called by import flows.
     """
 
-    from offers.models import Offer
-
     from catalog.models import Spu
+    from offers.models import Offer
 
     del full
     spu_ids = set(
@@ -66,10 +65,10 @@ def rebuild_search_document(spu, *, market) -> ProductSearchDocument:
     """Refresh the search document of one SPU from its ACTIVE offers."""
 
     from django.db.models import Avg, Count
-    from offers.models import Offer
-    from reviews.models import Review
 
     from catalog.models import Spu
+    from offers.models import Offer
+    from reviews.models import Review
 
     active_offers = list(
         Offer.objects.filter(
@@ -120,7 +119,9 @@ def search_documents(
         raise SearchParamsInvalid("page must be a positive integer.")
     page = min(page, MAX_PAGE)
 
-    queryset = ProductSearchDocument.objects.filter(market=market, is_searchable=True)
+    queryset = ProductSearchDocument.objects.filter(
+        market=market, is_searchable=True
+    ).select_related("spu", "local_category")
     query = (query or "").strip()
     if query:
         cleaned = " ".join(query.split())[:100]
@@ -172,6 +173,7 @@ def search_documents(
     total = queryset.count()
     offset = (page - 1) * PAGE_SIZE
     rows = list(queryset[offset : offset + PAGE_SIZE])
+    image_paths = _first_gallery_images(rows)
     return {
         "query": query,
         "page": page,
@@ -179,11 +181,40 @@ def search_documents(
         "total": total,
         "total_pages": (total + PAGE_SIZE - 1) // PAGE_SIZE,
         "sort": sort,
-        "items": [serialize_search_row(row) for row in rows],
+        "items": [
+            serialize_search_row(row, image_path=image_paths.get(row.spu_id, "")) for row in rows
+        ],
     }
 
 
-def serialize_search_row(row: ProductSearchDocument) -> dict:
+def _first_gallery_images(rows: list[ProductSearchDocument]) -> dict[int, str]:
+    """Resolve the first local gallery image for a search page in one query."""
+
+    if not rows:
+        return {}
+    from django.contrib.contenttypes.models import ContentType
+
+    from catalog.models import Spu
+    from media.models import MediaUsage
+    from media.storage import media_url
+
+    spu_type = ContentType.objects.get_for_model(Spu)
+    usages = (
+        MediaUsage.objects.filter(
+            content_type=spu_type,
+            object_id__in={row.spu_id for row in rows},
+            role="gallery",
+        )
+        .select_related("asset")
+        .order_by("object_id", "sort_order", "pk")
+    )
+    result = {}
+    for usage in usages:
+        result.setdefault(usage.object_id, media_url(usage.asset.relative_path))
+    return result
+
+
+def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") -> dict:
     return {
         "spu_public_id": str(row.spu.public_id),
         "title": row.title,
@@ -194,4 +225,5 @@ def serialize_search_row(row: ProductSearchDocument) -> dict:
         "currency": row.currency_code,
         "rating_average": str(row.rating_average) if row.rating_average is not None else None,
         "rating_count": row.rating_count,
+        "image_path": image_path,
     }

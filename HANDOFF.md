@@ -4,6 +4,7 @@
 
 ## 1. 我们在做什么
 
+- 当前任务（2026-11-04，**已完成**）：补齐商城端【畅销榜单】11 个标准类目的公开 Joybuy 演示商品。已从 `joybuy.co.uk` 中文浏览器会话和固定公开榜单页采集 11 类 × 3 条，全部通过 staging 导入、激活并建立 GB 搜索文档；33/33 fixture 商品均已下载到本地媒体库，榜单接口现在返回本地 `/media/...` 首图，页面已抽查美妆与游戏类目正常显示。服装是唯一例外：Joybuy 畅销榜侧栏没有服装一级榜，fixture 明确标记使用“时装配饰频道 → 爆款直降”替代来源，绝不能伪装成官方 bestseller 子榜。
 - 当前任务（2026-11-04 夜间自动执行，**已完成**）：按用户指令"参照 joybuy.co.uk 逐元素视觉对齐全部文档页面"的全自动流程执行完毕。四份交付物在 `var/ui-alignment/deliverables.md`（页面清单+基准规格表+代码修改记录+复核差异清单 D-01~D-14）。覆盖：全局头部（logo 图片化/搜索框/圆形按钮/类目行）、首页、Categories 面板、列表页（234px 左栏+274px 卡重写）、**畅销榜单页新建**（/promo/best-seller，hero 384px/11 品类无箭头/仅价格筛选/排名徽章 32×32 #E4E6EB）、详情页重写（Buy now #E1251B hover #D14335 / Add to cart #1A1A1A hover #282828 / 数量步进器 47×34 / 白名单拦截弹窗 / 服务保障纯文本行）、结算页两步化（3 字段地址表单→支付步骤：余额支付置顶+精简 Summary+精简页脚）。后端最小支撑：`BuyerAccount.purchase_whitelisted`（迁移 0004，默认 True=开发阶段放行，session payload 返回）。E2E purchase-funnel 的结算步骤已同步新流程；funnel 在 dev 水合竞态下仍偶发超时（差异清单 D-14），全流程已浏览器人工验证（含下单 201）。
 - 下一轮（待用户确认后）：第 2 轮榜单后台配置（RankingList/管理端 RankingsView，见更下方计划）；第 3 轮钱包/白名单 admin/直购参数/地址后端校验放宽（对应差异清单 D-07~D-10）。
 - 当前任务（三轮制，**已完成第 1 轮，待用户确认后进入第 2 轮**）：按 `docs/12-joybuy-co-uk-ui-spec.md`（目标状态规格，对应 `功能需求清单.md` 8 组需求）实施改造。用户已确认两个口径：**界面语言中英文可配置**（EN/ZH 双语，storefront 轻量 i18n + 后端双语数据）、**分三轮逐轮确认**（第 1 轮全局头部+类目体系+首页 CMS → 第 2 轮畅销榜单页+后台榜单配置 → 第 3 轮详情页购买改造+地址页+支付页+白名单/钱包后台）。完整计划见本会话已批准的实施计划；第 1 轮成果见下方"2026-11-04"节。
@@ -23,6 +24,16 @@
 - 上一任务“平台管理端全面中文化（仅保留 Joybuy 标识）”已完成并通过验证，历史记录保留在下方。
 
 ## 2. 已经完成了什么
+
+### 2026-11-04：畅销榜单 11 类公开数据补齐
+
+- 新增受版本控制的 `backend/catalog/fixtures/bestseller_demo_2026_11_04.json`：11 个标准类目各 3 条，共 33 条；保存来源父榜/子榜、固定 URL、来源语言、榜单位置、Joybuy SKU、标题、品牌、商品 URL、图片 URL、原价和库存。前 6 组来自中文浏览器会话（`zh-CN`），后 5 组来自公开英文服务端页（`en-GB`），均按实际来源标记，没有伪造翻译。
+- 现场映射：家居生活→家居用品/清洁用品；电子产品→数码电子/办公设备；美妆→美妆/彩妆；小家电→家用电器/小型厨房电器；健康→健康与保健/营养品；电脑→电脑及配件/电子配件；户外→运动户外/运动器材；宠物→宠物用品/猫咪必备；母婴→母婴用品/哺育喂养；游戏→游戏娱乐/游戏主机；服装→时装配饰频道/爆款直降（替代来源）。
+- 新增幂等命令 `backend/catalog/management/commands/load_bestseller_demo.py`：支持 `--fixture`、`--per-category`、`--skip-images`、`--only-category`；建立 `bestseller:<local-slug>` 来源类目和主映射，调用 `ingest_product_payload()` → `import_staging_product()`，显式修正既有 SPU 的本地类目/品牌，激活 SPU/Offer，按来源层/本地覆盖层解析有效标题，下载本地图并重建搜索文档。fixture 价格作为 `current_price` 保存，`list_price=None`，不保存促销文案。
+- `backend/catalog/search_services.py`：搜索页批量读取当前页 SPU 的第一张 `gallery` 本地图，返回 `image_path`；同时 `select_related("spu", "local_category")`，避免商品逐条查询。商城现有 `ProductCard` 已消费 `image_path`，无需改前端。
+- 新增测试 `backend/catalog/tests/test_bestseller_demo.py`；扩展 `test_search.py` 覆盖本地首图与查询数上限。
+- 实库执行：首次导入 33 条（30 个新 SPU，另 3 个命中既有来源身份），一次源图失败；确认 CDN 对失败资源稳定返回 HTTP 400 后，改用同一“爆款直降”楼层真实第 4 名 PUMA 商品，重跑服装类 3 条后 0 图片失败。失败样本 `10489708` 已置 SPU=DRAFT、GB Offer=INACTIVE 并重建索引（未物理删除历史）。最终 fixture 33 个 SPU 全部可搜索、33/33 有本地图。
+- 最终 API 总量（含此前数据）：home-living 46、electronics 6、beauty 3、small-home-appliances 10，其余 7 类各 3；本轮 fixture 在每个类目严格各 3 条。
 
 ### 2026-11-04（补充）：头部 logo 换成本地真实字标图片
 
@@ -124,6 +135,8 @@
 
 ## 3. 当前卡在哪里
 
+- 本轮畅销榜数据补齐没有阻塞。正式 `RankingList/RankingEntry` 后台配置仍未实现，当前 `/promo/best-seller` 和首页楼层继续读取 `/api/v1/search?category=<slug>&sort=rating_desc`；这是既有第 2 轮范围，不应把本轮演示数据导入误写成正式榜单模型已完成。
+- 商品多语言索引仍是已知架构欠账：`ProductSearchDocument` 每 SPU/市场只有一行且 `rebuild_search_document()` 取第一条翻译。本轮只如实保存来源 locale，不顺手伪造翻译或宣称已实现按界面语言切换商品文本。
 - “是否强制全德文/是否由用户触发翻译”的产品口径已经闭合，不再是阻塞。
 - 后续仍需现场分析德国市场：默认/可选语言、币种、配送上下文，以及首页、类目、商品、属性、活动和评价分别为德文还是英文；本轮按用户要求暂不继续分析类目。
 - 国际化实现不能只改 `SpuTranslation`：现有 `ProductSearchDocument` 每个 SPU 只有一行，商品详情取第一条翻译，搜索和详情市场基本固定为 GB；实现前必须一起重构市场/请求语言解析、字段实际语言和 `(spu, market, requested_locale)` 搜索索引。
@@ -135,14 +148,24 @@
 
 ## 4. 下一步计划
 
-1. 继续与用户讨论剩余多市场行为；在用户允许现场分析后，依次核对德国市场和其他目标市场/语言组合。
-2. 证据闭合后，把国际化改造拆成独立小工作包：MarketLocale、市场本地化内容与字段语言元数据、API 上下文切换、搜索索引、购物端自动刷新和管理端来源对比。
-3. 再使用已保存的 Joybuy 中文会话重新分析类目；不直接复用英文名称生成最终 seed。
-4. 中文类目完成后，再回到 `docs/09-crawler-category-task-redesign.md` 第 10 节的四个品类口径和配额页面实现。
-5. 任何后续任务结束前，继续按 `AGENTS.md` 更新本文档。
+1. 用户若继续第 2 轮，先实现正式 `RankingList/RankingEntry`、平台端榜单配置和对应 API，再把商城榜单从搜索排序切到运营榜单；本轮 fixture 可作为初始化候选数据。
+2. 多语言商品内容另拆工作包，重构 `(spu, market, requested_locale)` 搜索索引和详情翻译选择；不要在榜单 loader 里补机器翻译。
+3. 若要刷新演示数据，先用保存 fixture/低频公开页证据更新，再执行 `load_bestseller_demo`；单类重试用 `--only-category <slug>`，不要全量重复下载。
+4. 继续与用户讨论剩余多市场行为；在用户允许现场分析后，依次核对德国市场和其他目标市场/语言组合。
+5. 证据闭合后，把国际化改造拆成独立小工作包：MarketLocale、市场本地化内容与字段语言元数据、API 上下文切换、搜索索引、购物端自动刷新和管理端来源对比。
+6. 再使用已保存的 Joybuy 中文会话重新分析类目；不直接复用英文名称生成最终 seed。
+7. 中文类目完成后，再回到 `docs/09-crawler-category-task-redesign.md` 第 10 节的四个品类口径和配额页面实现。
+8. 任何后续任务结束前，继续按 `AGENTS.md` 更新本文档。
 
 ## 5. 已踩过且绝对不能再踩的坑
 
+- Joybuy 卡片 DOM 可能把划线价与折扣百分比无空格拼接，例如 `£2.797% off`；金额正则必须限制为最多两位小数，否则会把 `£2.79` 错存成 `2.797`。证据解析脚本已修为 `£\s*([\d,]+(?:\.\d{1,2})?)`。
+- 不能只信 JSON-LD 的 `offers.price`：它通常是当前优惠价。原价必须优先读可见卡片 `[class*="crossOffPrice"]`，没有划线价才回退 `[class*="mainPrice"]`/唯一价格。
+- `get_or_create_spu_from_source()` 命中既有来源身份时不会更新 `Spu.local_category`、品牌或既有翻译实体字段；演示 loader 必须显式修正类目/品牌，并用来源层+本地覆盖层的有效值同步索引读取字段，再重建搜索文档。
+- 搜索接口过去完全没返回图片，即使媒体库有图也只显示骨架；图片必须按当前页 SPU 批量查 `MediaUsage(role="gallery")`，不能在序列化器里逐商品 N+1。
+- `--noreload` 的 Django 开发服务器不会自动加载后端改动。本轮实库导入后 HTTP 仍无 `image_path`，确认 8000 监听 PID 后只重启了明确的后端进程；后续后端改动浏览器验证前必须先确认运行进程已加载新代码。
+- CDN 单图 HTTP 400 时不得拿其他商品图片冒充。应换用同一公开楼层的下一条真实商品，保留原排名/来源证据，并把失败样本退出可搜索状态；本轮 `10489708` 已按此处理。
+- Joybuy 公开榜单连续浏览器导航会偶发重定向登录页；不要反复撞登录/风控。固定子榜 URL 可低频读取服务端公开 HTML；服装不在榜单侧栏，必须明确记录替代来源。
 - 详情页白名单拦截会改变既有 e2e 流程：`purchase_whitelisted` 后端默认 True 是有意设计（开发阶段放行），若把默认改 False 必须同步重写 purchase-funnel（先做 admin 白名单再购买）。
 - Playwright fill 后水合重置输入属 dev 模式已知竞态（helpers.js 有注）：结算表单用"fill+click+查 Pay now"自愈循环应对；生产构建不受影响。
 - 组件模板里静态 `src="/images/..."`（根绝对路径）会被 vite 模板资源转换当成模块 import：vitest 下报 `file:///images/logo.png` 参数错误，Nuxt dev 下报 Failed to resolve import。改用运行时绑定（`:src="常量"`），vitest 配置再加 `transformAssetUrls: false` 兜底。
@@ -201,6 +224,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/红价/图贴顶）
+
+- 实测真实站 Bestsellers 卡（首页楼层 261 宽 + 列表卡 267）：图全宽贴卡顶（无内边距、radius 由卡整体裁切）、文字区 6px 内边距、品牌粗体、标题 16px/500 行高 22px **两行截断（h44）**、红色价格粗体、40px 圆形加购钮、榜单卡无星级。
+- ProductCard 重写：结构改为图贴顶（`.product-card` overflow hidden radius 12，图 radius 0）+ `product-card__body` 内边距 8/6/6；标题 clamp 移入组件自身样式（`-webkit-line-clamp: 2`、line-height 22px、min-height 44px——此前依赖全局 `.truncate-2`，实测在卡内未生效出现三行硬切）；价格改红色（--colour-accent，1.125rem/700，与真实站红价一致，仍为单一原价规则）；榜单模式（rank>0）隐藏星级、可选 `viewed_count` 渲染 "x people viewed in 72 hours" 行（搜索接口暂无该字段=数据缺失，不编造）；徽章降级为价格旁小灰签。
+- 验证：vitest 45/45；eslint/prettier 通过；浏览器复核 titleClamp=2/标题高 44/五卡全部省略号结尾/红价/图贴顶/无星级 ✓；e2e 首页快照重基线 9/10（funnel 仍 D-14）。注意：dev 模式组件 CSS 经客户端 JS 注入，SSR HTML 中 grep 不到样式属正常；HMR 对样式改动偶发陈旧需重启 dev（今日两次）。
+
 ### 2026-11-04（续 4）：独立商品楼层并入畅销榜单（home v8）
 
 - 用户指出：心选品牌与畅销榜单之间的 6 个独立商品楼层（Kitchen Roll…/Food Cupboard/Beverages/Rice…/Small Kitchen Appliances/Instant Noodle——即爬取的 bestseller 分区）应属畅销榜单数据，不应单独铺开；真实站这些分区本来就是 Bestsellers 楼层的 tab 分区。
@@ -241,6 +270,25 @@
 - 浏览器量测复核：strip 40px 居中/#1A1A1A/标签 ✓、campaign y160==header bottom ✓、发现卡 radius16 带图 ✓、品牌 12 圆卡 50% 不可点击图加载 ✓、面板 hover bg #F7F7F7 fw600 黑色 + 子类目联动 ✓。
 
 ## 6. 验证记录
+
+### 2026-11-04 畅销榜单 11 类数据补齐（按验证纪律仅做针对性验证）
+
+- `ruff format` + `ruff check`（仅 4 个改动 Python 文件）：通过；顺带修复 `search_services.py`/`test_search.py` 原有 import 顺序，最终 `All checks passed`。
+- `.venv/Scripts/python.exe -m json.tool backend/catalog/fixtures/bestseller_demo_2026_11_04.json`：通过。
+- `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 2`：11/11 通过；MySQL 仅输出既有 3 条条件唯一约束警告。
+- 命令参数/fixture 调整后复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_bestseller_demo --verbosity 1`：1/1 通过，重复执行第二次为 0 new SPUs。
+- `vitest run storefront/components/home/HomeBestsellers.test.js --config storefront/vitest.config.js`：2/2 通过。
+- 实库 `load_bestseller_demo --per-category 3`：33 条导入成功，初次 1 图失败；修正坏源后 `--only-category clothing-accessories --per-category 3`：3 条、0 图失败。最终 ORM 核对：fixture 每类 3、33 个 SPU、33/33 gallery、本地图片缺失 `[]`。
+- 重启旧 `--noreload` 后端后，`GET /api/v1/search?category=beauty-personal-care&sort=rating_desc&page=1` 返回 3 条且每条 `image_path=/media/...`。
+- 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
+- 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
+- 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-04（续 5）：商品卡对齐真实榜单卡（两行省略/红价/图贴顶）
+
+- 实测真实站 Bestsellers 卡（首页楼层 261 宽 + 列表卡 267）：图全宽贴卡顶（无内边距、radius 由卡整体裁切）、文字区 6px 内边距、品牌粗体、标题 16px/500 行高 22px **两行截断（h44）**、红色价格粗体、40px 圆形加购钮、榜单卡无星级。
+- ProductCard 重写：结构改为图贴顶（`.product-card` overflow hidden radius 12，图 radius 0）+ `product-card__body` 内边距 8/6/6；标题 clamp 移入组件自身样式（`-webkit-line-clamp: 2`、line-height 22px、min-height 44px——此前依赖全局 `.truncate-2`，实测在卡内未生效出现三行硬切）；价格改红色（--colour-accent，1.125rem/700，与真实站红价一致，仍为单一原价规则）；榜单模式（rank>0）隐藏星级、可选 `viewed_count` 渲染 "x people viewed in 72 hours" 行（搜索接口暂无该字段=数据缺失，不编造）；徽章降级为价格旁小灰签。
+- 验证：vitest 45/45；eslint/prettier 通过；浏览器复核 titleClamp=2/标题高 44/五卡全部省略号结尾/红价/图贴顶/无星级 ✓；e2e 首页快照重基线 9/10（funnel 仍 D-14）。注意：dev 模式组件 CSS 经客户端 JS 注入，SSR HTML 中 grep 不到样式属正常；HMR 对样式改动偶发陈旧需重启 dev（今日两次）。
 
 ### 2026-11-04（续 4）：独立商品楼层并入畅销榜单（home v8）
 

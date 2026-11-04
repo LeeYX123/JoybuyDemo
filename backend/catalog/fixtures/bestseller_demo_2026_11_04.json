@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-04T17:00:00+08:00",
+  "source_system": "joybuy",
+  "market": "GB",
+  "currency": "GBP",
+  "notes": "Public-page demo evidence only. Clothing is sourced from the Fashion & Accessories channel floor because Joybuy's bestseller sidebar has no clothing parent list. Prices are crossed-off original prices when present, otherwise the sole visible price.",
+  "categories": [
+    {
+      "local_category": "home-living",
+      "source_locale": "zh-CN",
+      "source_parent": "家居用品",
+      "source_list": "清洁用品",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/清洁用品家居用品热门榜/36d17f355ae04fb69787587fc6fc32c6",
+      "products": [
+        {"rank": 1, "sku": "100647435", "title": "洁柔 厨房纸巾，加厚超强吸水厨房纸巾，湿水强韧不掉屑食品级纸卷，用于沥油、擦拭台面、清洁、备餐和擦手 - 2层 76张 (4包/提)", "brand": "洁柔", "source_url": "https://www.joybuy.co.uk/dp/洁柔-厨房纸巾加厚超强吸水厨房纸巾湿水强韧不掉屑食品级纸卷用于沥油擦拭台面清洁备餐和擦手-2层-76张-4包提/100647435", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/7798784/61098171980/192962/69f2ed98E7d800572/42b10752b5083d5e.png.webp", "original_price": "4.82", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10558956", "title": "JORDAN&JUDY 120cm拖把桶套装，轻量化设计，家庭清洁必备工具", "brand": "JORDAN&JUDY", "source_url": "https://www.joybuy.co.uk/dp/jordanjudy-120cm拖把桶套装轻量化设计家庭清洁必备工具/10558956", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/7667712/6109817105191/244707/6981cd3bE41e422ae/42b10752b5083d5e.jpg!q70.webp", "original_price": "9.25", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "100659156", "title": "洁柔 厨房纸巾 2层 65张（6卷/包）", "brand": "洁柔", "source_url": "https://www.joybuy.co.uk/dp/洁柔-厨房纸巾-2层-65张6卷包/100659156", "image_url": "https://images5.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/12884901888/4063232/610979662274/536612/69f1a613E43b89bd4/c22fb1ddfc67ea4d.jpg!q70.webp", "original_price": "9.99", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "electronics",
+      "source_locale": "zh-CN",
+      "source_parent": "数码电子",
+      "source_list": "办公设备",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/办公设备数码电子热门榜/2f44445a727c403ebfa9b46432684c56",
+      "products": [
+        {"rank": 1, "sku": "10323362", "title": "JOYBUY x 纵维立方 PLA基础打印耗材，1kg线盘，1.75mm直径，±0.02mm公差 - 黑色", "brand": "纵维立方", "source_url": "https://www.joybuy.co.uk/dp/joybuy-x-纵维立方-pla基础打印耗材1kg线盘175mm直径002mm公差-黑色/10323362", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/3276800/620722011239389/999963/6a880b3dE8e3ac939/42b10752b5083d5e.png.webp", "original_price": "9.99", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10288665", "title": "闪铸 × JOYBUY AD5X 多色 3D 打印机，具备 600 mm/s 高速打印、300 °C 热端、自动调平和柔性 PEI 打印板，安装空间为 220*220*220 mm", "brand": "闪铸", "source_url": "https://www.joybuy.co.uk/dp/闪铸-×-joybuy-ad5x-多色-3d/10288665", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/4128768/61098360155846/313376/6a21362eEe4526b48/42b10752b5083d5e.png.webp", "original_price": "369.00", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "10289686", "title": "闪铸科技× JOYBUY Adventurer 5M 3D 打印机，最高 600mm/s 高速打印，280°C 直接挤出机，打印尺寸 220x220x220mm", "brand": "闪铸", "source_url": "https://www.joybuy.co.uk/dp/闪铸科技×-joybuy-adventurer-5m-3d-打印机最高/10289686", "image_url": "https://images3.joy-sourcing.com/product/s135x135_jfsintlpro-000-com/t1/4294967296/4915200/610987106184232/176744/68e53a77E672f907d/4c765c6ab87a3a67.jpg!q70.webp", "original_price": "269.00", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "beauty-personal-care",
+      "source_locale": "zh-CN",
+      "source_parent": "美妆",
+      "source_list": "彩妆",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/彩妆美妆热门榜/1ede3e00bc884bc58c4d7b4a88d8129a",
+      "products": [
+        {"rank": 1, "sku": "100004340049346", "title": "心愿先生 免胶款假睫毛 摩登时刻系列泪汪汪 上镜无死角 无辜大眼睫", "brand": "心愿先生", "source_url": "https://www.joybuy.co.uk/dp/心愿先生-免胶款假睫毛-摩登时刻系列泪汪汪-上镜无死角-无辜大眼睫/100004340049346", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/4521984/61097966826601/657427/6a5de2a9E8e560af0/42b10752b5083d5e.jpg!q70.webp", "original_price": "12.99", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "100004200027108", "title": "橘朵新高光修容面部综合盘 01", "brand": "橘朵", "source_url": "https://www.joybuy.co.uk/dp/橘朵新高光修容面部综合盘-01/100004200027108", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/5046272/6109817767326/205259/6ac8756fE56932d29/42b10752b5083d5e.jpg!q70.webp", "original_price": "12.86", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "100010375163956", "title": "COLORKEY珂拉琪小金筷眉笔 02大地褐 防水防汗", "brand": "珂拉琪", "source_url": "https://www.joybuy.co.uk/dp/colorkey珂拉琪小金筷眉笔-02大地褐-防水防汗/100010375163956", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/4325376/62073701305198/126612/6a8e51d6E2800fd99/42b10752b5083d5e.jpg!q70.webp", "original_price": "7.45", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "small-home-appliances",
+      "source_locale": "zh-CN",
+      "source_parent": "家用电器",
+      "source_list": "小型厨房电器",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/小型厨房电器家用电器热门榜/5f46db6db180420bb7061083fae53ebb",
+      "products": [
+        {"rank": 1, "sku": "100002040003455", "title": "Tristar 多功能空气炸烤箱 - 10L，1800W，触摸屏，10种程序，洗碗机适用部件，不粘涂层，FR-6964", "brand": "Tristar", "source_url": "https://www.joybuy.co.uk/dp/tristar-多功能空气炸烤箱-10l1800w触摸屏10种程序洗碗机适用部件不粘涂层fr6964/100002040003455", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/6619136/61097966251272/690581/6a283e98E4e1261f6/42b10752b5083d5e.jpg!q70.webp", "original_price": "120.00", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "100627922", "title": "IAGREEA 便携式电煮锅 1.6 L，双电源多功能懒人锅，不粘涂层带防干烧保护，适用于拉面、意面、面条、蛋汤，宿舍/办公室适用（绿色）", "brand": "IAGREEA", "source_url": "https://www.joybuy.co.uk/dp/iagreea-便携式电煮锅-16-l双电源多功能懒人锅不粘涂层带防干烧保护适用于拉面意面面条蛋汤宿舍办公室适用绿色/100627922", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/1376256/101615961154742/1840160/699e77d4E1f1a9ffd/42b10752b5083d5e.png.webp", "original_price": "24.99", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "100006995081936", "title": "ochama 小绿锅 1.8L 电压力锅 1-3 人 陶瓷涂层内胆 火锅炖肉煮饭煲汤 把手可提 旋钮面板 70Kpa 高压锅 电火锅 电饭煲", "brand": "Ochama", "source_url": "https://www.joybuy.co.uk/dp/ochama-小绿锅-18l-电压力锅-13-人/100006995081936", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/3276800/62072201994972/451857/6acdfed4E3fda2f00/42b10752b5083d5e.png.webp", "original_price": "69.99", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "health-wellness",
+      "source_locale": "zh-CN",
+      "source_parent": "健康与保健",
+      "source_list": "营养品",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/营养品健康与保健热门榜/80a9872c549f49a79b553cbbd9209ce6",
+      "products": [
+        {"rank": 1, "sku": "10376371", "title": "Swanson Full Spectrum Coleus Forskohlii 体重管理 400mg 日常营养胶囊 - 60粒", "brand": "Swanson", "source_url": "https://www.joybuy.co.uk/dp/swanson-full-spectrum-coleus-forskohlii-体重管理/10376371", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/2490368/10161596115728/35867/68b8134fE77f247ce/42b10752b5083d5e.jpg!q70.webp", "original_price": "8.49", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "100336970", "title": "Zooki 脂质体维生素 B12 2500 微克能量支持液 - 10 毫升", "brand": "Zooki", "source_url": "https://www.joybuy.co.uk/dp/zooki-脂质体维生素-b12-2500-微克能量支持液-10/100336970", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/0/6109836061969/90952/696f50fcE1afecf9c/42b10752b5083d5e.jpg!q70.webp", "original_price": "2.49", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "10024506", "title": "Myprotein 布朗尼巧克力块 - 12 x 5 克", "brand": "Myprotein", "source_url": "https://www.joybuy.co.uk/dp/myprotein-布朗尼巧克力块-12-x-5-克/10024506", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/1638400/610981720232/105329/6959d9bbEae026ef9/42b10752b5083d5e.jpg!q70.webp", "original_price": "22.99", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "clothing-accessories",
+      "source_locale": "zh-CN",
+      "source_parent": "时装配饰频道",
+      "source_list": "爆款直降",
+      "source_kind": "channel_floor_substitute",
+      "source_list_url": "https://www.joybuy.co.uk/minihome/uk-minihp-clothing-footwear-acc-",
+      "products": [
+        {"rank": 1, "sku": "10489713", "title": "Under Armour Performance Tech 中性款3双装中筒袜 白色", "brand": "Under Armour", "source_url": "https://www.joybuy.co.uk/dp/under-armour-performance-tech-中性款3双装中筒袜-白色/10489713", "image_url": "https://images4.joy-sourcing.com/product/s194x194_jfsintlpro-000-product/t1/4294967296/1572864/61097966765647/246044/69428b20E76ff3585/42b10752b5083d5e.jpg!q70.webp", "original_price": "14.50", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "102098048", "title": "Boss 棉质平纹大 Logo 印花 T 恤 - 白色", "brand": "Boss", "source_url": "https://www.joybuy.co.uk/dp/boss-棉质平纹大-logo-印花-t-恤/102098048", "image_url": "https://images4.joy-sourcing.com/product/s194x194_jfsintlpro-000-product/t1/4294967296/2752512/620736142808/269263/69f03c46Ec1f4133a/42b10752b5083d5e.png.webp", "original_price": "59.00", "availability": "IN_STOCK"},
+        {"rank": 4, "sku": "10502884", "title": "彪马 Wardrobe Essentials 梭织短裤 3英寸 Puma Black", "brand": "PUMA", "source_url": "https://www.joybuy.co.uk/dp/彪马-wardrobe-essentials-梭织短裤-3英寸-puma/10502884", "image_url": "https://images4.joy-sourcing.com/product/s194x194_jfsintlpro-000-product/t1/4294967296/2752512/10161596161567/81092/696f3b12E49d66509/42b10752b5083d5e.jpg!q70.webp", "original_price": "44.00", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "computers-accessories",
+      "source_locale": "en-GB",
+      "source_parent": "Computers & Accessories",
+      "source_list": "Electronic Accessories",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/electronic-accessories/ccdaaebe36cb48f88f72a2af3c99c2d9",
+      "products": [
+        {"rank": 1, "sku": "10447471", "title": "Ochama EU Standard Universal Travel Adapter - Travel Plug Adapter - Multi-Country Available - USA Europe Australia UK China Germany", "brand": "Ochama", "source_url": "https://www.joybuy.co.uk/dp/ochama-eu-standard-universal-travel-adapter/10447471", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/5767168/62073712530439/536416/6ae88eb0Ecfec02f4/42b10752b5083d5e.png.webp", "original_price": "2.79", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10003659", "title": "Ochama AAA Batteries 10 Pieces, Alkaline Mercury-Free Eco-Friendly", "brand": "Ochama", "source_url": "https://www.joybuy.co.uk/dp/ochama-aaa-batteries-10-pieces-alkaline/10003659", "image_url": "https://images3.joy-sourcing.com/product/s135x135_jfsintlpro-000-da/t1/4294967296/7012352/1016145513830/182482/6798d2c4Ec6e7c34f/b853b8a46c93f496.jpg!q70.webp", "original_price": "2.29", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "10002698", "title": "HOCO J117 Esteem 5000mAh Power Bank - Magnetic - Black", "brand": "hoco.", "source_url": "https://www.joybuy.co.uk/dp/hoco-j117-esteem-5000mah-power-bank/10002698", "image_url": "https://images3.joy-sourcing.com/product/s135x135_jfsintlpro-000-da/t1/4294967296/196608/10161432276008/558778/67ab5d4fE75d5a465/b853b8a46c93f496.jpg!q70.webp", "original_price": "24.19", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "outdoor-sports",
+      "source_locale": "en-GB",
+      "source_parent": "Outdoor & Sports",
+      "source_list": "Sports Equipment",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/sports-equipment/749f51ef370b428b8e3575601dee5bfd",
+      "products": [
+        {"rank": 1, "sku": "100002485001401", "title": "Foldable 5-Mode Under Desk Treadmill 2.5HP Low Noise Motor with 9% Incline & KINOMAP App", "brand": "KeHot", "source_url": "https://www.joybuy.co.uk/dp/foldable-5mode-under-desk-treadmill-25hp/100002485001401", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/7864320/620737136730/531688/69c2242bE7c86ff42/42b10752b5083d5e.jpg!q70.webp", "original_price": "239.99", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10497112", "title": "Neuleb 3 Wheel Scooter for Kids Ages 3-10", "brand": "Neuleb", "source_url": "https://www.joybuy.co.uk/dp/neuleb-3-wheel-scooter-for-kids/10497112", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/1179648/101615961197186/198456/69a92443Ec12a207a/42b10752b5083d5e.jpg!q70.webp", "original_price": "39.09", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "10516793", "title": "ECOODA GT high-quality dual-ring fishing ring", "brand": "ECOODA", "source_url": "https://www.joybuy.co.uk/dp/ecooda-gt-highquality-dualring-fishing-ring/10516793", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/7929856/6109817101258/199518/698036a1Ef955266b/42b10752b5083d5e.jpg!q70.webp", "original_price": "3.00", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "pet-supplies",
+      "source_locale": "en-GB",
+      "source_parent": "Pet Supplies",
+      "source_list": "Cat Essentials",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/cat-essentials/237460271c6f4a1b81ca8d446ede22b4",
+      "products": [
+        {"rank": 1, "sku": "10010061", "title": "CATSAN Hygiene Non-Clumping Odour Control Cat Litter 20L", "brand": "CATSAN", "source_url": "https://www.joybuy.co.uk/dp/catsan-hygiene-nonclumping-odour-control-cat/10010061", "image_url": "https://images3.joy-sourcing.com/product/s135x135_jfsintlpro-000-com/t1/4294967296/2621440/1016159618193/620087/68b6afcdE287e51f9/4c765c6ab87a3a67.png.webp", "original_price": "12.89", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10000389", "title": "Whiskas 1+ Poultry Feasts in Jelly 40 x 85g (3.40kg)", "brand": "Whiskas", "source_url": "https://www.joybuy.co.uk/dp/whiskas-1-poultry-feasts-in-jelly/10000389", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/3473408/6109817211484/97868/68f0a529Eebef9895/42b10752b5083d5e.jpg!q70.webp", "original_price": "10.89", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "10436738", "title": "Ochama 4-in-1 Mixed Cat Litter, 2.6kg x 4 Packs", "brand": "Ochama", "source_url": "https://www.joybuy.co.uk/dp/ochama-4in1-mixed-cat-litter-26kg/10436738", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/5701632/620736103079/71819/69d86ca9Ea4c02815/42b10752b5083d5e.jpg!q70.webp", "original_price": "29.99", "availability": "IN_STOCK"}
+      ]
+    },
+    {
+      "local_category": "baby-toddler",
+      "source_locale": "en-GB",
+      "source_parent": "Baby",
+      "source_list": "Feeding",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/feeding/4a779b071e744fcf86f97c503c31702d",
+      "products": [
+        {"rank": 1, "sku": "100018940417708", "title": "8-in-1 Baby Bottle Warmer with Smart Temperature Control", "brand": "", "source_url": "https://www.joybuy.co.uk/dp/8in1-baby-bottle-warmer-smart-temperature/100018940417708", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/7995392/620722011305415/167376/6a8e5428E699b334e/42b10752b5083d5e.jpg!q70.webp", "original_price": "14.23", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "100027090801605", "title": "Nursing Pillow for Breastfeeding Moms with Adjustable Safety Strap", "brand": "", "source_url": "https://www.joybuy.co.uk/dp/nursing-pillow-for-breastfeeding-moms-multifunctional/100027090801605", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/2818048/61097966198321/1081477/6abcbf36E885b2506/42b10752b5083d5e.jpg!q70.webp", "original_price": "29.00", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "100511338", "title": "SEEDNUR Disposable Nursing Pads (100 Count)", "brand": "SEEDNUR", "source_url": "https://www.joybuy.co.uk/dp/seednur-disposable-nursing-pads-100-count/100511338", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/6225920/61098360320825/1054664/69d89ea2E0e41e327/42b10752b5083d5e.png.webp", "original_price": "7.15", "availability": "OUT_OF_STOCK"}
+      ]
+    },
+    {
+      "local_category": "games-accessories",
+      "source_locale": "en-GB",
+      "source_parent": "Gaming",
+      "source_list": "Game Consoles",
+      "source_kind": "bestseller",
+      "source_list_url": "https://www.joybuy.co.uk/promo/best-seller/game-consoles/aa440926ae734062a206d03d5234761a",
+      "products": [
+        {"rank": 1, "sku": "10534883", "title": "Sony PlayStation 5 Console, Digital Edition, Slim Version", "brand": "PlayStation", "source_url": "https://www.joybuy.co.uk/dp/sony-playstation-5-console-digital-edition/10534883", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/5111808/61097966155532/550260/6a212d4eE3ba37d11/42b10752b5083d5e.png.webp", "original_price": "519.99", "availability": "IN_STOCK"},
+        {"rank": 2, "sku": "10337096", "title": "Sony PlayStation 5 Console - Disc Edition - Slim", "brand": "PlayStation", "source_url": "https://www.joybuy.co.uk/dp/sony-playstation-5-console-disc-edition/10337096", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/6684672/10161432272160161/58505/68a7508cE4e529fb8/42b10752b5083d5e.jpg!q70.webp", "original_price": "569.99", "availability": "IN_STOCK"},
+        {"rank": 3, "sku": "100025805147727", "title": "PlayStation 5 Console - PlayStation Plus Premium 24-Month Subscription Bundle", "brand": "PlayStation", "source_url": "https://www.joybuy.co.uk/dp/playstation-5-console-playstation-plus-premium/100025805147727", "image_url": "https://images4.joy-sourcing.com/product/s135x135_jfsintlpro-000-product/t1/4294967296/4980736/61097966503920/196790/6abe77f7Eb2eb7bcf/42b10752b5083d5e.png.webp", "original_price": "769.99", "availability": "IN_STOCK"}
+      ]
+    }
+  ]
+}

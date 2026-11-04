@@ -1,13 +1,11 @@
 import unittest
 from decimal import Decimal
 
+from django.contrib.contenttypes.models import ContentType
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
-from merchants.services import get_import_fallback_merchant
-from offers.models import Currency, Market, Offer
-from offers.services import import_offer_from_source
-from reviews.services import upsert_source_review
 
 from catalog.models import ProductSearchDocument, Spu
 from catalog.product_services import (
@@ -20,6 +18,11 @@ from catalog.search_services import (
     search_documents,
 )
 from catalog.services import create_local_category
+from media.models import MediaAsset, MediaUsage
+from merchants.services import get_import_fallback_merchant
+from offers.models import Currency, Market, Offer
+from offers.services import import_offer_from_source
+from reviews.services import upsert_source_review
 
 
 class SearchFixtureBase(TestCase):
@@ -196,6 +199,42 @@ class SearchServiceTests(SearchFixtureBase):
         self.assertEqual(empty["total"], 0)
         self.assertEqual(empty["items"], [])
         self.assertEqual(empty["total_pages"], 0)
+
+    def test_search_returns_first_local_gallery_image_without_n_plus_one(self):
+        document = self.seed_product(
+            source_id="pictured",
+            title="Pictured Product",
+            price="12.00",
+            category=self.electronics,
+        )
+        now = timezone.now()
+        asset = MediaAsset.objects.create(
+            sha256="a" * 64,
+            kind=MediaAsset.Kind.PRODUCT,
+            relative_path="products/original/aa/aa/pictured.webp",
+            mime_type="image/webp",
+            extension="webp",
+            byte_size=12,
+            first_seen_at=now,
+            last_seen_at=now,
+            download_status=MediaAsset.DownloadStatus.DOWNLOADED,
+        )
+        MediaUsage.objects.create(
+            asset=asset,
+            content_type=ContentType.objects.get_for_model(Spu),
+            object_id=document.spu_id,
+            role="gallery",
+            sort_order=0,
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            result = search_documents(market=self.market, category=self.electronics)
+
+        self.assertEqual(
+            result["items"][0]["image_path"],
+            "/media/products/original/aa/aa/pictured.webp",
+        )
+        self.assertLessEqual(len(queries), 5)
 
 
 @unittest.skipUnless(connection.vendor == "mysql", "EXPLAIN plan shape is MySQL-specific")

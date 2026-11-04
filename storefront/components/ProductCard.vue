@@ -3,11 +3,14 @@ import { computed } from 'vue'
 
 import { formatDisplayPrice, isDeliveryLabel } from '../utils/display'
 
-// Shared product card for CMS pools and search/category listings, aligned to
-// the joybuy.co.uk card spec: white 12px-radius card, square 12px-radius
-// image, brand in 700, two-line 16px/500 title, single original price and a
-// 40px round add button bottom-right (docs/12 §4/§5; badges suppressed per
-// requirement 5-6). Optional rank badge for bestseller floors (§5).
+// Shared product card aligned to the joybuy.co.uk card spec (sampled from
+// the Bestsellers floor, 2026-11-04): white 12px-radius card, full-width
+// square image, 6px text inset, brand in bold, a two-line 16px/500 title
+// clamped with an ellipsis, red price on the left with a 40px round add
+// button on the right. Bestseller mode (`rank` > 0) shows the positional
+// badge and hides the rating stars like the real floor; marketing labels
+// never render (requirement 5-6). An optional `viewed_count` on the product
+// renders the real floor's "viewed in 72 hours" line when data exists.
 const props = defineProps({
   product: {
     type: Object,
@@ -35,6 +38,11 @@ const brand = computed(() => {
   return typeof name === 'string' ? name : ''
 })
 
+const viewed = computed(() => {
+  const count = Number(props.product.viewed_count ?? 0)
+  return count > 0 ? `${count} people viewed in 72 hours` : ''
+})
+
 const badge = computed(() => {
   // Marketing labels (新客福利/优惠x%/送达/满减/自营) never render (req 5-6);
   // delivery-estimate labels are suppressed by the display rule too.
@@ -59,38 +67,42 @@ const badge = computed(() => {
       <img v-if="image" :src="image" alt="" loading="lazy" />
       <BaseSkeleton v-else variant="block" />
     </NuxtLink>
-    <p v-if="brand" class="product-card__brand">{{ brand }}</p>
-    <h3 class="product-card__title truncate-2">
-      <NuxtLink class="product-card__title-link" :to="href">{{ props.product.title }}</NuxtLink>
-    </h3>
-    <BaseRatingStars
-      v-if="props.product.rating || props.product.rating_average"
-      :rating="Number(props.product.rating_average ?? props.product.rating ?? 0)"
-      :count="Number(props.product.review_count ?? 0)"
-      show-count
-    />
-    <div class="product-card__footer">
-      <p v-if="price" class="product-card__price">{{ price }}</p>
-      <NuxtLink class="product-card__add" :to="href" aria-label="Add to cart">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
-        </svg>
-      </NuxtLink>
+    <div class="product-card__body">
+      <p v-if="brand" class="product-card__brand">{{ brand }}</p>
+      <h3 class="product-card__title">
+        <NuxtLink class="product-card__title-link" :to="href">{{ props.product.title }}</NuxtLink>
+      </h3>
+      <p v-if="viewed" class="product-card__viewed">{{ viewed }}</p>
+      <BaseRatingStars
+        v-if="props.rank === 0 && (props.product.rating || props.product.rating_average)"
+        :rating="Number(props.product.rating_average ?? props.product.rating ?? 0)"
+        :count="Number(props.product.review_count ?? 0)"
+        show-count
+      />
+      <div class="product-card__footer">
+        <p v-if="price" class="product-card__price">{{ price }}</p>
+        <span v-if="badge" class="product-card__badge">{{ badge }}</span>
+        <NuxtLink class="product-card__add" :to="href" aria-label="Add to cart">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
+          </svg>
+        </NuxtLink>
+      </div>
     </div>
-    <BaseBadge v-if="badge" tone="promo">{{ badge }}</BaseBadge>
   </article>
 </template>
 
 <style scoped>
+/* Card: white, 12px radius; the image sits flush at the top and the text
+ * block is inset by the real site's 6px. */
 .product-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   height: 100%;
-  padding: var(--space-3);
   border-radius: 12px;
   background: var(--colour-surface);
+  overflow: hidden;
 }
 
 .product-card__rank {
@@ -103,11 +115,11 @@ const badge = computed(() => {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-md) 0 var(--radius-md) 0;
+  border-radius: 8px 0;
   background: #e4e6eb;
   color: var(--colour-text);
   font-size: 1.125rem;
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-regular);
 }
 
 .product-card__wish {
@@ -133,15 +145,25 @@ const badge = computed(() => {
 
 .product-card__media {
   display: block;
+  flex-shrink: 0;
 }
 
-.product-card__media img {
+.product-card__media img,
+.product-card__media :deep(*) {
   display: block;
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--colour-surface-soft);
+}
+
+.product-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 6px 6px;
+  flex: 1;
 }
 
 .product-card__brand {
@@ -154,10 +176,17 @@ const badge = computed(() => {
   color: var(--colour-text);
 }
 
+/* Two-line clamp with ellipsis (real card: 16px/500, 22px line height). */
 .product-card__title {
-  min-height: 2.75rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 44px;
+  margin: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  line-height: 22px;
   color: var(--colour-text);
 }
 
@@ -166,18 +195,34 @@ const badge = computed(() => {
   color: inherit;
 }
 
+.product-card__viewed {
+  margin: 0;
+  color: var(--colour-muted);
+  font-size: 13px;
+}
+
 .product-card__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   margin-top: auto;
+  padding-top: var(--space-2);
 }
 
+/* Price: red like the real card (original-price-only display rule). */
 .product-card__price {
-  color: var(--colour-text);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
+  color: var(--colour-accent);
+  font-size: 1.125rem;
+  font-weight: var(--font-weight-bold);
+}
+
+.product-card__badge {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--colour-surface-muted);
+  color: var(--colour-text-secondary);
+  font-size: var(--font-size-xs);
 }
 
 .product-card__add {
