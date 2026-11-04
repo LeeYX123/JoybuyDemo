@@ -58,8 +58,8 @@ const heading = computed(() => {
 
 const sortOptions = [
   { value: 'relevance', label: 'Relevance' },
-  { value: 'price_asc', label: 'Price: low to high' },
-  { value: 'price_desc', label: 'Price: high to low' },
+  { value: 'price_desc', label: 'Price: High to low' },
+  { value: 'price_asc', label: 'Price: Low to high' },
   { value: 'rating_desc', label: 'Top rated' },
   { value: 'newest', label: 'Newest' },
 ]
@@ -317,17 +317,22 @@ useHead(() => ({ title: heading.value }))
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--font-size-sm);
-  color: var(--colour-muted);
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  color: #1a1a1a;
 }
 
+/* Trigger matches the real dropdown: dark 1px border, 4px radius, 40px. */
 .sort-control select {
   min-height: 40px;
   padding: 0 var(--space-3);
-  border: 1px solid var(--colour-border);
+  border: 1px solid #1a1a1a;
   border-radius: var(--radius-sm);
   font: inherit;
+  font-size: 16px;
+  color: #1a1a1a;
   background: var(--colour-surface);
+  cursor: pointer;
 }
 
 .listing-grid {

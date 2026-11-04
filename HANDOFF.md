@@ -225,6 +225,12 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-05（续）：列表页排序控件对齐真实站
+
+- 实测真实站（/s?k=noodles）：标签 "Sort by:" 16px/500 #1A1A1A；触发器白底 **1px #1A1A1A 深色描边**、radius 4、高 40、16px 字；展开菜单白底、选中项浅灰高亮；选项顺序 Relevance → Price: High to low → Price: Low to high（→ Sales: High to low，后端无销量排序）。
+- ProductListing：标签 16px/500 深色（原 14px 灰）；select 描边改 #1A1A1A（原浅灰）、16px 字、cursor pointer；选项文案与顺序对齐（price_desc 提前，"Price: High to low/Low to high" 大小写对齐真实站），保留 Top rated/Newest（真实站有 Sales 排序但后端暂无——差异记录）。
+- 验证：vitest 45/45；浏览器复核 label/trigger/选项序列 ✓（截图）。
+
 ### 2026-11-05（续）：列表页三处（头部无缝/图区四角圆角/侧栏分割线）
 
 - 头部与页面间隙：原 `.listing-page-bg` margin-top:0 未压过 `.app-main > *`（实测 bgTop 184 vs header 160，灰缝来自 app-main）。改为"一整块+内边距"：wrapper `margin-block: 0`（`.listing-page-bg.listing-page-bg` 双类名提权重）+ `padding-block: 32px 24px`，`.listing-layout` margin 归零。实测 bgTop==headerBottom==160 ✓。
@@ -345,6 +351,12 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05（续）：列表页排序控件对齐真实站
+
+- 实测真实站（/s?k=noodles）：标签 "Sort by:" 16px/500 #1A1A1A；触发器白底 **1px #1A1A1A 深色描边**、radius 4、高 40、16px 字；展开菜单白底、选中项浅灰高亮；选项顺序 Relevance → Price: High to low → Price: Low to high（→ Sales: High to low，后端无销量排序）。
+- ProductListing：标签 16px/500 深色（原 14px 灰）；select 描边改 #1A1A1A（原浅灰）、16px 字、cursor pointer；选项文案与顺序对齐（price_desc 提前，"Price: High to low/Low to high" 大小写对齐真实站），保留 Top rated/Newest（真实站有 Sales 排序但后端暂无——差异记录）。
+- 验证：vitest 45/45；浏览器复核 label/trigger/选项序列 ✓（截图）。
 
 ### 2026-11-05（续）：列表页三处（头部无缝/图区四角圆角/侧栏分割线）
 
