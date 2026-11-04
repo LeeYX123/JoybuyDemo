@@ -225,6 +225,13 @@
 - 不要并行执行 Nuxt 生产构建与 Playwright 浏览器测试：构建开始时会清理 `.nuxt`，可使复用中的开发服务器短暂丢失开发清单并导致水合竞态。正确顺序是先完成 `pnpm build:frontends`，再单独运行 `pnpm test:e2e`。
 - 所有前端资源必须本地托管，不得引用 CDN。
 
+### 2026-11-05（续）：列表页三处（头部无缝/图区四角圆角/侧栏分割线）
+
+- 头部与页面间隙：原 `.listing-page-bg` margin-top:0 未压过 `.app-main > *`（实测 bgTop 184 vs header 160，灰缝来自 app-main）。改为"一整块+内边距"：wrapper `margin-block: 0`（`.listing-page-bg.listing-page-bg` 双类名提权重）+ `padding-block: 32px 24px`，`.listing-layout` margin 归零。实测 bgTop==headerBottom==160 ✓。
+- 图片区四角圆角遗漏点：`.product-card__media` 容器（#F5F5F5 底）自身 radius 0——img 虽 12px 但灰底方块外露。补容器 radius 12px。其它位置已排查：发现卡 12px、榜单页共用 ProductCard ✓。
+- 侧栏 Category/Price 之间加 1px 分割线（`.filter-card + .filter-card` border-top）。
+- 验证：vitest 45/45；浏览器复核三项 ✓（截图）。
+
 ### 2026-11-05：/s 列表页全幅白底
 
 - 用户要求 /s?category= 页面背景 #FFFFFF。ProductListing 根部加全幅包裹 `.listing-page-bg`（margin-inline calc(50%-50vw)、bg #FFFFFF、覆写 .app-main 子项顶距）——/s、/search、/c 三个路由统一生效。
@@ -338,6 +345,13 @@
 - 内置浏览器抽查 `/promo/best-seller?category=beauty-personal-care`：3 个中文商品标题和 3 张本地图均可见，图片 `complete=true`、`naturalWidth=135`；抽查 `games-accessories`：3 个 PlayStation 标题和 3 张本地图均加载成功。
 - 续验（用户说“继续”后）：确认当前 8000 端口已经是 2026-11-04 18:03 启动的新后端进程，没有重复重启；再次请求美妆榜接口仍为 3 条、3 条均带本地 `/media/...` 首图；内置浏览器再次核对游戏榜 3 张图均 `complete=true`、`naturalWidth=135`；复跑 `.venv/Scripts/python.exe backend/manage.py test catalog.tests.test_search catalog.tests.test_bestseller_demo --verbosity 1`，11/11 通过（仅既有 3 条 MySQL 条件唯一约束警告）。
 - 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05（续）：列表页三处（头部无缝/图区四角圆角/侧栏分割线）
+
+- 头部与页面间隙：原 `.listing-page-bg` margin-top:0 未压过 `.app-main > *`（实测 bgTop 184 vs header 160，灰缝来自 app-main）。改为"一整块+内边距"：wrapper `margin-block: 0`（`.listing-page-bg.listing-page-bg` 双类名提权重）+ `padding-block: 32px 24px`，`.listing-layout` margin 归零。实测 bgTop==headerBottom==160 ✓。
+- 图片区四角圆角遗漏点：`.product-card__media` 容器（#F5F5F5 底）自身 radius 0——img 虽 12px 但灰底方块外露。补容器 radius 12px。其它位置已排查：发现卡 12px、榜单页共用 ProductCard ✓。
+- 侧栏 Category/Price 之间加 1px 分割线（`.filter-card + .filter-card` border-top）。
+- 验证：vitest 45/45；浏览器复核三项 ✓（截图）。
 
 ### 2026-11-05：/s 列表页全幅白底
 

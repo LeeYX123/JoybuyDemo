@@ -192,10 +192,13 @@ useHead(() => ({ title: heading.value }))
 <style scoped>
 /* Full-bleed white: escapes the centered container so ultra-wide strips are
  * white too (scoped attr beats the .app-main > * margin rule). */
-.listing-page-bg {
-  margin-top: 0;
+.listing-page-bg.listing-page-bg {
+  /* One flush white block: zero outer margin (doubled class beats the
+   * .app-main > * margin rule), spacing comes from the inner padding. */
+  margin-block: 0;
   margin-inline: calc(50% - 50vw);
   background: #ffffff;
+  padding-block: 32px 24px;
 }
 
 /* Two-column layout per the joybuy /s?k= spec: 234px sidebar + results. */
@@ -203,7 +206,7 @@ useHead(() => ({ title: heading.value }))
   display: grid;
   grid-template-columns: 234px minmax(0, 1fr);
   gap: 24px;
-  margin-block: 24px;
+  margin-block: 0;
 }
 
 .listing-sidebar {
@@ -219,6 +222,12 @@ useHead(() => ({ title: heading.value }))
   padding: var(--space-3);
   border-radius: 8px;
   background: var(--colour-surface);
+}
+
+/* Divider between the Category and Price sections (real sidebar). */
+.filter-card + .filter-card {
+  border-top: 1px solid var(--colour-border);
+  border-radius: 0 0 8px 8px;
 }
 
 .filter-card__title {

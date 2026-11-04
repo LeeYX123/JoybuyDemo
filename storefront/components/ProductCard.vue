@@ -151,7 +151,10 @@ const badge = computed(() => {
 /* Image area bg #F5F5F5; multiply blend turns baked-in white backgrounds
  * into the same grey while transparent images show it through directly. */
 .product-card__media {
+  /* The grey area itself must be rounded on all four corners (the img is
+   * rounded too, so no square grey corners peek out anywhere). */
   background: #f5f5f5;
+  border-radius: 12px;
 }
 
 .product-card__media img,
