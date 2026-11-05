@@ -90,3 +90,6 @@ var/crawl_exports/
 backend/*-pipeline-job/
 backend/*-3-v4/
 backend/*-v4/
+
+# 需求原型与开发文档（本地留存，不入库）
+商家端及平台管理端文档/
