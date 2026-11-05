@@ -18,6 +18,9 @@
 8. [按 Codex 会话拆分的实施工作包](./08-implementation-work-packages.md)
 9. [爬虫任务品类与配额页面改造方案](./09-crawler-category-task-redesign.md)
 10. [多语言商品内容与国家市场设计](./10-multilingual-content-and-market-design.md)
+11. [真实 Joybuy 站点产品功能分析](./11-joybuy-co-uk-product-features.md)
+12. [真实 Joybuy 站点界面还原规格](./12-joybuy-co-uk-ui-spec.md)
+13. [数据库表结构与字段说明](./13-database-schema.md)
 
 ## 决策优先级
 

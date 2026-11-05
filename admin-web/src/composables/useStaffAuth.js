@@ -53,6 +53,16 @@ export function useStaffAuth() {
     return permissions.value.has(code)
   }
 
+  // A16：只有查看权限的角色也要能看到菜单（写操作由接口 403 兜底）。
+  function canView(module) {
+    return permissions.value.has(`${module}.view`) || permissions.value.has(`${module}.manage`)
+  }
+
+  // 模块目录里的访问/写权限判定，供页面按权限隐藏按钮。
+  function canWrite(permission) {
+    return permissions.value.has(permission)
+  }
+
   return {
     session,
     isAuthenticated,
@@ -63,5 +73,7 @@ export function useStaffAuth() {
     login,
     logout,
     hasPermission,
+    canView,
+    canWrite,
   }
 }

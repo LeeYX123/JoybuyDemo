@@ -15,6 +15,10 @@ append price snapshots.
 """
 
 import dataclasses
+import urllib.request
+
+from django.db import transaction
+from django.utils import timezone
 
 from catalog.models import Brand, CategoryMapping, SpuTranslation
 from catalog.override_services import apply_source_field_values
@@ -22,13 +26,10 @@ from catalog.product_services import (
     get_or_create_sku_from_source,
     get_or_create_spu_from_source,
 )
-from django.db import transaction
-from django.utils import timezone
+from crawler_control.models import StagingProduct
 from merchants.services import resolve_import_merchant
 from offers.models import Offer
 from offers.services import import_offer_from_source
-
-from crawler_control.models import StagingProduct
 
 IMPORT_REQUIRED_FIELDS = ("source_id", "title", "currency", "current_price", "skus")
 
@@ -40,8 +41,8 @@ class StagingImportRejected(RuntimeError):
         self.staging = staging
         self.missing_fields = missing_fields
         super().__init__(
-            f"Staging {staging.source_system}:{staging.source_id} is missing: "
-            f"{', '.join(missing_fields)}."
+            f"暂存记录 {staging.source_system}:{staging.source_id} 缺少必填字段："
+            f"{', '.join(missing_fields)}。"
         )
 
 
@@ -83,6 +84,65 @@ def _resolve_local_category(source_category):
     return mapping.local_category if mapping else None
 
 
+_IMPORT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
+
+
+def _fetch_image_bytes(url: str, *, timeout_seconds: float = 30.0) -> bytes | None:
+    if not url or not url.startswith(("http://", "https://")):
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": _IMPORT_UA})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            if response.status != 200:
+                return None
+            return response.read(10 * 1024 * 1024)
+    except Exception:  # noqa: BLE001 - gallery download is best-effort
+        return None
+
+
+def _import_gallery_images(spu, payload, *, observed_at) -> dict:
+    """Download the payload gallery into the media library (role=gallery).
+
+    Best-effort: a failed CDN object is reported per-URL and never blocks
+    the product import. Highest-resolution variants are expected to have
+    been resolved by the crawler already.
+    """
+
+    from media.pipeline import process_media_bytes
+    from media.variants import link_asset_to_object
+
+    summary = {"downloaded": 0, "failed": 0}
+    urls = [url for url in (payload.get("image_urls") or []) if url]
+    for sort_order, url in enumerate(urls):
+        data = _fetch_image_bytes(url)
+        if not data:
+            summary["failed"] += 1
+            continue
+        mime_type = "image/webp" if ".webp" in url else "image/jpeg"
+        try:
+            asset, _created = process_media_bytes(
+                data,
+                kind="PRODUCT",
+                mime_type=mime_type,
+                source_url=url,
+                target=spu,
+                role="gallery",
+                observed_at=observed_at,
+            )
+            usage, _usage_created = link_asset_to_object(
+                asset, spu, role="gallery", sort_order=sort_order
+            )
+            usage.sort_order = sort_order
+            usage.save(update_fields=["sort_order"])
+            summary["downloaded"] += 1
+        except Exception:  # noqa: BLE001
+            summary["failed"] += 1
+    return summary
+
+
 def import_staging_product(
     staging: StagingProduct,
     *,
@@ -98,7 +158,7 @@ def import_staging_product(
     if missing:
         staging.missing_fields = sorted(set(missing))
         staging.status = StagingProduct.Status.REJECTED
-        staging.error_message = f"Missing required fields: {', '.join(missing)}."
+        staging.error_message = f"缺少必填字段：{', '.join(missing)}。"
         staging.save(update_fields=["missing_fields", "status", "error_message", "updated_at"])
         raise StagingImportRejected(staging, missing)
 
@@ -191,6 +251,8 @@ def import_staging_product(
                 observed_at=observed_at,
             )
 
+        gallery_summary = _import_gallery_images(spu, payload, observed_at=observed_at)
+
         staging.missing_fields = sorted(set(payload.get("missing_fields") or []))
         staging.status = StagingProduct.Status.IMPORTED
         staging.imported_at = observed_at
@@ -199,6 +261,7 @@ def import_staging_product(
             "spu_public_id": str(spu.public_id),
             "sku_count": len(skus),
             "offer_count": len(offers),
+            "gallery_images": gallery_summary,
         }
         staging.save(
             update_fields=[

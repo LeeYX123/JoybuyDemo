@@ -3,6 +3,28 @@ import uuid
 from django.db import models
 
 
+class CrawlerAccountGroup(models.Model):
+    """A named pool of crawler accounts (2026-11-05).
+
+    The name was previously free text on ``CrawlerAccount``, so a group only
+    existed while some account happened to carry that string and the admin UI
+    had to type it. It is a real row now: groups can be created before any
+    account uses them, and the UI can offer a dropdown.
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+    note = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "crawler_account_group"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
 class CrawlerAccount(models.Model):
     """Metadata for one authorized crawler account and its stored session.
 
@@ -40,6 +62,9 @@ class CrawlerAccount(models.Model):
     rate_limit_per_minute = models.PositiveIntegerField(null=True, blank=True)
     concurrency_limit = models.PositiveSmallIntegerField(null=True, blank=True)
     note = models.CharField(max_length=500, blank=True, default="")
+    # Soft delete: the row disappears from management screens and its stored
+    # session is destroyed, but historical runs keep the account label.
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -148,6 +173,16 @@ class CrawlJob(models.Model):
     concurrency = models.PositiveSmallIntegerField(default=1)
     rate_limit_per_minute = models.PositiveIntegerField(null=True, blank=True)
     account_group = models.CharField(max_length=100, default="default")
+    # 指定账号（2026-11-05）：为空时按 account_group 自动挑「最近最少使用」的
+    # 可用账号；有值时优先用这个账号。建任务时可选，避免所有任务都只会落到
+    # default 组。
+    account = models.ForeignKey(
+        "CrawlerAccount",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_crawl_jobs",
+    )
     failure_strategy = models.CharField(
         max_length=16,
         choices=FailureStrategy.choices,

@@ -17,10 +17,6 @@ from catalog.override_services import (  # noqa: E402
     resolve_effective_value,
     review_local_override,
 )
-from merchants.models import Merchant  # noqa: E402
-from merchants.services import get_import_fallback_merchant  # noqa: E402
-from offers.models import Offer  # noqa: E402
-
 from crawler_control.import_services import (  # noqa: E402
     StagingImportRejected,
     import_staging_product,
@@ -28,6 +24,9 @@ from crawler_control.import_services import (  # noqa: E402
 from crawler_control.models import StagingProduct  # noqa: E402
 from crawler_control.services import start_run  # noqa: E402
 from crawler_control.tests.test_crawler_control_domain import CrawlerControlTestBase  # noqa: E402
+from merchants.models import Merchant  # noqa: E402
+from merchants.services import get_import_fallback_merchant  # noqa: E402
+from offers.models import Offer  # noqa: E402
 
 SCRAPY_AVAILABLE = find_spec("scrapy") is not None
 FIXTURES_DIR = CRAWLER_DIR / "fixtures"

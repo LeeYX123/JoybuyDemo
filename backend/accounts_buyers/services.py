@@ -200,3 +200,108 @@ def delete_buyer_session_cookie(response) -> None:
         path="/",  # SSR pages need the session cookie on page routes too
         samesite="Lax",
     )
+
+
+# --------------------------------------------------------------------------
+# 白名单余额账户（平台管理后台 A13 / A14）
+# --------------------------------------------------------------------------
+
+
+class BuyerWalletError(Exception):
+    def __init__(self, code: str, message: str, status_code: int = 400):
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        super().__init__(message)
+
+
+def record_buyer_wallet_entry(
+    *,
+    account,
+    kind: str,
+    amount,
+    note: str = "",
+    order=None,
+    operator_label: str = "",
+    idempotency_key: str | None = None,
+):
+    """写一条买家余额流水并同步余额；幂等键相同即直接返回旧流水。"""
+
+    from decimal import Decimal
+
+    from django.db import transaction
+    from django.utils import timezone
+
+    from accounts_buyers.models import BuyerAccount, BuyerWalletEntry
+
+    amount = Decimal(str(amount or 0)).quantize(Decimal("0.0001"))
+    if amount == 0:
+        raise BuyerWalletError("AMOUNT_REQUIRED", "金额不能为 0。")
+
+    with transaction.atomic():
+        if idempotency_key:
+            existing = BuyerWalletEntry.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                return existing
+
+        locked = BuyerAccount.objects.select_for_update().get(pk=account.pk)
+        before = locked.balance
+        after = (before + amount).quantize(Decimal("0.0001"))
+        if after < 0:
+            raise BuyerWalletError("INSUFFICIENT_BUYER_BALANCE", "该账号余额不足。")
+
+        entry = BuyerWalletEntry.objects.create(
+            account=locked,
+            kind=kind,
+            amount=amount,
+            balance_before=before,
+            balance_after=after,
+            currency="CNY",
+            order=order,
+            operator_label=operator_label,
+            note=note,
+            idempotency_key=idempotency_key,
+            occurred_at=timezone.now(),
+        )
+        locked.balance = after
+        locked.save(update_fields=["balance", "updated_at"])
+        return entry
+
+
+def recharge_buyer(account, *, amount, operator_label: str = "", note: str = ""):
+    from decimal import Decimal
+
+    from accounts_buyers.models import BuyerWalletEntry
+
+    value = Decimal(str(amount or 0))
+    if value <= 0:
+        raise BuyerWalletError("AMOUNT_INVALID", "充值金额必须大于 0。")
+    if not account.purchase_whitelisted:
+        raise BuyerWalletError("NOT_WHITELISTED", "只有启用中的白名单账号可以充值。")
+    return record_buyer_wallet_entry(
+        account=account,
+        kind=BuyerWalletEntry.Kind.RECHARGE,
+        amount=value,
+        note=note or "平台充值",
+        operator_label=operator_label,
+    )
+
+
+def adjust_buyer_balance(account, *, target_balance, operator_label: str = "", note: str = ""):
+    from decimal import Decimal
+
+    from accounts_buyers.models import BuyerWalletEntry
+
+    target = Decimal(str(target_balance or 0)).quantize(Decimal("0.0001"))
+    if target < 0:
+        raise BuyerWalletError("BALANCE_NEGATIVE", "余额不能为负。")
+    delta = target - account.balance
+    if delta == 0:
+        raise BuyerWalletError("NO_CHANGE", "余额未发生变化。")
+    return record_buyer_wallet_entry(
+        account=account,
+        kind=BuyerWalletEntry.Kind.ADJUSTMENT,
+        amount=delta,
+        note=note or "平台调整余额",
+        operator_label=operator_label,
+    )

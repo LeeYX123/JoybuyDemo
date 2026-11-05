@@ -1,12 +1,12 @@
 import time
 
-from catalog.models import Spu
-from catalog.product_services import get_or_create_spu_from_source
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from accounts_buyers.models import BuyerAccount, Favourite, RecentlyViewed
+from catalog.models import Spu
+from catalog.product_services import get_or_create_spu_from_source
 
 
 class ActivityApiTests(TestCase):

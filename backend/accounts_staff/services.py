@@ -164,16 +164,23 @@ def set_staff_session_cookie(response, token: str) -> None:
         httponly=True,
         secure=settings.SESSION_COOKIE_SECURE,
         samesite="Lax",
-        path="/api/v1/admin/",
+        path=settings.STAFF_SESSION_COOKIE_PATH,
     )
 
 
 def delete_staff_session_cookie(response) -> None:
     response.delete_cookie(
         key=settings.STAFF_SESSION_COOKIE_NAME,
-        path="/api/v1/admin/",
+        path=settings.STAFF_SESSION_COOKIE_PATH,
         samesite="Lax",
     )
+    # 兼容历史 Cookie（旧作用域 /api/v1/admin/），避免退出后仍有同名残留。
+    for legacy_path in getattr(settings, "STAFF_SESSION_COOKIE_LEGACY_PATHS", ()):
+        response.delete_cookie(
+            key=settings.STAFF_SESSION_COOKIE_NAME,
+            path=legacy_path,
+            samesite="Lax",
+        )
 
 
 def rate_limit_key(email: str, ip_address: str) -> str:
@@ -204,6 +211,16 @@ def clear_rate_limit(key: str) -> None:
 
 
 def get_staff_permission_codes(staff: StaffAccount) -> set[str]:
-    return set(
+    """员工持有的权限码集合。
+
+    ``X.manage`` 会隐式带上 ``X.view``：A16 规定「操作必须同时具备查看」，
+    在读取侧统一补齐，避免每个调用点各判一次。
+    """
+
+    codes = set(
         staff.roles.values_list("permissions__code", flat=True).exclude(permissions__code=None)
     )
+    for code in list(codes):
+        if code.endswith(".manage"):
+            codes.add(f"{code[: -len('.manage')]}.view")
+    return codes

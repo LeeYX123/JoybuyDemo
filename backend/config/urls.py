@@ -1,3 +1,7 @@
+from django.conf import settings
+from django.contrib import admin
+from django.urls import path, re_path
+
 from accounts_buyers import activity_views
 from accounts_buyers.urls import urlpatterns as buyer_urlpatterns
 from accounts_staff.urls import urlpatterns as staff_urlpatterns
@@ -6,10 +10,8 @@ from catalog import detail_views, search_views
 from checkout import checkout_views
 from common import admin_views, views
 from content import views as content_views
-from django.conf import settings
-from django.contrib import admin
-from django.urls import path, re_path
 from media.views import serve_media_file
+from merchant_ops.urls import urlpatterns as merchant_ops_urlpatterns
 from orders import order_views
 from reviews import review_views
 
@@ -55,6 +57,26 @@ urlpatterns = [
         name="admin-inventory-adjust",
     ),
     path("api/v1/admin/reviews", admin_views.AdminReviewsView.as_view(), name="admin-reviews"),
+    path(
+        "api/v1/admin/crawlers/accounts",
+        admin_views.AdminCrawlerAccountsView.as_view(),
+        name="admin-crawl-accounts",
+    ),
+    path(
+        "api/v1/admin/crawlers/accounts/<uuid:account_public_id>/actions",
+        admin_views.AdminCrawlerAccountActionsView.as_view(),
+        name="admin-crawl-account-actions",
+    ),
+    path(
+        "api/v1/admin/crawlers/accounts/<uuid:account_public_id>",
+        admin_views.AdminCrawlerAccountDetailView.as_view(),
+        name="admin-crawl-account-detail",
+    ),
+    path(
+        "api/v1/admin/crawlers/account-groups",
+        admin_views.AdminCrawlerAccountGroupsView.as_view(),
+        name="admin-crawl-account-groups",
+    ),
     path(
         "api/v1/admin/crawlers/source-tree",
         admin_views.AdminCrawlerSourceTreeView.as_view(),
@@ -102,6 +124,7 @@ urlpatterns = [
     ),
     *buyer_urlpatterns,
     *staff_urlpatterns,
+    *merchant_ops_urlpatterns,
     path("api/v1/<path:unmatched>", views.api_not_found, name="api-not-found"),
 ]
 

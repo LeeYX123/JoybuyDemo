@@ -29,6 +29,8 @@ def _normalize_source_nodes(nodes: Iterable[dict]) -> tuple[dict[str, dict], lis
         normalized[source_id] = {
             "source_id": source_id,
             "name": name,
+            # 中文名只影响展示，不参与结构哈希与版本判定。
+            "name_zh": str(raw_node.get("name_zh", "")).strip(),
             "parent_source_id": parent_source_id or None,
             "source_url": str(raw_node.get("source_url", "")).strip(),
             "sort_order": int(raw_node.get("sort_order", 0)),
@@ -130,7 +132,13 @@ def save_source_category_version(
             if not created:
                 identity.is_active = True
                 identity.last_seen_at = captured_at
-                identity.save(update_fields=["is_active", "last_seen_at", "updated_at"])
+                if node_zh := normalized_nodes[source_id]["name_zh"]:
+                    identity.name_zh = node_zh
+                    identity.save(
+                        update_fields=["is_active", "last_seen_at", "name_zh", "updated_at"]
+                    )
+                else:
+                    identity.save(update_fields=["is_active", "last_seen_at", "updated_at"])
             identities[source_id] = identity
 
         SourceCategory.objects.filter(catalog=catalog).exclude(
@@ -148,6 +156,7 @@ def save_source_category_version(
                 category=identity,
                 parent=parent,
                 name=node["name"],
+                name_zh=node["name_zh"] or identity.name_zh,
                 source_url=node["source_url"],
                 sort_order=node["sort_order"],
                 depth=parent.depth + 1 if parent else 0,

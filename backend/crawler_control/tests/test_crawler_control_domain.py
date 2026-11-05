@@ -4,15 +4,13 @@ import tempfile
 from datetime import timedelta
 from pathlib import Path
 
-from catalog.models import SourceCatalog, SourceCategory, SourceCategoryTreeVersion
-from catalog.services import save_source_category_version
 from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from offers.models import Currency, Market
 
+from catalog.models import SourceCatalog, SourceCategory, SourceCategoryTreeVersion
+from catalog.services import save_source_category_version
 from crawler_control.domain import (
-    CrawlAccountStateInvalid,
     CrawlJobParamsInvalid,
     CrawlJobStateInvalid,
     CrawlRunStateInvalid,
@@ -41,6 +39,7 @@ from crawler_control.services import (
     start_run,
     update_run_progress,
 )
+from offers.models import Currency, Market
 
 
 class CrawlerControlTestBase(TestCase):
@@ -80,7 +79,16 @@ class CrawlerControlTestBase(TestCase):
         account = create_crawler_account(
             label=label or f"Account {group}", account_group=group, **kwargs
         )
-        record_account_session(account, {"joybuy_session": "session-token-value"})
+        # A real login stores cookies; an account whose session carries no
+        # cookies is deliberately NOT selectable for a run (2026-11-05).
+        record_account_session(
+            account,
+            {
+                "cookies": [
+                    {"name": "pinId", "value": "session-token-value", "domain": ".joybuy.co.uk"}
+                ]
+            },
+        )
         return account
 
     def make_job(self, **kwargs):
@@ -319,12 +327,16 @@ class CrawlerAccountTests(CrawlerControlTestBase):
         account = run.account
         mark_session_expired(account)
 
+        # 2026-11-05: runs may start unauthenticated — a group with no
+        # valid session yields an account-less run instead of an error,
+        # and the run records an explicit unauthenticated event.
         other = create_crawler_account(label="Expired only", account_group="solo")
         record_account_session(other, {"joybuy_session": "t"})
         mark_session_expired(other)
         job2 = self.make_job(name="Solo group job", account_group="solo")
-        with self.assertRaises(CrawlAccountStateInvalid):
-            start_run(job2)
+        unauthenticated = start_run(job2)
+        self.assertIsNone(unauthenticated.account)
+        self.assertTrue(unauthenticated.events.filter(code="RUN_UNAUTHENTICATED").exists())
 
         record_account_session(account, {"joybuy_session": "refreshed"})
         account.refresh_from_db()
@@ -349,8 +361,10 @@ class CrawlerAccountTests(CrawlerControlTestBase):
         self.assertFalse(account.is_selectable)
 
         same_group_job = self.make_job(name="Second job")
-        with self.assertRaises(CrawlAccountStateInvalid):
-            start_run(same_group_job)
+        # 2026-11-05: with the only account risk-paused, a new run starts
+        # unauthenticated (logged-out first) instead of being refused.
+        unauthenticated = start_run(same_group_job)
+        self.assertIsNone(unauthenticated.account)
 
         reactivate_account(account, note="Cleared by human review")
         account.refresh_from_db()
@@ -359,7 +373,7 @@ class CrawlerAccountTests(CrawlerControlTestBase):
         resumed = resume_run(run)
         self.assertEqual(resumed.status, CrawlRun.Status.RUNNING)
         self.assertEqual(resumed.account, account)
-        fresh_run = start_run(same_group_job)
+        fresh_run = start_run(self.make_job(name="Third job"))
         self.assertEqual(fresh_run.account, account)
         self.assertNotEqual(fresh_run.pk, run.pk)
 

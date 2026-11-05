@@ -41,7 +41,6 @@ from crawler_control.services import (
     create_crawl_job,
     create_crawler_account,
     mark_job_ready,
-    record_account_session,
     start_run,
 )
 from media.models import MediaUsage
@@ -112,14 +111,12 @@ class Command(BaseCommand):
         existing = CrawlRun.objects.filter(job__source_catalog=catalog).order_by("-pk").first()
         if existing is not None and existing.job.status == CrawlJob.Status.RUNNING:
             return existing
-        # start_run selects an account with a valid session from the job's
-        # group; the demo import reuses the public homepage, so a marker
-        # session blob is enough (no credentials involved).
-        account = CrawlerAccount.objects.filter(account_group="default").first()
-        if account is None:
-            account = create_crawler_account(label="Joybuy UK demo", account_group="default")
-        if account.session_status != CrawlerAccount.SessionStatus.VALID:
-            record_account_session(account, {"joybuy_session": "public-bestsellers-demo"})
+        # Fixture import only — it never crawls, so it must not fake a
+        # "VALID" session (that made accounts look logged-in with zero
+        # cookies; 2026-11-05 login-wall bug). start_run allows runs
+        # without an account.
+        if not CrawlerAccount.objects.filter(account_group="default").exists():
+            create_crawler_account(label="Joybuy UK demo", account_group="default")
         job = create_crawl_job(
             name="Joybuy UK bestsellers demo import",
             market=market,
@@ -171,9 +168,7 @@ class Command(BaseCommand):
 
         category_ids = set(TAB_CATEGORY_MAP.keys())
         catalog, categories = self.ensure_source(category_ids)
-        fallback_category = categories.get(
-            "Food Cupboard", next(iter(categories.values()))
-        )
+        fallback_category = categories.get("Food Cupboard", next(iter(categories.values())))
         run = self.ensure_run(catalog, fallback_category, market)
 
         imported = 0

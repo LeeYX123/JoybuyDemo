@@ -6,13 +6,10 @@ CRAWLER_DIR = Path(__file__).resolve().parents[3] / "crawler"
 if str(CRAWLER_DIR) not in sys.path:
     sys.path.insert(0, str(CRAWLER_DIR))
 
+from django.utils import timezone  # noqa: E402
+
 from catalog.override_services import resolve_effective_value  # noqa: E402
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source  # noqa: E402
-from django.utils import timezone  # noqa: E402
-from merchants.services import get_import_fallback_merchant  # noqa: E402
-from offers.models import Offer  # noqa: E402
-from offers.services import import_offer_from_source  # noqa: E402
-
 from crawler_control.domain import CrawlerControlError  # noqa: E402
 from crawler_control.import_services import import_staging_product  # noqa: E402
 from crawler_control.models import (  # noqa: E402
@@ -34,6 +31,9 @@ from crawler_control.services import (  # noqa: E402
     start_run,
 )
 from crawler_control.tests.test_crawler_control_domain import CrawlerControlTestBase  # noqa: E402
+from merchants.services import get_import_fallback_merchant  # noqa: E402
+from offers.models import Offer  # noqa: E402
+from offers.services import import_offer_from_source  # noqa: E402
 
 
 class QualityGateTests(CrawlerControlTestBase):
@@ -279,9 +279,14 @@ class CircuitBreakerTests(CrawlerControlTestBase):
 
     def test_reactivation_after_review_allows_new_runs(self):
         account = self.make_account(label="Reactivate me")
+        second = self.make_account(group="default", label="Second risk hit")
         job = self.make_job(name="Reactivate job")
         start_run(job)
+        # The breaker trips at 2 distinct risk-controlled accounts in a
+        # window; unauthenticated starts (2026-11-05) are unaffected, so
+        # both accounts must be flagged for a genuine trip.
         flag_account_risk_control(account, reason="Suspicious pace")
+        flag_account_risk_control(second, reason="Suspicious pace")
         with self.assertRaises(CrawlerControlError):
             start_run(self.make_job(name="Blocked while tripped"))
         reset_circuit_breaker(reason="Cleared by ops")

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "Home Appliances",
+    "source_id": "minihome:UK-Mini-HP-Home-Appliances",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Home-Appliances",
+    "children": []
+  },
+  {
+    "name": "Electronics",
+    "source_id": "minihome:UK-Mini-HP-Electronics",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Electronics",
+    "children": []
+  },
+  {
+    "name": "Pets",
+    "source_id": "minihome:UK-Mini-HP-Pets",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Pets",
+    "children": []
+  },
+  {
+    "name": "TV & Audio",
+    "source_id": "minihome:UK-Mini-HP-TV",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-TV",
+    "children": []
+  },
+  {
+    "name": "Beauty",
+    "source_id": "minihome:UK-Mini-HP-Beauty",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Beauty",
+    "children": []
+  },
+  {
+    "name": "Gaming",
+    "source_id": "minihome:UK-Mini-HP-Gaming",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Gaming",
+    "children": []
+  },
+  {
+    "name": "Food & Drinks",
+    "source_id": "minihome:UK-Mini-HP-Joymart",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Joymart",
+    "children": []
+  },
+  {
+    "name": "Home & Living",
+    "source_id": "minihome:UK-Mini-HP-Home-Living",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Home-Living",
+    "children": []
+  },
+  {
+    "name": "Everyday Essentials",
+    "source_id": "minihome:uk-mini-hp-everyday-essentials",
+    "source_url": "https://www.joybuy.co.uk/minihome/uk-mini-hp-everyday-essentials",
+    "children": []
+  },
+  {
+    "name": "Toys, Baby and Kids",
+    "source_id": "minihome:UK-Mini-HP-Toys-Baby-and-Kids",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Toys-Baby-and-Kids",
+    "children": []
+  },
+  {
+    "name": "Clothing, Footwear & Acc.",
+    "source_id": "minihome:uk-minihp-clothing-footwear-acc-",
+    "source_url": "https://www.joybuy.co.uk/minihome/uk-minihp-clothing-footwear-acc-",
+    "children": []
+  },
+  {
+    "name": "Health & Wellness",
+    "source_id": "minihome:UK-Mini-HP-Health-and-Wellness",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Health-and-Wellness",
+    "children": []
+  },
+  {
+    "name": "Automotive",
+    "source_id": "minihome:UK-Mini-HP-Automotive",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Automotive",
+    "children": []
+  },
+  {
+    "name": "World Foods",
+    "source_id": "minihome:UK-Mini-HP-World-Foods",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-World-Foods",
+    "children": []
+  }
+]

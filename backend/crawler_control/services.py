@@ -7,12 +7,12 @@ import secrets
 from datetime import timedelta
 from pathlib import Path
 
-from catalog.models import SourceCategorySnapshot, SourceCategoryTreeVersion
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from catalog.models import SourceCategorySnapshot, SourceCategoryTreeVersion
 from crawler_control.domain import (
     CrawlAccountStateInvalid,
     CrawlJobParamsInvalid,
@@ -23,11 +23,12 @@ from crawler_control.domain import (
     RiskControlPaused,
 )
 from crawler_control.models import (
+    CrawlerAccount,
+    CrawlerAccountGroup,
     CrawlJob,
     CrawlJobSourceSelection,
     CrawlRun,
     CrawlRunEvent,
-    CrawlerAccount,
     RawResponse,
 )
 
@@ -111,6 +112,29 @@ def mark_session_expired(account: CrawlerAccount, *, observed_at=None):
     return account
 
 
+def ensure_account_group(name: str) -> CrawlerAccountGroup:
+    """Get or create a group row; the group list must never lose a name."""
+
+    cleaned = (name or "").strip() or "default"
+    group, _ = CrawlerAccountGroup.objects.get_or_create(name=cleaned)
+    return group
+
+
+def create_account_group(*, name: str, note: str = "") -> CrawlerAccountGroup:
+    """Create an empty group so it can be chosen before accounts exist."""
+
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise CrawlAccountStateInvalid("账号组名称必填。")
+    if CrawlerAccountGroup.objects.filter(name=cleaned).exists():
+        raise CrawlAccountStateInvalid(f"账号组「{cleaned}」已存在。")
+    return CrawlerAccountGroup.objects.create(name=cleaned, note=(note or "").strip()[:200])
+
+
+def list_account_groups() -> list[CrawlerAccountGroup]:
+    return list(CrawlerAccountGroup.objects.all())
+
+
 def create_crawler_account(
     *,
     label: str,
@@ -121,13 +145,75 @@ def create_crawler_account(
 ) -> CrawlerAccount:
     if not label.strip():
         raise CrawlAccountStateInvalid("A crawler account label is required.")
+    group = ensure_account_group(account_group)
     return CrawlerAccount.objects.create(
         label=label.strip(),
-        account_group=account_group.strip() or "default",
+        account_group=group.name,
         rate_limit_per_minute=rate_limit_per_minute,
         concurrency_limit=concurrency_limit,
         note=note.strip(),
     )
+
+
+def update_crawler_account(
+    account: CrawlerAccount,
+    *,
+    label=None,
+    account_group=None,
+    note=None,
+) -> CrawlerAccount:
+    """Edit the operator-facing fields; the stored session is left alone."""
+
+    if account.deleted_at is not None:
+        raise CrawlAccountStateInvalid("该账号已删除，不能编辑。")
+    fields = []
+    if label is not None:
+        cleaned = str(label).strip()
+        if not cleaned:
+            raise CrawlAccountStateInvalid("账号名称不能为空。")
+        account.label = cleaned[:120]
+        fields.append("label")
+    if account_group is not None:
+        account.account_group = ensure_account_group(str(account_group)).name
+        fields.append("account_group")
+    if note is not None:
+        account.note = str(note).strip()[:500]
+        fields.append("note")
+    if not fields:
+        return account
+    account.save(update_fields=[*fields, "updated_at"])
+    return account
+
+
+def delete_crawler_account(account: CrawlerAccount, *, reason: str = "") -> CrawlerAccount:
+    """Soft delete: hide the account, destroy its session, keep run history.
+
+    A hard delete would null out ``CrawlRun.account`` and erase which identity
+    a past run used, so the row stays and only the credentials are dropped.
+    """
+
+    if account.deleted_at is not None:
+        return account
+    if CrawlRun.objects.filter(account=account, status=CrawlRun.Status.RUNNING).exists():
+        raise CrawlAccountStateInvalid("该账号正在被运行中的任务使用，请先暂停或取消任务再删除。")
+    account.deleted_at = timezone.now()
+    account.status = CrawlerAccount.Status.DISABLED
+    account.session_status = CrawlerAccount.SessionStatus.UNKNOWN
+    account.session_cipher = ""
+    account.risk_reason = ""
+    account.note = (reason or account.note)[:500]
+    account.save(
+        update_fields=[
+            "deleted_at",
+            "status",
+            "session_status",
+            "session_cipher",
+            "risk_reason",
+            "note",
+            "updated_at",
+        ]
+    )
+    return account
 
 
 def flag_account_risk_control(account: CrawlerAccount, *, reason: str, observed_at=None):
@@ -190,6 +276,107 @@ def reactivate_account(account: CrawlerAccount, *, note: str = "", observed_at=N
     return account
 
 
+def _session_has_cookies(account) -> bool:
+    """True when the stored session actually contains replayable cookies.
+
+    ``session_status=VALID`` on its own proves nothing: a session blob
+    written by a fixture/placeholder (e.g. ``{"joybuy_session": "..."}``)
+    is "valid" but carries zero cookies, so a run bound to it crawls
+    anonymously while looking authenticated. That exact case produced
+    login walls on 2026-11-05.
+    """
+
+    try:
+        payload = load_account_session(account)
+    except Exception:  # noqa: BLE001 - undecryptable = unusable
+        return False
+    cookies = payload.get("cookies") if isinstance(payload, dict) else None
+    return any(
+        str(cookie.get("name") or "").strip()
+        for cookie in (cookies or [])
+        if isinstance(cookie, dict)
+    )
+
+
+def _account_unusable_reason(account) -> str:
+    """Chinese reason why an account cannot carry a crawl ('' when usable)."""
+
+    if account is None:
+        return "没有可用账号"
+    if account.status != CrawlerAccount.Status.ACTIVE:
+        return f"账号状态为 {account.status}"
+    if account.session_status != CrawlerAccount.SessionStatus.VALID:
+        return f"会话状态为 {account.session_status}"
+    if not account.session_cipher:
+        return "没有保存会话"
+    if not _session_has_cookies(account):
+        return "会话里没有可用 Cookie，需要重新登录"
+    return ""
+
+
+def _account_is_usable(account) -> bool:
+    """An account can carry a crawl only when it is active and has cookies."""
+
+    return not _account_unusable_reason(account)
+
+
+def _resolve_account_for_run(job: CrawlJob):
+    """Pinned account first, then the group's least-recently-used account.
+
+    Returns ``(account, note)``: ``note`` is a Chinese explanation when the
+    pinned account could not be used, so the run log says *why* a different
+    account (or none at all) was picked instead of failing silently.
+    """
+
+    pinned = job.account
+    if pinned is None:
+        return _select_account_for_run(job.account_group), ""
+    if _account_is_usable(pinned):
+        return pinned, ""
+    fallback = _select_account_for_run(job.account_group)
+    tail = (
+        f"已改按账号组「{job.account_group}」自动选择。"
+        if fallback is not None
+        else "组内也没有可用账号，本轮改为匿名抓取。"
+    )
+    return (
+        fallback,
+        f"任务指定的账号「{pinned.label}」当前不可用（{_account_unusable_reason(pinned)}），{tail}",
+    )
+
+
+def usable_accounts_for_run(job: CrawlJob) -> list[CrawlerAccount]:
+    """Accounts a run may rotate through: pinned first, then the group.
+
+    2026-11-05 (user decision): a crawl may spread its work across several
+    accounts instead of holding one identity. Only accounts that really
+    carry cookies are offered — a placeholder session would look
+    authenticated while crawling anonymously.
+    """
+
+    pooled: list[CrawlerAccount] = []
+    seen: set[int] = set()
+    if job.account_id and _account_is_usable(job.account):
+        pooled.append(job.account)
+        seen.add(job.account_id)
+    candidates = (
+        CrawlerAccount.objects.filter(
+            account_group=job.account_group,
+            status=CrawlerAccount.Status.ACTIVE,
+            session_status=CrawlerAccount.SessionStatus.VALID,
+            deleted_at__isnull=True,
+        )
+        .exclude(pk=job.account_id)
+        .order_by("last_used_at", "pk")[:50]
+    )
+    for account in candidates:
+        if account.pk in seen or not _account_is_usable(account):
+            continue
+        pooled.append(account)
+        seen.add(account.pk)
+    return pooled
+
+
 def _select_account_for_run(account_group: str) -> CrawlerAccount | None:
     """Pick the least-recently-used selectable account, or None.
 
@@ -199,15 +386,83 @@ def _select_account_for_run(account_group: str) -> CrawlerAccount | None:
     demands a login (requirement: try logged-out first).
     """
 
-    return (
-        CrawlerAccount.objects.filter(
-            account_group=account_group,
-            status=CrawlerAccount.Status.ACTIVE,
-            session_status=CrawlerAccount.SessionStatus.VALID,
+    candidates = CrawlerAccount.objects.filter(
+        account_group=account_group,
+        status=CrawlerAccount.Status.ACTIVE,
+        session_status=CrawlerAccount.SessionStatus.VALID,
+        deleted_at__isnull=True,
+    ).order_by("last_used_at", "pk")[:20]
+    for account in candidates:
+        # A "VALID" session with no cookies is not usable — picking it would
+        # produce an anonymous crawl that looks authenticated.
+        if _account_is_usable(account):
+            return account
+    return None
+
+
+def set_account_status(account: CrawlerAccount, *, status: str) -> CrawlerAccount:
+    """Admin enable/disable; risk-paused accounts must go through review."""
+
+    if status not in {CrawlerAccount.Status.ACTIVE, CrawlerAccount.Status.DISABLED}:
+        raise CrawlAccountStateInvalid("Only ACTIVE or DISABLED can be set directly.")
+    if account.status == CrawlerAccount.Status.PAUSED_RISK_CONTROL:
+        raise CrawlAccountStateInvalid(
+            "A risk-paused account must be reactivated through human review."
         )
-        .order_by("last_used_at", "pk")
-        .first()
+    account.status = status
+    account.save(update_fields=["status", "updated_at"])
+    return account
+
+
+def verify_account_session(account: CrawlerAccount) -> dict:
+    """Lightweight session check: render the homepage with stored cookies.
+
+    Signed in = the real homepage's VISIBLE text no longer shows the
+    Sign in button (scripts still mention it; same rule as the login
+    command). Marks the account expired when the check fails.
+    """
+
+    observed_at = timezone.now()
+    try:
+        cookies = load_account_session(account).get("cookies") or []
+    except CrawlSessionSecretInvalid:
+        return {"verified": False, "reason": "NO_SESSION"}
+    if not cookies:
+        return {"verified": False, "reason": "NO_SESSION"}
+
+    import sys
+    from pathlib import Path
+
+    crawler_dir = str(Path(__file__).resolve().parents[2] / "crawler")
+    if crawler_dir not in sys.path:
+        sys.path.insert(0, crawler_dir)
+    from joybuy_crawler.render import _visible_text, render_page
+
+    page = render_page(
+        "https://www.joybuy.co.uk/",
+        cookies=cookies,
+        headless=True,
+        wait_seconds=4,
     )
+    evidence = {"cookie_count": len(cookies)}
+    if page.error or not page.html:
+        return {"verified": False, "reason": f"RENDER_FAILED: {page.error[:200]}", **evidence}
+    if page.risk_control:
+        # Never count a blocked page as a session failure.
+        return {"verified": False, "reason": "RISK_CONTROL_BLOCKED", **evidence}
+    logged_in = "sign in" not in _visible_text(page.html).lower()
+    if logged_in:
+        account.last_verified_at = observed_at
+        account.session_status = CrawlerAccount.SessionStatus.VALID
+        account.save(update_fields=["last_verified_at", "session_status", "updated_at"])
+        return {
+            "verified": True,
+            "reason": "",
+            **evidence,
+            "detail": "在隔离无头浏览器中加载了该账号存储的加密 Cookie，页面已无 Sign in 按钮。",
+        }
+    mark_session_expired(account, observed_at=observed_at)
+    return {"verified": False, "reason": "SESSION_EXPIRED", **evidence}
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +503,7 @@ def create_crawl_job(
     concurrency: int = 1,
     rate_limit_per_minute=None,
     account_group: str = "default",
+    account=None,
     failure_strategy: str = CrawlJob.FailureStrategy.PAUSE,
     allow_manual_resume: bool = True,
     download_product_media: bool = True,
@@ -375,6 +631,7 @@ def create_crawl_job(
             concurrency=concurrency,
             rate_limit_per_minute=rate_limit_per_minute,
             account_group=account_group.strip() or "default",
+            account=account,
             failure_strategy=failure_strategy,
             allow_manual_resume=allow_manual_resume,
             created_by=created_by,
@@ -486,7 +743,7 @@ def start_run(job: CrawlJob, *, started_at=None) -> CrawlRun:
         }:
             raise CrawlJobStateInvalid(f"Job in status {job.status} cannot start a run.")
         _transition_job(job, CrawlJob.Status.RUNNING)
-        account = _select_account_for_run(job.account_group)
+        account, account_note = _resolve_account_for_run(job)
         if account is not None:
             account.last_used_at = started_at
             account.save(update_fields=["last_used_at", "updated_at"])
@@ -497,13 +754,30 @@ def start_run(job: CrawlJob, *, started_at=None) -> CrawlRun:
             params_snapshot=_job_params_snapshot(job),
             started_at=started_at,
         )
+        if account_note:
+            record_run_event(
+                run,
+                level=CrawlRunEvent.Level.WARNING,
+                code="ACCOUNT_FALLBACK",
+                message=account_note,
+            )
         if account is None:
             record_run_event(
                 run,
                 level=CrawlRunEvent.Level.INFO,
                 code="RUN_UNAUTHENTICATED",
-                message="No crawler account with a valid session in this group; "
-                "the run starts without a stored session (logged-out first).",
+                message="本账号组内没有可用会话的爬虫账号，本轮以未登录状态启动"
+                "（先按匿名流程抓取）。",
+            )
+        else:
+            # Making the account visible in the run log is the point: ops must
+            # be able to tell at a glance whether the crawl carried a session.
+            record_run_event(
+                run,
+                level=CrawlRunEvent.Level.INFO,
+                code="RUN_ACCOUNT_SELECTED",
+                message=f"本轮使用爬虫账号「{account.label}」"
+                f"（账号组 {account.account_group}），每次请求都会带上该账号的会话 Cookie。",
             )
         return run
 

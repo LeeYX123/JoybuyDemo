@@ -1,12 +1,12 @@
 import json
 
-from accounts_staff.models import PlatformRole, StaffAccount
-from accounts_staff.services import current_totp_code, provision_totp_device
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.test import Client, TestCase
 from django.utils import timezone
 
+from accounts_staff.models import PlatformRole, StaffAccount
+from accounts_staff.services import current_totp_code, provision_totp_device
 from merchants.models import (
     Merchant,
     MerchantMembership,

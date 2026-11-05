@@ -17,6 +17,11 @@ NEWSPIDER_MODULE = "joybuy_crawler.spiders"
 # Honour the authorisation scope: robots.txt and low default rates.
 ROBOTSTXT_OBEY = True
 DOWNLOAD_DELAY = float(os.getenv("CRAWL_DOWNLOAD_DELAY", "2.0"))
+# Every inter-request gap is randomised to 0.5x–1.5x DOWNLOAD_DELAY. A
+# fixed interval is itself a fingerprint: an exactly-2.000s cadence is
+# trivially distinguishable from a human session, so the jitter is what
+# keeps the crawl polite-looking rather than the absolute delay value.
+RANDOMIZE_DOWNLOAD_DELAY = True
 CONCURRENT_REQUESTS = int(os.getenv("CRAWL_CONCURRENT_REQUESTS", "2"))
 CONCURRENT_REQUESTS_PER_DOMAIN = int(os.getenv("CRAWL_CONCURRENT_PER_DOMAIN", "2"))
 DOWNLOAD_TIMEOUT = int(os.getenv("CRAWL_DOWNLOAD_TIMEOUT", "60"))
@@ -33,10 +38,36 @@ AUTOTHROTTLE_START_DELAY = float(os.getenv("CRAWL_AUTOTHROTTLE_START", "2.0"))
 AUTOTHROTTLE_MAX_DELAY = float(os.getenv("CRAWL_AUTOTHROTTLE_MAX", "30.0"))
 AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
 
-HTTPCACHE_ENABLED = os.getenv("CRAWL_HTTPCACHE_ENABLED", "true").strip().lower() == "true"
+# Multi-account rotation (2026-11-05, operator decision): one crawl spreads
+# its requests across the account pool instead of holding a single identity.
+# Each stint draws a fresh random budget, so the switch cadence is not a
+# fixed period. Set CRAWL_ACCOUNT_ROTATION=false to pin the first account.
+CRAWL_ACCOUNT_ROTATION_ENABLED = (
+    os.getenv("CRAWL_ACCOUNT_ROTATION", "true").strip().lower() == "true"
+)
+CRAWL_ACCOUNT_ROTATE_MIN_SECONDS = float(
+    os.getenv("CRAWL_ACCOUNT_ROTATE_MIN_SECONDS", "300")
+)
+CRAWL_ACCOUNT_ROTATE_MAX_SECONDS = float(
+    os.getenv("CRAWL_ACCOUNT_ROTATE_MAX_SECONDS", "900")
+)
+CRAWL_ACCOUNT_ROTATE_MIN_REQUESTS = int(
+    os.getenv("CRAWL_ACCOUNT_ROTATE_MIN_REQUESTS", "20")
+)
+CRAWL_ACCOUNT_ROTATE_MAX_REQUESTS = int(
+    os.getenv("CRAWL_ACCOUNT_ROTATE_MAX_REQUESTS", "60")
+)
+
+HTTPCACHE_ENABLED = (
+    os.getenv("CRAWL_HTTPCACHE_ENABLED", "true").strip().lower() == "true"
+)
 HTTPCACHE_EXPIRATION_SECS = int(os.getenv("CRAWL_HTTPCACHE_EXPIRATION_SECS", "21600"))
 HTTPCACHE_DIR = str(VAR_ROOT / "cache" / "scrapy")
 HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+# DummyPolicy (the default) caches 307 redirects, and the cache key ignores
+# cookies — so an anonymous "/login" bounce would be replayed to every later
+# run, including authenticated ones. Only successful pages are cached now.
+HTTPCACHE_POLICY = "joybuy_crawler.cache_policy.SuccessOnlyCachePolicy"
 
 COOKIES_ENABLED = True
 DEFAULT_REQUEST_HEADERS = {
@@ -56,7 +87,7 @@ LOG_FORMAT = "%(levelname)s %(message)s"
 
 # Scrapy runs outside manage.py; wire Django before pipelines import models.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-import django  # noqa: E402
+import django
 
 django.setup()
 

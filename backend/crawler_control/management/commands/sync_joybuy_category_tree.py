@@ -20,10 +20,12 @@ Examples::
 
 import json
 import sys
+import time
 from pathlib import Path
 
-from catalog.models import SourceCatalog
 from django.core.management.base import BaseCommand
+
+from catalog.models import SourceCatalog
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 if str(REPOSITORY_ROOT / "crawler") not in sys.path:
@@ -105,11 +107,36 @@ class Command(BaseCommand):
             payload = json.loads(Path(options["from_json"]).read_text(encoding="utf-8"))
             return self._json_to_nodes(payload)
         from joybuy_crawler.category_menu import capture_category_tree
+        from joybuy_crawler.render import reset_browser_profile
 
-        return capture_category_tree(
-            headless=not options["headed"],
-            fetch_children=not options["no_children"],
-        )
+        # Live evidence (2026-11-05): a warm browser profile gets served a
+        # degraded homepage variant without the category row; a fresh
+        # profile receives the full SSR payload. The tree sync is a manual
+        # command, so it starts from a clean profile every run.
+        reset_browser_profile()
+
+        # The site rate-limits bursts with transient 403s; cooldown and
+        # retry instead of hammering (docs/05 §7.3: never bypass, wait it
+        # out or let a human verify in a headed window).
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                return capture_category_tree(
+                    headless=not options["headed"],
+                    fetch_children=not options["no_children"],
+                )
+            except RuntimeError as exc:
+                if "risk-control" not in str(exc):
+                    raise
+                last_error = exc
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Attempt {attempt}/3 blocked by risk control; "
+                        "cooling down 60s (docs/05 §7.3)..."
+                    )
+                )
+                time.sleep(60)
+        raise last_error
 
     def _nodes_to_json(self, nodes) -> list[dict]:
         return [

@@ -1,230 +1,327 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 
-import AdminTable from '@/components/AdminTable.vue'
-import { adminGet, adminWrite } from '@/composables/useAdminApi'
-import { actionLabel, valueLabel } from '@/lib/locale'
+import AppDrawer from '@/components/AppDrawer.vue'
+import AppModal from '@/components/AppModal.vue'
+import AppPager from '@/components/AppPager.vue'
+import { adminWrite } from '@/composables/useAdminApi'
+import { apiRequest } from '@/lib/api'
 
-// Buyers (enable/disable only — no deletion by policy) and the phase-1
-// order view (PENDING_PAYMENT / CANCELED listing, no fulfilment actions).
-const tab = ref('buyers')
-const buyerQuery = ref('')
-const buyers = ref([])
-const orders = ref([])
-const orderFilter = ref('PENDING_PAYMENT')
-const loading = ref(false)
-const message = ref('')
-const error = ref('')
+const state = reactive({
+  q: '',
+  whitelisted: '',
+  status: '',
+  page: 1,
+  items: [],
+  meta: { total: 0, page_size: 20, has_next: false },
+  loading: false,
+  error: '',
+})
 
-const buyerColumns = [
-  { key: 'email', label: '电子邮箱' },
-  { key: 'phone', label: '手机号码' },
-  { key: 'status', label: '状态' },
-  { key: 'created_at', label: '创建时间', width: '12rem' },
-]
+const detail = ref(null)
+const detailLoading = ref(false)
 
-const orderColumns = [
-  { key: 'public_id', label: '订单号' },
-  { key: 'status', label: '状态' },
-  { key: 'total', label: '总额' },
-  { key: 'currency', label: '币种' },
-  { key: 'item_count', label: '商品件数' },
-  { key: 'created_at', label: '创建时间', width: '12rem' },
-]
+const profileTarget = ref(null)
+const profileBusy = ref(false)
+const profileForm = reactive({ region: '' })
 
-async function loadTab() {
-  loading.value = true
-  if (tab.value === 'buyers') {
-    const query = buyerQuery.value.trim() ? `?q=${encodeURIComponent(buyerQuery.value.trim())}` : ''
-    const data = await adminGet(`/buyers${query}`)
-    buyers.value = (data.items || []).map((row) => ({
-      ...row,
-      raw_status: row.status,
-      status: valueLabel(row.status),
-      created_at: row.created_at.slice(0, 19).replace('T', ' '),
-    }))
-  } else {
-    const query = orderFilter.value ? `?status=${orderFilter.value}` : ''
-    const data = await adminGet(`/orders${query}`)
-    orders.value = (data.items || []).map((row) => ({
-      ...row,
-      status: valueLabel(row.status),
-      currency: valueLabel(row.currency),
-      public_id: `#${row.public_id.slice(0, 8)}`,
-      created_at: row.created_at.slice(0, 19).replace('T', ' '),
-    }))
-  }
-  loading.value = false
-}
-
-onMounted(loadTab)
-
-function switchTab(next) {
-  tab.value = next
-  loadTab()
-}
-
-async function buyerAction(row, action) {
-  error.value = ''
-  message.value = ''
-  const reason = window.prompt(
-    `请输入对账号 ${row.email} 执行「${actionLabel(action)}」的原因（记入审计日志）：`,
-  )
-  if (!reason) return
+async function load(resetPage = false) {
+  if (resetPage) state.page = 1
+  state.loading = true
+  state.error = ''
   try {
-    const data = await adminWrite('/buyers', {
-      buyer_public_id: row.public_id,
-      action,
-      reason,
-    })
-    message.value = `账号 ${row.email} 已${actionLabel(action)}，当前状态：${valueLabel(data.status)}。`
-    await loadTab()
-  } catch (caught) {
-    error.value = caught.message
+    const params = new URLSearchParams({ page: String(state.page) })
+    if (state.whitelisted) params.set('whitelisted', state.whitelisted)
+    if (state.status) params.set('status', state.status)
+    if (state.q.trim()) params.set('q', state.q.trim())
+    const payload = await apiRequest(`/buyers/accounts?${params}`)
+    state.items = payload.items
+    state.meta = payload
+  } catch (error) {
+    state.error = error.message
+  } finally {
+    state.loading = false
   }
 }
 
-const buyerCount = computed(() => buyers.value.length)
+async function openDetail(row) {
+  detail.value = null
+  detailLoading.value = true
+  try {
+    const payload = await apiRequest(`/buyers/accounts/${row.id}`)
+    detail.value = payload.buyer
+  } catch (error) {
+    state.error = error.message
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function toggleStatus(row) {
+  try {
+    await adminWrite(`/buyers/accounts/${row.id}/profile`, {
+      action: row.enabled ? 'disable' : 'enable',
+    })
+    await load()
+  } catch (error) {
+    state.error = error.message
+  }
+}
+
+function openProfile(row) {
+  profileTarget.value = row
+  profileForm.region = row.region || ''
+}
+
+async function saveProfile() {
+  if (!profileTarget.value) return
+  profileBusy.value = true
+  try {
+    await adminWrite(`/buyers/accounts/${profileTarget.value.id}/profile`, {
+      action: 'set_region',
+      region: profileForm.region,
+    })
+    profileTarget.value = null
+    await load()
+  } catch (error) {
+    state.error = error.message
+  } finally {
+    profileBusy.value = false
+  }
+}
+
+function formatTime(value) {
+  return value ? value.replace('T', ' ').slice(0, 16) : '—'
+}
+
+function resetFilters() {
+  state.q = ''
+  state.whitelisted = ''
+  state.status = ''
+  load(true)
+}
+
+function goPage(page) {
+  state.page = page
+  load()
+}
+
+function closeDetail() {
+  detail.value = null
+  detailLoading.value = false
+}
+
+onMounted(load)
 </script>
 
 <template>
-  <section aria-labelledby="buyers-title">
-    <h1 id="buyers-title">买家与订单</h1>
-
-    <p v-if="message" class="notice" role="status">{{ message }}</p>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-
-    <div class="tabs" role="tablist">
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="tab === 'buyers'"
-        :class="{ active: tab === 'buyers' }"
-        @click="switchTab('buyers')"
-      >
-        买家
-      </button>
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="tab === 'orders'"
-        :class="{ active: tab === 'orders' }"
-        @click="switchTab('orders')"
-      >
-        订单
-      </button>
+  <section>
+    <div class="page-intro">
+      <div>
+        <h1>用户端管理</h1>
+        <p>查询商城注册用户、查看白名单标识与充值消费历史。买家余额与商家钱包是两套独立账户。</p>
+      </div>
     </div>
 
-    <template v-if="tab === 'buyers'">
-      <form class="toolbar" @submit.prevent="loadTab">
-        <input v-model="buyerQuery" type="search" placeholder="搜索电子邮箱或手机号码" />
-        <button type="submit">搜索</button>
-      </form>
-
-      <AdminTable
-        :columns="buyerColumns"
-        :rows="buyers"
-        :loading="loading"
-        :empty-text="`当前有 ${buyerCount} 个买家账号，请通过搜索查找。`"
-      >
-        <template #actions="{ row }">
-          <button
-            v-if="row.raw_status === 'ACTIVE'"
-            type="button"
-            @click="buyerAction(row, 'disable')"
-          >
-            停用
-          </button>
-          <button v-else type="button" @click="buyerAction(row, 'enable')">启用</button>
-        </template>
-      </AdminTable>
-    </template>
-
-    <template v-else>
-      <form class="toolbar" @submit.prevent="loadTab">
-        <select v-model="orderFilter">
-          <option value="">全部状态</option>
-          <option value="PENDING_PAYMENT">待支付</option>
-          <option value="CANCELED">已取消</option>
+    <div class="panel">
+      <div class="toolbar">
+        <input
+          v-model="state.q"
+          type="search"
+          placeholder="账号 / 邮箱 / 手机号 / 用户 ID"
+          @keyup.enter="load(true)"
+        />
+        <select v-model="state.whitelisted" @change="load(true)">
+          <option value="">全部账号</option>
+          <option value="1">仅白名单</option>
+          <option value="0">非白名单</option>
         </select>
-        <button type="submit">筛选</button>
-      </form>
+        <select v-model="state.status" @change="load(true)">
+          <option value="">全部状态</option>
+          <option value="ACTIVE">启用</option>
+          <option value="DISABLED">停用</option>
+        </select>
+        <button type="button" class="btn" @click="load(true)">查询</button>
+        <button type="button" class="btn" @click="resetFilters">重置</button>
+      </div>
 
-      <AdminTable
-        :columns="orderColumns"
-        :rows="orders"
-        :loading="loading"
-        empty-text="该状态下暂无订单。"
+      <p v-if="state.error" class="notice notice--error" style="margin: 0 20px 14px">
+        {{ state.error }}
+      </p>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>账号</th>
+              <th>地区</th>
+              <th>启用</th>
+              <th>白名单</th>
+              <th>余额</th>
+              <th>支付权限</th>
+              <th>注册时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in state.items" :key="row.id">
+              <td>
+                <b>{{ row.account || '—' }}</b>
+                <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
+              </td>
+              <td>{{ row.region || '未设置' }}</td>
+              <td>
+                <span class="tag" :class="row.enabled ? 'tag--ok' : 'tag--danger'">
+                  {{ row.enabled ? '启用' : '停用' }}
+                </span>
+              </td>
+              <td>
+                <span class="tag" :class="row.whitelisted ? 'tag--info' : 'tag--gray'">
+                  {{ row.whitelisted ? '白名单' : '普通' }}
+                </span>
+              </td>
+              <td class="num">¥ {{ row.balance }}</td>
+              <td>
+                <span class="cell-sub">{{ row.checkout_allowed ? '可进入支付' : '不可支付' }}</span>
+                <span class="cell-sub">
+                  {{ row.balance_pay_allowed ? '支持余额支付' : '不支持余额支付' }}
+                </span>
+              </td>
+              <td>{{ formatTime(row.joined_at) }}</td>
+              <td>
+                <div class="row-actions">
+                  <button type="button" class="btn btn--sm" @click="openDetail(row)">详情</button>
+                  <button type="button" class="btn btn--sm" @click="openProfile(row)">
+                    改地区
+                  </button>
+                  <button type="button" class="btn btn--sm" @click="toggleStatus(row)">
+                    {{ row.enabled ? '停用' : '启用' }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="!state.loading && state.items.length === 0">
+              <td colspan="8" class="data-table__empty">没有匹配的用户。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <AppPager
+        :page="state.meta.page || 1"
+        :page-size="state.meta.page_size || 20"
+        :total="state.meta.total || 0"
+        :has-next="state.meta.has_next"
+        @change="goPage"
       />
-    </template>
+    </div>
+
+    <AppDrawer
+      v-if="detail || detailLoading"
+      :title="detail ? `用户详情 · ${detail.account}` : '用户详情'"
+      wide
+      @close="closeDetail"
+    >
+      <p v-if="detailLoading" class="inline-loading">加载中…</p>
+      <template v-if="detail">
+        <dl class="detail-grid">
+          <div>
+            <dt>用户 ID</dt>
+            <dd>{{ detail.id }}</dd>
+          </div>
+          <div>
+            <dt>账号</dt>
+            <dd>{{ detail.account }}</dd>
+          </div>
+          <div>
+            <dt>邮箱</dt>
+            <dd>{{ detail.email || '—' }}</dd>
+          </div>
+          <div>
+            <dt>手机号</dt>
+            <dd>{{ detail.phone || '—' }}</dd>
+          </div>
+          <div>
+            <dt>地区</dt>
+            <dd>{{ detail.region || '未设置' }}</dd>
+          </div>
+          <div>
+            <dt>余额</dt>
+            <dd>¥ {{ detail.balance }}</dd>
+          </div>
+          <div>
+            <dt>白名单</dt>
+            <dd>{{ detail.whitelisted ? '是' : '否' }}</dd>
+          </div>
+          <div>
+            <dt>状态</dt>
+            <dd>{{ detail.enabled ? '启用' : '停用' }}</dd>
+          </div>
+          <div>
+            <dt>注册时间</dt>
+            <dd>{{ formatTime(detail.joined_at) }}</dd>
+          </div>
+          <div>
+            <dt>上次在线</dt>
+            <dd>{{ formatTime(detail.last_online_at) }}</dd>
+          </div>
+        </dl>
+
+        <h3 class="section-title">充值 / 消费明细</h3>
+        <table v-if="detail.ledger?.length" class="data-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>类型</th>
+              <th>金额</th>
+              <th>变动后</th>
+              <th>关联订单</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in detail.ledger" :key="entry.id">
+              <td>{{ formatTime(entry.occurred_at) }}</td>
+              <td>
+                {{
+                  entry.kind === 'RECHARGE'
+                    ? '余额充值'
+                    : entry.kind === 'PURCHASE'
+                      ? '商城消费'
+                      : '余额调整'
+                }}
+              </td>
+              <td
+                class="num"
+                :style="{ color: Number(entry.amount) < 0 ? 'var(--red)' : 'var(--green)' }"
+              >
+                ¥ {{ entry.amount }}
+              </td>
+              <td class="num">¥ {{ entry.balance_after }}</td>
+              <td class="mono">{{ entry.order_id ? entry.order_id.slice(0, 8) : '—' }}</td>
+              <td>{{ entry.note || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="empty-state">暂无资金明细。</p>
+      </template>
+    </AppDrawer>
+
+    <AppModal
+      v-if="profileTarget"
+      title="修改用户地区"
+      confirm-text="保存"
+      :busy="profileBusy"
+      @cancel="profileTarget = null"
+      @confirm="saveProfile"
+    >
+      <div class="field">
+        <label for="buyer-region">所在地区（ISO 代码，如 GB / CN）</label>
+        <input id="buyer-region" v-model="profileForm.region" type="text" maxlength="32" />
+        <span class="field__hint">
+          未开放地区需加入白名单才能进入支付；已开放地区（GB / CN / HK / US）普通用户即可支付。
+        </span>
+      </div>
+    </AppModal>
   </section>
 </template>
-
-<style scoped>
-h1 {
-  font-size: var(--font-size-xl);
-  margin-bottom: var(--space-4);
-}
-
-.tabs {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.tabs button {
-  min-height: 44px;
-  padding: 0 var(--space-5);
-  border: 1px solid var(--colour-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
-  cursor: pointer;
-  font: inherit;
-  font-weight: var(--font-weight-semibold);
-}
-
-.tabs button.active {
-  color: var(--colour-accent);
-  border-color: var(--colour-accent);
-  background: var(--colour-accent-soft);
-}
-
-.toolbar {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.toolbar input,
-.toolbar select {
-  min-height: 44px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-md);
-  font: inherit;
-}
-
-.toolbar input {
-  flex: 0 1 20rem;
-}
-
-.toolbar button {
-  min-height: 44px;
-  padding: 0 var(--space-4);
-  border: 1px solid var(--colour-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
-  cursor: pointer;
-  font: inherit;
-}
-
-.notice {
-  color: var(--colour-success);
-  margin-bottom: var(--space-3);
-}
-
-.error {
-  color: var(--colour-error);
-  margin-bottom: var(--space-3);
-}
-</style>

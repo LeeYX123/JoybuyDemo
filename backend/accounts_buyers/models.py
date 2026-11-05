@@ -24,6 +24,9 @@ class BuyerAccount(models.Model):
     # stage defaults every account to whitelisted so the storefront keeps
     # working; the admin can flip the flag to exercise the blocking popup.
     purchase_whitelisted = models.BooleanField(default=True)
+    # 平台管理后台 A13/A14：白名单余额账户。与商家钱包是两套独立账户，不可互相覆盖。
+    balance = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    region = models.CharField(max_length=32, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -34,7 +37,11 @@ class BuyerAccount(models.Model):
                 condition=(Q(email__isnull=False) & ~Q(email=""))
                 | (Q(phone_e164__isnull=False) & ~Q(phone_e164="")),
                 name="buyer_account_has_identifier",
-            )
+            ),
+            models.CheckConstraint(
+                condition=Q(balance__gte=0),
+                name="buyer_balance_nonnegative",
+            ),
         ]
         indexes = [models.Index(fields=["status", "created_at"], name="buyer_status_created_idx")]
 
@@ -127,3 +134,50 @@ class RecentlyViewed(models.Model):
         ]
         ordering = ["-viewed_at", "-pk"]
         indexes = [models.Index(fields=["account", "viewed_at"], name="recent_account_viewed_idx")]
+
+
+class BuyerWalletEntry(models.Model):
+    """买家（白名单）余额流水（A13/A14）。
+
+    与商家 ``merchant_wallet_entry`` 刻意分开：文档明确「白名单余额消费与商家
+    钱包成本/回款为不同账户，不可相互覆盖」。金额收入为正、消费为负。
+    """
+
+    class Kind(models.TextChoices):
+        RECHARGE = "RECHARGE", "余额充值"
+        PURCHASE = "PURCHASE", "商城消费"
+        ADJUSTMENT = "ADJUSTMENT", "余额调整"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    account = models.ForeignKey(
+        BuyerAccount,
+        on_delete=models.CASCADE,
+        related_name="wallet_entries",
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    amount = models.DecimalField(max_digits=18, decimal_places=4)
+    balance_before = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    balance_after = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    currency = models.CharField(max_length=3, default="CNY")
+    order = models.ForeignKey(
+        "orders.Order",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="buyer_wallet_entries",
+    )
+    operator_label = models.CharField(max_length=120, blank=True, default="")
+    note = models.CharField(max_length=255, blank=True, default="")
+    idempotency_key = models.CharField(max_length=120, unique=True, null=True, blank=True)
+    occurred_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "buyer_wallet_entry"
+        ordering = ["-occurred_at", "-pk"]
+        indexes = [
+            models.Index(
+                fields=["account", "kind", "occurred_at"],
+                name="bwallet_account_kind_idx",
+            )
+        ]

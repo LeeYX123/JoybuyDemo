@@ -4,6 +4,7 @@ import uuid
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
+from django.db.models import F, Q
 
 
 def normalize_brand_name(value: str) -> str:
@@ -35,6 +36,9 @@ class SourceCategory(models.Model):
         related_name="categories",
     )
     source_id = models.CharField(max_length=160)
+    # 中文名按 source_id 持久保存：重新同步英文树版本时直接继承，
+    # 不必为拿到中文名再跑一遍中文抓取（管理端选择器同时展示中英文）。
+    name_zh = models.CharField(max_length=200, blank=True, default="")
     is_active = models.BooleanField(default=True)
     first_seen_at = models.DateTimeField()
     last_seen_at = models.DateTimeField()
@@ -107,6 +111,8 @@ class SourceCategorySnapshot(models.Model):
         related_name="children",
     )
     name = models.CharField(max_length=200)
+    # 中文名来自 joybuy.co.uk 站点切到 中文(简体) 后的类目菜单，按 source_id 对齐英文名。
+    name_zh = models.CharField(max_length=200, blank=True, default="")
     source_url = models.URLField(max_length=1000, blank=True, default="")
     sort_order = models.PositiveIntegerField(default=0)
     depth = models.PositiveSmallIntegerField(default=0)
@@ -316,11 +322,37 @@ class Spu(models.Model):
     model_number = models.CharField(max_length=120, blank=True, default="")
     gtin = models.CharField(max_length=14, blank=True, default="")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+
+    # --- 商品池（平台管理后台 A03）字段 ---
+    # 商品池是「平台可售商品主档」：成本价与零售价是平台建议值，
+    # 商家上架时把成本价快照进 Offer，之后调价不影响已生成的订单。
+    cost_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    retail_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    is_activity = models.BooleanField(default=False)
+    description = models.TextField(blank=True, default="")
+    # 商品池表单里的图片与规格是「平台手工录入值」，与爬虫导入的
+    # media_asset / sku.specification 并存：前者用于后台编辑展示，
+    # 后者是商城详情页的真实数据源。
+    image_urls = models.JSONField(default=list, blank=True)
+    specs = models.JSONField(default=list, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "spu"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(cost_price__isnull=True) | Q(cost_price__gte=0),
+                name="spu_cost_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(retail_price__isnull=True)
+                | Q(cost_price__isnull=True)
+                | Q(retail_price__gte=F("cost_price")),
+                name="spu_retail_not_below_cost",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["local_category", "status", "created_at"],

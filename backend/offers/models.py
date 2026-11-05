@@ -66,6 +66,13 @@ class Offer(models.Model):
         choices=SourceAvailability.choices,
         default=SourceAvailability.UNKNOWN,
     )
+    # --- 店铺商品关系（平台 A04 / 商家 M02-M03）---
+    # 成本价在商家上架时从商品池快照，发货扣款与订单利润都以它为准；
+    # 商品池后续调价不会回写已上架的旧关系。
+    cost_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    listed_at = models.DateTimeField(null=True, blank=True)
+    removed_at = models.DateTimeField(null=True, blank=True)
+    removed_by_platform = models.BooleanField(default=False)
     # Full-refresh staleness tracking (WP-19): set when a refresh run did not
     # see the offer; after consecutive confirmations the source is treated
     # as UNAVAILABLE. History is never deleted.

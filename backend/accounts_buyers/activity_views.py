@@ -1,11 +1,11 @@
 import json
 
-from catalog.models import ProductSearchDocument, Spu
 from django.http import JsonResponse
 from django.utils import timezone
-from offers.models import Market
 
 from accounts_buyers.models import Favourite, RecentlyViewed
+from catalog.models import ProductSearchDocument, Spu
+from offers.models import Market
 
 PAGE_SIZE = 12
 MAX_PAGE = 100

@@ -42,7 +42,6 @@ from crawler_control.services import (
     create_crawl_job,
     create_crawler_account,
     mark_job_ready,
-    record_account_session,
     start_run,
 )
 from media.models import MediaUsage
@@ -76,42 +75,126 @@ CAMPAIGN_BG_URL = (
 CATEGORY_DISCOVERY_TILES = [
     # (slug, label_en, label_zh, discovery image sampled from the live
     # joybuy.co.uk discovery carousel, 2026-11-04; admin reconfigures freely).
-    ("home-living", "Home", "家居",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/5308416/10161432272242740/135890/68f563d2Edaa06d68/4c765c6ab87a3a67.png.webp"),
-    ("electronics", "Electronics", "电子产品",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/3801088/10161432272242369/186716/68f276ceE499d6cee/4c765c6ab87a3a67.png.webp"),
-    ("clothing-accessories", "Clothing & Accessories", "服装以及配饰",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/4915200/1016145512242644/68705/68f55d1aEd020bb22/4c765c6ab87a3a67.png.webp"),
-    ("games-accessories", "Games", "游戏",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/6356992/61097966203569/147538/69ab3148Eb2afce62/4c765c6ab87a3a67.png.webp"),
-    ("outdoor-sports", "Outdoor & Sports", "户外运动",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8060928/1016145512242609/63724/68f538caE36d3bf11/4c765c6ab87a3a67.png.webp"),
-    ("small-home-appliances", "Small Home Appliances", "小家电",
-     "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8257536/1016145512244632/22745/6900ada5E63223e54/4c765c6ab87a3a67.png.webp"),
+    (
+        "home-living",
+        "Home",
+        "家居",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/5308416/10161432272242740/135890/68f563d2Edaa06d68/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "electronics",
+        "Electronics",
+        "电子产品",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/3801088/10161432272242369/186716/68f276ceE499d6cee/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "clothing-accessories",
+        "Clothing & Accessories",
+        "服装以及配饰",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/4915200/1016145512242644/68705/68f55d1aEd020bb22/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "games-accessories",
+        "Games",
+        "游戏",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/6356992/61097966203569/147538/69ab3148Eb2afce62/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "outdoor-sports",
+        "Outdoor & Sports",
+        "户外运动",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8060928/1016145512242609/63724/68f538caE36d3bf11/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "small-home-appliances",
+        "Small Home Appliances",
+        "小家电",
+        "https://images3.joy-sourcing.com/product/s624x624_jfsintlpro-000-com/t1/4294967296/8257536/1016145512244632/22745/6900ada5E63223e54/4c765c6ab87a3a67.png.webp",
+    ),
 ]
 # Featured brands (心选品牌 / "Brands we love"): circular logo cards,
 # rendered static (not clickable). Logos sampled from the live homepage.
 FEATURED_BRANDS = [
-    ("McCormick", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/4784128/620722011367887/22992/6a914cdaE882ad2fb/4c765c6ab87a3a67.jpg!q70.webp"),
-    ("Celeplate", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5177344/62073711069147/42278/6a7c2473E11e8fde4/4c765c6ab87a3a67.png.webp"),
-    ("Encona", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/7143424/10161455133581/6594/67c9af04Eb2402a90/b853b8a46c93f496.png.webp"),
-    ("eufy", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/6356992/62073702236/19726/69f1ac1aE02121017/de925bbe628751df.jpg!q70.webp"),
-    ("Tapo", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5636096/10161432272503/3693/682c8d92Eb52fb0e8/b853b8a46c93f496.png.webp"),
-    ("Nando's", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5701632/6207370721314/36393/6a5aa4ddEaf3a0ead/b853b8a46c93f496.jpg!q70.webp"),
-    ("C&S", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/393216/6207370860098/34260/6a63682fE22cdbd65/4c765c6ab87a3a67.png.webp"),
-    ("TCL", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2883584/610979661137159/34305/6a8154f5Ed28c0707/4c765c6ab87a3a67.jpg!q70.webp"),
-    ("CJ", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4128768/101614551440/37764/676b01b3E3cc60f6d/b853b8a46c93f496.png.webp"),
-    ("Bc Babycare", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2031616/6109817860618/12623/6a6369baE4fef6171/4c765c6ab87a3a67.png.webp"),
-    ("Midea", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/524288/6109796674463/4992/6a9a7beaE2ba420fc/4c765c6ab87a3a67.png.webp"),
-    ("Healthy Boy Brand", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1179648/62073701366812/38787/6a9147d4Eea26fcb3/4c765c6ab87a3a67.jpg!q70.webp"),
-    ("Fairy Non Bio", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/6881280/6207370327063/10970/6a337df0E5f726993/4c765c6ab87a3a67.jpg!q70.webp"),
-    ("CaiLab", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/262144/1016159612139/19436/69f1a282E8ba4cc5a/de925bbe628751df.jpg!q70.webp"),
-    ("Obento", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/4259840/610979662280/22540/69f1a6e3E1b0381c0/de925bbe628751df.jpg!q70.webp"),
-    ("Kinda", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5242880/6109817878071/50878/6a684b36E70cde242/4c765c6ab87a3a67.png.webp"),
-    ("Dove", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4194304/101614322725745/136445/67bd9a3bE86c48336/b853b8a46c93f496.jpg!q70.webp"),
-    ("Highland Spring", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/3932160/61098360977642/14067/6a748b65E50417f45/4c765c6ab87a3a67.jpg!q70.webp"),
-    ("Garnier", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/3407872/101614322725740/109643/67bd99f5Eed4245c4/b853b8a46c93f496.jpg!q70.webp"),
-    ("L'Oréal Paris", "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1966080/62072201273164/11176/6a2bb482E9be773f4/4c765c6ab87a3a67.png.webp"),
+    (
+        "McCormick",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/4784128/620722011367887/22992/6a914cdaE882ad2fb/4c765c6ab87a3a67.jpg!q70.webp",
+    ),
+    (
+        "Celeplate",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5177344/62073711069147/42278/6a7c2473E11e8fde4/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "Encona",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/7143424/10161455133581/6594/67c9af04Eb2402a90/b853b8a46c93f496.png.webp",
+    ),
+    (
+        "eufy",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/6356992/62073702236/19726/69f1ac1aE02121017/de925bbe628751df.jpg!q70.webp",
+    ),
+    (
+        "Tapo",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5636096/10161432272503/3693/682c8d92Eb52fb0e8/b853b8a46c93f496.png.webp",
+    ),
+    (
+        "Nando's",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/5701632/6207370721314/36393/6a5aa4ddEaf3a0ead/b853b8a46c93f496.jpg!q70.webp",
+    ),
+    (
+        "C&S",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/393216/6207370860098/34260/6a63682fE22cdbd65/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "TCL",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2883584/610979661137159/34305/6a8154f5Ed28c0707/4c765c6ab87a3a67.jpg!q70.webp",
+    ),
+    (
+        "CJ",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4128768/101614551440/37764/676b01b3E3cc60f6d/b853b8a46c93f496.png.webp",
+    ),
+    (
+        "Bc Babycare",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/2031616/6109817860618/12623/6a6369baE4fef6171/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "Midea",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/524288/6109796674463/4992/6a9a7beaE2ba420fc/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "Healthy Boy Brand",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1179648/62073701366812/38787/6a9147d4Eea26fcb3/4c765c6ab87a3a67.jpg!q70.webp",
+    ),
+    (
+        "Fairy Non Bio",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/6881280/6207370327063/10970/6a337df0E5f726993/4c765c6ab87a3a67.jpg!q70.webp",
+    ),
+    (
+        "CaiLab",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/262144/1016159612139/19436/69f1a282E8ba4cc5a/de925bbe628751df.jpg!q70.webp",
+    ),
+    (
+        "Obento",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/12884901888/4259840/610979662280/22540/69f1a6e3E1b0381c0/de925bbe628751df.jpg!q70.webp",
+    ),
+    (
+        "Kinda",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/5242880/6109817878071/50878/6a684b36E70cde242/4c765c6ab87a3a67.png.webp",
+    ),
+    (
+        "Dove",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/4194304/101614322725745/136445/67bd9a3bE86c48336/b853b8a46c93f496.jpg!q70.webp",
+    ),
+    (
+        "Highland Spring",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/3932160/61098360977642/14067/6a748b65E50417f45/4c765c6ab87a3a67.jpg!q70.webp",
+    ),
+    (
+        "Garnier",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-da/t1/4294967296/3407872/101614322725740/109643/67bd99f5Eed4245c4/b853b8a46c93f496.jpg!q70.webp",
+    ),
+    (
+        "L'Oréal Paris",
+        "https://images3.joy-sourcing.com/product/s220x220_jfsintlpro-000-com/t1/4294967296/1966080/62072201273164/11176/6a2bb482E9be773f4/4c765c6ab87a3a67.png.webp",
+    ),
 ]
 MAX_FEATURED_BRANDS = 12
 # Localized (var/media) paths filled by handle() on each run.
@@ -123,8 +206,16 @@ USER_AGENT = (
 )
 # Real first-level categories documented in docs/09 (brand wall content).
 BRANDS = [
-    "TCL", "Midea", "Hisense", "CHiQ", "PUMA", "Under Armour", "Dove",
-    "Garnier", "L'Oréal Paris", "PlayStation",
+    "TCL",
+    "Midea",
+    "Hisense",
+    "CHiQ",
+    "PUMA",
+    "Under Armour",
+    "Dove",
+    "Garnier",
+    "L'Oréal Paris",
+    "PlayStation",
 ]
 DEFAULT_SECTIONS = 6
 DEFAULT_PRODUCTS_PER_SECTION = 10
@@ -359,7 +450,9 @@ class Command(BaseCommand):
         elif source.startswith("http"):
             url = source
         else:
-            base = {"tile": TILE_IMAGE_BASE, "thumb": THUMB_IMAGE_BASE}.get(variant, TILE_IMAGE_BASE)
+            base = {"tile": TILE_IMAGE_BASE, "thumb": THUMB_IMAGE_BASE}.get(
+                variant, TILE_IMAGE_BASE
+            )
             suffix = "!q70.webp" if source.lower().endswith(".jpg") else ".webp"
             url = f"{base}{source}{suffix}"
         data = self.download_image(url)
@@ -422,16 +515,15 @@ class Command(BaseCommand):
         existing = CrawlRun.objects.filter(job__source_catalog=catalog).order_by("-pk").first()
         if existing is not None and existing.job.status == CrawlJob.Status.RUNNING:
             return existing
-        # start_run selects an account with a valid session from the job's
-        # group; the demo import reuses the public homepage, so a marker
-        # session blob is enough (no credentials involved).
+        # The demo import writes fixture data into a run record — it never
+        # crawls. It used to fabricate a "VALID" marker session so that
+        # start_run would pick the account; that made the account look
+        # logged-in while carrying zero cookies (2026-11-05 login-wall bug).
+        # start_run supports an unauthenticated run, so no fake session.
         from crawler_control.models import CrawlerAccount
 
-        account = CrawlerAccount.objects.filter(account_group="default").first()
-        if account is None:
-            account = create_crawler_account(label="Joybuy homepage demo", account_group="default")
-        if account.session_status != CrawlerAccount.SessionStatus.VALID:
-            record_account_session(account, {"joybuy_session": "public-homepage-demo"})
+        if not CrawlerAccount.objects.filter(account_group="default").exists():
+            create_crawler_account(label="Joybuy homepage demo", account_group="default")
         job = create_crawl_job(
             name="Joybuy homepage demo import",
             market=market,
@@ -445,7 +537,9 @@ class Command(BaseCommand):
 
     def import_products(self, sections, *, market, skip_images: bool) -> tuple[dict, dict, int]:
         category_ids = {
-            item["category_id"] for section in sections for item in section["items"]
+            item["category_id"]
+            for section in sections
+            for item in section["items"]
             if item["category_id"]
         }
         fallback_category = SourceCategory.objects.filter(catalog__source_system="joybuy").first()

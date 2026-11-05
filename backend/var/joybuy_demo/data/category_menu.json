@@ -1,0 +1,965 @@
+[
+  {
+    "name": "Home Appliances",
+    "source_id": "minihome:UK-Mini-HP-Home-Appliances",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Home-Appliances",
+    "children": [
+      {
+        "name": "Coffee Machines",
+        "source_id": "l2:1407",
+        "source_url": "https://www.joybuy.co.uk/s?k=Coffee%20Machines&l2=1407&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Heating & Cooling & Purifier",
+        "source_id": "l2:1401",
+        "source_url": "https://www.joybuy.co.uk/s?k=Heating%20%26%20Cooling%20%26%20Purifier&l2=1401&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Kettles & Toasters",
+        "source_id": "l2:1405",
+        "source_url": "https://www.joybuy.co.uk/s?k=Kettles%20%26%20Toasters&l2=1405&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Fridges & Freezers",
+        "source_id": "l2:2696",
+        "source_url": "https://www.joybuy.co.uk/s?k=Fridges%20%26%20Freezers&l2=2696&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Blenders, Food Processors & Mixers",
+        "source_id": "l2:1397",
+        "source_url": "https://www.joybuy.co.uk/s?k=Blenders%2C%20Food%20Processors%20%26%20Mixers&l2=1397&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Washing Machines & Tumble Dryers",
+        "source_id": "l2:2700",
+        "source_url": "https://www.joybuy.co.uk/s?k=Washing%20Machines%20%26%20Tumble%20Dryers&l2=2700&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Tabletop Cooking",
+        "source_id": "l2:2547",
+        "source_url": "https://www.joybuy.co.uk/s?k=Tabletop%20Cooking&l2=2547&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Hair Styling Tools",
+        "source_id": "l2:2551",
+        "source_url": "https://www.joybuy.co.uk/s?k=Hair%20Styling%20Tools&l2=2551&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Air Fryers",
+        "source_id": "l2:2543",
+        "source_url": "https://www.joybuy.co.uk/s?k=Air%20Fryers&l2=2543&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Toothbrushes & Flossers",
+        "source_id": "l2:2553",
+        "source_url": "https://www.joybuy.co.uk/s?k=Toothbrushes%20%26%20Flossers&l2=2553&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Floorcare",
+        "source_id": "l2:1403",
+        "source_url": "https://www.joybuy.co.uk/s?k=Floorcare&l2=1403&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Male Grooming",
+        "source_id": "l2:2555",
+        "source_url": "https://www.joybuy.co.uk/s?k=Male%20Grooming&l2=2555&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Ironing",
+        "source_id": "l2:1399",
+        "source_url": "https://www.joybuy.co.uk/s?k=Ironing&l2=1399&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Female Hair Removal",
+        "source_id": "l2:2557",
+        "source_url": "https://www.joybuy.co.uk/s?k=Female%20Hair%20Removal&l2=2557&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Microwaves & Ovens",
+        "source_id": "l2:2544",
+        "source_url": "https://www.joybuy.co.uk/s?k=Microwaves%20%26%20Ovens&l2=2544&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Oven & Hobs",
+        "source_id": "l2:2702",
+        "source_url": "https://www.joybuy.co.uk/s?k=Oven%20%26%20Hobs&l2=2702&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cooker Hoods & Extractor Fans",
+        "source_id": "l2:2704",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cooker%20Hoods%20%26%20Extractor%20Fans&l2=2704&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Electronics",
+    "source_id": "minihome:UK-Mini-HP-Electronics",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Electronics",
+    "children": [
+      {
+        "name": "Phones",
+        "source_id": "l2:1420",
+        "source_url": "https://www.joybuy.co.uk/s?k=Phones&l2=1420&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Headphones",
+        "source_id": "l2:1414",
+        "source_url": "https://www.joybuy.co.uk/s?k=Headphones&l2=1414&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Tablets",
+        "source_id": "l2:1418",
+        "source_url": "https://www.joybuy.co.uk/s?k=Tablets&l2=1418&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Speakers",
+        "source_id": "l2:2846",
+        "source_url": "https://www.joybuy.co.uk/s?k=Speakers&l2=2846&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Wearables",
+        "source_id": "l2:1410",
+        "source_url": "https://www.joybuy.co.uk/s?k=Wearables&l2=1410&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Mouse, Keyboard & Accessories",
+        "source_id": "l2:1434",
+        "source_url": "https://www.joybuy.co.uk/s?k=Mouse%2C%20Keyboard%20%26%20Accessories&l2=1434&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Desktop PCs",
+        "source_id": "l2:2656",
+        "source_url": "https://www.joybuy.co.uk/s?k=Desktop%20PCs&l2=2656&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Laptops",
+        "source_id": "l2:1438",
+        "source_url": "https://www.joybuy.co.uk/s?k=Laptops&l2=1438&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming PC components",
+        "source_id": "l2:2623",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20PC%20components&l2=2623&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Camera & Photo",
+        "source_id": "l2:1416",
+        "source_url": "https://www.joybuy.co.uk/s?k=Camera%20%26%20Photo&l2=1416&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Home & Office Electronics",
+        "source_id": "l2:2621",
+        "source_url": "https://www.joybuy.co.uk/s?k=Home%20%26%20Office%20Electronics&l2=2621&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Electronics Accessories",
+        "source_id": "l2:1499",
+        "source_url": "https://www.joybuy.co.uk/s?k=Electronics%20Accessories&l2=1499&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Monitors",
+        "source_id": "l2:1436",
+        "source_url": "https://www.joybuy.co.uk/s?k=Monitors&l2=1436&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Soundbars & Home Cinema",
+        "source_id": "l2:1412",
+        "source_url": "https://www.joybuy.co.uk/s?k=Soundbars%20%26%20Home%20Cinema&l2=1412&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Smart Home",
+        "source_id": "l2:1536",
+        "source_url": "https://www.joybuy.co.uk/s?k=Smart%20Home&l2=1536&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Batteries",
+        "source_id": "l2:3567",
+        "source_url": "https://www.joybuy.co.uk/s?k=Batteries&l2=3567&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Pets",
+    "source_id": "minihome:UK-Mini-HP-Pets",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Pets",
+    "children": [
+      {
+        "name": "Dog Food",
+        "source_id": "l2:1364",
+        "source_url": "https://www.joybuy.co.uk/s?k=Dog%20Food&l2=1364&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cat Food",
+        "source_id": "l2:1363",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cat%20Food&l2=1363&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cat Treats",
+        "source_id": "l2:3532",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cat%20Treats&l2=3532&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Healthcare & Wellness",
+        "source_id": "l2:3536",
+        "source_url": "https://www.joybuy.co.uk/s?k=Healthcare%20%26%20Wellness&l2=3536&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Other Animals",
+        "source_id": "l2:3534",
+        "source_url": "https://www.joybuy.co.uk/s?k=Other%20Animals&l2=3534&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Pet Grooming",
+        "source_id": "l2:3538",
+        "source_url": "https://www.joybuy.co.uk/s?k=Pet%20Grooming&l2=3538&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cat Toys",
+        "source_id": "l2:3540",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cat%20Toys&l2=3540&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Pet Supplies & Accesories",
+        "source_id": "l2:3542",
+        "source_url": "https://www.joybuy.co.uk/s?k=Pet%20Supplies%20%26%20Accesories&l2=3542&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "TV & Audio",
+    "source_id": "minihome:UK-Mini-HP-TV",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-TV",
+    "children": [
+      {
+        "name": "TVs",
+        "source_id": "l2:2693",
+        "source_url": "https://www.joybuy.co.uk/s?k=TVs&l2=2693&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Soundbars & Home Cinema",
+        "source_id": "l2:1412",
+        "source_url": "https://www.joybuy.co.uk/s?k=Soundbars%20%26%20Home%20Cinema&l2=1412&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Consoles",
+        "source_id": "l3:1430",
+        "source_url": "https://www.joybuy.co.uk/s?k=Consoles&l3=1430&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Speakers",
+        "source_id": "l2:2846",
+        "source_url": "https://www.joybuy.co.uk/s?k=Speakers&l2=2846&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Headphones",
+        "source_id": "l2:1414",
+        "source_url": "https://www.joybuy.co.uk/s?k=Headphones&l2=1414&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Electronic Accessories",
+        "source_id": "l3:1500",
+        "source_url": "https://www.joybuy.co.uk/s?k=Electronic%20Accessories&l3=1500&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Beauty",
+    "source_id": "minihome:UK-Mini-HP-Beauty",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Beauty",
+    "children": [
+      {
+        "name": "Premium Beauty",
+        "source_id": "l2:5316",
+        "source_url": "https://www.joybuy.co.uk/s?k=Premium%20Beauty&l2=5316&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Fragrance",
+        "source_id": "l2:2751",
+        "source_url": "https://www.joybuy.co.uk/s?k=Fragrance&l2=2751&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Face Care",
+        "source_id": "l2:2747",
+        "source_url": "https://www.joybuy.co.uk/s?k=Face%20Care&l2=2747&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Makeup",
+        "source_id": "l2:2753",
+        "source_url": "https://www.joybuy.co.uk/s?k=Makeup&l2=2753&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Hair",
+        "source_id": "l2:2729",
+        "source_url": "https://www.joybuy.co.uk/s?k=Hair&l2=2729&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Body",
+        "source_id": "l2:2710",
+        "source_url": "https://www.joybuy.co.uk/s?k=Body&l2=2710&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sun Cream & Lotion",
+        "source_id": "l2:2745",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sun%20Cream%20%26%20Lotion&l2=2745&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Nails",
+        "source_id": "l2:2755",
+        "source_url": "https://www.joybuy.co.uk/s?k=Nails&l2=2755&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Gaming",
+    "source_id": "minihome:UK-Mini-HP-Gaming",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Gaming",
+    "children": [
+      {
+        "name": "Controllers",
+        "source_id": "l2:1425",
+        "source_url": "https://www.joybuy.co.uk/s?k=Controllers&l2=1425&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Console Games",
+        "source_id": "l2:1427",
+        "source_url": "https://www.joybuy.co.uk/s?k=Console%20Games&l2=1427&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Consoles",
+        "source_id": "l2:1429",
+        "source_url": "https://www.joybuy.co.uk/s?k=Consoles&l2=1429&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming Memory & Storage",
+        "source_id": "l2:5380",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20Memory%20%26%20Storage&l2=5380&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming PC components",
+        "source_id": "l2:2623",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20PC%20components&l2=2623&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Monitors",
+        "source_id": "l3:1437",
+        "source_url": "https://www.joybuy.co.uk/s?k=Monitors&l3=1437&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming Keyboards",
+        "source_id": "l3:5116",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20Keyboards&l3=5116&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming Mice",
+        "source_id": "l3:5117",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20Mice&l3=5117&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gaming Steering Wheels",
+        "source_id": "l2:3505",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gaming%20Steering%20Wheels&l2=3505&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Food & Drinks",
+    "source_id": "minihome:UK-Mini-HP-Joymart",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Joymart",
+    "children": [
+      {
+        "name": "Chocolate & Sweets",
+        "source_id": "l2:1277",
+        "source_url": "https://www.joybuy.co.uk/s?k=Chocolate%20%26%20Sweets&l2=1277&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Crisps, Snacks & Nuts",
+        "source_id": "l2:1285",
+        "source_url": "https://www.joybuy.co.uk/s?k=Crisps%2C%20Snacks%20%26%20Nuts&l2=1285&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Wine",
+        "source_id": "l2:1329",
+        "source_url": "https://www.joybuy.co.uk/s?k=Wine&l2=1329&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Fizzy Drinks",
+        "source_id": "l2:1302",
+        "source_url": "https://www.joybuy.co.uk/s?k=Fizzy%20Drinks&l2=1302&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Energy, Sports & Health Drinks",
+        "source_id": "l2:1300",
+        "source_url": "https://www.joybuy.co.uk/s?k=Energy%2C%20Sports%20%26%20Health%20Drinks&l2=1300&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Water",
+        "source_id": "l2:1312",
+        "source_url": "https://www.joybuy.co.uk/s?k=Water&l2=1312&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Tea, Coffee & Hot Drinks",
+        "source_id": "l2:1338",
+        "source_url": "https://www.joybuy.co.uk/s?k=Tea%2C%20Coffee%20%26%20Hot%20Drinks&l2=1338&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Beer",
+        "source_id": "l2:1315",
+        "source_url": "https://www.joybuy.co.uk/s?k=Beer&l2=1315&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Spirits",
+        "source_id": "l2:1325",
+        "source_url": "https://www.joybuy.co.uk/s?k=Spirits&l2=1325&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cider",
+        "source_id": "l2:1317",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cider&l2=1317&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Tins & Cans",
+        "source_id": "l2:1297",
+        "source_url": "https://www.joybuy.co.uk/s?k=Tins%20%26%20Cans&l2=1297&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Table Sauces, Condiments & Dressings",
+        "source_id": "l2:1295",
+        "source_url": "https://www.joybuy.co.uk/s?k=Table%20Sauces%2C%20Condiments%20%26%20Dressings&l2=1295&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cereals",
+        "source_id": "l2:1275",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cereals&l2=1275&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cooking Ingredients",
+        "source_id": "l2:1278",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cooking%20Ingredients&l2=1278&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Biscuits",
+        "source_id": "l2:1276",
+        "source_url": "https://www.joybuy.co.uk/s?k=Biscuits&l2=1276&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Rice, Pasta & Pulses",
+        "source_id": "l2:1293",
+        "source_url": "https://www.joybuy.co.uk/s?k=Rice%2C%20Pasta%20%26%20Pulses&l2=1293&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Home & Living",
+    "source_id": "minihome:UK-Mini-HP-Home-Living",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Home-Living",
+    "children": [
+      {
+        "name": "Kitchen & Dining",
+        "source_id": "l2:1572",
+        "source_url": "https://www.joybuy.co.uk/s?k=Kitchen%20%26%20Dining&l2=1572&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Storage & Organisation",
+        "source_id": "l2:1574",
+        "source_url": "https://www.joybuy.co.uk/s?k=Storage%20%26%20Organisation&l2=1574&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Bedding",
+        "source_id": "l2:1568",
+        "source_url": "https://www.joybuy.co.uk/s?k=Bedding&l2=1568&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Bath",
+        "source_id": "l2:1570",
+        "source_url": "https://www.joybuy.co.uk/s?k=Bath&l2=1570&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Home Decor",
+        "source_id": "l2:1566",
+        "source_url": "https://www.joybuy.co.uk/s?k=Home%20Decor&l2=1566&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Party Decorations",
+        "source_id": "l2:4663",
+        "source_url": "https://www.joybuy.co.uk/s?k=Party%20Decorations&l2=4663&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Arts & Craft Supplies",
+        "source_id": "l2:1443",
+        "source_url": "https://www.joybuy.co.uk/s?k=Arts%20%26%20Craft%20Supplies&l2=1443&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Gift Wrap & Cards",
+        "source_id": "l2:1578",
+        "source_url": "https://www.joybuy.co.uk/s?k=Gift%20Wrap%20%26%20Cards&l2=1578&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Seasonal Decor",
+        "source_id": "l2:1580",
+        "source_url": "https://www.joybuy.co.uk/s?k=Seasonal%20Decor&l2=1580&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Wash & Maintenance Tools",
+        "source_id": "l2:3902",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Wash%20%26%20Maintenance%20Tools&l2=3902&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Auto Accessories",
+        "source_id": "l2:3904",
+        "source_url": "https://www.joybuy.co.uk/s?k=Auto%20Accessories&l2=3904&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Furniture",
+        "source_id": "l2:1564",
+        "source_url": "https://www.joybuy.co.uk/s?k=Furniture&l2=1564&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Watering & Garden Tools",
+        "source_id": "l3:3121",
+        "source_url": "https://www.joybuy.co.uk/s?k=Watering%20%26%20Garden%20Tools&l3=3121&trkSource=002&trkType=200"
+      },
+      {
+        "name": "DIY",
+        "source_id": "l2:1584",
+        "source_url": "https://www.joybuy.co.uk/s?k=DIY&l2=1584&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sports & Leisure",
+        "source_id": "l2:1587",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sports%20%26%20Leisure&l2=1587&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Outdoors",
+        "source_id": "l2:1585",
+        "source_url": "https://www.joybuy.co.uk/s?k=Outdoors&l2=1585&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Notebooks, Pads & Paper",
+        "source_id": "l2:1449",
+        "source_url": "https://www.joybuy.co.uk/s?k=Notebooks%2C%20Pads%20%26%20Paper&l2=1449&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Pens & Pencils",
+        "source_id": "l2:1445",
+        "source_url": "https://www.joybuy.co.uk/s?k=Pens%20%26%20Pencils&l2=1445&trkSource=002&trkType=200"
+      },
+      {
+        "name": "School & Office Accessories",
+        "source_id": "l2:1447",
+        "source_url": "https://www.joybuy.co.uk/s?k=School%20%26%20Office%20Accessories&l2=1447&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Mailing Supplies",
+        "source_id": "l2:1441",
+        "source_url": "https://www.joybuy.co.uk/s?k=Mailing%20Supplies&l2=1441&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Electronics",
+        "source_id": "l2:3896",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Electronics&l2=3896&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Lights",
+        "source_id": "l2:3898",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Lights&l2=3898&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Everyday Essentials",
+    "source_id": "minihome:uk-mini-hp-everyday-essentials",
+    "source_url": "https://www.joybuy.co.uk/minihome/uk-mini-hp-everyday-essentials",
+    "children": [
+      {
+        "name": "Body",
+        "source_id": "l2:2710",
+        "source_url": "https://www.joybuy.co.uk/s?k=Body&l2=2710&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Dental",
+        "source_id": "l2:2711",
+        "source_url": "https://www.joybuy.co.uk/s?k=Dental&l2=2711&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Hair",
+        "source_id": "l2:2729",
+        "source_url": "https://www.joybuy.co.uk/s?k=Hair&l2=2729&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Intimate Care",
+        "source_id": "l3:3014",
+        "source_url": "https://www.joybuy.co.uk/s?k=Intimate%20Care&l3=3014&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sexual Wellness",
+        "source_id": "l2:2739",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sexual%20Wellness&l2=2739&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sunscreens",
+        "source_id": "l3:2746",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sunscreens&l3=2746&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Men's",
+        "source_id": "l2:2737",
+        "source_url": "https://www.joybuy.co.uk/s?k=Men's&l2=2737&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Shaving & Hair removal",
+        "source_id": "l2:2731",
+        "source_url": "https://www.joybuy.co.uk/s?k=Shaving%20%26%20Hair%20removal&l2=2731&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Stop Smoking",
+        "source_id": "l2:2741",
+        "source_url": "https://www.joybuy.co.uk/s?k=Stop%20Smoking&l2=2741&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Massage & Relaxation",
+        "source_id": "l2:2735",
+        "source_url": "https://www.joybuy.co.uk/s?k=Massage%20%26%20Relaxation&l2=2735&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Eye and Visual Care",
+        "source_id": "l2:2743",
+        "source_url": "https://www.joybuy.co.uk/s?k=Eye%20and%20Visual%20Care&l2=2743&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Toilet Roll",
+        "source_id": "l3:3144",
+        "source_url": "https://www.joybuy.co.uk/s?k=Toilet%20Roll&l3=3144&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Kitchen Roll",
+        "source_id": "l3:1531",
+        "source_url": "https://www.joybuy.co.uk/s?k=Kitchen%20Roll&l3=1531&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Laundry",
+        "source_id": "l2:1534",
+        "source_url": "https://www.joybuy.co.uk/s?k=Laundry&l2=1534&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Dishwashing",
+        "source_id": "l2:1528",
+        "source_url": "https://www.joybuy.co.uk/s?k=Dishwashing&l2=1528&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Air Fresheners & Home Fragrance",
+        "source_id": "l2:1524",
+        "source_url": "https://www.joybuy.co.uk/s?k=Air%20Fresheners%20%26%20Home%20Fragrance&l2=1524&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Cleaning",
+        "source_id": "l2:1532",
+        "source_url": "https://www.joybuy.co.uk/s?k=Cleaning&l2=1532&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Insect & Pest Control",
+        "source_id": "l3:1523",
+        "source_url": "https://www.joybuy.co.uk/s?k=Insect%20%26%20Pest%20Control&l3=1523&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Foil, Plastic Wrap & Food Storage",
+        "source_id": "l2:1526",
+        "source_url": "https://www.joybuy.co.uk/s?k=Foil%2C%20Plastic%20Wrap%20%26%20Food%20Storage&l2=1526&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Toys, Baby and Kids",
+    "source_id": "minihome:UK-Mini-HP-Toys-Baby-and-Kids",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Toys-Baby-and-Kids",
+    "children": [
+      {
+        "name": "Infant & Pre-school Toys",
+        "source_id": "l2:1372",
+        "source_url": "https://www.joybuy.co.uk/s?k=Infant%20%26%20Pre-school%20Toys&l2=1372&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Dress Up & Imaginative Play",
+        "source_id": "l2:1382",
+        "source_url": "https://www.joybuy.co.uk/s?k=Dress%20Up%20%26%20Imaginative%20Play&l2=1382&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Construction Toys",
+        "source_id": "l2:1374",
+        "source_url": "https://www.joybuy.co.uk/s?k=Construction%20Toys&l2=1374&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Games & Puzzles",
+        "source_id": "l2:1394",
+        "source_url": "https://www.joybuy.co.uk/s?k=Games%20%26%20Puzzles&l2=1394&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Play Figures & Accessories",
+        "source_id": "l2:1388",
+        "source_url": "https://www.joybuy.co.uk/s?k=Play%20Figures%20%26%20Accessories&l2=1388&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Dolls",
+        "source_id": "l2:1386",
+        "source_url": "https://www.joybuy.co.uk/s?k=Dolls&l2=1386&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Pocket Money Toys & Collectibles",
+        "source_id": "l2:1370",
+        "source_url": "https://www.joybuy.co.uk/s?k=Pocket%20Money%20Toys%20%26%20Collectibles&l2=1370&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Outdoor Toys",
+        "source_id": "l2:1392",
+        "source_url": "https://www.joybuy.co.uk/s?k=Outdoor%20Toys&l2=1392&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Arts & Crafts Supplies",
+        "source_id": "l2:1390",
+        "source_url": "https://www.joybuy.co.uk/s?k=Arts%20%26%20Crafts%20Supplies&l2=1390&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Learning, Discovery & Science",
+        "source_id": "l2:1384",
+        "source_url": "https://www.joybuy.co.uk/s?k=Learning%2C%20Discovery%20%26%20Science&l2=1384&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Vehicles & Remote Control",
+        "source_id": "l2:1376",
+        "source_url": "https://www.joybuy.co.uk/s?k=Vehicles%20%26%20Remote%20Control&l2=1376&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Electronic Toys & Music",
+        "source_id": "l2:1380",
+        "source_url": "https://www.joybuy.co.uk/s?k=Electronic%20Toys%20%26%20Music&l2=1380&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Soft Toys",
+        "source_id": "l2:1378",
+        "source_url": "https://www.joybuy.co.uk/s?k=Soft%20Toys&l2=1378&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Nappies & Pants",
+        "source_id": "l2:1494",
+        "source_url": "https://www.joybuy.co.uk/s?k=Nappies%20%26%20Pants&l2=1494&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Baby & Toddler Milk",
+        "source_id": "l2:1492",
+        "source_url": "https://www.joybuy.co.uk/s?k=Baby%20%26%20Toddler%20Milk&l2=1492&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Baby & Toddler Food",
+        "source_id": "l2:1490",
+        "source_url": "https://www.joybuy.co.uk/s?k=Baby%20%26%20Toddler%20Food&l2=1490&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Baby Toiletries & Bathing",
+        "source_id": "l2:1488",
+        "source_url": "https://www.joybuy.co.uk/s?k=Baby%20Toiletries%20%26%20Bathing&l2=1488&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Baby & Kids Health",
+        "source_id": "l2:1486",
+        "source_url": "https://www.joybuy.co.uk/s?k=Baby%20%26%20Kids%20Health&l2=1486&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Strollers, Prams & Travel Accessories",
+        "source_id": "l2:1482",
+        "source_url": "https://www.joybuy.co.uk/s?k=Strollers%2C%20Prams%20%26%20Travel%20Accessories&l2=1482&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Nursing & Feeding",
+        "source_id": "l2:1484",
+        "source_url": "https://www.joybuy.co.uk/s?k=Nursing%20%26%20Feeding&l2=1484&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Nursery & Bedding",
+        "source_id": "l2:1480",
+        "source_url": "https://www.joybuy.co.uk/s?k=Nursery%20%26%20Bedding&l2=1480&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Infant & Pre-school Toys & Activities",
+        "source_id": "l2:1476",
+        "source_url": "https://www.joybuy.co.uk/s?k=Infant%20%26%20Pre-school%20Toys%20%26%20Activities&l2=1476&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Baby Clothing",
+        "source_id": "l2:1474",
+        "source_url": "https://www.joybuy.co.uk/s?k=Baby%20Clothing&l2=1474&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Safety Equipment",
+        "source_id": "l2:1478",
+        "source_url": "https://www.joybuy.co.uk/s?k=Safety%20Equipment&l2=1478&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Clothing, Footwear & Acc.",
+    "source_id": "minihome:uk-minihp-clothing-footwear-acc-",
+    "source_url": "https://www.joybuy.co.uk/minihome/uk-minihp-clothing-footwear-acc-",
+    "children": [
+      {
+        "name": "Women's Clothing & Accessories",
+        "source_id": "l2:1877",
+        "source_url": "https://www.joybuy.co.uk/s?k=Women's%20Clothing%20%26%20Accessories&l2=1877&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Men's Clothing & Accessories",
+        "source_id": "l2:1879",
+        "source_url": "https://www.joybuy.co.uk/s?k=Men's%20Clothing%20%26%20Accessories&l2=1879&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Watches",
+        "source_id": "l2:1881",
+        "source_url": "https://www.joybuy.co.uk/s?k=Watches&l2=1881&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Footwear",
+        "source_id": "l2:1883",
+        "source_url": "https://www.joybuy.co.uk/s?k=Footwear&l2=1883&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Bags & Luggage",
+        "source_id": "l2:1885",
+        "source_url": "https://www.joybuy.co.uk/s?k=Bags%20%26%20Luggage&l2=1885&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Jewellery",
+        "source_id": "l2:1889",
+        "source_url": "https://www.joybuy.co.uk/s?k=Jewellery&l2=1889&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Health & Wellness",
+    "source_id": "minihome:UK-Mini-HP-Health-and-Wellness",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Health-and-Wellness",
+    "children": [
+      {
+        "name": "Weight Management",
+        "source_id": "l2:1454",
+        "source_url": "https://www.joybuy.co.uk/s?k=Weight%20Management&l2=1454&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sexual Wellbeing & Family Planning",
+        "source_id": "l2:1456",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sexual%20Wellbeing%20%26%20Family%20Planning&l2=1456&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Period Products & Intimate Care",
+        "source_id": "l2:1458",
+        "source_url": "https://www.joybuy.co.uk/s?k=Period%20Products%20%26%20Intimate%20Care&l2=1458&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Sports Nutrition & Performance",
+        "source_id": "l2:1460",
+        "source_url": "https://www.joybuy.co.uk/s?k=Sports%20Nutrition%20%26%20Performance&l2=1460&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Vitamins & Supplements",
+        "source_id": "l2:1462",
+        "source_url": "https://www.joybuy.co.uk/s?k=Vitamins%20%26%20Supplements&l2=1462&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Pharmacy & Health",
+        "source_id": "l2:1464",
+        "source_url": "https://www.joybuy.co.uk/s?k=Pharmacy%20%26%20Health&l2=1464&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Healthcare devices",
+        "source_id": "l2:2567",
+        "source_url": "https://www.joybuy.co.uk/s?k=Healthcare%20devices&l2=2567&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Lifestyle & Wellbeing",
+        "source_id": "l2:2569",
+        "source_url": "https://www.joybuy.co.uk/s?k=Lifestyle%20%26%20Wellbeing&l2=2569&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "Automotive",
+    "source_id": "minihome:UK-Mini-HP-Automotive",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-Automotive",
+    "children": [
+      {
+        "name": "Car Electronics",
+        "source_id": "l2:3896",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Electronics&l2=3896&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Lights",
+        "source_id": "l2:3898",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Lights&l2=3898&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Repair Tools",
+        "source_id": "l2:3900",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Repair%20Tools&l2=3900&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Car Wash & Maintenance Tools",
+        "source_id": "l2:3902",
+        "source_url": "https://www.joybuy.co.uk/s?k=Car%20Wash%20%26%20Maintenance%20Tools&l2=3902&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Auto Accessories",
+        "source_id": "l2:3904",
+        "source_url": "https://www.joybuy.co.uk/s?k=Auto%20Accessories&l2=3904&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Hand & Power Tools",
+        "source_id": "l3:3129",
+        "source_url": "https://www.joybuy.co.uk/s?k=Hand%20%26%20Power%20Tools&l3=3129&trkSource=002&trkType=200"
+      }
+    ]
+  },
+  {
+    "name": "World Foods",
+    "source_id": "minihome:UK-Mini-HP-World-Foods",
+    "source_url": "https://www.joybuy.co.uk/minihome/UK-Mini-HP-World-Foods",
+    "children": [
+      {
+        "name": "Korean",
+        "source_id": "l2:1549",
+        "source_url": "https://www.joybuy.co.uk/s?k=Korean&l2=1549&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Japanese",
+        "source_id": "l2:1547",
+        "source_url": "https://www.joybuy.co.uk/s?k=Japanese&l2=1547&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Thai & South East Asian",
+        "source_id": "l2:1557",
+        "source_url": "https://www.joybuy.co.uk/s?k=Thai%20%26%20South%20East%20Asian&l2=1557&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Indian & South Asian",
+        "source_id": "l2:1551",
+        "source_url": "https://www.joybuy.co.uk/s?k=Indian%20%26%20South%20Asian&l2=1551&trkSource=002&trkType=200"
+      },
+      {
+        "name": "African & Caribbean",
+        "source_id": "l2:1555",
+        "source_url": "https://www.joybuy.co.uk/s?k=African%20%26%20Caribbean&l2=1555&trkSource=002&trkType=200"
+      },
+      {
+        "name": "International Flavours",
+        "source_id": "l2:2758",
+        "source_url": "https://www.joybuy.co.uk/s?k=International%20Flavours&l2=2758&trkSource=002&trkType=200"
+      },
+      {
+        "name": "World Spirits",
+        "source_id": "l2:3983",
+        "source_url": "https://www.joybuy.co.uk/s?k=World%20Spirits&l2=3983&trkSource=002&trkType=200"
+      },
+      {
+        "name": "Chinese",
+        "source_id": "l2:1545",
+        "source_url": "https://www.joybuy.co.uk/s?k=Chinese&l2=1545&trkSource=002&trkType=200"
+      }
+    ]
+  }
+]

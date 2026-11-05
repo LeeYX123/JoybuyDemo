@@ -53,9 +53,10 @@ class ExpansionPlanTests(CrawlerControlTestBase):
     def test_expansion_uses_bound_tree_version(self):
         # Publish a newer tree where Electronics was renamed; the job stays
         # bound to the older snapshot for reproducibility.
-        from catalog.services import save_source_category_version
         from django.utils import timezone
         from joybuy_crawler.expansion import expand_job_categories
+
+        from catalog.services import save_source_category_version
 
         newer = save_source_category_version(
             source_system="joybuy",

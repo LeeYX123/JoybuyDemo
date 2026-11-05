@@ -96,7 +96,7 @@ JS_PAGE = """<!DOCTYPE html>
 class FixtureHandler(BaseHTTPRequestHandler):
     server_version = "JoybuyFixture/1.0"
 
-    def log_message(self, format, *args):  # noqa: A002 - stdlib signature
+    def log_message(self, format, *args):
         return  # keep test output clean
 
     def _send(self, status: int, body: bytes, headers: dict | None = None):

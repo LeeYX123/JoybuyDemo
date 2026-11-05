@@ -4,8 +4,26 @@
 
 ## 1. 我们在做什么
 
-- 当前任务（2026-11-05，**已完成**）：应用户要求产出数据库说明文档 `docs/13-database-schema.md`——以本地开发库实际结构为准（information_schema 快照，79 表 759 字段），结合 `backend/*/models.py` 逐表逐字段中文说明（通用约定、按业务域分组的表清单、每张表的用途与字段表、Django 内置表）。纯文档任务，未改任何代码与数据库。文档编号避开了已被占用的 12（UI 规格），索引 `docs/README.md` 已同步补 11/12/13 三条。
-- 上一任务（2026-11-05，**已完成**）：应用户要求**移除平台管理端登录的验证器（TOTP），只保留邮箱+密码登录**。后端 `StaffLoginView` 删除全部 TOTP 校验分支（登录成功即创建 `totp_verified=True` 会话，RBAC 链一致），`StaffLoginSerializer` 移除 `totp_code` 字段（旧客户端多传会被 DRF 忽略），`settings.py` 删除 `STAFF_TOTP_LOGIN_ENFORCED`（`.env.example` 同步删除）；`StaffTotpDevice` 模型、`provision_totp_device` 服务与 `bootstrap_platform_admin` 引导命令**保留为休眠代码**（无迁移改动），权限层对 `totp_verified_at` 的既有检查不变。admin-web 登录页移除动态码输入与 STAFF_TOTP_REQUIRED 分支，`useStaffAuth.login(email, password)` 去掉第三参。测试同步：后端 TOTP 强制/重放两用例替换为"密码直登"+"忽略多余 totp_code"两用例；LoginView 组件测试改为密码直登+错误提示两用例；E2E `admin-login.spec.js` 移除 RFC 6238 动态码生成与环境自适应分支。文档：`backend/README.md`（登录接口表+引导命令说明）、`docs/08`（新增 2026-11-05 变更补记，历史记录保留）。**注意**：期间发现 8000 端口旧后端进程（21:51 启动的 --noreload）仍执行旧 TOTP 逻辑导致 e2e 首跑失败，已杀掉并重启后端后全部通过。
+- **当前任务（2026-11-05 夜，三轮 + 图片本地上传全部完成）**：按 `商家端及平台管理端文档/` 重构商家后台与平台管理后台。**第 1 轮**：数据模型 + 平台 A02–A09。**第 2 轮**：A10–A17。**第 3 轮**：`merchant-web` + 商家端 M01–M10。**图片**：新增统一上传接口，落盘到 `var/media/`，业务表只存 `/media/...` URL，前端直接渲染。**已无遗留必做项**（对象存储/图片压缩变体可作为后续优化）。
+- 当前任务（2026-11-05，**运行日志已细化**）：用户要求日志里能看到访问的 URL、拿到的数据、处理结果和落盘路径。已加 `LISTING_FETCHED` / `PRODUCT_PARSED` / `DATASET_SAVED` 并增强 `PRODUCT_IMPORTED`（每商品 3 条：解析→落盘→入库），详情接口事件数 50→200；顺带修掉 `parse_detail` 里会导致每个详情页崩溃的 `UnboundLocalError`。详见 §2"补充 11"。
+- 当前任务（2026-11-05，**登录墙根因已修**）：用户反馈最新任务仍报登录墙。实测证明账号 Cookie 有效（带 Cookie curl 得 200），真因是 **Scrapy 默认缓存策略把匿名请求的 307 跳登录缓存了 6 小时，带 Cookie 的运行直接吃缓存、根本没发请求**；同时列表页改版导致解析出空标题/无价格。已加 `SuccessOnlyCachePolicy` + 清缓存 + 列表双布局解析器，端到端实抓验证 40/40 卡片有标题有原价。详见 §2"补充 10"。
+- 当前任务（2026-11-05，**账号组实体化 + 账号可编辑/删除**）：用户要求账号可改组、可编辑、可删除，新增账号时组要下拉选，并能新建账号组。已加 `CrawlerAccountGroup` 表 + 账号软删除 + 4 个接口 + 管理端下拉/编辑/删除。**删除是软删除**（会话销毁、行保留以保住历史运行的账号归属）。详见 §2"补充 9"。
+- 当前任务（2026-11-05，**多账号不定时换号已实现**）：用户明确决定用多个账号轮换抓取，并按"对话优先"改掉了 `docs/05` 的冲突条目。已实现 `AccountPool`（随机时间/请求预算触发换号）、风控命中即移出池子、Scrapy 全局 CookieJar 关闭以防串号、5 个中文事件码。详见 §2"补充 8"。
+- 当前任务（2026-11-05，**爬虫账号绑定已修**）：用户问"抓取时到底有没有带爬虫账号"。查出三个真问题：建任务接口忽略账号、HTTP 请求从不带 Cookie（只有浏览器回退带）、`Joybuy homepage demo` 是"假 VALID"占位会话（0 条 Cookie）。已加 `CrawlJob.account`（迁移 0006）+ 建任务可选账号 + 账号 Cookie 注入 + 可用性判定要求"会话里真有 Cookie"。详见 §2"补充 7"。
+- 当前任务（2026-11-05，**运行日志已中文化**）：用户反馈爬虫任务详情的日志是英文。已把全部运行事件文案、失败原因、质量规则说明改成中文；`code` 与字段名保留英文常量以维持可检索性，中文短标签放前端 `locale.js`。详见 §2 同日"补充 6"小节。
+- 当前任务（2026-11-05，**评价只采聚合、分类只到二级**）：用户两条数据口径变更。①**不再爬评价内容**，只采 1~5 星各自数量、平均分、评价条数，以及【内容由人工智能总结自用户评价】区块（有才采、没有就不写）；②面包屑**只保留去掉"首页"后的前两级**（`首页/母婴用品/健康护理/湿巾及配件/湿巾/商品` → `母婴用品/健康护理`）。两条都已落到解析器（`joybuy_uk.py`）并有 fixture 契约测试。详见 §2 同日"补充 4"小节。
+- 当前任务（2026-11-05，**爬虫记录级质量层已落地**）：参照一篇商城爬虫实战文章（CSDN 166029197）里"解析看起来成功但数据是脏的"教训，给爬虫补了**记录级字段规则 + 运行级价格分布告警 + 数据集按内容指纹增量**三层。新建 `crawler/joybuy_crawler/quality.py` 与 `pipelines.RecordRulePipeline`（优先级 150，在 `StagingPipeline` 200 之前），致命违规直接丢该条，永不进 dataset/staging/业务表。**实测探针**：拿 `var/crawl_exports` 里 9 份真实抓取 payload 回放，6 份正常商品零违规通过、3 份本来就是空解析（title/price/currency 全空）的脏数据全部拦截，无误杀。详见 §2 同日"爬虫记录级质量层"小节。
+- 当前任务（2026-11-05，**浏览器生命周期已修**）：用户反馈「一个任务打开几十个浏览器且不关闭」。已改为**一个任务一个浏览器、退出必关**（`BrowserSession` + 进程回收 + `close_crawler_browsers` 命令），并用探针证实「1 个浏览器抓 2 页、结束后 0 个进程」。详见 §2 同日补充小节。
+- 当前任务（2026-11-05，**类目中英双语展示，代码已完成、数据 170/177**）：管理端【新建任务】-【选择 Joybuy 类目】原来只显示英文，现在同时显示「中文名 / English name」。中文名从 joybuy.co.uk 切到 `_lang=zh_CN` 后按 **source id 一对一** 抓取并入库，英文树结构不变。详见 §2 同日小节与 `docs/05` §4.1。
+- 当前任务（2026-11-05，**第 1、2 轮全部完成**）：按用户 7 条要求重建爬虫任务模块。用户确认 4 个口径：**类目树选择**、**Scrapy+DrissionPage 混合**、**人工弹窗登录+加密 Cookie**、数据集按**类目/商品分层**。
+- **第 2 轮成果（账号管理 + 管理端 UI，全部浏览器实测通过）**：
+  - **账号管理后端**：`GET/POST /api/v1/admin/crawlers/accounts`（列表不暴露 session_cipher）+ `POST /crawlers/accounts/{id}/actions`（`login`/`logout`/`verify`/`disable`/`enable`/`reactivate`，权限码 `crawler.accounts.manage`，全部写审计）。`login` 派生独立进程 `manage.py crawler_account_login --account <id>`：弹**有头 Chrome**（独立端口 9334 + 每账号独立 profile `var/browser_profiles/account-{id8}`），用户本人完成 Facebook 登录后自动检测（首页可见文本无 "Sign in" + Cookie≥5 条）→ Cookie 加密入库 `record_account_session`（密码永不收集），8 分钟超时；`verify` 用存储 Cookie 无头渲染首页判定，失败则 `mark_session_expired`（风控页不算失败）；`logout`=清除会话；风控账号必须走 `reactivate`（`set_account_status` 拦截直接 enable）。
+  - **admin-web 重做**（`CrawlersView.vue` + 新组件 `CategoryTreePicker.vue`）：**任务 Tab**——新建表单内嵌 Joybuy 类目树（搜索过滤+两级展开勾选+每节点"含子类目"切换，数据来自 `/crawlers/source-tree`），列表新增类目摘要列，**详情抽屉**（冻结类目选择/树版本/运行计数/事件流，RUNNING 时 5s 轮询）；**爬虫账号 Tab**——列表（状态/会话/最近动作 note）+ 新增 + 登录/验证/清除会话/解除风控/停用/启用，登录等待期 5s 轮询自动刷新。locale.js 补齐 SUCCEEDED/VALID/EXPIRED/LOGIN_PENDING 等中文映射。
+  - **实测修复的真 bug**：任务创建 API 用不存在的 `SourceCategory.public_id` 查类目（旧 UI 同样是坏的）→ 统一改为 `source_id`（`l2:1405`/`minihome:...`），前端 payload 改发 `source_ids`，并补 HTTP 层测试 `test_crawl_jobs_api.py` 防回归。
+  - **遗留**：登录流程需要用户本人在弹窗里完成 Facebook 登录（未实测到 Cookie 落库那一步，检测逻辑已按可见文本规则实现并有单测覆盖 verify 路径）；列表页 window.prompt 的审计原因框在自动化浏览器中不便处理，人工使用正常。
+- **第 1 轮成果（后端，全部已实测）**：① 类目树同步 `manage.py sync_joybuy_category_tree`（14 一级频道+163 子类目已发布 `joybuy-uk-20261104-4dcfbbe5`）+ `GET /crawlers/source-tree`；② `CrawlJobSourceSelection` 多类目+树版本冻结（迁移 0005）+ `CrawlRunEvent` 事件模型 + 任务详情 API；③ 执行器：`start` 派生独立进程 → Scrapy spider → 风控中间件自动切 DrissionPage → 解析器 v2（joybuy 原生字段）→ StagingPipeline；④ 数据集 `var/crawl_exports/{任务}/{类目}/{类目}/{商品ID}/`，主图 s1248 阶梯最高清；⑤ `import_staging_product` 补 gallery 导入。**实测**：3 商品 3/3 导入、52 图 0 失败、1248×1248 主图落盘。
+- **docs/05 已按用户指示更新**（§1、§7.3、§8）：避免触发风控优先；出现验证码/风控时人工接管，不程序化打码。
+- 上一任务（2026-11-05，已完成）：产出数据库说明文档 `docs/13-database-schema.md`（79 表 759 字段，纯文档）。再上一任务：管理端登录移除 TOTP 验证器只保留邮箱+密码（详见下方记录）。
 - 上一任务（2026-11-04，已完成）：补齐商城端【畅销榜单】11 个标准类目的公开 Joybuy 演示商品。已从 `joybuy.co.uk` 中文浏览器会话和固定公开榜单页采集 11 类 × 3 条，全部通过 staging 导入、激活并建立 GB 搜索文档；33/33 fixture 商品均已下载到本地媒体库，榜单接口现在返回本地 `/media/...` 首图，页面已抽查美妆与游戏类目正常显示。服装是唯一例外：Joybuy 畅销榜侧栏没有服装一级榜，fixture 明确标记使用“时装配饰频道 → 爆款直降”替代来源，绝不能伪装成官方 bestseller 子榜。
 - 当前任务（2026-11-04 夜间自动执行，**已完成**）：按用户指令"参照 joybuy.co.uk 逐元素视觉对齐全部文档页面"的全自动流程执行完毕。四份交付物在 `var/ui-alignment/deliverables.md`（页面清单+基准规格表+代码修改记录+复核差异清单 D-01~D-14）。覆盖：全局头部（logo 图片化/搜索框/圆形按钮/类目行）、首页、Categories 面板、列表页（234px 左栏+274px 卡重写）、**畅销榜单页新建**（/promo/best-seller，hero 384px/11 品类无箭头/仅价格筛选/排名徽章 32×32 #E4E6EB）、详情页重写（Buy now #E1251B hover #D14335 / Add to cart #1A1A1A hover #282828 / 数量步进器 47×34 / 白名单拦截弹窗 / 服务保障纯文本行）、结算页两步化（3 字段地址表单→支付步骤：余额支付置顶+精简 Summary+精简页脚）。后端最小支撑：`BuyerAccount.purchase_whitelisted`（迁移 0004，默认 True=开发阶段放行，session payload 返回）。E2E purchase-funnel 的结算步骤已同步新流程；funnel 在 dev 水合竞态下仍偶发超时（差异清单 D-14），全流程已浏览器人工验证（含下单 201）。
 - 下一轮（待用户确认后）：第 2 轮榜单后台配置（RankingList/管理端 RankingsView，见更下方计划）；第 3 轮钱包/白名单 admin/直购参数/地址后端校验放宽（对应差异清单 D-07~D-10）。
@@ -24,6 +42,431 @@
 - 上一任务“平台管理端全面中文化（仅保留 Joybuy 标识）”已完成并通过验证，历史记录保留在下方。
 
 ## 2. 已经完成了什么
+
+### 2026-11-05（图片改本地存储 + 真实上传）
+
+- **用户诉求**：图片存到服务器本地，路径写进 URL，前端直接从本地读图渲染。
+- **现状盘点**：项目本来就有完整的媒体库（`MediaAsset` 内容寻址 + `media_url()` + `serve_media_file` + `MEDIA_ROOT=var/media`），**缺的只是上传入口**——所有表单此前只能手填 URL。
+- **后端新增**：
+  - `media/uploads.py`：`store_upload(file, purpose=...)`。按 purpose 决定 kind 与大小上限；文件内容分块读、超限立即中断（不把大文件整个读进内存）；Pillow 先 `verify()` 再重新解码取尺寸；只放行 **JPEG/PNG/WebP**；像素上限 4000 万防解压炸弹。**不信任客户端 Content-Type 与文件名**。
+  - `media.MediaAsset.Kind` 新增 `MERCHANT`（店铺头像桶，路径 `var/media/merchants/...`），迁移 `media/0003`。
+  - `merchant_ops/views_media.py`：`POST /api/v1/admin/media` 与 `POST /api/v1/merchant/media`。管理端按 purpose 校验**对应模块**的写权限（商品图要 `catalog.pool.manage`、轮播图要 `cms.banners.manage`……不能互相顶替）；商家端只开放 product/avatar/review 三类。
+  - 售后凭证新增 `action="proof"`：只接受 `/media/` 或 http(s) 地址，最多 5 张（挡掉 `javascript:` 之类）。
+  - `merchant-listings` 列表与上架响应补 `image`（批量取 `MediaUsage` 主图，避免 N+1）；会话商品信息也改用同一套取图逻辑。
+- **前端新增**：
+  - `admin-web` / `merchant-web` 各一个 `components/ImageUploader.vue`：点击选图 → `FormData` 上传 → 回填 URL；支持多图、设为主图、移除、单张大小预检、**相同图片不重复追加**（内容寻址会返回同一 URL）。
+  - `adminUpload` / `merchantUpload`：**绝对不能手动设 `Content-Type`**，否则浏览器补不了 boundary，后端解析不出文件。
+  - **两个 `vite.config.js` 都加了 `/media` 代理**——不加的话 `<img src="/media/...">` 在 5173/5174 直接 404，这是「图能上传但显示不出来」的头号原因。
+- **接入的 5 处表单**：A03 商品池图片（最多 5 张，1MB）、A10 轮播图（2MB）、A11 好评评论图（5 张，1MB）、M02 店铺头像（2MB）、M07 售后凭证（5 张，1MB）。
+- **数据落点**：业务表仍只存 URL 字符串，不存二进制、不存 asset 外键——换存储或加 CDN 只需改 `media_url()`。
+- **本轮修掉的 2 个 bug**：
+  1. `adminUpload` 一开始写 `/admin/media`，但管理端 `API_BASE_URL` 已含 `/admin`，实际请求变成 `/api/v1/admin/admin/media` → 404。改成 `/media`。
+  2. **M02「保存资料」一直 405**：`merchantWrite('/merchant/profile', ...)` 没传 method，默认 POST，而接口是 PATCH。这个 bug 在第 3 轮就存在，本轮测头像上传才暴露。
+- **验证**：
+  - `manage.py test merchant_ops.tests.test_media_upload` → **13 passed**（落盘字节与上传一致、URL 形状、去重、非图片/伪装图片、GIF 拒绝、>1MB 413、>4000 万像素拒绝、非法 purpose、缺文件、管理端跨模块权限 403、商家端 banner 用途不开放、受限角色 403、凭证 URL 白名单）；`merchant_ops media` → **134 passed**。
+  - **浏览器实测（真实 `input[type=file]`）**：商品池上传后缩略图 `naturalWidth=600`、保存后列表首行图宽 600；轮播图上传预览 220、列表 220；好评评论图上传成功；店铺头像上传后页头头像 600；售后凭证上传 + 保存后凭证区渲染。
+  - **渲染巡检**：管理端商品池 20/20 张图加载；商家端商品池卡片 8/8、已上架列表 4/4、会话商品图 480px；**0 个失败请求**。
+- **生产部署注意**：`/media/` 由 Nginx 直接 `alias` 到 `var/media/`（`serve_media_file` 只在 `DEBUG` 下注册路由，生产不走 Django）。上传目录需要写权限。
+
+### 2026-11-05（商家/平台后台重构 · 第 3 轮续）：商家端 M03–M10 全部完成
+
+- **交付范围**：M02 店铺管理（顺手补上，接口本来就有）、M03 商品上架中心、M04 订单管理与详情、M05 钱包管理、M06 保证金、M07 售后中心、M08 平台活动与推荐返佣、M09 消息中心、M10 平台通知中心。前端 9 个页面替换掉占位页，后端新增 24 条 `/api/v1/merchant/*` 路由。
+- **新增后端文件**：
+  - `merchant_ops/views_merchant_catalog.py`（M03）：商品池筛选/搜索/分页 + 上架；
+  - `merchant_ops/views_merchant_orders.py`（M04）：列表/详情/发货/导出；
+  - `merchant_ops/views_merchant_wallet.py`（M05+M06）：明细/密码/提现/保证金；
+  - `merchant_ops/views_merchant_service.py`（M07+M08）：售后处理、活动参与、推荐返佣；
+  - `merchant_ops/views_merchant_inbox.py`（M09+M10）：会话与通知；
+  - `merchant_ops/management/commands/seed_merchant_demo.py`：本地演示数据（幂等，见下）。
+- **新增前端文件**：`CatalogueView` / `OrdersView` / `WalletView` / `DepositView` / `AfterSalesView` / `ActivitiesView` / `MessagesView` / `NotificationsView` / `StoreView`。
+- **关键设计（沿用第一轮的合并口径）**：
+  - **上架 = 创建/复活一条 `Offer`**：成本价与零售价从 `spu` 快照到 `offer.cost_price/current_price`；平台下架过的商品重新上架时**复用原 Offer**（不新建行），避免唯一约束冲突并保留历史。
+  - **上架双校验**：商品必须 `ACTIVE` 且成本/零售价齐全（零售 ≥ 成本），店铺必须 `can_operate`（接单中 + 入驻通过 + 保证金免缴或已缴足）；前端按钮置灰只是提示，服务端仍完整校验。
+  - **发货扣成本**复用 `ship_merchant_order`：与钱包流水同事务、`ship:<order>` 幂等、余额不足拒绝。
+  - **提现**：先过 6 位钱包密码 → 占用可用余额（负向 `WITHDRAWAL` 流水）→ 待审核。密码错 5 次锁 15 分钟。
+  - **售后**：投诉与退货分开；退货类在用户确认收货（子单 `COMPLETED`）后禁止完成；已完成只读；可申请平台介入。
+  - **会话与通知分开**：客服会话每店铺一条、列表固定第一；通知含普通与商品好评，打开详情自动已读，好评按「星级 → 文字 → 图片 → 时间」排版。
+- **本轮修掉的 4 个真 bug（都是自己写的，不是遗留）**：
+  1. **`AppDrawer`/`AppModal` 没有 `open` 属性也没有 `v-if`** —— 抽屉和弹窗内容常驻 DOM，全屏遮罩会把整页盖住。已加 `open` prop + `v-if`。管理端是父级 `v-if` 包裹，所以没暴露；商家端用了 `:open`，必须组件自己判。
+  2. **提现金额精度校验永远失败**：`money()` 先把金额量化到 4 位小数，再看 `exponent < -2` 必然成立，任何金额都报「最多 2 位小数」。改成先按原始 `Decimal` 输入判断小数位，再量化。
+  3. **钱包密码失败计数被事务回滚**：`raise` 写在 `transaction.atomic()` 里，异常把「+1 次失败」一起滚掉，5 次锁定永远不生效。改成块内只落库、块外再抛。
+  4. **seed 的幂等键跨店冲突**：`demo:recharge` 是全局唯一键，第二家店直接复用了第一家的流水，余额没加却去发货 → `INSUFFICIENT_WALLET_BALANCE`。键改成 `demo:recharge:<merchant_id>`。
+- **演示数据（本地库）**：
+  ```
+  ./.venv/Scripts/python.exe backend/manage.py seed_merchant_demo --merchant HOMCOM --reset
+  ./.venv/Scripts/python.exe backend/manage.py seed_merchant_demo --merchant CHiQ --reset --with-deposit
+  ```
+  - 会给商品池**补价格**（120 个 SPU：零售价取该 SPU 在售 Offer 的真实价，成本价按 62% 估算，**仅本地演示**；真实成本必须由平台运营在 A03 录入）；
+  - 每家店造 3 个上架商品、20000 充值、三种状态各一单（待处理/已发货/已完成，走真实服务生成流水）、1 个售后退货单、2 个活动（1 个已参与）、2 条通知（普通 + 好评含平台回复）、1 个买家会话、1 条推荐关系与待发放返佣；
+  - `--with-deposit` 给该店启用 5000 保证金并缴足，用来让 M06 菜单可见（CHiQ 用了，HOMCOM 保持免缴做对比）。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test merchant_ops.tests.test_merchant_modules` → **34 passed**（上架重复 409 / 商品无价格 / 店铺不可经营 / 发货扣成本 / 余额不足 / 跨店 404 / 密码 6 位与 5 次锁定 / 提现超余额与精度 / 流水隔离 / 售后状态机 / 活动幂等 / 返佣隔离 / 会话首条客服 / 通知已读与长度校验）。
+  - `merchant_ops orders accounts_staff accounts_buyers` → **136 passed**（回归未破）。
+  - **浏览器实测**：`/store`、`/catalog`、`/orders`、`/wallet`、`/deposit`、`/after-sales`、`/activities`、`/messages`、`/notifications` 全部标题正确、**0 console 错误、0 失败请求、0 遮罩残留**；两店切换后菜单项从 9 项变 10 项（保证金按 `deposit_enabled` 显隐）。
+  - **写链路实测（Playwright 真实点击）**：上架商品成功、发货成功（待处理 1→0、扣成本）、设置钱包密码成功、提现 100.50 创建待审核申请并占用余额、售后进度更新、参与活动、买家消息发送、通知回复 + 全部标记已读。测试后已 `--reset` 恢复演示态。
+  - `ruff check/format`、`prettier --check`、`eslint`、`vite build` 全通过。
+
+### 2026-11-05（商家/平台后台重构 · 第 3 轮）：merchant-web 骨架 + M01/M02
+
+- **用户诉求**：问「商家端地址」——此前只有平台管理端，商家端从未建过。
+- **新增工程 `merchant-web`**（`pnpm --filter @joybuy/merchant-web dev`）：
+  - **http://127.0.0.1:5174**，Vite + Vue3 + vue-router，`/api` 代理到 8000；
+  - 主题**独立于管理端**：白底 220px 侧栏 + 品牌红 `#df2636`（原型 `海外电商商家后台.html` 采样：logo 36×36/radius 8、body `#f5f6f8` 14px、卡片 radius 8、顶栏 68px）；
+  - 结构：`layouts/MerchantLayout.vue`（侧栏按权限过滤 + 顶部店铺切换）、`composables/useMerchantSession.js`（会话 + 店铺上下文）、`lib/api.js`（自动带 `X-Merchant-Id`）、4 个通用组件。
+- **商家身份（关键设计）**：**不新建商家账号表**，复用 `staff_account` 登录（`/api/v1/admin/auth/*`），归属店铺由 `merchant_membership` 决定、可做范围由该 membership 的 `merchant_role` 决定。
+  - `MerchantAPIView.initial` 解析 `X-Merchant-Id`；**多店成员必须显式指定店铺**，否则返回 400 `MERCHANT_CONTEXT_REQUIRED`——绝不隐式「取第一个」，否则切店会静默串店；
+  - `skip_context = True` 的类（如 `/merchant/shops`）跳过上下文解析；
+  - 权限用 `permission_any` / `required_merchant_permissions` 声明，缺权限即 403。
+- **新增接口**：`GET /api/v1/merchant/shops`（可选店铺+权限）、`GET /api/v1/merchant/overview`（经营看板）、`GET|PATCH /api/v1/merchant/profile`（店铺资料）。
+- **新增权限**：迁移 `merchants/0005` 补 10 个 `merchant.*` 权限码（看板/店铺/上架/订单/钱包/保证金/售后/活动/消息/通知），`merchant_owner` 授满，新增 `merchant_staff` 角色（不含提现）。
+- **修复两个真 bug（都是本次才暴露的）**：
+  1. **员工会话 Cookie 的 `Path` 是 `/api/v1/admin/`**，所以 `/api/v1/merchant/*` **根本收不到 cookie**，商家端所有接口 401。已改为可配置 `STAFF_SESSION_COOKIE_PATH="/api/v1/"`，并在登出时顺带清理旧 path 的残留 cookie（`STAFF_SESSION_COOKIE_LEGACY_PATHS`）。**这是商家端接不上的根因，不是前端问题。**
+  2. **`CSRF_TRUSTED_ORIGINS` 里没有 5174**，Django 的 Origin 校验直接 403 拒绝商家端登录。已补 `http://127.0.0.1:5174`。**以后每加一个前端端口，必须同步这两处配置。**
+  3. `MerchantAPIView.handle_exception` 起初只翻译 `MerchantContextError`，`MerchantAdminError`（改店铺名为空）会漏成 500，已一并翻译。
+- **演示数据（本地库）**：`admin@joybuy.test` 已绑定 **HOMCOM + CHiQ** 两家店（`merchant_owner`），用来验证多店切换；绑定命令见下方「本地开发登录凭据」。原来误绑的「Joybuy 自营导入」兜底店已解绑。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test merchant_ops.tests.test_merchant_app` → **13 passed**（单店隐式解析、多店必须指定、跨店 403、无 membership 403、匿名 401、看板只统计本店、7 天柱状图不除零、权限清单、受限角色 403、改店铺名校验）。
+  - `merchant_ops accounts_staff accounts_buyers orders` → **102 passed**（回归未破）。
+  - **浏览器实测**：登录后落在 `/dashboard`，侧栏实测 **220px / rgb(255,255,255)**、logo `rgb(223,38,54)` 36px/8px、body `#f5f6f8` 14px；菜单 9 项（保证金按 `deposit_enabled=false` 正确隐藏）；6 张统计卡、7 条柱状条、店铺切换显示 HOMCOM/CHiQ；`/orders`、`/wallet`、`/messages` 占位页正常；**0 console 错误、0 失败请求**。
+  - `eslint`、`prettier --check`、`vite build` 全通过；根 `package.json` 补 `dev:merchant` / `build:merchant`，并加入 lint/format 范围。
+
+### 2026-11-05（商家/平台后台重构 · 第 2 轮）：A10–A17 全部完成
+
+- **交付范围**：A10 首页轮播图、A11 平台通知推送、A12 客服中心、A13 用户端管理、A14 白名单账号、A15 商家关注与曝光、A16 账号与权限、A17 操作日志。
+- **新增 6 张表**（详见 `docs/13-database-schema.md` §13.5）：
+  - `home_banner`（**没有并进 `cms_module`**：CMS 是整页版本快照，轮播图要单条开关 + 排序）；
+  - `merchant_notification` + `merchant_notification_reply`（**没有复用 `notification_message`**：那张是模板外发队列，站内信需要已读/多轮回复/商品快照）；
+  - `support_conversation` + `support_message`（`kind` 区分买家咨询与平台客服，每商家一条平台客服会话）；
+  - `buyer_wallet_entry`（买家余额流水）+ `buyer_account.balance/region`。
+- **权限模型（A16，重要）**：
+  - 不新增表：给每个模块补 `<模块>.view`，`<模块>.manage` **隐式包含** view —— `get_staff_permission_codes` 统一补齐，所以升级后持有 `manage` 的历史角色不会掉菜单；
+  - `StaffRbacPermission` 支持 `view.resolve_required_permissions(request)`：GET 走 `view_permissions`、写走 `required_permissions`；`OpsAPIView` 已内置该钩子，第一轮 8 个模块也全部补了 `view_permissions`；
+  - 前端 `useStaffAuth` 新增 `canView(module)` / `canWrite(perm)`；侧栏与路由守卫改用 `module` 语义，**只读账号也能看到菜单**；
+  - 「账号与权限」保存时按模块勾选生成一个内置角色 `staff-<public_id 前 12 位>`，权限取并集；超级管理员（`is_platform_admin`）不能停用、不能改权限（防自锁）。
+- **关键业务规则（已用测试锁死）**：
+  - 商品好评**只能推给该店确实已上架的 SPU**，服务端二次校验 `PRODUCT_NOT_LISTED`；
+  - 平台回复通知后 `read_at` 置空 → 商家端重新未读；
+  - 买家余额不能为负（CHECK + 服务层双重），充值走 `idempotency_key`；
+  - 移出白名单**只取消权限**，余额与历史保留；停用账号不能加入白名单；
+  - 关注/曝光只做正向累加，调整记录直接读 `audit_log`（不另建日志表）。
+- **前端**：新增 8 个页面 `BannersView`/`NotificationsView`/`SupportView`/`WhitelistView`/`GrowthView`/`StaffAccountsView`/`AuditLogsView`，并**重写** `BuyersView`（改用 `/buyers/accounts`）；侧栏按「交易管理 / 资金与风控 / 服务与运营 / 用户与权限 / 采集与基础数据」5 组共 17 项。
+- **踩坑补充**：
+  1. **老 `/admin/buyers` 接口一直 500**（`account.phone` 但字段是 `phone_e164`），本轮重写页面时改用新接口 `/buyers/accounts`，旧接口也顺手修了。
+  2. 新增路由必须放在 `api/v1/<path:unmatched>` 之前 —— `merchant_ops/urls.py` 在 `config/urls.py` 里是 `*merchant_ops_urlpatterns` 展开，位置已在兜底路由之前，安全。
+  3. `home_banner` 的图片只存 URL（本地媒体库路径或 https），**没有做上传**，与文档「正式存对象存储」的差距仍在。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test merchant_ops` → **55 passed**（第二轮新增 26 例：只读账号可读不可写、轮播图校验/开关/删除、通知群发与好评归属校验、回复重新未读、客服会话幂等与状态流转、白名单充值/移出/负数/幂等/停用拦截、关注曝光累加、账号创建校验与保护、审计查询与导出）。
+  - 13 个新 GET 接口实库巡检全部 **200**。
+  - **浏览器实测**：8 个新页面逐个访问，标题正确、**0 console 错误 / 0 失败请求**，侧栏 17 项；实测「新增轮播图」写入成功、创建只读账号后用该账号登录**侧栏只剩「首页轮播图」且能看列表**（写操作由后端 403 兜底）；测试数据已清理。
+  - `ruff check/format`、`prettier --check`、`eslint`、`vitest`（9 passed）、`vite build` 全通过；后端已重启（8000）。
+
+### 2026-11-05（配色纠正）：管理端主题改为深色导航 + 蓝色操作
+
+- **用户反馈**：主题配色不对，要按文档里管理平台的主题配色。
+- **根因**：`海外电商平台管理后台.html` 的单个 `<style>` 块里塞了**两套主题**。前段（偏移 0 起）是废弃的红白版：`--red:#dc2638`、`aside{background:#fff;width:222px}`、`.primary{background:#dc2638}`。**后段偏移 12593 处**有一整块 `/* Platform operations console */` 把它整体覆盖。上一轮我只 grep 了第一个匹配，于是照着废弃主题做了白底红字。
+- **真实生效主题（已用 getComputedStyle 采样核对）**：
+  - `--primary:#2563eb`、`--red` 被改名复用为蓝色、`--ink:#18263b`、`--muted:#78869a`、`--border:#e2e8f0`、`--green:#16856a`、`--bg:#eef2f6`、`--sidebar-width:236px`
+  - 侧栏 `#111d32` 深色，品牌区 76px，品牌方块 `#2f6df6` 34×34 radius 7
+  - 导航项 `#b7c3d7`，hover `#1b2c47`，选中 `#2456ac` + `inset 3px 0 #73a7ff`
+  - 顶栏白色 56px，body 底色 `#eef2f6`，内容区 `padding:22px 24px 32px`
+  - 表头 `#f0f4f9` / `#61738e` / 11px；表格斑马 `#fcfdff`，hover `#f3f7ff`
+  - 按钮 12px / padding 6px 12px / radius 3；`.primary` = `#2563eb`，hover `#1d4ed8`
+  - 标签默认灰 `#f0f3f7/#7b899f`，另 warn / bad / ok 三档
+- **改动文件**：`admin-web/src/styles/main.css`（令牌全量替换 + 补回 `page-container/foundation-card/status-grid` 等旧视图依赖的类）、`styles/admin.css`（侧栏/顶栏/卡片/按钮/表格/标签/抽屉/弹窗/时间线全部按采样值重写）、`layouts/AdminLayout.vue`（深色侧栏 + 顶栏头像）、`views/LoginView.vue`（原型登录页：深色径向渐变 + 410px 白卡 + 蓝色按钮，不回显演示密码）。
+- **顺带修掉一个预先存在的 500**：`common/admin_views.py` 的 `AdminBuyersView` 用了 `account.phone` / `Q(phone__...)`，但模型字段是 `phone_e164`，`/api/v1/admin/buyers` 一直 500（不是本轮引入，是本轮巡检 `/buyers` 才暴露）。已改字段名并补 `purchase_whitelisted`。
+- **验证（按纪律仅针对性）**：
+  - **色值对拍**：浏览器 `getComputedStyle` 同时采样原型与本实现，`aside` 背景/宽度、品牌方块、导航选中、顶栏高度、主按钮、body、表头、内容区 padding、`--primary`、`--sidebar-width` **全部逐项一致**。
+  - 11 个路由（8 个新页 + 爬虫/内容/买家）逐个访问：标题正确、**0 条 console 错误 / 0 个 4xx-5xx 请求**。
+  - 抽屉层叠：宽 880px、白底、遮罩 `rgba(12,24,43,.46)`。
+  - `manage.py test merchant_ops orders` → **38 passed**；`prettier --check` / `eslint` / `vitest`（9 passed）/ `vite build` 全通过。
+  - 后端已重启（8000），前端 5173 热更新。
+
+### 2026-11-05（商家/平台后台重构 · 第 1 轮）：数据模型 + 平台 A02–A09
+
+- **用户要求**：读 `商家端及平台管理端文档/` 的 `01_商家端开发文档.md`、`02_管理后台开发文档.md`，按 `海外电商平台管理后台.html` / `海外电商商家后台.html` 的设计写两套后台；**文档里的表不能照抄，要按现有 Joybuy 数据结构合并**（已有表就补字段，覆盖不了才新建）。
+- **4 个已拍板口径（不要推翻）**：
+  1. 商品池 = `catalog.spu`（补 `cost_price`/`retail_price`/`is_activity`/`description`/`image_urls`/`specs`），**不新建 product 表**；
+  2. 店铺商品关系 = `offers.offer`（补 `cost_price`/`listed_at`/`removed_at`/`removed_by_platform`），**不新建 merchant_product 表**；
+  3. 订单 = 保留 `order` 作买家父单，**新增 `orders.merchant_order`** 按商家拆子单（成本快照、3 状态、8 节点、回款都在子单上）；
+  4. 商家端将新建独立 `merchant-web`（**第 2/3 轮做**），登录复用 `staff_account` + `merchant_membership` 判店，不新建商家账号表。
+- **新增 11 张表**：`merchant_order`（orders）+ `merchant_wallet_entry`、`merchant_withdrawal`、`merchant_deposit_entry`、`after_sale`、`after_sale_event`、`merchant_activity`、`merchant_activity_participation`、`referral_program`、`merchant_referral`、`referral_commission`（新应用 `merchant_ops`）。文档里的「商家与入驻」合并进 `merchant`（钱包/保证金/信誉/关注/曝光/推荐码等 20 个字段），不单开表。
+- **资金口径（后续别再改）**：
+  - 所有余额变更只能走 `merchant_ops/services.record_wallet_entry`，余额与流水同事务、`wallet_balance` 有 CHECK ≥ 0；
+  - 幂等键统一为 `ship:{子单}` / `settle:{子单}` / `withdrawal-reserve:{申请}` / `withdrawal-return:{申请}` / `commission:{核算}`，**回款、返佣到账、提现退回都只发生一次**；
+  - 提现申请时记一笔负向 PENDING 流水占用余额，打回/失败退回一次，**实际出款不再扣一次余额**；
+  - 保证金余额可以为 0 或负数、且**不触发封店**（文档明确要求）。
+- **接口（全部 `/api/v1/admin` 下，权限码逐个校验 + 写审计）**：
+  `merchants`（列表/详情/PATCH/actions/export）、`categories`、`products`（含 actions）、`merchant-options`、`merchant-listings`（actions）、`merchant-orders`（列表/详情/PATCH/actions/export）、`finance/summary|withdrawals|withdrawals/<id>/actions|recharges|ledger|ledger/export|merchants`、`deposits`（actions/entries）、`after-sales`（详情/actions）、`activities`（详情/actions/participations）、`referrals`（program/calculate/commissions/commissions/actions）。
+- **新增权限码 14 个 + 3 个角色模板**（`platform_finance`/`platform_operator`/`platform_support`），迁移 `accounts_staff/0003_seed_commerce_permissions`；`platform_admin` 只做权限并集，不回收既有授权。
+- **前端重构**：`admin-web` 按原型重做外壳——**236px 深色侧栏 `#111d32`**、76px 品牌区（`#2f6df6` 蓝底方块 + 「寰球优选 / PLATFORM CONSOLE」）、56px 白色顶栏（面包屑 + 标题 + 头像）、`#eef2f6` 底色、**蓝色主操作 `#2563eb`**；新增 `styles/admin.css`（panel/table/tag/drawer/modal/tabs/stat 等）+ `AppDrawer`/`AppModal`/`AppPager`/`StatusTag` 四个通用组件；新增 8 个页面 `MerchantsView`/`ProductPoolView`/`MerchantListingsView`/`MerchantOrdersView`/`FinanceView`/`DepositsView`/`AfterSalesView`/`ActivitiesView`；路由改为「登录后进入第一个有权限模块」，旧页面（爬虫/内容/买家/评价/商品目录）保留可用。
+- **踩过的坑（务必不要再踩）**：
+  1. **Prettier 会把 `@click="a; b"` 重排成多行、且丢掉分号**，Vue 模板编译器直接报 `Error parsing JavaScript expression`。所有多语句事件处理必须写成**具名函数**（`@click="selectTab(tab.key)"`），不要写内联多语句。
+  2. `status` 字段语义在两张表里不同：`spu.status=ACTIVE` 是**可售**，`merchant.onboarding_status=ACTIVE` 是**接单中**。`StatusTag` 默认把 ACTIVE 映射成「接单中」，商品池必须传 `:labels="PRODUCT_STATUS_LABELS"` 覆盖，否则商品列表显示「接单中」。
+  3. 商家列表**不能按 `is_system` 过滤**——爬虫识别出的来源店铺也是 `is_system=True`，全过滤会让「全部商家」在新库上一片空白。只排除 `merchant_type=IMPORT_FALLBACK`（技术收纳桶）。
+  4. `OpsAPIView` 的域错误翻译必须挂在 `handle_exception`，挂 `dispatch` 会在 DRF 异常链之后抛 `StaffApiError`，没人接住 → 500。
+  5. 管理端动作里「发货」是**商家端**职责（`ship_merchant_order` 扣成本、进度到 0），平台 A05 只能对已发货订单推进节点；别在 A05 里加发货按钮。
+  6. 改后端代码后必须重启 `runserver --noreload`，否则新路由 404（本次已重启，端口 8000）。
+  7. **原型 HTML 的 `<style>` 里有 TWO 套主题，前一套是废弃的**：`海外电商平台管理后台.html` 的 style 块前段是旧红白主题（`--red:#dc2638`、`aside{background:#fff;width:222px}`），**后段 12500 字符处**有一整块 `/* Platform operations console */` 把它整体覆盖成 `--primary:#2563eb` / `--ink:#18263b` / `--bg:#eef2f6` / `--sidebar-width:236px` / `aside{background:#111d32}`。`--red` 这个变量名被保留但值改成了蓝色。**只读前 3000 字符或只取第一个匹配会得到完全错误的白底红字**——这次就是这么错的，用户指出后才纠正。取色必须用浏览器 `getComputedStyle` 采样，不要靠 grep 源码。文档 02 第 11 行「后台采用深色导航与蓝色操作风格」是这条的书面佐证。
+  8. 商家端 HTML（`海外电商商家后台.html`）是**另一套**主题（216px 侧栏、`--red:#df2636`），不要和管理端混用。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test merchant_ops` → **29 passed**（商家审核/保证金/信誉/封店解封、商品池价格校验、下架幂等、发货扣成本、一键完成只回款一次、节点不可回退、下单时间≤首节点、提现打回只退一次、出款不再扣余额、保证金负值、售后结案与退货限制、返佣阶梯校验与发放幂等、幂等键、权限 403）。
+  - `ruff check` + `ruff format` 通过；`prettier --check` / `eslint` / `vitest`（9 passed）/ `vite build` 通过。
+  - **真实接口巡检**：用临时员工会话对 17 个新 GET 接口逐个请求，全部 200；商家列表返回 7 条（含待发货聚合）。
+  - **浏览器实测（Playwright 驱动本机 Chrome）**：登录后 8 个页面逐个访问，侧栏实测 `222px`、标题正确、表格有数据或正确空态、**0 条 console 错误**；并实测「创建活动」「新增商品」两个写链路成功（CSRF 正常），测试数据已清理。
+- **遗留 / 下一轮**：
+  - 第 2 轮：A10 轮播图、A11 通知推送、A12 客服中心、A13 用户端管理、A14 白名单、A15 关注曝光、A16 账号与权限（逐模块 read/write UI）、A17 操作日志；
+  - 第 3 轮：`merchant-web` 新建（端口 5174，216px 侧栏）+ 商家端 M01–M10 + `/api/v1/merchant/*` 与商家上下文中间件；
+  - 商品池详情页的 SKU/图片仍以媒体库为准，后台只维护 `image_urls`/`specs` 文本，图片上传到对象存储尚未做；
+  - `AdminOrdersView`（旧 `/admin/orders`）与新的 `merchant-orders` 并存，前者是买家订单视角，本轮未改。
+
+### 2026-11-05（补充 11）：运行日志细化到「URL → 拿到的数据 → 处理结果 → 落盘路径」
+
+- **用户要求**：运行日志不够详细，希望把访问的 URL、获取到的数据、处理过的数据、存入路径都打出来。
+- **新增 4 条日志（每个商品固定 3 条，形成完整链路）**：
+  - `LISTING_FETCHED`（列表页）：URL、HTTP 状态、响应大小 KB、耗时、卡片数、本轮入队/重复跳过/超上限/非商品卡片数、累计入队进度；
+  - `PRODUCT_PARSED`（详情页）：URL、HTTP 状态、响应大小、耗时、商品 ID + 标题、原价 + 币种、SKU 数、图片数、评分/条数（或"暂无评分"）、分类路径、AI 摘要字数；
+  - `DATASET_SAVED`：`var/crawl_exports/{任务目录}/{类目}/{商品ID}`、`product.json`、主图/详情图张数、失败图片数、内容是否变化；
+  - `PRODUCT_IMPORTED`（增强）：SPU（新建/更新）、SKU 数、Offer 数、暂存记录 ID。
+- **配套**：`dataset.save_product` 返回值新增 `product_dir`；详情接口事件条数 50 → **200**，前端标题同步「最近 200 条」；`locale.js` 补 `LISTING_FETCHED` / `PRODUCT_PARSED` / `DATASET_SAVED` 中文标签，`PRODUCT_IMPORTED` 改叫「商品已入库」。
+- **顺手修掉一个会致命 bug**：`parse_detail` 里 `record_run_event` 在 `if` 分支内被导入，导致它是函数局部变量、成功路径未赋值 → **每个详情页都会 `UnboundLocalError`**。已改为函数顶部导入，并加回归测试（`SpiderLoggingTests` 覆盖详情/列表两条路径）。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control` → **166 passed**（新增 3 例：`DATASET_SAVED` 带落盘路径、`PRODUCT_PARSED` 带 URL 与字段概要、`LISTING_FETCHED` 带卡片计数）。
+  - **真实页面实测**：用归档详情页跑 `parse_detail`，产出日志「详情页已解析 https://…/100026175251161（HTTP 200，687.4 KB，耗时 3.4s）；商品 100026175251161「3000W 1.7L Rapid Boil Kettle…」，原价 179.99 GBP，SKU 1 个，图片 20 张，暂无评分，分类 Home Appliances / Small Kitchen Appliances。」
+  - ruff / format / prettier / eslint / `vite build` 全通过；后端已重启。
+- **注意**：日志粒度变细后事件量约为「每商品 3 条」，任务详情仍按 `created_at` 倒序取最近 200 条；长任务早期的日志会被挤出这个窗口（数据仍在库里，可直接查 `CrawlRunEvent`）。
+
+### 2026-11-05（补充 10）：任务仍报「登录墙」——查出两个真 bug
+
+- **用户反馈**：最新任务仍然检测到登录墙，怀疑到底有没有带 Cookie。
+- **先证明 Cookie 是真的**：把最新运行（`3ba556b3`，19:37）账号 `任务账号01` 的会话解出来，用同一批 Cookie 直接 curl 列表页 → **200**；不带 Cookie → 307 跳 `/login`。所以账号会话有效，问题不在凭据。
+- **Bug A（根因）：HTTP 缓存把匿名请求的 307 缓存了。**
+  - Scrapy 默认 `DummyPolicy` 会缓存除 5xx 外的所有状态码，**包括 307**；而缓存键是 URL fingerprint，**不含 Cookie**。
+  - 17:50 那次匿名运行把 `307 → /login` 存在 `https://www.joybuy.co.uk/s?k=Kettles%20%26%20Toasters` 上，有效期 6 小时。19:37 那次带着有效 Cookie 运行，**直接命中缓存、一次网络请求都没发**，于是继续报"登录墙"，`RENDERED_OK` 渲染的还是缓存里的登录页。
+  - 证据：`var/cache/scrapy/joybuy_run/` 的 `meta` 里有 `'status': 307` 的条目；19:37 那次运行没有产生任何新缓存条目。
+  - 修复：新增 `crawler/joybuy_crawler/cache_policy.py::SuccessOnlyCachePolicy`（只缓存 200，且不缓存被判为登录墙/风控页的响应），`settings` 里挂 `HTTPCACHE_POLICY`；并清掉了 4 条中毒缓存（2 条 307 + 2 条登录页）。
+- **Bug B：列表页改版导致解析出空标题/无价格。**
+  - 新布局里卡片是 `div[class*="product_card"]`，`a[class*="image_wrapper"]` **内部没有文字**，标题在 `[class*="style_title"]`、价格在 `[class*="crossOffPrice"]` / `[class*="mainPriceText"]`（而且价格被拆成 `£ 32 . 33` 多个文本节点）。
+  - 旧解析器只遍历 `a[href*="/dp/"]`，于是 40 张卡片全是空标题、无价格（`check_listing_entry` 随后按"标题过短"把它们全丢掉）。
+  - 修复：`parse_uk_listing` 改为**卡片优先 + 锚点回退**双布局；`_price` 先合并小数间空格；新增 fixture `crawler/fixtures/listing_cards_v2.html`。
+- **端到端验证（真实网络）**：用该运行的同一套 settings（账号池 + Cookie 中间件 + 新缓存策略）实抓 `https://www.joybuy.co.uk/s?k=Kettles`：
+  - `status=200`、`Cookie` 请求头 2599 字节、`httpcache/miss=2`（真的发了网络请求）；
+  - 解析 **40 张卡片，40/40 有标题、40/40 有原价**（如 `KOMORE 2000W… | 35.99`）。
+- **测试**：`crawler_control` **163 passed**（新增缓存策略 4 例 + 列表卡片布局 3 例）；ruff / format 通过。
+- **文档**：`docs/05` §8 增"只缓存 200"及事故说明、新增 §8.1 缓存策略与排查提示、新增 §9.3 列表两套布局。
+- **安全**：排查时落盘的明文 Cookie 临时文件与页面快照已删除（`var/joybuy_demo/bin/_cookie_header.txt`、`_listing.html`）。
+- **待用户处理**：直接重跑任务即可（缓存已清、策略已换、解析器已修）。若仍失败，先在任务详情看第一条事件：出现 `LOGIN_WALL_FALLBACK` 且 URL 是 `/login?...` 说明是服务端判定，需要确认账号是否在网页端被登出。
+
+### 2026-11-05（补充 9）：账号组实体化 + 账号可编辑/可删除
+
+- **用户要求**：账号可编辑、可改账号组；新增账号时账号组要下拉选择；要有「新增账号组」；账号要能删除。
+- **改动**：
+  - 迁移 `0007_crawler_account_groups_and_soft_delete`：新增 `CrawlerAccountGroup`（`name` 唯一 + `note`）、`CrawlerAccount.deleted_at`；`0008_seed_crawler_account_groups` 把历史账号的组名回填成组记录（含 `default`）。实库已执行，组 = `['default', '数据抓取']`。
+  - 服务层：`ensure_account_group` / `create_account_group` / `list_account_groups` / `update_crawler_account` / `delete_crawler_account`；`create_crawler_account` 现在会补建组记录（API/脚本传新组名不会失败）。
+  - 删除是**软删除**：`deleted_at` 置位、状态 `DISABLED`、`session_cipher` 清空、会话状态回 `UNKNOWN`；行保留（`CrawlRun.account` 是 SET_NULL，硬删会让历史运行丢失"当时用哪个账号"）；运行中的任务占用该账号时拒绝删除（409）。
+  - 选号/账号池/列表/动作/登录命令全部加 `deleted_at__isnull=True` 过滤。
+  - 接口：`GET/POST /crawlers/account-groups`、`PUT|PATCH /crawlers/accounts/<uuid>`、`DELETE /crawlers/accounts/<uuid>`，全部写审计。
+  - 管理端：新增/编辑账号的「账号组」改下拉（显示每组账号数）+「新增账号组」内联表单；账号行加「编辑」「删除」；编辑用表格上方的内联表单。**另外给「新建任务」表单补了「账号组」下拉**——否则新建的组在任务侧用不上（任务原本只会落 `default`）。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control` → **156 passed**（新增 8 例：组列表/建组/重名拒绝/空名拒绝、编辑 label+组+备注、空名拒绝、删除后列表消失且会话清空、删除后编辑与动作 404、运行中拒绝删除、软删除保留运行归属）。
+  - `ruff check` / `ruff format` 全部通过；`prettier`、`eslint`、`vitest` 9 passed、`vite build` 通过。
+  - 迁移已在实库执行；后端已重启，`/api/v1/health` 正常，未登录访问 `account-groups` 返回 401（说明路由已注册、鉴权生效）。
+- **设计取舍**：账号组仍以**名称**软引用（`CrawlerAccount.account_group` 与 `CrawlJob.account_group` 都是字符串），没有改成外键——任务侧改 FK 牵扯面大且没有收益；改组名不会级联，需要时先改组内账号。
+
+### 2026-11-05（补充 8）：多账号不定时换号抓取
+
+- **用户决定**：本地对话确认「账号有很多，需要利用多个账号不定时换号抓取数据」，并要求把 `docs/05` 里冲突的条目改掉、以对话口径为准。**注意**：上一轮我建议不做"换号规避风控"，用户已明确否决该建议并拍板，本实现按其决定落地；后续会话不要再按旧文档口径劝阻。
+- **实现**：
+  - 新模块 `crawler/joybuy_crawler/account_rotation.py`：`AccountPool` 管理「一段班次」的随机预算——时间 `CRAWL_ACCOUNT_ROTATE_MIN/MAX_SECONDS`（默认 300~900 秒）与请求数 `MIN/MAX_REQUESTS`（默认 20~60），**先到者触发换号**，每段重新抽取所以节奏不固定；每次换号重置该账号的班次计数（否则回到旧账号会立刻再触发）。
+  - `account_session.load_account_pool()`：从 `services.usable_accounts_for_run()` 取池（指定账号优先 → 同组 ACTIVE+VALID 且会话里真有 Cookie 的账号，LRU 序，上限 50），解密后转成纯 dict 记录（便于单测，不依赖 ORM）。
+  - `middlewares.AccountCookieMiddleware` 重写：优先 550、按 pool 注入**当前活跃账号**的 Cookie；换号时写 `ACCOUNT_ROTATED`；池空写 `ACCOUNT_POOL_EMPTY`；池就绪写 `ACCOUNT_POOL_READY`。
+  - **Scrapy 全局 CookieJar 关闭**（`runner` 里 `COOKIES_ENABLED=False`）：否则两个账号的 Cookie 会混进同一个 jar 一起发出去，这是换号最容易踩的坑。
+  - **连带坑（已踩）**：`CookiesMiddleware` 关掉后，`Request.cookies` 不再被翻译成 `Cookie` 请求头，中间件必须自己写头。第一版写成 `request.cookies = merged`，等于抓取静默变匿名；已改为直接写 `request.headers["Cookie"]`，测试也改成断言请求头。
+  - 风控命中即换号：`RiskControlRenderMiddleware` 判定风控页后把当前账号 `mark_blocked()` 移出本轮池子并切到下一个，写 `ACCOUNT_RISK_ROTATED`(WARNING)；全池 blocked 写 `ACCOUNT_POOL_EXHAUSTED`(ERROR)。浏览器回退改用**当前活跃账号**的 Cookie，保证同一页面 HTTP 与浏览器是同一个身份。
+  - 前端 `locale.js` 补 5 个事件码中文标签（账号池就绪/已换号/命中风控已换号/账号池已耗尽/无可用账号）。
+- **文档（用户要求以对话为准）**：
+  - `docs/05` §7.2 用户已自行改为「被中断任务**能**自动切换其他账号接管」；
+  - §8「不为提高吞吐量轮换账号、代理或指纹」→ 改为「账号可在池内轮换，但只换身份：不轮换代理、不伪造设备指纹、不提高全局总速率」；
+  - 新增 §7.5 账号池轮换（目标、池构成、换号时机、隔离与安全、风控处理、事件表、环境变量、**已知限制**）；
+  - §7.4 关于 Cookie 注入/解密的描述同步为"当前活跃账号 / 按账号各解一次"；`crawler/README.md` 采集口径补账号轮换一条。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control` → **146 passed**；新增 `AccountRotationTests`（按请求预算换号、按时间预算换号、每段预算会变、Cookie 不串号、blocked 账号永不复用、全 blocked 返回 None、单账号不轮换）与改写的 `AccountCookieTests`（活跃账号 Cookie 注入、请求级 Cookie 优先、无账号不发 Cookie）。
+  - `ruff check` / `ruff format` 全部通过。
+  - **真实库探针**：`default` 组 → 无可用账号；`数据抓取` 组 → `['任务账号01']`，池大小 1、不可轮换（符合预期，单账号不换号）。
+  - 后端已重启，`/api/v1/health` 正常。
+- **实际生效前提（重要）**：现在库里只有 1 个可用账号，所以**轮换还不会发生**。要真正跑起来多账号：把多个账号归到同一 `account_group`（或建任务时选同一组的账号），并各自完成一次人工登录让会话里带 Cookie；任务详情里看到 `ACCOUNT_POOL_READY` 且账号数 > 1 才说明池子生效。
+- **已知限制**（已写进 §7.5，别再当 bug 排查）：所有账号共用同一出口 IP 与浏览器指纹；会话 Cookie 用登录快照、抓取中不跟随 `Set-Cookie` 更新（宁可少刷新也不让令牌串号）。
+
+### 2026-11-05（补充 7）：爬虫账号是否真的在访问中被使用（账号绑定修复）
+
+- **用户提问**：抓取时有没有带爬虫账号？建任务时也没让选账号。
+- **排查结论（三个真问题，全部已修）**：
+  1. **建任务没有账号入口**：`AdminCrawlJobsView.post` 完全忽略了 `account_group`，所有任务都被写成 `default` 组；界面上也没有任何账号字段。
+  2. **HTTP 请求是匿名的**：`RiskControlRenderMiddleware._load_account_cookies` 只在"检测到登录墙 → 换 DrissionPage 重抓"这一步把 Cookie 给浏览器；Scrapy 的普通 HTTP 请求从来不带你账号的 Cookie。所以每页都先撞一次 307 → `/login`，再开浏览器重抓，慢且触发风控。
+  3. **"假 VALID"账号**：`Joybuy homepage demo` 的会话载荷是 `{"joybuy_session": "public-homepage-demo"}`（演示命令伪造的占位串），却被标记 `session_status=VALID`。默认组里只有它"有效"，于是所有任务都绑到一个**实际 0 条 Cookie** 的账号上。真正可用的 `任务账号01`（数据抓取组，42 条 Cookie）从来没被任何任务用过。
+- **改动**：
+  - 迁移 `crawler_control/0006_crawljob_pinned_account`：`CrawlJob.account` FK（null=True），建任务可指定账号；不指定则按 `account_group` 自动选。
+  - `services._resolve_account_for_run` / `_account_is_usable` / `_account_unusable_reason`：指定账号可用就用；不可用**不静默失败**，写 `ACCOUNT_FALLBACK`(WARNING) 说明具体原因再回退组内选号；选到账号写 `RUN_ACCOUNT_SELECTED`(INFO)「本轮使用爬虫账号「X」（账号组 Y）」。
+  - **可用性判定加严**：`ACTIVE` + `VALID` + 有密文 **+ 解出来真的含 Cookie**。占位会话不再会被选中。
+  - `AdminCrawlJobsView.post` 接收 `account_public_id`/`account_group`（未知账号 404、非 ACTIVE 400），`GET` 列表与详情返回账号；详情每个 run 带 `account_label`。
+  - **抓取侧**新增 `crawler/joybuy_crawler/account_session.py`（`load_account_cookies` / `joybuy_cookie_pairs`）+ `middlewares.AccountCookieMiddleware`（优先级 550，早于 Scrapy CookiesMiddleware 700），把账号 Cookie 注入**每一个请求**；只回放 `joybuy` 域 Cookie，第三方（Facebook）绝不发给源站；浏览器回退复用同一份 Cookie。
+  - 演示命令 `load_joybuy_demo` / `load_uk_bestsellers_demo` **不再伪造 VALID 会话**（它们只导入 fixture、从不抓取；`start_run` 本来支持无账号运行）。
+  - 管理端：建任务表单加「爬虫账号」下拉（默认「自动（按账号组挑可用账号）」，列出 ACTIVE 账号及其会话状态），任务详情加「爬虫账号」，运行记录表加「账号」列。
+- **实测（真实库数据）**：
+  ```
+  Joybuy homepage demo  group=default  session=VALID   -> 会话里没有可用 Cookie，需要重新登录（实际 0 条）
+  FB 主账号              group=default  session=UNKNOWN -> 会话状态为 UNKNOWN（实际 0 条）
+  任务账号01             group=数据抓取  session=VALID   -> 可用（实际可回放 30 条 joybuy Cookie）
+  组 default: 【无可用账号 → 匿名抓取】     组 数据抓取: 任务账号01
+  ```
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control` → **139 passed**（新增 `test_crawler_account_binding.py` 17 例：指定账号优先、过期/占位账号回退并说明原因、组内无号匿名启动、第三方 Cookie 不回流、请求级 Cookie 优先、API 指定/拒绝账号）。
+  - `ruff check` / `ruff format` 全部通过；`prettier --check`、`eslint`、`vitest` 9 passed；`vite build` 通过。
+  - 迁移已执行（`crawler_control.0006` 应用成功）；后端已用新代码重启，三端口（8000/5173/3000）与 `/api/v1/health` 正常。
+- **待用户处理（不是代码问题）**：
+  - `default` 组目前**没有可用账号**，跑任务会匿名抓取。若要用登录态抓取，给任务选 `任务账号01`（数据抓取组），或给 default 组账号重新走一次「登录」。
+  - `Joybuy homepage demo` 这个占位账号建议删除或重新登录；它现在会被判定为"会话里没有可用 Cookie"并拒绝选中。
+  - `docs/05` §7.3 写着"所有页面抓取优先走真实 Chrome"，与实现（Scrapy HTTP 优先、撞墙才回退浏览器）不一致，属历史遗留口径，本次未改。
+
+### 2026-11-05（补充 6）：任务详情「运行日志」中文化
+
+- **用户反馈**：爬虫任务的任务详情里，日志打印的是英文，要改成中文。
+- **改法分两层**（这是以后加事件时必须遵守的约定）：
+  - **后端 `message` 全部改中文**：`crawler/joybuy_crawler/{pipelines,runner,middlewares,spiders/joybuy_run,quality}.py`、`backend/crawler_control/{services,import_services}.py` 里所有 `record_run_event(message=...)`、`complete_run_failed(reason=...)`、`logger.*` 文案。覆盖 20 个事件码（`RUN_STARTED`/`RUN_UNAUTHENTICATED`/`RUN_FAILED`/`RECORD_REJECTED`/`RECORD_FLAGGED`/`PRODUCT_IMPORTED`/`DATASET_SUMMARY`/`DATASET_WRITE_FAILED`/`STAGING_FAILED`/`IMPORT_REJECTED`/`IMPORT_FAILED`/`LISTING_*`/`DETAIL_*`/`RENDER*`/`RISK_CONTROL_FALLBACK`/`LOGIN_WALL_FALLBACK`/`PRICE_ANOMALY_*`）。
+  - **`code` 与字段名保持英文常量**：code 是排障检索标识，字段名是 payload 键，翻译会毁掉可检索性。中文短标签放前端 `admin-web/src/lib/locale.js` 的 `EVENT_CODE_LABELS` + `eventCodeLabel()`，原始 code 挂在 `title` 提示里；事件级别 `INFO/WARNING/ERROR` 用 `valueLabel()` 显示为「信息/警告/错误」。
+- **前端**：`CrawlersView.vue` 详情抽屉标题「事件流（最近 50 条）」→「运行日志（最近 50 条）」，空态「暂无事件」→「暂无日志」，级别与事件码中文化。
+- **顺带**：`quality.Violation.as_log_line()` 改成中文格式 `[CODE] 字段：说明（致命/警告）`，因此单条被拒商品的日志整行可读；`StagingImportRejected` 与 `staging.error_message`（缺必填字段）也一并中文化。
+- **边界（有意为之）**：`crawler/joybuy_crawler/core/http_client.py`、`core/browser.py` 的传输级日志仍是英文——那是请求/响应 dump，不是运维事件流；已在 `docs/05` §11.3 写明这条界线。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control` → **124 passed**（含把 `OutcomeReportingTests` 的断言改成中文格式）。
+  - `ruff check` + `ruff format` 8 个改动 Python 文件通过；`prettier --check` + `eslint` 两个前端文件通过。
+  - `vitest run --config admin-web/vitest.config.js` → 9 passed；`npx vite build`（admin-web）→ 53 modules，构建通过（证明模板/导入无语法问题）。
+  - 文案抽查：守卫告警输出「3/3 个商品拿不到可用价格。价格选择器很可能在页面改版后失效…」；记录汇总输出「[TITLE_TOO_SHORT] title：标题 'Buy' 少于 5 个字符（致命）；[PRICE_NOT_POSITIVE] current_price：解析出的价格为 0…」；前端 `valueLabel('INFO')→信息`、`eventCodeLabel('RECORD_REJECTED')→记录被拒（未入库）`、未知码原样透传。
+  - **后端已用新代码重启**（`--noreload` 必须重启），重启后 `/api/v1/health` 正常。
+- **遗留**：数据库里 **43 条历史事件中有 35 条是英文**（改动前产生的），界面打开旧运行记录仍会看到英文。是否按事件码回填翻译属于"改历史数据"，**未做**，需用户确认；新产生的日志一律中文。
+
+### 2026-11-05（补充 5）：本机全服务启动（运维，无代码改动）
+
+- 启动前核过端口：8000 / 5173 / 3000 均空闲，没有残留 runserver（避免又踩"改了没生效"的坑）。
+- 基础设施已在跑（`docker ps`）：`joybuy-dev-mysql-1`（127.0.0.1:33060）、`joybuy-dev-redis-1`（127.0.0.1:63790）、`joybuy-dev-mailpit-1`（8025/1025），均 healthy，本次未重启。
+- 启动命令（三条，均为后台任务）：
+  - 后端：`./.venv/Scripts/python.exe backend/manage.py runserver 127.0.0.1:8000 --noreload`
+  - 管理端：`pnpm --filter @joybuy/admin-web dev`（vite 127.0.0.1:5173）
+  - 商城端：`pnpm --filter @joybuy/storefront dev`（nuxt 127.0.0.1:3000，`predev` 会先 `nuxt cleanup`，首启约 30s）
+- 验证：
+  - `netstat` 三个端口都在 LISTENING（8000→PID 31876，5173→39616，3000→19768）；
+  - `curl --noproxy '*'`：`/admin/login/` 200、`127.0.0.1:5173/` 200、`127.0.0.1:3000/` 200；
+  - `/api/v1/health` 返回 `{"status":"ok", database ok, cache ok}`；
+  - 商城端首页渲染时已实际打通后端：`/api/v1/storefront/home` 200、`/api/v1/categories` 200、`/api/v1/search` 200。
+- 容易踩的点：**健康检查路径是 `/api/v1/health`，不带尾部斜杠**（带斜杠会 404，别误判成服务没起）；本机调 localhost 必须 `curl --noproxy '*'`，否则会被环境里的死代理劫持。
+
+### 2026-11-05（补充 4）：评价只采聚合 + 分类只到二级
+
+- **用户两条口径**：① 不再爬评价内容，只爬评分聚合（1~5 分各自数量、平均分、x 条评价）与右侧【内容由人工智能总结自用户评价】的内容（**有就爬，没有就不写**）；② 商品子分类展示过多时只保留前两级（`首页/母婴用品/健康护理/湿巾及配件/湿巾/商品名` → `母婴用品/健康护理`）。
+- **现场结构（靠归档页确认，不是猜的）**：参考页 `…/dp/…/10524192` 匿名访问 **307 跳 /login**，抓不到；改用 `var/raw/2026/11/04/…/8dd804f5….gz`（真实 kettle 详情页 702KB）逆向出评价结构：
+  - 评价区块是 flight 里的**一个扁平对象**，形如 `{"commentCount":…,"star":"4.8","starShow":"4.8","aiSummary":null,"aiTagTitle":null,"aiTagList":null,"totalCommentCount":47,"ratingInfo":"$19c"}`；
+  - `ratingInfo` **不是内联对象而是引用** `"$19c"`，真值在同文件的 `19c:{…}` 槽位；槽内字段 `score1Count`…`score5Count`、`averageScore`、`commentCount` 就是需求要的 1~5 分数量/平均分/条数；
+  - `aiSummary` 就是"内容由人工智能总结自用户评价"的正文，`aiTagTitle`/`aiTagList` 是标题与标签；无评价的页面这几项为 `null`。
+- **解析器改动（`crawler/joybuy_crawler/parsers/joybuy_uk.py`）**：
+  - 新增 `_flight_text()`（改用 `json.loads('"…"')` 解码，**不再用 `unicode_escape`**，否则中文摘要会乱码）、`_flight_ref()`（解析 `$19c` 槽位引用，支持多跳）、`_flight_key()`；
+  - 新增 `_extract_flight_review()`：**锚定"包含 `ratingInfo` 的那个大括号对象"**再读字段。**不要全局搜 `aiSummary`**——i18n 文案里有同名字段，会取到错值；
+  - 平均分取 `star`/`starShow`，只有 count>0 时才回落 `averageScore`（**真实页面在 0 条评价时把 `averageScore` 默认成 5**，直接取会凭空造出 5 分）；
+  - `_extract_dom_review()` 只兜底 AI 摘要正文；**星分布明确不做 DOM 猜测**（宁可留空也不按进度条宽度推算）；
+  - `truncate_breadcrumbs()`（`BREADCRUMB_DEPTH=2`）在解析阶段截断，按 `home/首页/主页/首頁` 丢掉站点根；
+  - payload 新增 `rating_distribution` / `rating_source` / `ai_summary` / `ai_summary_title` / `ai_summary_tags`，native 块里 `rating` 带 `distribution`，摘要只在非空时挂 `aiReviewSummary`（**没有就是不存在这个 key，不留空壳**）。
+- **新增 fixture**：`crawler/fixtures/product_detail_reviews_v2.html`（按归档页结构构造：6 级面包屑 + `$19c` 引用 + 中文摘要 + 标签，数值 47 条 / 4.8 分 / 1-1-2-9-34）。生成脚本在 `var/joybuy_demo/bin/gen_review_fixture.py`（临时，不入库）。
+- **新增测试** `backend/crawler_control/tests/test_crawler_review_aggregates.py`（9 例）：星分布且**各档之和 == 总条数**、无评价时不造平均分、摘要存在/不存在两态、无评价正文进入 payload、面包屑 2 级截断（中英站点根、短 trail、payload 里深层分类消失）。
+- **文档**：`docs/05` §4（评价目标数/评价媒体标注停用）、§9.2（类目层级口径）、§10（评价采集口径整节重写）；`crawler/README.md` 增"采集口径（2026-11-05）"。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control.tests.test_crawler_review_aggregates` → **9 passed**。
+  - `manage.py test test_crawler_review_aggregates test_crawler_field_rules test_crawler_rebuild test_crawler_runtime test_crawl_jobs_api` → **71 passed**。
+  - **真实归档页回放**（不靠构造数据）：kettle 详情页解析出 `Home Appliances / Small Kitchen Appliances` 两级、`rating_source=flight`、`count=0` 且分布全 0、`aiSummary=''`（该页确实无评价无摘要）——与页面实际状态一致，没有编造。
+  - `ruff check` 3 个改动文件通过，`ruff format` 已执行。
+- **未做 / 下次注意**：
+  - **没有真实跑在线抓取**（站点 307 登录墙），"有评价+有摘要"的形态是用归档结构构造的 fixture 验证的；等有登录态账号实抓一次后应核对一次真值。
+  - 后端 `reviews` 应用与 `joybuy_crawler/sampling.py`（WP-17 评价导入/抽样）**代码仍在**，只是爬虫不再供数；是否整体下线评价模块属于另一个决策，未在本次范围内，**不要顺手删**。
+  - `CrawlJob.review_target` / `download_review_media` 两个模型字段仍在库和迁移里（只改了文档口径），清理需要新迁移，未做。
+  - 面包屑的 `cid` 提取在真实页面上一直为空（href 里没有 `l1/cid` 参数），所以 `source_category_id` 实际为空、导入走兜底类目——这是**旧有现状**，本次截断不改变它。
+
+### 2026-11-05（补充 3）：爬虫记录级质量层（文章对照后补的缺口）
+
+- **来源**：用户给了一篇商城爬虫实战文章（`https://blog.csdn.net/weixin_29913663/article/details/166029197`），要求"结合当前框架优化"。对照后发现项目**已有**这些：原始响应 gzip 归档（`RawArchivePipeline` + 中间件里 `record_raw_response`，30 天）、退避重试（`RETRY_HTTP_CODES` + `core/policies.py`）、批级缺失率闸门（`evaluate_batch_quality`）、列表页 `seen_product_ids` 去重、带宽/并发克制（`CONCURRENT_REQUESTS=2`）。**真正的缺口**是文章强调的另外三件事，本次已补。
+- **新文件 `crawler/joybuy_crawler/quality.py`**（纯函数，无 Scrapy/Django 依赖，可脱离数据库单测）：
+  - `apply_product_rules(payload, source_url=)` 返回 `(清洗后的 payload, RuleOutcome)`；**输入 dict 永不被修改**。
+  - 致命项（丢弃）：`source_id` 缺失/不合规、标题去空白后 < 5 字、`current_price` 解析不出数字、**价格为 0 或负**、价格超出 `0.01~100000`、币种不是 3 位字母、`skus` 为空、来源 URL host 不是 `joybuy.co.uk` 或路径不含 `/dp/`。
+  - 警告项（放行并上报）：标题 > 500 字、标题含广告词（`sponsored`/`advertisement`/`hot sale`/`为你推荐`/`热推`/`广告`）、个别 SKU 价格坏、非 `joy-sourcing.com` 域的图片（**并且真的从 payload 里删掉**，不会写入 dataset、不会从陌生源下载）、`mainPrice > crossOffPrice`（两个价格选择器串位）。
+  - `check_listing_entry(title=, source_url=)`：列表页卡片级判定，标题过短 / 含广告标记 / URL 取不到商品 ID 的卡片丢弃，**不再占用每个类目的商品配额**（文章提到的"推荐位污染选择器"在本站的具体形态就是这类 `/dp/` 广告砖）。
+  - `PriceDistributionGuard`：运行级守卫，样本 ≥3 且不可用价格 ≥50% → `PRICE_ANOMALY_MISSING`(ERROR)；样本 ≥3 且所有有效价格相同 → `PRICE_ANOMALY_UNIFORM`(WARNING)。
+- **新管线 `pipelines.RecordRulePipeline`**（`runner._run_settings` 注册优先级 **150**，`StagingPipeline` 是 200）：
+  - 致命违规 → `update_run_progress(failed=1)` + `RECORD_REJECTED`(ERROR) 事件 + `raise DropItem`，item 不会到达 dataset/staging/业务表；
+  - 警告 → `RECORD_FLAGGED`(WARNING) 事件，`payload["rule_warnings"]` 带上违规码继续走；
+  - `spider_closed` 里把守卫判词写成一条运行级事件。**只上报事件、不改变任务状态**——"这一轮是否算失败"仍由 `complete_run_failed` 既有规则决定，避免把"价格可疑但可用"直接判死。
+- **列表页**（`spiders/joybuy_run.py`）：`parse_listing` 先用 `check_listing_entry` 过滤，被丢的条数与原因汇总成 `LISTING_CARDS_REJECTED`(WARNING) 事件。
+- **数据集增量**（`dataset.py`）：每个商品目录新增 `meta.json`（`payload_sha256`/`first_captured_at`/`last_captured_at`/`capture_count`/`changed`）；`product.json` 与图片**每次都重写**（原始快照永不丢），`dataset_index.jsonl` **只在指纹变化或首次落盘时追加**，重复抓同一商品不再刷重复行。`StagingPipeline` 收尾写 `DATASET_SUMMARY` 事件汇报"刷新 N 个目录 / 其中 M 条真的变了"。
+- **`settings.py`**：显式写明 `RANDOMIZE_DOWNLOAD_DELAY = True`（Scrapy 默认就是 True，之前靠隐式默认）。**没有**再加一层自定义 jitter 中间件——`DOWNLOAD_DELAY` 已经被随机成 0.5~1.5x，再叠一层只是在 reactor 里多一次无意义等待。
+- **实测（真实数据回放，最有说服力的一条）**：`var/joybuy_demo/bin/probe_record_rules.py`（临时探针，`var/` 不入库）遍历 `var/crawl_exports/*/*/*/product.json` 共 9 份真实抓取 payload → **6 份正常商品（米家咖啡机 92.99、ochama 咖啡机 49.99、Kettle 29.99 等）零违规通过；3 份被拒的正是历史上那批空解析（title/price/currency 全空、`missing_fields` 非空）的脏数据**。无误杀、无漏放。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control.tests.test_crawler_field_rules` → **30 passed**（新增：价格解析形态、8 类致命规则、4 类警告规则、列表卡片 4 例、守卫 4 例、管线丢弃/放行/运行级告警、数据集增量 3 例）。
+  - `manage.py test crawler_control.tests.test_crawler_rebuild crawler_control.tests.test_crawler_runtime crawler_control.tests.test_crawl_jobs_api crawler_control.tests.test_crawler_field_rules` → **62 passed**（回归未破）。
+  - `ruff check` 本次改动 7 个文件 → All checks passed；`ruff format` 已执行。
+  - `docs/05` §5.1、§11.1、§11.2 与 `crawler/README.md` 已同步新口径。
+- **已知遗留 / 下次注意**：
+  - `crawler/joybuy_crawler/settings.py` 有一处**既有**格式问题（`HTTPCACHE_ENABLED` 那行超出 ruff format 习惯换行，非本次引入），`ruff format --check` 会对该文件报 1 处，未顺手改以免混入无关 diff。
+  - 规则阈值是常量写在 `quality.py` 顶部（`TITLE_MIN_LENGTH`/`PRICE_MIN`/`PRICE_MAX`/`IMAGE_HOST_SUFFIXES` 等）。真实站点如果出现合法低价配件（< 0.01）或新 CDN 域名，需要调这里，别去改调用点。
+  - `PRICE_ANOMALY_*` 只发事件不改状态，管理端事件流能看到；如果后续希望"价格异常自动暂停任务"，要接到 `apply_quality_failure_policy` 上，属于策略变更，需用户确认。
+  - 本轮**没有**跑真实 Joybuy 在线抓取（站点要求登录态 + 有风控），验证靠"真实历史 payload 回放 + 单测"，不要写成"线上抓取已验证"。
+
+### 2026-11-05（补充 2）：类目双语「界面还是英文」的排查结论
+
+- **现象**：管理端【爬虫任务】→【新建任务】→【选择 Joybuy 类目】只显示英文。
+- **根因不是前端**：本机 `127.0.0.1:8000` 上有 **4 个 `manage.py runserver ... --noreload` 进程**（30808 / 29852 / 12352 / 32128，只有 32128 真正占着端口），`--noreload` 不加载新代码，接口返回的 `source-tree` 节点**没有 `name_zh` 字段**，前端自然只能显示英文。用临时员工会话直连接口核对：修复前 `has name_zh: False`，重启后 `has name_zh: True | Home Appliances | 家用电器`。
+- **处理**：`taskkill` 掉 4 个旧进程，重新起一个 `runserver 127.0.0.1:8000 --noreload`（后台任务）。浏览器实测（用户自己的 Chrome，已登录 admin）：类目行显示「家用电器 Home Appliances minihome:…」，展开后子类目显示「热水壶 & 烤面包机 Kettles & Toasters l2:1405」等，中英双语正常；任务列表类目列也已变成中文（热水壶 & 烤面包机）。
+- **教训**：改后端代码后必须重启 `--noreload` 开发服务器；`runserver` 默认的自动重载在本机不可用（`RuntimeError: Script backend\manage.py does not exist.`，因为启动参数是相对路径 `backend/manage.py`），要自动重载需用**绝对路径**启动：`python E:\code\AgentProject\Joybuy\backend\manage.py runserver 127.0.0.1:8000`。
+- **别再多开**：`runserver` 重复启动不会报错（后起的占不到端口但仍在跑），排查「改了没生效」时先 `netstat -ano | grep 8000` 看监听 PID，再核对进程命令行。
+
+### 2026-11-05（补充）：一个任务只用一个爬虫浏览器，用完必关
+
+- **问题（用户反馈）**：跑一个任务会打开几十个浏览器且不关闭。根因是 `render_page` 每抓一个 URL 就
+  `ChromiumPage(...)` 新开一个实例（类目树 15 页 = 15 个浏览器），而 `page.quit()` 在部分情况下并没有
+  真正结束进程；Scrapy 风控/登录墙回退也是每页一个浏览器。
+- **改法**：
+  - `crawler/joybuy_crawler/render.py` 新增 `BrowserSession`（`open/get/close` + 上下文管理器）：
+    一次 open、可连续 `get` 多页（每次 `listen.stop()`→`listen.start()` 复用 SSR 抓取），`close()` 先
+    `page.quit()` 再显式回收进程。`render_page()` 保留原签名，内部改成「开一个临时 session、用完必关」。
+  - `_kill_stale_crawler_browsers()` 重写：用一条 PowerShell 查询匹配 **`browser_profiles` 路径**或
+    **调试端口 9333/9334** 的 chrome 进程，`taskkill /T /F` 并返回数量；`_crawler_chrome_pids()` 可单独列 PID。
+    open 前和 close 后都跑一次，任何残留都会被收掉。
+  - `capture_category_tree()` 全程使用同一个 session（`finally` 里 close），所以类目树 15 页只开 1 个浏览器。
+  - `RiskControlRenderMiddleware` 改成复用同一个 session（cookie 变化时才重建），并连接
+    `spider_closed` 信号关闭；渲染失败会丢掉 session，下次回退自动重建。这样商品任务里的登录墙回退
+    不再「一页一个浏览器」。
+  - `crawler_account_login` 的 `finally` 除了 `quit()` 也调用回收，避免登录窗口残留。
+  - 新命令 `manage.py close_crawler_browsers`：随时回收残留爬虫浏览器（只匹配爬虫 profile / 9333、9334）。
+- **验证（针对性）**：
+  - `var/joybuy_demo/bin/verify_browser_lifecycle.py`（临时探针，不入库）：开 session 连抓 2 页，
+    期间调试端口浏览器主进程数 = **1**，`close()` 后 = **0**，爬虫 PID = **0**。
+  - `manage.py test crawler_control.tests.test_crawler_rebuild crawler_control.tests.test_crawl_jobs_api`
+    → 21 passed；`ruff check`/`ruff format --check` 本次 5 个改动文件通过。
+  - `manage.py close_crawler_browsers` 在无残留时输出 "No crawler browser was running."。
+
+### 2026-11-05：管理端类目选择器「中文名 / English name」双语展示
+
+- **目标**：`新建任务 → 选择 Joybuy 类目` 原本只有英文名；现在每个节点同时显示中文名与英文名，搜索框支持中文/英文/来源 ID。中文名必须来自 joybuy.co.uk 真实中文页面，按 source id 与英文严格一对一，不伪造译名。
+- **语言开关（现场核实）**：joybuy.co.uk 用 `_lang` Cookie 控制界面语言（默认 `en_GB`），设成 `zh_CN` 后整站（含类目菜单、频道页类目磁贴）变中文，URL 与 source id 不变。
+- **登录墙（新踩的坑）**：2026-11-05 起，未登录访问首页/频道页会 **307 跳 `/login`**（`Location: /login?returnUrl=...`），匿名爬取/无头/有头都被拦，`/minihome/` 页拿不到类目链接。抓取必须带已登录账号的会话。
+- **后端存储**：`catalog` 迁移 `0008_source_category_chinese_names` 给 `SourceCategory` 和 `SourceCategorySnapshot` 各加 `name_zh`。`SourceCategory.name_zh` 是 source id 维度的持久映射；`SourceCategorySnapshot.name_zh` 是版本内展示名；`tree_sync.sync_category_tree` 建快照时优先取节点自带中文名、否则继承 `SourceCategory.name_zh`，**重建英文树不会丢中文名**。`catalog/services.save_source_category_version` 同步支持 `name_zh`（不参与结构哈希与版本判定）。
+- **新命令** `manage.py sync_joybuy_category_names_zh`：`--from-json` 回放 / `--dump-json` 落盘 / `--account <public_id>` 用账号会话抓取 / `--profile` 复用某个浏览器 profile / `--channel` 按频道分块 / `--merge-json` 分块合并 / `--pause` 控速 / `--no-reset-profile` 跳过删 profile（本机 safe-delete 会拦批量删除）。命令输出 `matched / categories_updated / snapshots_updated / unknown / still_missing` 五项，**unknown 与 still_missing 只报告不猜译名**。
+- **爬虫层**：`category_menu.py` 新增 `locale_cookies()` 与 `capture_category_tree(locale=, cookies=, profile_dir=, only_channels=)`；`render.py` 的 `_build_options/render_page` 支持指定 `profile_dir`；风控特征串补了中文站实际出现的 `403 页面 / 服务暂时中断 / 系统当前负载过高`。
+- **登录命令修复（真 bug）**：`crawler_account_login` 原来的「出现新 Cookie 就算登录成功」会在用户停在 facebook.com 授权页时误判，把 **facebook.com 的 7 条 Cookie 存成了账号会话**。现改为：当前 URL 必须是 joybuy.co.uk 且不在 `/login`、可见正文 ≥2000 字符、且只采集 `joybuy` 域 Cookie。
+- **管理端接口**：`tree_to_payload()` 每个节点返回 `name_zh`；任务列表类目列优先显示中文名；任务详情 `categories[]` 增加 `name_zh` 字段。
+- **前端**：`CategoryTreePicker.vue` 每行渲染「中文名（加粗）+ 英文名（次要色）」，没有中文名时只显示英文；搜索同时匹配中英文与 source id；选中项带上 `name_zh`；表单标题下加了说明文案。`CrawlersView.vue` 补 `.create-form__tree-hint` 样式。
+- **数据现状**：14 个一级频道 100% 有中文名；163 个二级类目 **156 个有中文名（95.7%）**，缺 7 个：`l2:3505 Gaming Steering Wheels`、`l2:1384 Learning, Discovery & Science`、`l2:1376 Vehicles & Remote Control`、`l2:1380 Electronic Toys & Music`、`l2:1378 Soft Toys`、`l2:1474 Baby Clothing`、`l2:1478 Safety Equipment`（这 7 个在频道页的类目轮播里不在首屏，浏览器 DOM 快照拿不到；爬虫侧当天被风控限流）。
+- **数据文件**：`var/joybuy_demo/data/category_menu_zh.json`（英文名+中文名+来源 URL，可直接 `--from-json` 回放）；`category_menu_zh.tsv` 是抓取原始对照（channel / source_id / 中文名）。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test crawler_control.tests.test_crawler_rebuild.TreeSyncTests crawler_control.tests.test_crawl_jobs_api` → 7 passed（新增 2 个用例：中文名按 source id 匹配且重建版本仍继承；unknown/still_missing 报告正确）。
+  - `npx vitest run --config admin-web/vitest.config.js` → 9 passed（`CategoryTreePicker` 6 个用例，含「中英同时显示」与「中文关键词过滤」）。
+  - `npx prettier --check` + `npx eslint` 三个改动前端文件 → 通过；`ruff check` / `ruff format --check` 本次改动的 9 个 Python 文件 → 通过。
+  - 实库：`manage.py migrate catalog` 已执行；`sync_joybuy_category_names_zh --from-json` 结果 `tree=joybuy-uk-20261104-4dcfbbe5 matched=170 categories_updated=170 snapshots_updated=184 unknown=0 still_missing=7`；`tree_to_payload` 抽查 Electronics/Pets 中英对照正确、14 个 L1 全部有中文名。
+  - **未做**：管理端页面人工登录截图核对（当时不知密码；**2026-11-05 夜已解决**：`admin@joybuy.test` 密码已重设为 `Admin@123456`，见下方「本地开发登录凭据」）。
 
 ### 2026-11-05：数据库说明文档（docs/13）
 
@@ -140,7 +583,36 @@
 - 扩展管理员浏览器测试：登录后逐一打开商品目录、评价管理、爬取任务、内容页面、买家与订单五个管理页面，并断言中文标题可见。
 - 新增根目录 `AGENTS.md`，并更新 `README.md` 与 `docs/08-implementation-work-packages.md`，将“每次执行结束前更新 `HANDOFF.md`”固化为项目纪律。
 
+### 本地开发登录凭据（2026-11-05 夜更新）
+
+- **商家端演示数据**：`manage.py seed_merchant_demo --merchant HOMCOM --reset` / `--merchant CHiQ --reset --with-deposit`（幂等，可反复跑）
+- **商家端（merchant-web，http://127.0.0.1:5174/login）**
+  - 同一套账号：`admin@joybuy.test` / `Admin@123456`（已绑定 HOMCOM + CHiQ 两家店）
+  - 商家端复用 `/api/v1/admin/auth/*` 登录，店铺归属靠 `merchant_membership`
+  - 绑定店铺的命令（在仓库根目录执行）：
+    ```
+    ./.venv/Scripts/python.exe backend/manage.py shell -c "from merchants.models import Merchant,MerchantMembership,MerchantRole; from accounts_staff.models import StaffAccount; s=StaffAccount.objects.get(email='admin@joybuy.test'); m=Merchant.objects.get(display_name='CHiQ'); MerchantMembership.objects.get_or_create(merchant=m, staff=s, defaults={'role':MerchantRole.objects.get(code='merchant_owner'),'status':'ACTIVE'})"
+    ```
+- **管理端（admin-web，http://127.0.0.1:5173）**
+  - 账号 `admin@joybuy.test` / 密码 `Admin@123456`（`platform_admin` 角色，21 个权限码全含，TOTP 未启用）
+  - 次要账号 `auditor@joybuy.test`（`platform_auditor`，只有审计只读权限，密码未重置、不可用）
+  - **仅本地开发库**。正式环境必须改密码并走初始化流程，不得沿用。
+- **登录页只校验邮箱 + 密码**，不再要求 TOTP 验证码；会话 Cookie 名 `joybuy_staff_session`，写操作必须带 `X-CSRFToken`（先 GET `/api/v1/admin/auth/session` 拿 `csrf_token`）。
+- 密码遗忘时的重置方式（在仓库根目录执行）：
+  ```
+  ./.venv/Scripts/python.exe backend/manage.py shell -c "from accounts_staff.models import StaffAccount; s=StaffAccount.objects.get(email='admin@joybuy.test'); s.set_password('新密码'); s.save()"
+  ```
+
 ## 3. 当前卡在哪里
+
+- **开发服务器（2026-11-05 15:59 起）由助手在后台启动**：`python backend/manage.py runserver 127.0.0.1:8000 --noreload`。此进程若随会话结束退出，重新启动即可；**改后端代码后必须重启**，否则接口还是旧结构（类目双语那次就是被 4 个残留 `--noreload` 进程挡住）。admin 前端在 5173（vite dev，源码热更新，浏览器 Ctrl+F5 即可）。
+- **7 个二级类目还没有中文名**（`l2:3505/1384/1376/1380/1378/1474/1478`），UI 上这些节点只显示英文名。补法：等 joybuy 风控窗口过去后跑一次
+  `manage.py sync_joybuy_category_names_zh --account <账号public_id> --merge-json --dump-json var/joybuy_demo/data/category_menu_zh.json`
+  （全量）或按 `--channel minihome:UK-Mini-HP-Toys-Baby-and-Kids --channel minihome:UK-Mini-HP-Gaming` 分块补；命令会自动合并并汇报 `still_missing`。
+- **joybuy.co.uk 2026-11-05 起对未登录访问强制跳登录**：`sync_joybuy_category_tree` 这类匿名抓取现在会拿到 `/login` 或 `Joybuy Risk Control` 页，必须有有效账号会话（`--account`）才能跑。
+- **当天爬虫浏览器已被风控限流**：频道路径 `/minihome/*` 连续抓 10+ 页后返回 `Joybuy Risk Control`（`evApi=color_guide_homepage_getPageAllData`）。已确认不是登录态问题（账号会话 42 条 Cookie 有效），冷却后放慢 `--pause 20`+ 分块可恢复；用户自己的 Chrome 同时段正常。
+- **`reset_browser_profile()` 在本机被 safe-delete 拦截**（656 个文件批量删除需要确认，报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`）→ 命令新增 `--no-reset-profile`，复用现有 profile 绕过；需要干净 profile 时要人工清 `var/browser_profiles/profile`。
+- **账号 profile 未必能过风控**：`--profile account-9b189970` 实测直接 403（该 profile 做过 Facebook OAuth），通用 profile + 注入会话 Cookie 反而正常，选择 profile 时要先小样本验证。
 
 - 本轮畅销榜数据补齐没有阻塞。正式 `RankingList/RankingEntry` 后台配置仍未实现，当前 `/promo/best-seller` 和首页楼层继续读取 `/api/v1/search?category=<slug>&sort=rating_desc`；这是既有第 2 轮范围，不应把本轮演示数据导入误写成正式榜单模型已完成。
 - 商品多语言索引仍是已知架构欠账：`ProductSearchDocument` 每 SPU/市场只有一行且 `rebuild_search_document()` 取第一条翻译。本轮只如实保存来源 locale，不顺手伪造翻译或宣称已实现按界面语言切换商品文本。
@@ -165,6 +637,25 @@
 8. 任何后续任务结束前，继续按 `AGENTS.md` 更新本文档。
 
 ## 5. 已踩过且绝对不能再踩的坑
+
+### 2026-11-05 爬虫重建（第 1 轮）
+
+- **风控/登录判定只能匹配页面标题+可见文本**（先剥掉 script/style 再匹配）：正常首页的 i18n 文案包里有 `"error403":"403 Forbidden"`，页脚有 "protected by reCAPTCHA"——直接匹配整段 HTML 必然误判（两次踩坑实测）。
+- **joy-sourcing 图片 CDN 对 bot UA 返回 403**：图片探测/下载必须带浏览器 User-Agent（media 库导入用浏览器 UA 成功、`JoybuyResearchBot` 全部 400）。
+- **Scrapy 2.13.4 自带 bug**：`ProtegoRobotParser.allowed()` 把 `can_fetch(url, user_agent)` 参数传反，任意 URL 随机 Forbidden（已实测证明）。必须用 `ROBOTSTXT_PARSER = joybuy_crawler.robots.FixedProtegoRobotParser` 修正；不可因此关掉 ROBOTSTXT_OBEY。
+- **Scrapy 2.13 管道钩子**：item pipeline `close_spider(spider)` 不再传 reason（终态原因从 stats 的 finish_reason 读）；asyncio reactor 里调 Django ORM 会抛 `SynchronousOnlyOperation`——执行器进程必须 `DJANGO_ALLOW_ASYNC_UNSAFE=true`（runner.py 已内置）。
+- **joybuy.co.uk robots.txt（2026-11-05 实测）**：`/s?k=<纯净关键词>` 允许；带 `&l1=/l2=/l3=/page=/sortType=` 一律禁止；`/dp/<slug>/<id>` 详情页允许。列表目标必须规范化成 `/s?k=<k>`，**分页不可爬**（缺口用 LISTING_SHORTFALL 事件如实记录）。
+- **joybuy.co.uk 当前结构（2026-11-05）**：一级类目 = 14 个 `/minihome/<pagecode>` 频道链接；子类目 = `/s?k=...&l2=/l3=` 列表链接（如 Kettles & Toasters = `l2:1405`）。docs/09 里的 `l1=1409` 数字 ID 已不在现 UI，只作历史证据。
+- **热浏览器 profile 会拿到降级版首页**（无类目行、minihome 链接只剩 1 个）；全新 profile 拿完整 SSR（1.9MB）。所以 `sync_joybuy_category_tree` 每次运行前重置爬虫 profile（`render.reset_browser_profile`）。SSR 内容在水合后会被替换——**必须用 `page.listen` 网络层捕获文档响应**（`render_page(capture_ssr=True)`），读 DOM 是时序竞争。
+- **DrissionPage 浏览器隔离**：固定调试端口（9333）会连接到已存在的实例。`render_page` 启动前杀掉带 `browser_profiles` 标记的残留爬虫浏览器，连接后校验 9333 端口上的 chrome 进程必须带爬虫专属 user-data-dir，否则拒绝导航。绝不能让爬虫操作到运营者本体浏览器。
+- **连接失败先排查 VPN/系统代理**（本机 127.0.0.1:7890）：Chrome 报 ERR_CONNECTION_CLOSED 时 curl 直连可能正常——先分清是网络断了还是被站点 403。
+- **连续快速渲染会触发站点 403 限流**：类目同步页间 5s 间隔 + 403 后 60s 冷却重试（命令内置 3 次），不要连续重试硬撞。
+- `fetch_url` 的参数名是 `timeout_seconds`，不是 `timeout`（传错会 TypeError "unexpected keyword"）。
+- `Path("")` 是真值——`dataset_root` 曾因此返回相对路径把数据集散落在 cwd。目录解析要用显式 `if configured` 分支。
+- 树同步幂等：同日同结构哈希会生成相同 `version_key`，`sync_category_tree` 对已存在版本原地重建快照（否则撞唯一约束）；同一 l2/l3 ID 会挂在多个频道下，快照去重"首次出现为准"。
+- **登录检测不能只靠页面渲染**（2026-11-05 二次踩坑）：站点会持续给渲染器返回"temporary service interruption"限流页（可见文本仅几百字符），登录成功与否页面看不出来。`_is_logged_in` 必须加 **Cookie 新增信号**（profile 出现初始快照没有的新 Cookie = 登录动作发生，Cookie 是持久化的不受拦截页影响）；拦截页标记 `temporary service interruption` 已加入 render.RISK_CONTROL_MARKERS。
+- **DrissionPage 浏览器隔离双层防线**：① 进程校验（9333 端口进程必须带 browser_profiles user-data-dir）；② **标签页指纹**（连接后已打开的标签若存在非空白页 → 立即 quit + 拒绝导航）。实测干净专用实例 = 1 个 `chrome://newtab/` 标签；运营者本体浏览器必然有多条真实标签页。变量命名禁忌：`crawler_account_login` 里 `options` 既是命令参数字典又是 ChromiumOptions——ChromiumOptions 必须另命名（曾致登录窗口秒退）。
+- 爬虫账号 = 用户自己的 Facebook 账号（docs/05 §7.1 设计），登录后 Joybuy 显示的就是用户本人的账号——这不是隔离失败；隔离的对象是**浏览器实例**（专用 profile 无书签、独立调试端口），不是账号身份。用户曾三次误报"弹出的浏览器显示的是我正常账户"：Joybuy 按 Facebook 身份识别账号，OAuth 登录谁的 FB 就进谁绑定的 Joybuy 账号。**要独立小号必须用另一个 Facebook 账号登录**（首次登录自动建新 Joybuy 账号）。账号 Tab 已加身份说明文案，向用户解释时先讲这个模型。
 
 - Joybuy 卡片 DOM 可能把划线价与折扣百分比无空格拼接，例如 `£2.797% off`；金额正则必须限制为最多两位小数，否则会把 `£2.79` 错存成 `2.797`。证据解析脚本已修为 `£\s*([\d,]+(?:\.\d{1,2})?)`。
 - 不能只信 JSON-LD 的 `offers.price`：它通常是当前优惠价。原价必须优先读可见卡片 `[class*="crossOffPrice"]`，没有划线价才回退 `[class*="mainPrice"]`/唯一价格。
@@ -347,6 +838,37 @@
 - 浏览器量测复核：strip 40px 居中/#1A1A1A/标签 ✓、campaign y160==header bottom ✓、发现卡 radius16 带图 ✓、品牌 12 圆卡 50% 不可点击图加载 ✓、面板 hover bg #F7F7F7 fw600 黑色 + 子类目联动 ✓。
 
 ## 6. 验证记录
+
+### 2026-11-05 账号隔离加固（按验证纪律仅做针对性验证）
+
+- 用户实测反馈两问题：① 登录窗口弹出后闪退（`crawler_account_login` 里 ChromiumOptions 遮蔽 `options` 参数字典，已修复）；② 登录成功但长时间未保存（站点持续返回限流页导致页面信号检测失败）+ 对"验证会话用哪个浏览器"的疑虑。
+- 修复/加固：`render_page` 新增标签页指纹防线 `_assert_clean_browser`（干净实例=1 个 chrome://newtab/ 标签，实测确认；已有真实标签页的浏览器立即 quit 拒绝导航）；`RISK_CONTROL_MARKERS` 加 "temporary service interruption"；登录检测加 Cookie 新增信号（初始快照 diff，忽略 _ga/_uet 等噪声）；verify 返回 cookie_count+detail 证据，UI 成功提示改为"在隔离无头浏览器中用该账号存储的 N 条加密 Cookie 验证"。
+- 实测：任务账号01（用户自行登录成功，10 条 Cookie 已入库 VALID）真实验证跑通——隔离无头浏览器加载其 Cookie，被站点限流页拦截 → 正确返回 RISK_CONTROL_BLOCKED 且**不误标过期**（session_status 保持 VALID）；ruff 干净；账号 API 13/13。
+- 遗留：站点对本机限流未解除，`verified=true` 的 UI 展示待用户稍后自行点"验证会话"确认；"验证打开本体浏览器"未能在代码路径上复现（当时账号无会话，verify 应直接返回 NO_SESSION 不开浏览器），最可能是登录等待期的有头窗口被误认——现已有双防线兜底。
+
+### 2026-11-05 爬虫重建第 2 轮：账号管理 + 管理端 UI（按验证纪律仅做针对性验证）
+
+- 服务启动：Docker Desktop → joybuy-dev-mysql/redis/mailpit 全部 healthy → migrate（无缺失）→ 后端/storefront/admin 三个 200。
+- 后端：`manage.py test crawler_control` **83/83 通过**（新增 `test_crawler_accounts_api.py` 11 项：创建/列表（不暴露 session_cipher）/启停/风控拦截 enable/登出过期/verify 有效与过期/无会话/login 派生/权限门/404；`test_crawl_jobs_api.py` 2 项 HTTP 建任务）；ruff 全部改动文件干净。
+- 前端：admin-web vitest **7/7**（CategoryTreePicker 4 项：展开/勾选 v-model/含子类目切换/搜索过滤）；eslint 0 错误；prettier 通过；locale.js 补映射。
+- **浏览器实测（内置浏览器，admin@joybuy.test 登录）**：① 任务 Tab 类目树显示 14 频道+子类目计数，搜索 "Kettles" 过滤并勾选 → 创建任务「UI 实测-壶类目-2件」成功（就绪，列表类目列显示 Kettles & Toasters）；② 详情抽屉：状态/类目选择（含子类目标记）/树版本/运行记录/事件流全部正确；③ 账号 Tab：新增「FB 主账号」成功（启用/未知会话/备注正确），验证会话返回友好提示"尚未登录保存过会话"，停用→已停用（按钮变启用）→恢复启用。
+- **实测抓出并修复的真 bug**：任务创建 API 用不存在的 `SourceCategory.public_id` 查类目 → 500。修复为按 `source_id` 查找（前端 `source_ids` payload），补 HTTP 层测试防回归。教训：第 1 轮只测了服务层，API 层接线错误未被捕获——以后 API 改动必须补 HTTP 级测试。
+- 清理：昨天实测中断的 3 个僵尸 RUNNING run 用服务层 `cancel_run` 收尾（已变"已取消"）。
+- 遗留待人工：账号"登录"流程需用户本人在弹出的 Chrome 里完成 Facebook 登录（检测/存储逻辑已实现并有单测，端到端 Cookie 落库待用户实测）。
+- 按纪律未跑全量后端、全部组件或全部 e2e。
+
+### 2026-11-05 爬虫重建第 1 轮（按验证纪律仅做针对性验证）
+
+- ruff check + format：全部改动 Python 文件（crawler/joybuy_crawler 全部新模块、backend/crawler_control、common/admin_views.py、config/urls.py）通过；既有无关文件的 2 个旧告警（browser.py PYI034、ingest.py RUF059）未顺手修复。
+- 后端 `manage.py test crawler_control`：**70/70 通过**（终版回归，含 close_spider 全失败→FAILED 新用例）（新增 test_crawler_rebuild.py 13 项：树同步 3、多类目任务 4、解析器/图片阶梯 4、数据集 2、StagingPipeline 4）；`test_crawler_import` 8/8 通过。既有测试 2 处按新语义更新：无可用账号时 start_run 改为未登录启动（不再抛错）；熔断测试改为标记 2 个账号真正触发熔断。
+- **实测终验（真实爬取，小规模）**：
+  1. `sync_joybuy_category_tree --publish` → 版本 `joybuy-uk-20261104-4dcfbbe5` PUBLISHED：14 一级频道 + 177 快照（163 个子类目，l2/l3 ID 原样保存 + 真实列表 URL）。
+  2. 建任务（类目 l2:1405 Kettles & Toasters，product_limit=3）→ `start_run` → `run_crawl_run` 独立进程执行：列表页 `/s?k=Kettles%20%26%20Toasters`（robots 合规规范化）+ 3 个 `/dp/` 详情页全部 200。
+  3. 结果：**3/3 商品 IMPORTED**（SPU/SKU/Offer 各 3）、gallery 图片 15+17+20 张全部下载 0 失败、run→SUCCEEDED、job→COMPLETED；事件流 RUN_STARTED/PRODUCT_IMPORTED 完整。
+  4. 数据集落盘核对：`var/crawl_exports/d76a930e-3-2/kettles-toasters/home-appliances/{商品ID}/product.json + images/main/01.webp + images/detail/*.webp + dataset_index.jsonl`；主图实测 **1248×1248**（站点最高清规格）；product.json 含 joybuy 原生字段块（productId/priceInfo.crossOffPrice/skus[].skuId/seller/gallery 等一一对应）。
+- 迭代过程中修复并复验的问题：robots 解析器参数反序（Scrapy 上游 bug）、close_spider 签名（Scrapy 2.13 变更）、asyncio 下 ORM 调用、JSON-LD image 字符串迭代 bug、CDN bot UA 403、dataset_root 相对路径、面包屑分层（选中类目为第一层）。
+- docs/05（§1/§7.3/§8）与 docs/09（类目结构现状）已更新；`DrissionPage` 已装入 `.venv`（4.1.1.4）。
+- 按纪律未跑全量后端、全部组件或全部 e2e；admin-web UI 属第 2 轮未动。
 
 ### 2026-11-05 管理端登录移除验证器（按验证纪律仅做针对性验证）
 

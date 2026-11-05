@@ -22,7 +22,11 @@ class StaffRbacPermission(BasePermission):
                 status_code=403,
             )
 
-        required = set(getattr(view, "required_permissions", []))
+        resolver = getattr(view, "resolve_required_permissions", None)
+        if callable(resolver):
+            required = set(resolver(request))
+        else:
+            required = set(getattr(view, "required_permissions", []))
         if not required:
             return True
 

@@ -83,3 +83,10 @@ celerybeat-schedule*
 Thumbs.db
 Desktop.ini
 
+
+# 爬虫数据集导出（<job_id>-<name>/ 结构，运行时产物，不入库）
+var/crawl_exports/
+*-pipeline-job/
+backend/*-pipeline-job/
+backend/*-3-v4/
+backend/*-v4/

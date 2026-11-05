@@ -10,12 +10,14 @@
   "scripts": {
     "dev:storefront": "pnpm --filter @joybuy/storefront dev",
     "dev:admin": "pnpm --filter @joybuy/admin-web dev",
+    "dev:merchant": "pnpm --filter @joybuy/merchant-web dev",
     "build:storefront": "pnpm --filter @joybuy/storefront build",
     "build:admin": "pnpm --filter @joybuy/admin-web build",
-    "build:frontends": "pnpm run build:storefront && pnpm run build:admin",
-    "lint:frontends": "eslint storefront admin-web playwright.config.js tests/e2e",
-    "format:check": "prettier --check package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web tests/e2e .github/workflows",
-    "format:write": "prettier --write package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web tests/e2e .github/workflows",
+    "build:merchant": "pnpm --filter @joybuy/merchant-web build",
+    "build:frontends": "pnpm run build:storefront && pnpm run build:admin && pnpm run build:merchant",
+    "lint:frontends": "eslint storefront admin-web merchant-web playwright.config.js tests/e2e",
+    "format:check": "prettier --check package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web merchant-web tests/e2e .github/workflows",
+    "format:write": "prettier --write package.json pnpm-workspace.yaml eslint.config.js playwright.config.js storefront admin-web merchant-web tests/e2e .github/workflows",
     "test:components": "vitest run --config storefront/vitest.config.js && vitest run --config admin-web/vitest.config.js",
     "test:e2e": "playwright test"
   },

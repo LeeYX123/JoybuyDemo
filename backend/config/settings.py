@@ -37,7 +37,8 @@ if APP_ENV not in {"development", "test"} and (
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 CSRF_TRUSTED_ORIGINS = env_list(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
-    "http://127.0.0.1:3000,http://127.0.0.1:5173",
+    # 3000 商城端 / 5173 平台管理端 / 5174 商家端（三个前端都要能发写请求）
+    "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174",
 )
 
 INSTALLED_APPS = [
@@ -53,6 +54,7 @@ INSTALLED_APPS = [
     "accounts_staff.apps.AccountsStaffConfig",
     "audit.apps.AuditConfig",
     "merchants.apps.MerchantsConfig",
+    "merchant_ops.apps.MerchantOpsConfig",
     "catalog.apps.CatalogConfig",
     "offers.apps.OffersConfig",
     "media.apps.MediaConfig",
@@ -202,6 +204,10 @@ BUYER_LOGIN_FAILURE_LIMIT = int(os.getenv("BUYER_LOGIN_FAILURE_LIMIT", "5"))
 BUYER_LOGIN_FAILURE_WINDOW_SECONDS = int(os.getenv("BUYER_LOGIN_FAILURE_WINDOW_SECONDS", "900"))
 
 STAFF_SESSION_COOKIE_NAME = os.getenv("STAFF_SESSION_COOKIE_NAME", "joybuy_staff_session")
+# 员工会话要同时服务平台端（/api/v1/admin/*）与商家端（/api/v1/merchant/*），
+# 所以作用域是整个 /api/v1/。历史值曾是 "/api/v1/admin/"，见 LEGACY 常量。
+STAFF_SESSION_COOKIE_PATH = os.getenv("STAFF_SESSION_COOKIE_PATH", "/api/v1/")
+STAFF_SESSION_COOKIE_LEGACY_PATHS = ("/api/v1/admin/",)
 STAFF_SESSION_MAX_AGE_SECONDS = int(os.getenv("STAFF_SESSION_MAX_AGE_SECONDS", "28800"))
 STAFF_SESSION_HMAC_KEY = os.getenv("STAFF_SESSION_HMAC_KEY", SECRET_KEY)
 STAFF_TOTP_ENCRYPTION_KEY = os.getenv("STAFF_TOTP_ENCRYPTION_KEY", SECRET_KEY)

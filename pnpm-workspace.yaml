@@ -1,6 +1,7 @@
 packages:
   - storefront
   - admin-web
+  - merchant-web
 
 allowBuilds:
   esbuild: true
