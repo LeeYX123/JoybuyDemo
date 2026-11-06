@@ -3,8 +3,17 @@ import { useCookie } from '#imports'
 
 import { messages, pickName } from '../locales/messages'
 
-// Lightweight storefront locale (docs/12: bilingual EN/ZH target state).
-// Persisted in a cookie so SSR renders the same language as the browser.
+const localeAliases = {
+  en: 'en-GB',
+  zh: 'zh-CN',
+  de: 'de-DE',
+  fr: 'fr-FR',
+  nl: 'nl-NL',
+  lb: 'lb-LU',
+}
+
+// Locale is persisted as a full BCP-47-like code. UI copy may fall back to
+// English while product content and specifications still use the exact locale.
 export function useLocale() {
   const cookie = useCookie('joybuy-locale', {
     default: () => 'en',
@@ -12,18 +21,19 @@ export function useLocale() {
     sameSite: 'lax',
   })
 
-  const locale = computed(() => (cookie.value === 'zh' ? 'zh' : 'en'))
+  const localeCode = computed(() => localeAliases[cookie.value] || cookie.value || 'en-GB')
+  const locale = computed(() => localeCode.value.split('-')[0].toLowerCase())
 
   function t(key) {
     return messages[locale.value]?.[key] ?? messages.en[key] ?? key
   }
 
   function setLocale(value) {
-    cookie.value = value === 'zh' ? 'zh' : 'en'
+    cookie.value = localeAliases[value] || value || 'en-GB'
   }
 
   function toggleLocale() {
-    cookie.value = locale.value === 'zh' ? 'en' : 'zh'
+    cookie.value = locale.value === 'zh' ? 'en-GB' : 'zh-CN'
   }
 
   // Category rows come from the API with name_en/name_zh.
@@ -31,5 +41,5 @@ export function useLocale() {
     return pickName(category, locale.value)
   }
 
-  return { locale, t, setLocale, toggleLocale, categoryName }
+  return { locale, localeCode, t, setLocale, toggleLocale, categoryName }
 }

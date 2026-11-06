@@ -338,6 +338,12 @@ def set_merchant_suspension(merchant: Merchant, *, suspended: bool, reason: str 
 
 
 def deduct_credit(merchant: Merchant, *, points, note: str = "") -> Merchant:
+    """扣减信誉分（100 分制，下限 0）。
+
+    WP-42 文档拍板：超额扣减按 0 钳制（不再报错拒绝）；扣至 0 后系统
+    不做任何自动处理、不自动封店，是否封店由人工在管理端操作。
+    """
+
     from decimal import Decimal
 
     amount = Decimal(str(points or 0))
@@ -345,11 +351,24 @@ def deduct_credit(merchant: Merchant, *, points, note: str = "") -> Merchant:
         raise MerchantAdminError("CREDIT_POINTS_INVALID", "扣分数必须为正数。")
     with transaction.atomic():
         locked = Merchant.objects.select_for_update().get(pk=merchant.pk)
-        if amount > locked.credit_score:
-            raise MerchantAdminError("CREDIT_EXCEEDS_CURRENT", "扣分数不能超过当前信誉分。")
-        locked.credit_score = locked.credit_score - amount
+        locked.credit_score = max(Decimal("0"), locked.credit_score - amount)
         locked.save(update_fields=["credit_score", "updated_at"])
         return locked
+
+
+def _bump_daily_stat(merchant: Merchant, *, stat_date=None, **deltas) -> None:
+    """upsert 当日统计行（曝光/关注/订单量），供趋势图使用。"""
+    from django.db.models import F
+
+    from merchants.models import MerchantDailyStat
+
+    date = stat_date or timezone.localdate()
+    row, created = MerchantDailyStat.objects.get_or_create(
+        merchant=merchant, stat_date=date, defaults={key: value for key, value in deltas.items()}
+    )
+    if not created and deltas:
+        fields = {key: F(key) + value for key, value in deltas.items()}
+        MerchantDailyStat.objects.filter(pk=row.pk).update(**fields)
 
 
 def add_followers(merchant: Merchant, *, count: int) -> Merchant:
@@ -364,14 +383,64 @@ def add_followers(merchant: Merchant, *, count: int) -> Merchant:
         locked.followers += count
         locked.follow_delta += count
         locked.save(update_fields=["followers", "follow_delta", "follow_day", "updated_at"])
+        _bump_daily_stat(locked, stat_date=today, followers_delta=count)
         return locked
 
 
 def add_exposure(merchant: Merchant, *, count: int) -> Merchant:
+    """加曝光：总曝光度累加不清零；今日曝光度 = 当日累计新增，每天自动清零。"""
     if count <= 0:
         raise MerchantAdminError("COUNT_INVALID", "新增曝光必须是正整数。")
+    today = timezone.localdate()
     with transaction.atomic():
         locked = Merchant.objects.select_for_update().get(pk=merchant.pk)
+        if locked.exposure_day != today:
+            locked.exposure_day = today
+            locked.exposure_delta = 0
         locked.exposure += count
-        locked.save(update_fields=["exposure", "updated_at"])
+        locked.exposure_delta += count
+        locked.save(
+            update_fields=["exposure", "exposure_delta", "exposure_day", "updated_at"]
+        )
+        _bump_daily_stat(locked, stat_date=today, exposure_delta=count)
         return locked
+
+
+def auto_suspend_overdue_merchants(*, now=None) -> list:
+    """唯一的自动封店规则（WP-42 文档 M02 §6 / 管理端 §2）。
+
+    判定口径：接单中（ACTIVE）商家存在【待处理】商家子单，且该子单
+    下单时间距当前超过该店设置的【订单未处理自动封店天数】→ 自动封店。
+    ``ban_after_days`` 为空的商家不参与自动封店。信誉分清零不触发本逻辑。
+    """
+
+    from datetime import timedelta
+
+    from orders.models import MerchantOrder
+
+    now = now or timezone.now()
+    suspended = []
+    merchants = Merchant.objects.filter(
+        onboarding_status=Merchant.OnboardingStatus.ACTIVE,
+        ban_after_days__isnull=False,
+    )
+    for merchant in merchants:
+        cutoff = now - timedelta(days=merchant.ban_after_days)
+        overdue = MerchantOrder.objects.filter(
+            merchant=merchant,
+            status=MerchantOrder.Status.PENDING,
+            created_at__lt=cutoff,
+        ).exists()
+        if not overdue:
+            continue
+        locked = Merchant.objects.select_for_update().get(pk=merchant.pk)
+        if locked.onboarding_status != Merchant.OnboardingStatus.ACTIVE:
+            continue
+        locked.onboarding_status = Merchant.OnboardingStatus.SUSPENDED
+        locked.suspended_at = now
+        locked.suspend_reason = "订单未处理超过设定天数，系统自动封店"
+        locked.save(
+            update_fields=["onboarding_status", "suspended_at", "suspend_reason", "updated_at"]
+        )
+        suspended.append(locked)
+    return suspended

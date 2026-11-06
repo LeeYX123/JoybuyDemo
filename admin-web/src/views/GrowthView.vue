@@ -131,7 +131,8 @@ onMounted(() => {
               <th>店铺</th>
               <th>总关注</th>
               <th>当日增量</th>
-              <th>曝光量</th>
+              <th>总曝光度</th>
+              <th>今日曝光度</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
@@ -148,6 +149,7 @@ onMounted(() => {
                 <span v-else class="cell-sub">—</span>
               </td>
               <td class="num">{{ row.exposure }}</td>
+              <td class="num">{{ row.exposure_delta ?? 0 }}</td>
               <td>
                 <span class="tag" :class="row.status === 'ACTIVE' ? 'tag--ok' : 'tag--gray'">
                   {{ row.status === 'ACTIVE' ? '接单中' : row.status }}
@@ -173,7 +175,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="!state.loading && state.items.length === 0">
-              <td colspan="6" class="data-table__empty">没有匹配的店铺。</td>
+              <td colspan="7" class="data-table__empty">没有匹配的店铺。</td>
             </tr>
           </tbody>
         </table>

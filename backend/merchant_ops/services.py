@@ -272,6 +272,41 @@ def _ensure_node_times(merchant_order: MerchantOrder) -> list:
     return times[:8]
 
 
+# --------------------------------------------------------------------------
+# 物流进度自动扭转（WP-42 文档 M04 §3/§4）
+# 区间值按拍板口径写死在代码里，不做后台可配置。
+# 下标 i 的区间控制「节点 i → 节点 i+1」的流转时长（小时，含端点）。
+# --------------------------------------------------------------------------
+PROGRESS_INTERVAL_HOURS = (
+    (4, 8),      # 待出库 → 已出库
+    (6, 12),     # 已出库 → 已揽收
+    (3, 6),      # 已揽收 → 运输中
+    (48, 120),   # 运输中 → 到达网点
+    (10, 18),    # 到达网点 → 派送中
+    (6, 16),     # 派送中 → 已签收
+)
+AUTO_CONFIRM_DAYS = 14  # 已签收 → 用户确认收货：手动更新，或最长 14 天自动收货
+
+
+def build_progress_schedule(shipped_at) -> list:
+    """从发货时间起，每段在区间内随机取一个时长，累进生成计划扭转时刻。
+
+    返回长度 7 的列表：下标 0..5 是到达节点 1..6（已出库..已签收）的计划时刻，
+    下标 6 是 14 天自动确认收货的截止时刻（从已签收时刻起算）。
+    """
+
+    import random
+    from datetime import timedelta
+
+    cursor = shipped_at
+    planned = []
+    for low, high in PROGRESS_INTERVAL_HOURS:
+        cursor = cursor + timedelta(hours=random.uniform(low, high))
+        planned.append(cursor)
+    planned.append(cursor + timedelta(days=AUTO_CONFIRM_DAYS))
+    return planned
+
+
 def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference: str = ""):
     """确认发货：扣成本 → 已发货 → 进度到「待出库」。"""
 
@@ -313,6 +348,7 @@ def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference:
         if not times[0]:
             times[0] = now.isoformat()
         locked.node_times = times
+        locked.planned_node_times = [moment.isoformat() for moment in build_progress_schedule(now)]
         locked.progress = max(locked.progress, 0)
         locked.status = MerchantOrder.Status.SHIPPED
         locked.shipped_at = now
@@ -321,6 +357,7 @@ def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference:
         locked.save(
             update_fields=[
                 "node_times",
+                "planned_node_times",
                 "progress",
                 "status",
                 "shipped_at",
@@ -398,6 +435,77 @@ def complete_all_nodes(merchant_order: MerchantOrder, *, actor=None):
             ]
         )
         return locked
+
+
+def auto_advance_progress(*, now=None) -> dict:
+    """按发货时生成的随机计划时刻，自动推进物流节点（WP-42 文档 M04 §3）。
+
+    - 起算点是发货时间，下一段从上一段的实际扭转时刻累进（计划生成时已累进）；
+    - 到点的节点一次性推进到最新应达节点，``node_times`` 记录计划扭转时刻；
+    - 已签收后最长 14 天自动确认收货（走 node 7，触发一次回款）；
+    - 没有计划时刻表的历史子单（功能上线前发货）跳过，仍走人工推进。
+    """
+
+
+    from django.utils.dateparse import parse_datetime
+
+    now = now or timezone.now()
+    advanced = 0
+    confirmed = 0
+    rows = MerchantOrder.objects.filter(status=MerchantOrder.Status.SHIPPED).exclude(
+        planned_node_times=[]
+    )
+    for row in rows:
+        planned_raw = list(row.planned_node_times or [])
+        if len(planned_raw) < 7:
+            continue
+        planned = [parse_datetime(value) for value in planned_raw[:7]]
+        if any(moment is None for moment in planned):
+            continue
+        # 已签收（进度 6）后看 14 天自动确认截止（planned[6]）。
+        if row.progress >= 6:
+            if planned[6] <= now:
+                with transaction.atomic():
+                    locked = MerchantOrder.objects.select_for_update().get(pk=row.pk)
+                    if locked.status == MerchantOrder.Status.SHIPPED and locked.progress == 6:
+                        times = _ensure_node_times(locked)
+                        if not times[7]:
+                            times[7] = planned[6].isoformat()
+                        locked.node_times = times
+                        locked.progress = 7
+                        locked = _settle_locked(locked)
+                        locked.save(
+                            update_fields=[
+                                "node_times",
+                                "progress",
+                                "status",
+                                "settled",
+                                "settled_at",
+                                "updated_at",
+                            ]
+                        )
+                        confirmed += 1
+            continue
+        # 计算当前应达的最新节点：最大的 i（1..6）使 planned[i-1] <= now。
+        target = 0
+        for index in range(1, 7):
+            if planned[index - 1] <= now:
+                target = index
+        if target <= row.progress:
+            continue
+        with transaction.atomic():
+            locked = MerchantOrder.objects.select_for_update().get(pk=row.pk)
+            if locked.status != MerchantOrder.Status.SHIPPED:
+                continue
+            times = _ensure_node_times(locked)
+            for index in range(locked.progress + 1, target + 1):
+                if not times[index]:
+                    times[index] = planned[index - 1].isoformat()
+            locked.node_times = times
+            locked.progress = target
+            locked.save(update_fields=["node_times", "progress", "updated_at"])
+            advanced += 1
+    return {"advanced": advanced, "confirmed": confirmed}
 
 
 def _settle_locked(merchant_order: MerchantOrder, *, actor=None) -> MerchantOrder:

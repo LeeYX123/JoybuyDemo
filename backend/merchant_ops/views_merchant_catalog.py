@@ -2,8 +2,13 @@
 
 商品池复用 ``catalog.Spu``（全平台商品），店铺商品关系复用 ``offers.Offer``
 （merchant × sku × market × currency）。「上架」只是在本店创建或复活一条 Offer，
-并把商品池的成本价/零售价快照过去，不复制商品主档。
+并把折扣折算后的成本价/零售价快照过去，不复制商品主档。
+
+WP-42（文档 M03 §2）：零售价 = 抓取到的价格原样保留；成本价按**商家级统一折扣**
+计算 = 向上取整(零售价 × 折扣)，活动商品优先用活动折扣。折扣由管理端按商家设置。
 """
+
+from decimal import ROUND_CEILING, Decimal
 
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
@@ -12,7 +17,7 @@ from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
 from audit.services import record_audit
-from catalog.models import LocalCategory, Spu
+from catalog.models import Spu
 from merchant_ops.api_utils import money_str, paginate, require
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.views_catalog import _category_payload, _primary_images, _spu_payload
@@ -22,6 +27,37 @@ from offers.models import Market, Offer
 ACTIVITY_CATEGORY = "ACTIVITY"
 # 与商城详情/搜索保持一致：默认市场 GB。
 DEFAULT_MARKET_CODE = "GB"
+
+
+def merchant_category_items() -> list:
+    """12 个固定品类 +「活动商品」筛选（活动商品是标记，不改原品类）。"""
+    items = [
+        {"id": value, "name": label, "name_en": value}
+        for value, label in Spu.MerchantCategory.choices
+    ]
+    items.append({"id": ACTIVITY_CATEGORY, "name": "活动商品", "name_en": "Activity"})
+    return items
+
+
+def compute_listing_cost(merchant, spu):
+    """按商家折扣计算上架成本价：向上取整(零售价 × 折扣)，取整到个位。
+
+    取折扣顺序（文档拍板）：先判断活动商品 → 用活动折扣；否则用普通折扣；
+    商家未设置折扣时回退商品池建议成本价（保持既有行为）。
+    例：12.10 与 12.90 取整后都是 13；121.98 → 122。
+    """
+
+    if spu.retail_price is None:
+        return spu.cost_price
+    rate = None
+    if spu.is_activity and merchant.activity_discount_rate is not None:
+        rate = merchant.activity_discount_rate
+    elif merchant.discount_rate is not None:
+        rate = merchant.discount_rate
+    if rate is None:
+        return spu.cost_price
+    factor = (Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.000001"))
+    return (spu.retail_price * factor).to_integral_value(rounding=ROUND_CEILING)
 
 
 def _default_market() -> Market:
@@ -54,6 +90,9 @@ def _listing_payload(offer: Offer, *, image: str = "") -> dict:
         "product_id": str(spu.public_id),
         "name": _spu_title(spu),
         "category": _category_payload(spu.local_category),
+        "merchant_category": spu.merchant_category,
+        "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
+        "description": spu.description,
         "image": image or (spu.image_urls[0] if spu.image_urls else ""),
         "cost": money_str(offer.cost_price) if offer.cost_price is not None else None,
         "price": money_str(offer.current_price),
@@ -75,24 +114,12 @@ def _spu_title(spu: Spu) -> str:
 
 
 class MerchantCatalogCategoriesView(MerchantAPIView):
-    """品类按钮数据源：一级本地类目 +「活动商品」。"""
+    """品类按钮数据源：12 个固定品类 +「活动商品」（WP-42 文档 M03 §3）。"""
 
     permission_any = ("merchant.listings.manage",)
 
     def get(self, request):
-        rows = LocalCategory.objects.filter(status=LocalCategory.Status.ACTIVE, depth=0).order_by(
-            "sort_order", "path"
-        )[:20]
-        items = [
-            {
-                "id": str(category.public_id),
-                "name": category.name_zh or category.name,
-                "name_en": category.name_en,
-            }
-            for category in rows
-        ]
-        items.append({"id": ACTIVITY_CATEGORY, "name": "活动商品", "name_en": "Activity"})
-        return Response({"items": items})
+        return Response({"items": merchant_category_items()})
 
 
 class MerchantCatalogProductsView(MerchantAPIView):
@@ -119,7 +146,7 @@ class MerchantCatalogProductsView(MerchantAPIView):
             if category.upper() == ACTIVITY_CATEGORY:
                 queryset = queryset.filter(is_activity=True)
             else:
-                queryset = queryset.filter(local_category__public_id=category)
+                queryset = queryset.filter(merchant_category=category)
 
         query = (request.query_params.get("q") or "").strip()
         if query:
@@ -139,6 +166,13 @@ class MerchantCatalogProductsView(MerchantAPIView):
             skus = list(spu.skus.all())
             primary_image = images.get(spu.pk)
             payload = _spu_payload(spu, images=[primary_image] if primary_image else [])
+            # 商品卡片的成本价按当前商家折扣折算（文档 M03 §2），与上架快照一致。
+            discount_cost = compute_listing_cost(merchant, spu)
+            payload["cost"] = money_str(discount_cost) if discount_cost is not None else None
+            payload["merchant_category"] = spu.merchant_category
+            payload["merchant_category_label"] = Spu.merchant_category_label(
+                spu.merchant_category
+            )
             payload["listed"] = bool(getattr(spu, "listed", False))
             payload["sku_id"] = str(skus[0].public_id) if skus else None
             # 有 SKU 且成本/零售价齐全才允许上架，前端按钮据此置灰；
@@ -164,6 +198,23 @@ class MerchantListingsView(MerchantAPIView):
         status = (request.query_params.get("status") or "ACTIVE").upper()
         if status != "ALL":
             queryset = queryset.filter(status=status)
+        # M02：支持商品名称与商品 ID 搜索；品类只显示本店已上架商品所属品类。
+        query = (request.query_params.get("q") or "").strip()
+        if query:
+            condition = Q(sku__spu__translations__title__icontains=query)
+            try:
+                import uuid as uuid_module
+
+                condition |= Q(sku__spu__public_id=uuid_module.UUID(query))
+            except ValueError:
+                pass
+            queryset = queryset.filter(condition).distinct()
+        category = (request.query_params.get("category") or "").strip()
+        if category and category.upper() != "ALL":
+            if category.upper() == ACTIVITY_CATEGORY:
+                queryset = queryset.filter(sku__spu__is_activity=True)
+            else:
+                queryset = queryset.filter(sku__spu__merchant_category=category)
         rows, meta = paginate(queryset.order_by("-listed_at", "-pk"), request)
         # 批量取主图，避免逐行查 MediaUsage（列表 20 行就是 20 次查询）。
         images = _primary_images([offer.sku.spu_id for offer in rows])
@@ -208,16 +259,24 @@ class MerchantListingsView(MerchantAPIView):
                 message="该商品已下架，不能上架到店铺。",
                 status_code=400,
             )
-        if spu.cost_price is None or spu.retail_price is None:
+        if spu.retail_price is None:
             raise StaffApiError(
                 business_code="PRODUCT_PRICE_MISSING",
-                message="商品缺少成本价或零售价，暂不能上架。",
+                message="商品缺少零售价，暂不能上架。",
                 status_code=400,
             )
-        if spu.retail_price < spu.cost_price:
+        if spu.cost_price is not None and spu.retail_price < spu.cost_price:
             raise StaffApiError(
                 business_code="PRODUCT_PRICE_INVALID",
                 message="商品零售价低于成本价，不能上架。",
+                status_code=400,
+            )
+        # 成本价 = 向上取整(零售价 × 商家折扣)；未设折扣时回退商品池建议成本价。
+        listing_cost = compute_listing_cost(merchant, spu)
+        if listing_cost is None:
+            raise StaffApiError(
+                business_code="PRODUCT_PRICE_MISSING",
+                message="商家未设置折扣且商品缺少成本价，暂不能上架。",
                 status_code=400,
             )
         sku = spu.skus.filter(status="ACTIVE").order_by("pk").first()
@@ -246,7 +305,7 @@ class MerchantListingsView(MerchantAPIView):
                 existing.removed_at = None
                 existing.removed_by_platform = False
                 existing.listed_at = timezone.now()
-                existing.cost_price = spu.cost_price
+                existing.cost_price = listing_cost
                 existing.current_price = spu.retail_price
                 existing.save(
                     update_fields=[
@@ -268,7 +327,7 @@ class MerchantListingsView(MerchantAPIView):
                     currency=market.default_currency,
                     current_price=spu.retail_price,
                     list_price=spu.retail_price,
-                    cost_price=spu.cost_price,
+                    cost_price=listing_cost,
                     local_inventory=999,
                     source_availability=Offer.SourceAvailability.IN_STOCK,
                     status=Offer.Status.ACTIVE,
@@ -285,7 +344,7 @@ class MerchantListingsView(MerchantAPIView):
                 after_state={
                     "merchant": str(merchant.public_id),
                     "product": str(spu.public_id),
-                    "cost": str(spu.cost_price),
+                    "cost": str(listing_cost),
                     "price": str(spu.retail_price),
                 },
                 tenant_type="MERCHANT",

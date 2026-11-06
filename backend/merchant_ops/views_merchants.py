@@ -1,6 +1,9 @@
 """A02 商家管理：入驻审核、资金与信誉调整、封店解封。"""
 
+from decimal import Decimal, InvalidOperation
+
 from django.db.models import Count, Q, Sum
+from django.utils import timezone
 from rest_framework.response import Response
 
 from accounts_staff.permissions import StaffRbacPermission
@@ -63,11 +66,22 @@ def _merchant_payload(merchant: Merchant, *, pending=None) -> dict:
         "wallet_balance": money_str(merchant.wallet_balance),
         "credit_score": _plain_number(merchant.credit_score),
         "ban_after_days": merchant.ban_after_days,
+        "discount_rate": money_str(merchant.discount_rate)
+        if merchant.discount_rate is not None
+        else None,
+        "activity_discount_rate": money_str(merchant.activity_discount_rate)
+        if merchant.activity_discount_rate is not None
+        else None,
         "suspend_reason": merchant.suspend_reason,
         "followers": merchant.followers,
         "follow_delta": merchant.follow_delta,
         "follow_day": date_str(merchant.follow_day),
         "exposure": merchant.exposure,
+        # 今日曝光度 = 当日累计新增，每天自动清零（WP-42 文档 M01 §4）。
+        "exposure_delta": merchant.exposure_delta
+        if merchant.exposure_day == timezone.localdate()
+        else 0,
+        "exposure_day": date_str(merchant.exposure_day),
         "referral_code": merchant.referral_code,
         "joined": iso(merchant.created_at),
         "last_online_at": iso(merchant.last_online_at),
@@ -228,6 +242,31 @@ class AdminMerchantDetailView(OpsAPIView):
             merchant.ban_after_days = days
             merchant.save(update_fields=["ban_after_days", "updated_at"])
 
+        # 折扣设置（WP-42 文档管理端 §1）：按商家统一设置，百分数（70 = 70%）。
+        # 文档拍板：不做区间校验、不做默认值兜底，设多少按多少算。
+        discount_changed = False
+        for field in ("discount_rate", "activity_discount_rate"):
+            if field not in payload:
+                continue
+            raw = payload.get(field)
+            if raw in (None, ""):
+                setattr(merchant, field, None)
+            else:
+                try:
+                    rate = Decimal(str(raw)).quantize(Decimal("0.01"))
+                except InvalidOperation as exc:
+                    from accounts_staff.api_exceptions import StaffApiError
+
+                    raise StaffApiError(
+                        business_code="DISCOUNT_INVALID",
+                        message=f"{field} 必须是数字（百分数，70 表示 70%）。",
+                        status_code=400,
+                    ) from exc
+                setattr(merchant, field, rate)
+            discount_changed = True
+        if discount_changed:
+            merchant.save(update_fields=["discount_rate", "activity_discount_rate", "updated_at"])
+
         record_audit(
             request=request,
             actor=request.staff_account,
@@ -242,6 +281,8 @@ class AdminMerchantDetailView(OpsAPIView):
                 "wallet_balance": money_str(merchant.wallet_balance),
                 "credit_score": str(merchant.credit_score),
                 "ban_after_days": merchant.ban_after_days,
+                "discount_rate": str(merchant.discount_rate),
+                "activity_discount_rate": str(merchant.activity_discount_rate),
             },
         )
         payload_out = _merchant_payload(merchant)

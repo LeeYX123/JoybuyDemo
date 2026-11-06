@@ -31,7 +31,22 @@ export const messages = {
     'gate.message':
       'Our service is not yet available in your country. Purchasing is not supported at the moment.',
     'gate.confirm': 'OK',
+    'gate.messageWhitelist':
+      'Your account is not on the purchase whitelist yet. Please contact customer service.',
     'checkout.balancePay': 'Balance payment',
+    'common.loading': 'Loading…',
+    'header.searchMerchants': 'Shops',
+    'merchant.searchTitle': 'Shop search',
+    'merchant.searchPlaceholder': 'Search shops by name',
+    'merchant.searchButton': 'Search shops',
+    'merchant.noResults': 'No shops match your search.',
+    'merchant.notFound': 'Shop not found.',
+    'merchant.followers': 'Followers',
+    'merchant.exposure': 'Exposure',
+    'merchant.shopTitle': 'Shop',
+    'merchant.shopSubtitle': 'Official shop on Joybuy',
+    'merchant.productsTitle': 'All listed products',
+    'merchant.noProducts': 'This shop has no listed products yet.',
   },
   zh: {
     'topStrip.region': '英国 | 中文',
@@ -61,13 +76,28 @@ export const messages = {
     'detail.guaranteeSupport': '24/7 客户支持',
     'gate.message': '您当前的国家业务尚未开放，暂不支持购买',
     'gate.confirm': '确定',
+    'gate.messageWhitelist': '您的账号还未加入购买白名单，暂不能购买，请联系客服。',
     'checkout.balancePay': '余额支付',
+    'common.loading': '加载中…',
+    'header.searchMerchants': '搜商家',
+    'merchant.searchTitle': '搜索商家',
+    'merchant.searchPlaceholder': '按商家店铺名称搜索',
+    'merchant.searchButton': '搜商家',
+    'merchant.noResults': '没有匹配的商家。',
+    'merchant.notFound': '商家不存在。',
+    'merchant.followers': '总关注',
+    'merchant.exposure': '总曝光度',
+    'merchant.shopTitle': '商家店铺',
+    'merchant.shopSubtitle': 'Joybuy 入驻商家',
+    'merchant.productsTitle': '该商家全部上架商品',
+    'merchant.noProducts': '该商家暂无上架商品。',
   },
 }
 
 // Pick a bilingual label: `locale` wins, the other language is the fallback.
 export function pickName(item, locale, prefix = 'name') {
-  const primary = locale === 'zh' ? item[`${prefix}_zh`] : item[`${prefix}_en`]
+  const language = String(locale || 'en').split('-')[0]
+  const primary = language === 'zh' ? item[`${prefix}_zh`] : item[`${prefix}_en`]
   if (primary) return primary
-  return locale === 'zh' ? item[`${prefix}_en`] || item[prefix] : item[prefix]
+  return language === 'zh' ? item[`${prefix}_en`] || item[prefix] : item[prefix]
 }

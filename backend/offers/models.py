@@ -17,6 +17,23 @@ class Currency(models.Model):
         ordering = ["code"]
 
 
+class Locale(models.Model):
+    """A language/region combination exposed by one or more markets."""
+
+    code = models.CharField(max_length=16, unique=True)
+    language_code = models.CharField(max_length=8)
+    region_code = models.CharField(max_length=8)
+    name = models.CharField(max_length=100)
+    native_name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "locale"
+        ordering = ["code"]
+
+
 class Market(models.Model):
     code = models.CharField(max_length=8, unique=True)
     name = models.CharField(max_length=100)
@@ -27,6 +44,16 @@ class Market(models.Model):
         on_delete=models.PROTECT,
         related_name="default_for_markets",
     )
+    # Price values and stored ISO currencies remain untouched. The storefront
+    # intentionally renders the configured display symbol without conversion.
+    display_currency_symbol = models.CharField(max_length=8, default="$")
+    offer_fallback_market = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="offer_fallback_dependants",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -34,6 +61,24 @@ class Market(models.Model):
     class Meta:
         db_table = "market"
         ordering = ["code"]
+
+
+class MarketLocale(models.Model):
+    market = models.ForeignKey(Market, on_delete=models.CASCADE, related_name="locale_options")
+    locale = models.ForeignKey(Locale, on_delete=models.PROTECT, related_name="market_options")
+    is_default = models.BooleanField(default=False)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "market_locale"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["market", "locale"],
+                name="market_locale_unique",
+            )
+        ]
+        ordering = ["market", "sort_order", "locale__code"]
 
 
 class Offer(models.Model):

@@ -1,13 +1,13 @@
 from django.test import TestCase
 from django.urls import reverse
-from merchants.services import get_import_fallback_merchant
-from offers.models import Currency, Market, Offer
-from offers.services import import_offer_from_source
-from reviews.services import upsert_source_review
 
 from catalog.models import Spu
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
 from catalog.search_services import rebuild_search_document
+from merchants.services import get_import_fallback_merchant
+from offers.models import Currency, Market, Offer
+from offers.services import import_offer_from_source
+from reviews.services import upsert_source_review
 
 
 class ProductDetailApiTests(TestCase):

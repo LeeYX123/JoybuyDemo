@@ -1,6 +1,6 @@
 # 数据库表结构与字段说明
 
-基线日期：`2026-11-05`（以本地开发库实际结构为准，共 98 张表；第一轮新增商家经营域 11 张，第二轮新增 6 张）
+基线日期：`2026-11-06`（以本地开发库实际结构为准，共 106 张表；含六国市场与商品规格本地化表）
 
 - 数据库：MySQL 8.4，库名 `joybuy`（容器 `joybuy-dev-mysql-1`，主机端口 `33060`）。
 - 全部表由 Django models + migrations 生成（`backend/*/models.py`），本文与代码同步维护。
@@ -20,9 +20,9 @@
 
 | 业务域 | 表 |
 | --- | --- |
-| 商品目录与来源 | `source_catalog`、`source_category`、`source_category_tree_version`、`source_category_snapshot`、`local_category`、`category_mapping`、`brand`、`attribute_definition`、`attribute_option`、`category_attribute_definition`、`spu`、`spu_translation`、`spu_source_identity`、`sku`、`sku_source_identity`、`product_search_document` |
+| 商品目录与来源 | `source_catalog`、`source_category`、`source_category_tree_version`、`source_category_snapshot`、`local_category`、`local_category_translation`、`category_mapping`、`brand`、`attribute_definition`、`attribute_definition_translation`、`attribute_option`、`attribute_option_translation`、`category_attribute_definition`、`spu`、`spu_translation`、`spu_market_content`、`spu_source_identity`、`sku`、`sku_specification_translation`、`sku_source_identity`、`product_search_document` |
 | 来源值与本地覆盖 | `source_field_value`、`local_field_override`、`local_field_override_version` |
-| 币种、市场与价格库存 | `currency`、`market`、`offer`、`offer_source_identity`、`price_snapshot`、`inventory_ledger` |
+| 币种、市场与价格库存 | `currency`、`locale`、`market`、`market_locale`、`offer`、`offer_source_identity`、`price_snapshot`、`inventory_ledger` |
 | 媒体 | `media_asset`、`media_variant`、`media_usage` |
 | CMS 内容 | `cms_page`、`cms_module`、`home_banner` |
 | 爬虫控制 | `crawler_account`、`crawl_job`、`crawl_job_source_selection`、`crawl_run`、`crawl_run_event`、`raw_response`、`staging_product`、`quality_gate_report`、`crawler_circuit_breaker` |
@@ -176,7 +176,8 @@ CHOICE 类属性的可选值。
 | gtin | varchar(14) | 全球贸易项目代码（可空串） |
 | status | varchar(16) | `DRAFT` / `ACTIVE` / `INACTIVE`；仅 ACTIVE 在商城可见 |
 | cost_price / retail_price | decimal(18,4) 可空 | 商品池成本价 / 零售价（CHECK：成本非负、零售价 ≥ 成本） |
-| is_activity | tinyint(1) | 活动商品标记（A03 品类选择「活动商品」时置真） |
+| is_activity | tinyint(1) | 活动商品标记（A03 品类选择「活动商品」时置真；只打标记不改原品类，商家端独立筛选展示） |
+| merchant_category | varchar(24) 索引可空 | 商家端 12 固定品类（WP-42）：`HOME`/`ELECTRONICS`/`BEAUTY`/`SMALL_APPLIANCE`/`HEALTH`/`COMPUTER`/`APPAREL`/`OUTDOOR`/`PET`/`BABY`/`GAMES`，空 = 未分类；与商城 `local_category` 是两套维度 |
 | description | text | 后台录入的商品描述 |
 | image_urls | json | 后台录入的图片 URL 列表（最多 5 张，首张为主图） |
 | specs | json | 后台录入的规格文本 `[{name, value}]`；真实 SKU 组合仍在 `sku.specification` |
@@ -224,9 +225,19 @@ CHOICE 类属性的可选值。
 
 结构同 `spu_source_identity`：`source_system + source_id` 唯一（来源 SKU ID，如 `1001-black`），绑定 SKU 后不可换绑。
 
+### 跨市场商品内容与规格翻译
+
+- `spu_market_content`：`spu_id + market_id + locale_id` 唯一；保存标题、副标题、详情、字段级 `actual_locales`、来源类型、来源哈希、观察时间和 CURRENT/STALE/FAILED 状态；
+- `sku_specification_translation`：`sku_id + locale_id` 唯一；保存展示用规格 JSON、来源语言、翻译方式、未翻译词和 `needs_review`。原始 `sku.specification` 不改写，规格签名仍只基于原始规范值；
+- `local_category_translation`：`category_id + locale_id` 唯一；
+- `attribute_definition_translation`：`attribute_id + locale_id` 唯一，保存名称与单位；
+- `attribute_option_translation`：`option_id + locale_id` 唯一，保存选项展示标签。
+
+规格翻译命令：`manage.py translate_product_specs`。直接词典未覆盖的自由文本保留原文并标记复审，禁止伪造已翻译状态。
+
 ### product_search_document — 搜索文档
 
-每个 (SPU, market) 一行的扁平化搜索行；商城搜索/类目列表 API 只读这张表（MySQL FULLTEXT + 复合索引），由导入/评价变化时重建。
+每个 `(SPU, market, locale_code)` 一行的扁平化搜索行；商城搜索/类目列表 API 只读这张表（MySQL FULLTEXT + 含 locale 的复合索引），由导入、翻译或评价变化时重建。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -290,9 +301,15 @@ CHOICE 类属性的可选值。
 | exponent | smallint unsigned | 小数位（默认 2） |
 | is_active | tinyint(1) | 是否启用 |
 
+### locale / market_locale — 语言与市场可选组合
+
+- `locale`：`code`（BCP-47 风格且唯一）、`language_code`、`region_code`、英文名、原生名称、启用状态；
+- `market_locale`：`market_id + locale_id` 唯一，记录是否默认语言和排序；
+- 当前组合：GB=`en-GB/zh-CN`，DE=`de-DE`，FR=`fr-FR`，NL=`nl-NL`，BE=`nl-BE/fr-BE/de-BE`，LU=`lb-LU/fr-LU/de-LU`。
+
 ### market — 市场
 
-国家市场维度（决定币种/时区/默认语言）；当前仅 `GB`。
+国家市场维度（决定币种/时区/默认语言）；当前启用 `BE/DE/FR/NL/LU/GB`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -301,6 +318,8 @@ CHOICE 类属性的可选值。
 | default_locale | varchar(16) | 默认语言 |
 | time_zone | varchar(64) | 时区 |
 | default_currency_id | bigint | 默认币种（PROTECT） |
+| display_currency_symbol | varchar(8) | 纯展示符号；当前六国统一 `$`，不改变金额或 ISO 币种 |
+| offer_fallback_market_id | bigint 可空 | 尚无当地 Offer 时的明确回退市场；欧洲五国当前回退 GB |
 | is_active | tinyint(1) | 是否启用 |
 
 ### offer — 报价（可售 offer）
@@ -596,13 +615,14 @@ public_id、cart_id、offer_id、quantity（1–99，(cart, offer) 唯一）、a
 
 ### order — 订单
 
-一期只有待支付与取消两个状态（支付不可用，超时自动取消）。
+WP-42 后：白名单账户选择任一支付方式点【下单】即置 `PAID`（演示性质，不对接真实支付网关）；`PENDING_PAYMENT` 仍保留给无支付方式的历史路径与 60 分钟超时取消。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | public_id | char(32) 唯一 | 对外标识 |
 | account_id | bigint | 买家（PROTECT） |
-| status | varchar(24) 索引 | `PENDING_PAYMENT` / `CANCELED` |
+| status | varchar(24) 索引 | `PENDING_PAYMENT` / `PAID` / `CANCELED` |
+| payment_method / paid_at | varchar(32) / datetime 可空 | 支付方式（`BALANCE`/`CARD`/`GOOGLE_PAY`/`KLARNA`）与支付时间（WP-42） |
 | currency_id | bigint | 结算币种 |
 | items_subtotal / shipping_cost / total | decimal(18,4) | 小计/运费/总额 |
 | shipping_address | json | 下单时地址快照 |
@@ -627,6 +647,7 @@ public_id、cart_id、offer_id、quantity（1–99，(cart, offer) 唯一）、a
 | status | varchar(16) 索引 | `PENDING`/`SHIPPED`/`COMPLETED`（只有 3 种，超时是履约事件不是状态） |
 | progress | smallint | -1 = 未发货，0–7 = 已到达节点下标（CHECK -1..7） |
 | node_times | json | 8 个节点时间数组，元素可为 null |
+| planned_node_times | json | 发货时按区间随机生成的计划扭转时刻 ×7（下标 i = 到达节点 i+1 的时刻，最后一位是 14 天自动确认收货截止）；`auto_advance_progress` 按它推进，node_times 记计划时刻（WP-42） |
 | payment_method / recipient_region / tracking_reference | varchar | 支付方式快照 / 收件地区 / 物流凭证 |
 | settled / settled_at / shipped_at / fulfillment_reset_at | tinyint / datetime 可空 | 回款标记与时间、发货时间、解封后履约起算时间 |
 
@@ -693,9 +714,10 @@ public_id、cart_id、offer_id、quantity（1–99，(cart, offer) 唯一）、a
 | **wallet_password_hash / wallet_password_failures / wallet_password_locked_until** | varchar(128) / smallint / datetime 可空 | 6 位钱包密码摘要、连续错误次数、锁定截止 |
 | **admission_approved / admission_reviewed_at** | tinyint(1) / datetime 可空 | 入驻审核结果与审核时间（有值即锁定保证金规则） |
 | **deposit_enabled / deposit_required / deposit_initial_paid** | tinyint(1) / decimal 可空 / tinyint(1) | 是否启用保证金、应缴额、首次是否已缴足 |
-| **ban_after_days** | smallint | 未发货封店天数，默认 4 |
+| **ban_after_days** | smallint 可空 | 订单未处理自动封店天数（天）；null = 不自动封店。判定：存在待处理子单且下单时间超该天数 → 自动封店（唯一自动封店规则） |
 | **followers / follow_delta / follow_day** | int / int / date 可空 | 总关注、当天高亮增量、增量业务日（跨日归零） |
-| **exposure** | int | 曝光量（后台正向累加） |
+| **exposure / exposure_delta / exposure_day** | int / int / date 可空 | 总曝光度（累加不清零）、今日曝光度（当日累计新增）、增量业务日（每天自动清零） |
+| **discount_rate / activity_discount_rate** | decimal(5,2) 可空 | 商家折扣 / 活动商品折扣（百分数，70 = 70%）；不做区间校验；成本价 = 向上取整(零售价 × 折扣)，活动商品优先活动折扣 |
 | **last_online_at** | datetime 可空 | 商家最近操作时间 |
 | **referral_code** | varchar(32) 唯一可空 | 推荐码（= 开店邀请码），下单/入驻时绑定推荐关系 |
 
@@ -710,6 +732,15 @@ public_id、cart_id、offer_id、quantity（1–99，(cart, offer) 唯一）、a
 ### merchant_source_mapping — 来源卖家映射
 
 `source_system + source_seller_id` 唯一（CHECK 非空），把来源卖家映射到本地 merchant（导入时的 `resolve_import_merchant` 依赖它）：merchant_id、source_name、source_url、last_seen_at。
+
+### merchant_daily_stat — 商家按天统计（WP-42）
+
+商家端看板「曝光度趋势」数据源；只在动作发生时 upsert 当日行（后台调整曝光/关注、生成已付款商家子单），历史不回填。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| merchant_id + stat_date | bigint + date | (merchant, stat_date) 唯一 |
+| exposure_delta / followers_delta / order_count | int | 当日曝光增量 / 关注增量 / 已付款子单量 |
 
 ### merchant_wallet_entry — 统一资金明细
 

@@ -168,6 +168,31 @@ class LocalCategory(models.Model):
         return self.name
 
 
+class LocalCategoryTranslation(models.Model):
+    category = models.ForeignKey(
+        LocalCategory,
+        on_delete=models.CASCADE,
+        related_name="translations",
+    )
+    locale = models.ForeignKey(
+        "offers.Locale",
+        on_delete=models.PROTECT,
+        related_name="category_translations",
+    )
+    name = models.CharField(max_length=160)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "local_category_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["category", "locale"],
+                name="local_category_translation_unique",
+            )
+        ]
+
+
 class CategoryMapping(models.Model):
     local_category = models.ForeignKey(
         LocalCategory,
@@ -249,6 +274,32 @@ class AttributeDefinition(models.Model):
         ordering = ["code"]
 
 
+class AttributeDefinitionTranslation(models.Model):
+    attribute = models.ForeignKey(
+        AttributeDefinition,
+        on_delete=models.CASCADE,
+        related_name="translations",
+    )
+    locale = models.ForeignKey(
+        "offers.Locale",
+        on_delete=models.PROTECT,
+        related_name="attribute_translations",
+    )
+    name = models.CharField(max_length=160)
+    unit = models.CharField(max_length=32, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "attribute_definition_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["attribute", "locale"],
+                name="attribute_definition_translation_unique",
+            )
+        ]
+
+
 class AttributeOption(models.Model):
     attribute = models.ForeignKey(
         AttributeDefinition,
@@ -270,6 +321,31 @@ class AttributeOption(models.Model):
             )
         ]
         ordering = ["sort_order", "pk"]
+
+
+class AttributeOptionTranslation(models.Model):
+    option = models.ForeignKey(
+        AttributeOption,
+        on_delete=models.CASCADE,
+        related_name="translations",
+    )
+    locale = models.ForeignKey(
+        "offers.Locale",
+        on_delete=models.PROTECT,
+        related_name="attribute_option_translations",
+    )
+    label = models.CharField(max_length=160)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "attribute_option_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["option", "locale"],
+                name="attribute_option_translation_unique",
+            )
+        ]
 
 
 class CategoryAttributeDefinition(models.Model):
@@ -304,6 +380,29 @@ class Spu(models.Model):
         ACTIVE = "ACTIVE", "Active"
         INACTIVE = "INACTIVE", "Inactive"
 
+    class MerchantCategory(models.TextChoices):
+        """商家端 12 个固定品类（WP-42，文档 M03 §3）。
+
+        「活动商品」不是品类：它是 is_activity 标记，不改变原品类，
+        在商家端以独立的【活动商品】筛选呈现。
+        """
+
+        HOME = "HOME", "家居生活"
+        ELECTRONICS = "ELECTRONICS", "电子产品"
+        BEAUTY = "BEAUTY", "美妆个人护理"
+        SMALL_APPLIANCE = "SMALL_APPLIANCE", "小家电"
+        HEALTH = "HEALTH", "健康与保健"
+        COMPUTER = "COMPUTER", "计算机与配件"
+        APPAREL = "APPAREL", "服装与配饰"
+        OUTDOOR = "OUTDOOR", "户外运动"
+        PET = "PET", "宠物用品"
+        BABY = "BABY", "婴幼儿用品"
+        GAMES = "GAMES", "游戏及配件"
+
+    @classmethod
+    def merchant_category_label(cls, value: str) -> str:
+        return cls.MerchantCategory(value).label if value else "未分类"
+
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     brand = models.ForeignKey(
         Brand,
@@ -329,6 +428,14 @@ class Spu(models.Model):
     cost_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     retail_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     is_activity = models.BooleanField(default=False)
+    # 商家端 12 固定品类（空 = 未分类）；与商城 local_category 是两套维度。
+    merchant_category = models.CharField(
+        max_length=24,
+        choices=MerchantCategory.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
     description = models.TextField(blank=True, default="")
     # 商品池表单里的图片与规格是「平台手工录入值」，与爬虫导入的
     # media_asset / sku.specification 并存：前者用于后台编辑展示，
@@ -377,6 +484,55 @@ class SpuTranslation(models.Model):
             models.UniqueConstraint(
                 fields=["spu", "locale"],
                 name="spu_translation_locale_unique",
+            )
+        ]
+
+
+class SpuMarketContent(models.Model):
+    class Origin(models.TextChoices):
+        SOURCE = "SOURCE", "Source"
+        HUMAN = "HUMAN", "Human translation"
+        MACHINE = "MACHINE", "Machine translation"
+
+    class Status(models.TextChoices):
+        CURRENT = "CURRENT", "Current"
+        STALE = "STALE", "Stale"
+        FAILED = "FAILED", "Failed"
+
+    spu = models.ForeignKey(Spu, on_delete=models.CASCADE, related_name="market_contents")
+    market = models.ForeignKey(
+        "offers.Market",
+        on_delete=models.PROTECT,
+        related_name="product_contents",
+    )
+    locale = models.ForeignKey(
+        "offers.Locale",
+        on_delete=models.PROTECT,
+        related_name="product_contents",
+    )
+    title = models.CharField(max_length=500)
+    subtitle = models.CharField(max_length=500, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    actual_locales = models.JSONField(default=dict, blank=True)
+    origin = models.CharField(max_length=16, choices=Origin.choices, default=Origin.SOURCE)
+    source_content_hash = models.CharField(max_length=64, blank=True, default="")
+    observed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.CURRENT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "spu_market_content"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["spu", "market", "locale"],
+                name="spu_market_content_unique",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["market", "locale", "status"],
+                name="spu_market_locale_status_idx",
             )
         ]
 
@@ -437,6 +593,43 @@ class Sku(models.Model):
             )
         ]
         indexes = [models.Index(fields=["spu", "status"], name="sku_spu_status_idx")]
+
+
+class SkuSpecificationTranslation(models.Model):
+    class Method(models.TextChoices):
+        DIRECT = "DIRECT", "Direct translation"
+        HUMAN = "HUMAN", "Human reviewed"
+        SOURCE = "SOURCE", "Source supplied"
+
+    sku = models.ForeignKey(
+        Sku,
+        on_delete=models.CASCADE,
+        related_name="specification_translations",
+    )
+    locale = models.ForeignKey(
+        "offers.Locale",
+        on_delete=models.PROTECT,
+        related_name="sku_specification_translations",
+    )
+    specification = models.JSONField(default=dict)
+    source_locale = models.CharField(max_length=16, blank=True, default="en-GB")
+    method = models.CharField(max_length=16, choices=Method.choices, default=Method.DIRECT)
+    untranslated_terms = models.JSONField(default=list, blank=True)
+    needs_review = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sku_specification_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sku", "locale"],
+                name="sku_specification_translation_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["locale", "needs_review"], name="sku_spec_locale_review_idx")
+        ]
 
 
 class SkuSourceIdentity(models.Model):
@@ -578,17 +771,18 @@ class LocalFieldOverrideVersion(models.Model):
 
 
 class ProductSearchDocument(models.Model):
-    """Flattened searchable row per (SPU, market).
+    """Flattened searchable row per (SPU, market, locale).
 
     Rebuilt from SPU/SKU/Offer data by ``catalog.search_services``; the
     storefront search and category APIs read only this table so list queries
     stay simple and fully indexed. MySQL FULLTEXT powers text search.
     """
 
-    spu = models.OneToOneField(Spu, on_delete=models.CASCADE, related_name="search_document")
+    spu = models.ForeignKey(Spu, on_delete=models.CASCADE, related_name="search_documents")
     market = models.ForeignKey(
         "offers.Market", on_delete=models.PROTECT, related_name="search_documents"
     )
+    locale_code = models.CharField(max_length=16, default="en-GB")
     title = models.CharField(max_length=500)
     brand_name = models.CharField(max_length=160, blank=True, default="")
     local_category = models.ForeignKey(
@@ -610,13 +804,23 @@ class ProductSearchDocument(models.Model):
 
     class Meta:
         db_table = "product_search_document"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["spu", "market", "locale_code"],
+                name="product_search_document_unique",
+            )
+        ]
         indexes = [
             models.Index(
-                fields=["market", "is_searchable", "local_category", "min_price"],
-                name="psd_market_cat_price_idx",
+                fields=["market", "locale_code", "is_searchable", "local_category", "min_price"],
+                name="psd_market_locale_cat_idx",
             ),
-            models.Index(fields=["market", "is_searchable", "published_at"], name="psd_newest_idx"),
             models.Index(
-                fields=["market", "is_searchable", "rating_average"], name="psd_rating_idx"
+                fields=["market", "locale_code", "is_searchable", "published_at"],
+                name="psd_market_locale_new_idx",
+            ),
+            models.Index(
+                fields=["market", "locale_code", "is_searchable", "rating_average"],
+                name="psd_market_locale_rate_idx",
             ),
         ]

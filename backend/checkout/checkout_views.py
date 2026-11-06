@@ -8,10 +8,10 @@ shipping rule all feed one quote. No discount stacking in phase 1.
 import json
 from decimal import Decimal
 
-from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from django.conf import settings
 from django.http import JsonResponse
 
+from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from checkout.models import Address
 
 FREE_SHIPPING_THRESHOLD = getattr(settings, "CHECKOUT_FREE_SHIPPING_THRESHOLD", None) or Decimal(

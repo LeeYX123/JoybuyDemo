@@ -41,11 +41,11 @@ export async function useCheckout() {
     })
   }
 
-  async function placeOrder(addressPublicId) {
+  async function placeOrder(addressPublicId, paymentMethod = '') {
     const session = await $fetch(api('/auth/buyer/session'), { credentials: 'include' })
     return $fetch(api('/orders'), {
       method: 'POST',
-      body: { address: { public_id: addressPublicId } },
+      body: { address: { public_id: addressPublicId }, payment_method: paymentMethod },
       headers: { 'X-CSRFToken': session?.csrf_token || '' },
       credentials: 'include',
       ignoreResponseError: true,

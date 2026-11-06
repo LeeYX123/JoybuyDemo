@@ -230,11 +230,13 @@ class MerchantAdminApiTests(CommerceTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "BALANCE_NEGATIVE")
 
-    def test_credit_deduction_cannot_exceed_current_score(self):
+    def test_credit_deduction_clamps_at_zero(self):
+        # WP-42 拍板：超额扣减按 0 钳制，不再报 CREDIT_EXCEEDS_CURRENT。
         url = f"/api/v1/admin/merchants/{self.merchant.public_id}/actions"
         response = self.post_json(url, {"action": "deduct_credit", "points": "101"})
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "CREDIT_EXCEEDS_CURRENT")
+        self.assertEqual(response.status_code, 200)
+        self.merchant.refresh_from_db()
+        self.assertEqual(self.merchant.credit_score, 0)
 
     def test_suspend_and_unsuspend_reset_fulfillment_clock(self):
         order = self.make_merchant_order()

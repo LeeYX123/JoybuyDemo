@@ -7,7 +7,11 @@ from django.db.models import Q
 class Order(models.Model):
     class Status(models.TextChoices):
         PENDING_PAYMENT = "PENDING_PAYMENT", "Pending payment"
+        # 演示阶段：白名单免真付，下单即视为支付成功（WP-42，文档 M01 §1）。
+        PAID = "PAID", "Paid"
         CANCELED = "CANCELED", "Canceled"
+
+    PAYMENT_METHODS = ("BALANCE", "CARD", "GOOGLE_PAY", "KLARNA")
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     account = models.ForeignKey(
@@ -20,6 +24,8 @@ class Order(models.Model):
     total = models.DecimalField(max_digits=18, decimal_places=4)
     shipping_address = models.JSONField(default=dict)
     payment_expires_at = models.DateTimeField()
+    payment_method = models.CharField(max_length=32, blank=True, default="")
+    paid_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -72,7 +78,7 @@ class MerchantOrder(models.Model):
         "已出库",
         "已揽收",
         "运输中",
-        "到达目的地网点",
+        "到达网点",
         "派送中",
         "已签收",
         "用户确认收货",
@@ -92,6 +98,10 @@ class MerchantOrder(models.Model):
     # -1 = 未发货；0..7 = 已到达的节点下标。进度不是订单状态。
     progress = models.SmallIntegerField(default=-1)
     node_times = models.JSONField(default=list, blank=True)
+    # 发货时按区间随机生成的扭转时刻表（ISO 字符串 × 7）：下标 i 是"到达节点 i+1"
+    # 的计划时刻，下一段从上一计划时刻累进；最后一项是 14 天自动确认收货截止。
+    # 实际扭转即按计划时刻执行，node_times 记录计划时刻（WP-42 文档 M04 §3）。
+    planned_node_times = models.JSONField(default=list, blank=True)
     payment_method = models.CharField(max_length=32, blank=True, default="")
     recipient_region = models.CharField(max_length=120, blank=True, default="")
     tracking_reference = models.CharField(max_length=120, blank=True, default="")

@@ -1,5 +1,6 @@
 <script setup>
 defineProps({
+  open: { type: Boolean, default: true },
   title: { type: String, default: '' },
   wide: { type: Boolean, default: false },
 })
@@ -7,7 +8,7 @@ const emit = defineEmits(['close'])
 </script>
 
 <template>
-  <div class="drawer-mask" role="presentation" @click.self="emit('close')">
+  <div v-if="open" class="drawer-mask" role="presentation" @click.self="emit('close')">
     <section class="drawer" :class="{ 'drawer--wide': wide }" role="dialog" aria-modal="true">
       <header class="drawer__head">
         <h2>{{ title }}</h2>

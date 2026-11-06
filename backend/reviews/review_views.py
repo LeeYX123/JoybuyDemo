@@ -1,8 +1,8 @@
-from catalog.models import Spu
 from django.db.models import Avg, Count
 from django.http import JsonResponse
-from media.views import asset_urls
 
+from catalog.models import Spu
+from media.views import asset_urls
 from reviews.models import Review, ReviewMedia
 
 PAGE_SIZE = 10

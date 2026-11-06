@@ -1,9 +1,6 @@
-from audit.models import AuditLog
 from django.test import TestCase
-from merchants.services import get_import_fallback_merchant
-from offers.models import Currency, Market
-from offers.services import import_offer_from_source
 
+from audit.models import AuditLog
 from catalog.domain import FieldValueInvalid
 from catalog.models import (
     LocalFieldOverride,
@@ -20,6 +17,9 @@ from catalog.override_services import (
     review_local_override,
 )
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
+from merchants.services import get_import_fallback_merchant
+from offers.models import Currency, Market
+from offers.services import import_offer_from_source
 
 
 class FieldOverrideLayerTests(TestCase):

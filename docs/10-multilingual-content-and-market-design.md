@@ -2,7 +2,18 @@
 
 版本：`v0.1-draft`  
 需求确认日期：`2026-11-03`  
-状态：已确认“自动切换并忠实复刻 Joybuy 混合语言内容”，尚未开始业务代码改造
+状态：多市场与规格本地化基础已于 `2026-11-06` 落地；来源商品全文翻译仍需按市场采集或人工录入
+
+## 0. 2026-11-06 实施基线
+
+- 已启用六个市场：比利时 `BE`、德国 `DE`、法国 `FR`、荷兰 `NL`、卢森堡 `LU`、英国 `GB`；
+- 英国支持 `en-GB`（并保留既有 `zh-CN`）；德国 `de-DE`；法国 `fr-FR`；荷兰 `nl-NL`；比利时 `nl-BE/fr-BE/de-BE`；卢森堡 `lb-LU/fr-LU/de-LU`；
+- `Locale` 与 `MarketLocale` 已关系化，前端国家/语言选择写入 Cookie，商品详情、类目和搜索请求携带 `market + locale`；
+- 新增 `SpuMarketContent(spu, market, locale)`，记录实际语言、来源哈希、观察时间、来源类型和状态；现有 `SpuTranslation` 继续作为历史回退，不再承担完整跨市场语义；
+- SKU 原始 `specification` 永不因翻译改变，新增 `SkuSpecificationTranslation(sku, locale)` 保存展示翻译，并记录未翻译词和复审状态；属性定义、属性选项、本地类目也有独立翻译表；
+- 价格数值与 ISO 币种不改写、不做汇率换算；六个市场的展示符号统一配置为 `$`。当目标市场尚无 Offer 时，明确回退 GB Offer，并在 API 返回 `price_source_market=GB`，不得伪装成本地价格；
+- 现有 159 个有效 SKU 已生成 9 个欧洲目标 locale 的 1,431 份规格翻译快照，回填结果 `needs_review=0`；后续新 SKU 可运行 `manage.py translate_product_specs` 增量生成；
+- 搜索文档唯一维度已升级为 `(spu, market, locale_code)`，不同市场/语言的标题不会互相覆盖。
 
 ## 1. 用户目标
 

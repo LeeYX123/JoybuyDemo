@@ -83,6 +83,8 @@ def _spu_payload(spu: Spu, *, images=None, stores=0) -> dict:
         "status": spu.status,
         "stores": stores,
         "activity": spu.is_activity,
+        "merchant_category": spu.merchant_category,
+        "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
         "sku_count": getattr(spu, "sku_total", None),
         "created_at": iso(spu.created_at),
     }
@@ -289,6 +291,15 @@ class AdminProductPoolDetailView(OpsAPIView):
             spu.retail_price = price
         if "category" in payload:
             spu.local_category = _resolve_category(payload.get("category"))
+        if "merchant_category" in payload:
+            raw = (payload.get("merchant_category") or "").strip().upper()
+            if raw and raw not in Spu.MerchantCategory.values:
+                raise StaffApiError(
+                    business_code="MERCHANT_CATEGORY_INVALID",
+                    message="无效的商家端品类。",
+                    status_code=400,
+                )
+            spu.merchant_category = raw
         if "description" in payload:
             spu.description = (payload.get("description") or "").strip()
         if "activity" in payload:
@@ -332,25 +343,36 @@ class AdminProductPoolActionsView(OpsAPIView):
                 business_code="PRODUCT_NOT_FOUND", message="商品不存在。", status_code=404
             )
         action = ((request.data or {}).get("action") or "").strip().lower()
-        before = {"status": spu.status}
+        before = {"status": spu.status, "activity": spu.is_activity}
         if action == "publish":
             spu.status = Spu.Status.ACTIVE
         elif action == "unpublish":
             spu.status = Spu.Status.INACTIVE
+        elif action in {"mark_activity", "unmark_activity"}:
+            # 活动商品管理（WP-42）：只打/去标记，不改变原品类。
+            spu.is_activity = action == "mark_activity"
         else:
             raise StaffApiError(
                 business_code="ACTION_UNSUPPORTED", message="不支持的操作。", status_code=400
             )
-        spu.save(update_fields=["status", "updated_at"])
+        spu.save(
+            update_fields=(
+                ["status", "updated_at"]
+                if action in {"publish", "unpublish"}
+                else ["is_activity", "updated_at"]
+            )
+        )
         record_audit(
             request=request,
             actor=request.staff_account,
-            action="PRODUCT_STATUS_CHANGED",
+            action="PRODUCT_STATUS_CHANGED"
+            if action in {"publish", "unpublish"}
+            else "PRODUCT_ACTIVITY_MARKED",
             target_type="spu",
             target_id=str(spu.public_id),
             reason="",
             before_state=before,
-            after_state={"status": spu.status},
+            after_state={"status": spu.status, "activity": spu.is_activity},
         )
         return Response({"product": _spu_payload(spu, images=list(spu.image_urls or []))})
 

@@ -70,6 +70,10 @@ class MerchantAppTestBase(TestCase):
             total=items_total,
             shipping_address={"region": "London"},
             payment_expires_at=timezone.now(),
+            # WP-42：今日订单数只统计已付款（购买成功）的商家子单。
+            status=Order.Status.PAID,
+            payment_method="CARD",
+            paid_at=timezone.now(),
         )
         return MerchantOrder.objects.create(
             order=order,

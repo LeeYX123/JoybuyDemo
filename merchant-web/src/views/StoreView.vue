@@ -62,6 +62,16 @@ function fmtDate(value) {
   return value.slice(0, 16).replace('T', ' ')
 }
 
+async function copyStoreId() {
+  try {
+    await navigator.clipboard.writeText(state.merchant.id || '')
+    state.notice = '店铺 ID 已复制到剪贴板。'
+    state.error = ''
+  } catch {
+    state.error = '复制失败，请手动复制：' + (state.merchant.id || '')
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -97,6 +107,7 @@ onMounted(load)
             <span class="tag" :class="{ 'tag--ok': state.merchant.can_operate }">
               {{ state.merchant.can_operate ? '可正常经营' : '暂不可经营' }}
             </span>
+            <button type="button" class="btn btn--sm" @click="copyStoreId">复制店铺 ID</button>
           </div>
 
           <div class="form-grid">

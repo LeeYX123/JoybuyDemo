@@ -41,6 +41,7 @@ const editorId = ref('')
 const editor = reactive({
   name: '',
   category: '',
+  merchant_category: '',
   cost: '',
   price: '',
   description: '',
@@ -49,6 +50,21 @@ const editor = reactive({
   images: [],
   specs: [],
 })
+
+// 商家端 12 固定品类（WP-42 文档 M03 §3）：与左侧「品类」(商城类目) 是两套维度。
+const MERCHANT_CATEGORIES = [
+  { value: 'HOME', label: '家居生活' },
+  { value: 'ELECTRONICS', label: '电子产品' },
+  { value: 'BEAUTY', label: '美妆个人护理' },
+  { value: 'SMALL_APPLIANCE', label: '小家电' },
+  { value: 'HEALTH', label: '健康与保健' },
+  { value: 'COMPUTER', label: '计算机与配件' },
+  { value: 'APPAREL', label: '服装与配饰' },
+  { value: 'OUTDOOR', label: '户外运动' },
+  { value: 'PET', label: '宠物用品' },
+  { value: 'BABY', label: '婴幼儿用品' },
+  { value: 'GAMES', label: '游戏及配件' },
+]
 
 async function load(resetPage = false) {
   if (resetPage) state.page = 1
@@ -95,6 +111,7 @@ function openEditor(row = null) {
   editorId.value = row?.id || ''
   editor.name = row?.name || ''
   editor.category = row?.category?.id || ''
+  editor.merchant_category = row?.merchant_category || ''
   editor.cost = row?.cost || ''
   editor.price = row?.price || ''
   editor.description = row?.description || ''
@@ -121,6 +138,7 @@ async function saveProduct() {
   const payload = {
     name: editor.name,
     category: editor.category || null,
+    merchant_category: editor.merchant_category,
     cost: editor.cost,
     price: editor.price,
     description: editor.description,
@@ -388,6 +406,16 @@ onMounted(() => {
               {{ item.name_zh || item.name_en || item.name }}
             </option>
           </select>
+        </div>
+        <div class="field">
+          <label for="product-merchant-category">商家端品类（12 类）</label>
+          <select id="product-merchant-category" v-model="editor.merchant_category">
+            <option value="">未分类</option>
+            <option v-for="item in MERCHANT_CATEGORIES" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
+          </select>
+          <span class="field__hint">商家端【商品上架中心】按这 12 类展示。</span>
         </div>
         <div class="field">
           <label for="product-cost">成本价（元）</label>

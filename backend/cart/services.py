@@ -2,9 +2,9 @@ from dataclasses import dataclass
 
 from django.db import transaction
 from django.utils import timezone
-from offers.models import Offer
 
 from cart.models import MAX_QTY_PER_ITEM, Cart, CartItem, generate_anonymous_token
+from offers.models import Offer
 
 ANONYMOUS_COOKIE_NAME = "joybuy_cart_token"
 CART_MAX_AGE_SECONDS = 60 * 60 * 24 * 30  # 30 days
@@ -80,6 +80,11 @@ def add_item(context, *, offer_public_id: str, quantity: int) -> Cart:
         raise CartItemInvalid(message="Quantity must be a positive integer.")
     if quantity > MAX_QTY_PER_ITEM:
         raise CartItemInvalid("QUANTITY_LIMIT", "Quantity cannot exceed 99 per item.")
+
+    # 白名单后端打通（WP-42 文档购物端）：只有白名单账户能加购，
+    # 以后端返回的白名单标识为准，未拿到标识按不可购买处理。
+    if context.account is not None and not context.account.purchase_whitelisted:
+        raise CartItemInvalid("NOT_WHITELISTED", "当前账号不在购买白名单内，无法加购。")
 
     with transaction.atomic():
         offer = (

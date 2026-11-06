@@ -1,9 +1,9 @@
 from decimal import Decimal
 
-from accounts_staff.models import PlatformRole
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
+from accounts_staff.models import PlatformRole
 from catalog.domain import CategoryMoveInvalid, CategoryTreeInvalid, CategoryVersionConflict
 from catalog.models import (
     AttributeDefinition,

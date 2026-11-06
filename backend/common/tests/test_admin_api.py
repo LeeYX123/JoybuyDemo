@@ -1,5 +1,8 @@
 import json
 
+from django.test import TestCase
+from django.urls import reverse
+
 from accounts_buyers.models import BuyerAccount
 from accounts_staff.models import (
     PlatformPermission,
@@ -9,8 +12,6 @@ from accounts_staff.models import (
 )
 from accounts_staff.services import create_staff_session
 from catalog.product_services import get_or_create_spu_from_source
-from django.test import TestCase
-from django.urls import reverse
 
 
 class AdminApiTestBase(TestCase):

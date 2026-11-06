@@ -76,6 +76,8 @@ flowchart LR
 | WP-38 | 性能、并发与安全加固 | 3–4h | WP-37 | DONE |
 | WP-39 | 监控、备份与恢复演练 | 3–4h | WP-38 | DONE |
 | WP-40 | Ubuntu 生产部署 | 3–5h | WP-39 | DONE |
+| WP-41 | 六国市场与规格本地化 | 4–6h | WP-30, WP-31 | DONE |
+| WP-42 | 需求迭代 01：折扣/自动封店/进度自动扭转/搜商家/白名单/演示支付 | 6–8h | WP-29, WP-30, WP-41 | DONE |
 
 ## 4. 阶段 A：工程基础
 
@@ -682,7 +684,45 @@ flowchart LR
 - 验收边界（诚实记录）：全新 Ubuntu 服务器上的实际部署执行与"重启不丢数据"验证需要目标服务器；本会话在开发机上完成了全部脚本/配置/手册与本地等效验证（compose config、健康检查语义、E2E、备份/恢复脚本语法）。首次真实部署按手册 WP-40A→C 执行，排错超时则按手册拆分。
 - 遗留问题：真实服务器执行记录（certbot 域名、systemd 单元运行证据）待首次部署回填。
 
-## 11. 每次启动 Codex 的建议提示词
+## 11. 阶段 H：多市场与规格本地化
+
+### WP-41 六国市场、locale 与 SKU 规格翻译
+
+- 交付：BE/DE/FR/NL/LU/GB 市场配置，市场语言组合，市场化商品内容，类目/属性/规格翻译，搜索 locale 维度，购物端国家/语言选择器；
+- 验收：切换市场和语言后详情 API 返回对应规格；价格数值不换算且统一显示 `$`；缺少当地 Offer 时明确返回来源市场，不伪装当地价格；原始 SKU 规格和签名不被翻译覆盖。
+
+实施记录（2026-11-06）：
+
+- 状态：`DONE`。
+- 市场与语言：新增 `Locale`、`MarketLocale`；启用 BE/DE/FR/NL/LU/GB。比利时支持 `nl-BE/fr-BE/de-BE`，卢森堡支持 `lb-LU/fr-LU/de-LU`，其余为本国主语言，英国保留 `en-GB/zh-CN`。
+- 商品模型：新增 `SpuMarketContent`、`SkuSpecificationTranslation`、`LocalCategoryTranslation`、`AttributeDefinitionTranslation`、`AttributeOptionTranslation`；搜索文档唯一维度改为 `(spu, market, locale_code)`。
+- 价格规则：数据库金额和 ISO 币种不改、不做汇率换算；`Market.display_currency_symbol='$'` 只负责展示。欧洲五国当前 `offer_fallback_market=GB`，API 返回 `price_source_market` 明示价格来源。
+- 规格翻译：`translate_product_specs` 按 locale 生成展示快照，原始 `sku.specification` 和规格签名保持不变；未知自由文本保留原文并写入 `untranslated_terms/needs_review`。开发库现有 159 个有效 SKU 已生成 1,431 份欧洲 locale 翻译，复审数 0。
+- API/购物端：新增 `GET /api/v1/markets`；详情、类目和搜索支持 `market + locale`；购物端顶部新增国家/语言选择器并持久化 Cookie；价格格式器继续统一 `$`。
+- 迁移：真实 MySQL 已应用 `offers.0005`、`offers.0006`、`catalog.0011`。
+- 针对性验证：真实 MySQL 上 `catalog.tests.test_localization + test_product_detail_api + test_search + offers.tests.test_product_offer_domain` 共 29 项通过；Ruff、Django check、`makemigrations --check --dry-run` 通过；storefront Vitest 47 项、ESLint、Prettier 和 Nuxt 生产构建通过；真实接口验证 DE/de-DE 返回 `Farbe/Weiß/Blau`，价格保持原数值并标记 `price_source_market=GB`。
+- 验收边界：本阶段完成结构、现有规格翻译和读取链路；商品标题/详情尚未凭空机器翻译，需后续按市场采集或经人工翻译写入 `spu_market_content`。浏览器自动化通道本轮不可用，未把 API/构建验证写成浏览器 E2E。
+
+## 12. 阶段 I：需求迭代 01（2026-11-06 拍板版）
+
+### WP-42 商家经营闭环与购物端商家搜索（需求迭代文档 01 全量落地）
+
+- 需求来源：`功能需求迭代文档01.md` v2.2（十项拍板已全部回填）。
+- 交付：
+  - **折扣体系**：`Merchant.discount_rate / activity_discount_rate`（百分数、不做区间校验）；商家端上架成本价 = `向上取整(零售价 × 折扣)`（活动商品优先活动折扣，未设折扣回退商品池建议成本价）；管理端【商家管理】编辑弹窗设置；
+  - **曝光日口径**：`Merchant.exposure_delta/exposure_day`（当日累计、跨日惰性清零）+ 新表 `merchant_daily_stat`（按天统计，供曝光度趋势图）；管理端 GrowthView 增「今日曝光度」列；
+  - **自动封店**：`ban_after_days`（订单未处理自动封店天数，null=不自动封店）+ `auto_suspend_overdue_merchants()`，是唯一自动封店规则；信誉分扣减改按 0 钳制、扣完不联动封店；
+  - **进度自动扭转**：区间表写死（4–8h/6–12h/3–6h/48–120h/10–18h/6–16h），发货时随机生成 `planned_node_times`，扫描到点推进；已签收 14 天自动确认收货；调度入口 `manage.py run_order_sweeps`（生产挂 cron），商家看板/管理端订单列表读路径惰性兜底；
+  - **下单即支付 + 拆单**：`place_order` 接受 `payment_method`（BALANCE/CARD/GOOGLE_PAY/KLARNA）直接置 `PAID`；按 `offer.merchant` 拆 `MerchantOrder`（成本快照 `offer.cost_price`），`OrderItem.unit_cost` 回填；已付款订单计入商家看板今日订单与日统计；
+  - **白名单后端打通**：`cart.add_item` 与 `place_order` 校验 `purchase_whitelisted`（`NOT_WHITELISTED`）；购物端判断改严格（`=== true`），加购/下单被后端拒绝时弹拦截弹窗；
+  - **搜商家**：公开 API `GET /api/v1/merchants/search`（按店铺名称）与 `GET /api/v1/merchants/<slug>`（商家头 + 在售商品）；购物端头部「一个搜索框 + 两个按键」，新页 `/merchants` 与 `/merchants/[slug]`；
+  - **活动商品管理**：管理端新页 `/activity-products`（打标/取消，`products/<id>/actions` 增 `mark_activity/unmark_activity`）；`Spu.merchant_category` 12 固定品类 + 关键词回填命令 `assign_merchant_categories`（未命中=未分类）；商家端品类 Tab 改 12 类 + 活动商品；
+  - **商家端看板**：今日曝光度/总关注 +N（当日累计）、订单柱状图周/月切换、曝光度趋势、平台经营通知最新 3 条 + 查看全部；店铺管理页加「复制店铺 ID」；已上架列表支持名称/ID 搜索与品类筛选；提示"下架联系平台客服"。
+- 实施记录（2026-11-07）：迁移 `catalog.0012`、`merchants.0006`、`orders.0004` 已应用真实 MySQL；真实 MySQL 针对性测试 48 项通过（merchants WP-42 服务、折扣/清扫、下单拆单/白名单、商家端看板回归）+ 相关模块回归共 127 项通过；三端 Prettier/ESLint/Vitest（admin 9、storefront 47）/生产构建通过。浏览器实测：搜商家结果页与商家页渲染、管理端折扣设置保存（连带修掉「编辑商家总是发送 wallet_balance 导致 NO_CHANGE 400」的预先存在 bug）、活动商品打标、商家看板曝光 150 即时同步（今日曝光度 + 趋势图）、API 全漏斗下单（注册→加购→下单 201 PAID/GOOGLE_PAY→拆单 cost 快照→日统计）、非白名单加购 `NOT_WHITELISTED`。
+- 生产注意：`run_order_sweeps` 需挂 cron（开发环境靠读路径惰性兜底）；Groceries 类商品在 12 类中无对应品类，落「未分类」由管理端在商品池手动指派。
+- 验收边界：钱包余额扣款、真实支付网关不在本期范围（演示性质支付）；12 类关键词回填只覆盖开发库现有类目，新增类目需重跑命令或手动指派。
+
+## 13. 每次启动 Codex 的建议提示词
 
 ```text
 请只执行 docs/08-implementation-work-packages.md 中的 WP-XX。
@@ -692,7 +732,7 @@ flowchart LR
 最后更新 WP-XX 状态，并说明改动、测试结果、未解决问题和下一工作包是否已具备依赖。
 ```
 
-## 12. 每次结束时的交接清单
+## 14. 每次结束时的交接清单
 
 - [ ] 本工作包验收条件全部满足；
 - [ ] 没有顺手实现后续工作包；

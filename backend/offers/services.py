@@ -1,11 +1,11 @@
 from decimal import Decimal, InvalidOperation
 
-from accounts_staff.models import StaffAccount
-from catalog.models import Sku
 from django.db import IntegrityError, transaction
 from django.utils import timezone
-from merchants.models import Merchant
 
+from accounts_staff.models import StaffAccount
+from catalog.models import Sku
+from merchants.models import Merchant
 from offers.domain import (
     InventoryAdjustmentInvalid,
     InventoryIdempotencyConflict,

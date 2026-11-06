@@ -1,12 +1,12 @@
 from datetime import timedelta
 
-from catalog.product_services import get_or_create_spu_from_source
 from django.test import TestCase
 from django.utils import timezone
+
+from catalog.product_services import get_or_create_spu_from_source
 from media.models import MediaAsset
 from media.storage import store_bytes
 from media.tests.test_media_storage import IsolatedMediaRootMixin
-
 from reviews.domain import (
     ReviewContentInvalid,
     ReviewerIdentityInvalid,

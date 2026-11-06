@@ -69,10 +69,16 @@ async function enterPayment() {
 async function payNow() {
   submitting.value = true
   error.value = ''
-  const response = await placeOrder(selectedAddressId.value)
+  // WP-42（文档 M01 §1）：演示性质支付——选择任一支付方式点【下单】即支付成功。
+  const response = await placeOrder(selectedAddressId.value, paymentMethod.value.toUpperCase())
   submitting.value = false
   if (response?.error) {
-    error.value = response.error.message || 'Could not place the order.'
+    const code = response.error?.code || ''
+    if (code === 'NOT_WHITELISTED') {
+      error.value = t('gate.messageWhitelist')
+    } else {
+      error.value = response.error.message || 'Could not place the order.'
+    }
     return
   }
   navigateTo('/account/orders')

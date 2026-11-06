@@ -5,6 +5,7 @@ from merchant_ops import (
     views_audit,
     views_banners,
     views_buyers,
+    views_campaign,
     views_catalog,
     views_finance,
     views_growth,
@@ -517,5 +518,22 @@ urlpatterns = [
         "api/v1/merchant/media",
         views_media.MerchantMediaUploadView.as_view(),
         name="merchant-media-upload",
+    ),
+
+    # 首页活动卡片（搜索框下方 10 宫格，A10 同组的运营入口）
+    path(
+        "api/v1/admin/campaign-cards",
+        views_campaign.AdminCampaignCardsView.as_view(),
+        name="admin-campaign-cards",
+    ),
+    path(
+        "api/v1/admin/campaign-cards/<uuid:public_id>",
+        views_campaign.AdminCampaignCardDetailView.as_view(),
+        name="admin-campaign-card-detail",
+    ),
+    path(
+        "api/v1/admin/campaign-cards/<uuid:public_id>/actions",
+        views_campaign.AdminCampaignCardActionsView.as_view(),
+        name="admin-campaign-card-actions",
     ),
 ]

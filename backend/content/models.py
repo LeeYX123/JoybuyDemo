@@ -98,3 +98,39 @@ class HomeBanner(models.Model):
 
     def __str__(self):
         return f"{self.title}@{self.sort_order}"
+
+
+class HomeCampaignCard(models.Model):
+    """商城首页「Offers for you」活动卡片（搜索框下方 10 宫格）。
+
+    与 ``HomeBanner`` 同理：卡片是单条开关 + 排序的高频运营对象，不进
+    CMS 版本快照。``storefront_home`` 输出时用本表（enabled）覆盖快照里
+    写死的 ``campaign_grid`` 模块，快照保持只读历史。
+    """
+
+    class Section(models.TextChoices):
+        CAMPAIGN = "campaign", "活动卡片"
+        DISCOVERY = "discovery", "品类发现"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    section = models.CharField(max_length=16, choices=Section.choices, default=Section.CAMPAIGN)
+    title = models.CharField(max_length=60)
+    title_zh = models.CharField(max_length=60, blank=True, default="")
+    subtitle = models.CharField(max_length=120, blank=True, default="")
+    subtitle_zh = models.CharField(max_length=120, blank=True, default="")
+    image_url = models.CharField(max_length=1000, blank=True, default="")
+    href = models.CharField(max_length=1000, blank=True, default="")
+    sort_order = models.PositiveIntegerField(default=0)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "home_campaign_card"
+        ordering = ["section", "sort_order", "public_id"]
+        indexes = [
+            models.Index(fields=["section", "enabled", "sort_order"], name="card_section_sort_idx")
+        ]
+
+    def __str__(self):
+        return f"{self.title}@{self.sort_order}"

@@ -108,6 +108,18 @@ const router = createRouter({
           meta: { title: '平台活动与推荐返佣', module: 'activities' },
         },
         {
+          path: 'activity-products',
+          name: 'activity-products',
+          component: () => import('@/views/ActivityProductsView.vue'),
+          meta: { title: '活动商品管理', module: 'catalog.pool' },
+        },
+        {
+          path: 'campaign-cards',
+          name: 'campaign-cards',
+          component: () => import('@/views/CampaignCardsView.vue'),
+          meta: { title: '首页活动卡片', module: 'cms.campaign' },
+        },
+        {
           path: 'banners',
           name: 'banners',
           component: () => import('@/views/BannersView.vue'),

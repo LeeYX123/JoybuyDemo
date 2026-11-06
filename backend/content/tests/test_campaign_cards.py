@@ -1,0 +1,329 @@
+"""首页活动卡片（搜索框下方 10 宫格）的接口与同步测试。
+
+三条不能破的线：
+1. storefront_home 输出的 campaign_grid 必须来自独立表（enabled、按序），
+   覆盖快照里写死的内容；独立表为空时回退快照；
+2. 顺序可调：上移/下移与相邻交换，不能越界；
+3. 上限 10 张、href 白名单（/ 或 http(s)），非法输入 400 而不是 500。
+"""
+
+import json
+
+from django.test import TestCase
+from django.utils import timezone
+
+from accounts_staff.models import (
+    PlatformPermission,
+    PlatformRole,
+    StaffAccount,
+    StaffRoleAssignment,
+)
+from accounts_staff.services import create_staff_session
+from content.campaign_services import import_from_published_snapshot
+from content.models import CmsModule, CmsPage, HomeCampaignCard
+
+
+class CampaignCardTestBase(TestCase):
+    def setUp(self):
+        role, _ = PlatformRole.objects.update_or_create(
+            code="campaign-role", defaults={"name": "Campaign", "is_system": False}
+        )
+        role.permissions.set(
+            [
+                PlatformPermission.objects.get_or_create(code=code, defaults={"name": code})[0]
+                for code in ("cms.campaign.manage", "cms.campaign.view")
+            ]
+        )
+        self.staff = StaffAccount.objects.create(
+            email="campaign@joybuy.test", display_name="运营", status="ACTIVE"
+        )
+        StaffRoleAssignment.objects.create(staff=self.staff, role=role)
+        token, _session = create_staff_session(
+            staff=self.staff, ip_address="127.0.0.1", user_agent="test", totp_verified=True
+        )
+        self.client.cookies["joybuy_staff_session"] = token
+
+    def post(self, path, payload=None):
+        return self.client.post(
+            path, data=json.dumps(payload or {}), content_type="application/json"
+        )
+
+    def patch(self, path, payload=None):
+        return self.client.patch(
+            path, data=json.dumps(payload or {}), content_type="application/json"
+        )
+
+    def make_card(
+        self, title="测试卡片", *, sort_order=1, enabled=True, section="campaign", **kwargs
+    ):
+        return HomeCampaignCard.objects.create(
+            section=section,
+            title=title,
+            subtitle=kwargs.get("subtitle", ""),
+            image_url=kwargs.get("image_url", "/media/cms/original/aa/bb/x.webp"),
+            href=kwargs.get("href", "/c/electronics"),
+            sort_order=sort_order,
+            enabled=enabled,
+        )
+
+
+class CampaignCardCrudTests(CampaignCardTestBase):
+    def test_create_and_list(self):
+        response = self.post(
+            "/api/v1/admin/campaign-cards",
+            {
+                "title": "新卡片",
+                "subtitle": "副标题",
+                "href": "/c/home",
+                "image_url": "/media/cms/a.webp",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        card = HomeCampaignCard.objects.get(title="新卡片")
+        # 新卡排到末尾，不打乱现有顺序
+        self.assertEqual(
+            card.sort_order, HomeCampaignCard.objects.order_by("-sort_order").first().sort_order
+        )
+
+        listing = self.client.get("/api/v1/admin/campaign-cards")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["total"], 1)
+
+    def test_create_requires_title(self):
+        response = self.post("/api/v1/admin/campaign-cards", {"title": "  "})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "FIELD_REQUIRED")
+
+    def test_create_rejects_bad_href(self):
+        response = self.post(
+            "/api/v1/admin/campaign-cards", {"title": "x", "href": "javascript:alert(1)"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "HREF_INVALID")
+
+    def test_card_cap_is_ten(self):
+        for index in range(10):
+            self.make_card(f"卡{index}", sort_order=index + 1)
+        response = self.post("/api/v1/admin/campaign-cards", {"title": "第11张"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "TOO_MANY_CARDS")
+
+    def test_update_and_delete(self):
+        card = self.make_card()
+        updated = self.patch(
+            f"/api/v1/admin/campaign-cards/{card.public_id}",
+            {"title": "改过", "enabled": False},
+        )
+        self.assertEqual(updated.status_code, 200)
+        card.refresh_from_db()
+        self.assertEqual(card.title, "改过")
+        self.assertFalse(card.enabled)
+
+        deleted = self.client.delete(f"/api/v1/admin/campaign-cards/{card.public_id}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(HomeCampaignCard.objects.count(), 0)
+
+
+class CampaignCardOrderingTests(CampaignCardTestBase):
+    def test_move_down_swaps_neighbours(self):
+        first = self.make_card("A", sort_order=1)
+        second = self.make_card("B", sort_order=2)
+
+        response = self.post(
+            f"/api/v1/admin/campaign-cards/{first.public_id}/actions",
+            {"action": "move", "direction": "down"},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.sort_order, second.sort_order), (2, 1))
+
+    def test_move_up_at_top_is_rejected(self):
+        card = self.make_card("A", sort_order=1)
+        response = self.post(
+            f"/api/v1/admin/campaign-cards/{card.public_id}/actions",
+            {"action": "move", "direction": "up"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "MOVE_AT_EDGE")
+
+    def test_move_compacts_duplicate_sort_orders(self):
+        """历史数据 sort_order 可能重复（如全部 0），移动前先压实再换位。"""
+        first = self.make_card("A", sort_order=0)
+        second = self.make_card("B", sort_order=0)
+        response = self.post(
+            f"/api/v1/admin/campaign-cards/{first.public_id}/actions",
+            {"action": "move", "direction": "down"},
+        )
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertLess(second.sort_order, first.sort_order)
+
+
+class StorefrontSyncTests(CampaignCardTestBase):
+    def _publish_home_with_campaign_snapshot(self):
+        page = CmsPage.objects.create(
+            page_key="home",
+            title="home",
+            version=1,
+            status=CmsPage.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=1,
+            module_type="campaign_grid",
+            payload={"items": [{"title": "快照旧卡片", "subtitle": "snapshot"}]},
+        )
+        return page
+
+    def test_storefront_uses_independent_table_over_snapshot(self):
+        self._publish_home_with_campaign_snapshot()
+        self.make_card("独立表卡片", sort_order=1, href="/c/electronics")
+
+        response = self.client.get("/api/v1/storefront/home")
+        self.assertEqual(response.status_code, 200)
+        modules = response.json()["modules"]
+        grid = next(m for m in modules if m["type"] == "campaign_grid")
+        titles = [item["title"] for item in grid["payload"]["items"]]
+        self.assertEqual(titles, ["独立表卡片"])
+        # 快照里的旧卡片不能再出现
+        self.assertNotIn("快照旧卡片", titles)
+
+    def test_disabled_cards_are_excluded(self):
+        self._publish_home_with_campaign_snapshot()
+        self.make_card("启用", sort_order=1, enabled=True)
+        self.make_card("停用", sort_order=2, enabled=False)
+        response = self.client.get("/api/v1/storefront/home")
+        grid = next(m for m in response.json()["modules"] if m["type"] == "campaign_grid")
+        titles = [item["title"] for item in grid["payload"]["items"]]
+        self.assertEqual(titles, ["启用"])
+
+    def test_empty_table_falls_back_to_snapshot(self):
+        page = self._publish_home_with_campaign_snapshot()
+        # 独立表为空：回退快照，页面不能白屏
+        response = self.client.get("/api/v1/storefront/home")
+        self.assertEqual(response.status_code, 200)
+        grid = next(m for m in response.json()["modules"] if m["type"] == "campaign_grid")
+        self.assertEqual(grid["payload"]["items"][0]["title"], "快照旧卡片")
+        self.assertIsNotNone(page)
+
+    def test_snapshot_import_backfills_ten_cards(self):
+        # 单独建页（version 更高），避免 helper 里那个 1 卡快照干扰
+        # 「取最新版本页面」的导入口径。
+        page = CmsPage.objects.create(
+            page_key="home",
+            title="home",
+            version=3,
+            status=CmsPage.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=1,
+            module_type="campaign_grid",
+            payload={
+                "items": [
+                    {"title": f"卡{i}", "subtitle": "s", "image_path": "/media/cms/a.webp"}
+                    for i in range(1, 11)
+                ]
+            },
+        )
+        created = import_from_published_snapshot()
+        self.assertEqual(created, 10)
+        self.assertEqual(HomeCampaignCard.objects.count(), 10)
+        self.assertEqual(HomeCampaignCard.objects.order_by("sort_order").first().title, "卡1")
+        # 幂等：再导一次不重复
+        self.assertEqual(import_from_published_snapshot(), 0)
+        self.assertIsNotNone(page)
+
+
+class DiscoverySectionTests(CampaignCardTestBase):
+    def test_list_filters_by_section(self):
+        self.make_card("活动卡", sort_order=1)
+        self.make_card("发现卡", sort_order=1, section="discovery")
+        campaign = self.client.get("/api/v1/admin/campaign-cards?section=campaign")
+        discovery = self.client.get("/api/v1/admin/campaign-cards?section=discovery")
+        self.assertEqual([i["title"] for i in campaign.json()["items"]], ["活动卡"])
+        self.assertEqual([i["title"] for i in discovery.json()["items"]], ["发现卡"])
+        self.assertEqual(campaign.json()["max_cards"], 10)
+        self.assertEqual(discovery.json()["max_cards"], 12)
+
+    def test_create_in_discovery_section(self):
+        response = self.post(
+            "/api/v1/admin/campaign-cards",
+            {
+                "section": "discovery",
+                "title": "新品类",
+                "title_zh": "中文",
+                "href": "/s?category=toys",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        card = HomeCampaignCard.objects.get(title="新品类")
+        self.assertEqual(card.section, "discovery")
+        # discovery 不使用副标题字段
+        self.assertEqual(card.subtitle, "")
+
+    def test_section_must_be_valid(self):
+        response = self.post("/api/v1/admin/campaign-cards", {"section": "hack", "title": "x"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "SECTION_INVALID")
+        listing = self.client.get("/api/v1/admin/campaign-cards?section=hack")
+        self.assertEqual(listing.status_code, 400)
+
+    def test_move_stays_within_section(self):
+        first = self.make_card("发现A", sort_order=1, section="discovery")
+        second = self.make_card("发现B", sort_order=2, section="discovery")
+        # campaign 区的另一张卡不应参与 discovery 排序
+        self.make_card("活动A", sort_order=1, section="campaign")
+
+        response = self.post(
+            f"/api/v1/admin/campaign-cards/{first.public_id}/actions",
+            {"action": "move", "direction": "down"},
+        )
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertLess(second.sort_order, first.sort_order)
+        # campaign 区的卡片不受影响
+        campaign_card = HomeCampaignCard.objects.get(title="活动A")
+        self.assertEqual(campaign_card.sort_order, 1)
+
+    def test_storefront_injects_discovery_tiles(self):
+        page = CmsPage.objects.create(
+            page_key="home",
+            title="home",
+            version=1,
+            status=CmsPage.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=1,
+            module_type="link_grid",
+            payload={
+                "variant": "tiles",
+                "title": "Category discovery",
+                "items": [{"label": "快照旧品类", "icon_path": "/media/cms/x.webp"}],
+            },
+        )
+        self.make_card("独立品类", sort_order=1, section="discovery", href="/s?category=toys")
+
+        response = self.client.get("/api/v1/storefront/home")
+        self.assertEqual(response.status_code, 200)
+        grid = next(
+            m
+            for m in response.json()["modules"]
+            if m["type"] == "link_grid" and m["payload"].get("variant") == "tiles"
+        )
+        self.assertEqual(grid["payload"]["title_zh"], "品类发现")
+        items = grid["payload"]["items"]
+        self.assertEqual(len(items), 1)
+        # discovery 的 item 用 label/icon_path 字段名
+        self.assertEqual(items[0]["label"], "独立品类")
+        self.assertEqual(items[0]["href"], "/s?category=toys")
+        self.assertNotIn("快照旧品类", [i["label"] for i in items])
+        # campaign 无数据时不注入 campaign_grid（本页快照也没有）
+        self.assertFalse(any(m["type"] == "campaign_grid" for m in response.json()["modules"]))

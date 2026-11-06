@@ -41,6 +41,8 @@ const form = reactive({
   wallet_balance: '',
   points: '',
   reason: '',
+  discount_rate: '',
+  activity_discount_rate: '',
 })
 
 const createOpen = ref(false)
@@ -101,6 +103,9 @@ function openModal(kind, merchant) {
   form.wallet_balance = merchant?.wallet_balance || '0.00'
   form.points = ''
   form.reason = ''
+  // 折扣按百分数展示（70 = 70%），留空表示未设置。
+  form.discount_rate = merchant?.discount_rate ?? ''
+  form.activity_discount_rate = merchant?.activity_discount_rate ?? ''
 }
 
 const MODAL_TITLES = {
@@ -126,16 +131,20 @@ async function submitModal() {
         ban_after_days: Number(form.ban_after_days),
       })
     } else if (modal.kind === 'edit') {
-      await adminWrite(
-        `/merchants/${id}`,
-        {
-          name: form.name,
-          avatar: form.avatar,
-          wallet_balance: form.wallet_balance,
-          ban_after_days: Number(form.ban_after_days),
-        },
-        'PATCH',
-      )
+      // 余额只在真的改动时才提交：后端对"余额未变化"返回 NO_CHANGE 400，
+      // 总是带上余额会让普通的资料/折扣编辑一直失败。
+      const payload = {
+        name: form.name,
+        avatar: form.avatar,
+        ban_after_days: Number(form.ban_after_days),
+        discount_rate: form.discount_rate === '' ? '' : form.discount_rate,
+        activity_discount_rate:
+          form.activity_discount_rate === '' ? '' : form.activity_discount_rate,
+      }
+      if (form.wallet_balance !== (modal.merchant?.wallet_balance || '0.00')) {
+        payload.wallet_balance = form.wallet_balance
+      }
+      await adminWrite(`/merchants/${id}`, payload, 'PATCH')
     } else if (modal.kind === 'credit') {
       await adminWrite(`/merchants/${id}/actions`, {
         action: 'deduct_credit',
@@ -370,16 +379,26 @@ onMounted(load)
             <dd>{{ detail.credit_score }}</dd>
           </div>
           <div>
-            <dt>未发货封店天数</dt>
-            <dd>{{ detail.ban_after_days }} 天</dd>
+            <dt>订单未处理自动封店天数（天）</dt>
+            <dd>{{ detail.ban_after_days ?? '不自动封店' }}</dd>
+          </div>
+          <div>
+            <dt>商家折扣</dt>
+            <dd>{{ detail.discount_rate ? `${detail.discount_rate}%` : '未设置' }}</dd>
+          </div>
+          <div>
+            <dt>活动商品折扣</dt>
+            <dd>
+              {{ detail.activity_discount_rate ? `${detail.activity_discount_rate}%` : '未设置' }}
+            </dd>
           </div>
           <div>
             <dt>总关注</dt>
             <dd>{{ detail.followers }}（当日 +{{ detail.follow_delta }}）</dd>
           </div>
           <div>
-            <dt>曝光量</dt>
-            <dd>{{ detail.exposure }}</dd>
+            <dt>总曝光度</dt>
+            <dd>{{ detail.exposure }}（今日 +{{ detail.exposure_delta }}）</dd>
           </div>
           <div>
             <dt>推荐码</dt>
@@ -502,8 +521,35 @@ onMounted(load)
           <span class="field__hint">按调整后的余额填写，系统自动记差额流水。</span>
         </div>
         <div class="field">
-          <label for="merchant-ban">未发货封店天数</label>
+          <label for="merchant-ban">订单未处理自动封店天数（天）</label>
           <input id="merchant-ban" v-model="form.ban_after_days" type="number" min="1" step="1" />
+          <span class="field__hint"
+            >存在待处理订单且下单时间超过该天数时自动封店；这是唯一的自动封店规则。</span
+          >
+        </div>
+        <div class="field">
+          <label for="merchant-discount">折扣设置（%）</label>
+          <input
+            id="merchant-discount"
+            v-model="form.discount_rate"
+            type="number"
+            step="0.01"
+            min="0"
+          />
+          <span class="field__hint">成本价 = 向上取整(零售价 × 折扣)。留空表示未设置。</span>
+        </div>
+        <div class="field">
+          <label for="merchant-activity-discount">活动商品折扣（%）</label>
+          <input
+            id="merchant-activity-discount"
+            v-model="form.activity_discount_rate"
+            type="number"
+            step="0.01"
+            min="0"
+          />
+          <span class="field__hint"
+            >仅对活动商品生效，优先于普通折扣；不做区间校验，设多少按多少算。</span
+          >
         </div>
       </div>
 
@@ -512,7 +558,8 @@ onMounted(load)
           <label for="credit-points">扣分数</label>
           <input id="credit-points" v-model="form.points" type="number" min="0.01" step="0.01" />
           <span class="field__hint"
-            >当前信誉分 {{ modal.merchant?.credit_score }}，扣分数不得超过当前分数。</span
+            >当前信誉分 {{ modal.merchant?.credit_score }}；100 分制，最低扣到
+            0，扣完不做自动处理。</span
           >
         </div>
       </div>
@@ -546,7 +593,7 @@ onMounted(load)
           <input id="new-legal" v-model="createForm.legal_name" type="text" maxlength="200" />
         </div>
         <div class="field">
-          <label for="new-ban">未发货封店天数</label>
+          <label for="new-ban">订单未处理自动封店天数（天）</label>
           <input id="new-ban" v-model="createForm.ban_after_days" type="number" min="1" step="1" />
         </div>
         <div class="field">

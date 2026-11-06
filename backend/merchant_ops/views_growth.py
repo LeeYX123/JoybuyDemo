@@ -12,6 +12,8 @@ from merchants.services import add_exposure, add_followers
 
 
 def _row(merchant: Merchant) -> dict:
+    from django.utils import timezone
+
     return {
         "id": str(merchant.public_id),
         "name": merchant.display_name,
@@ -20,6 +22,11 @@ def _row(merchant: Merchant) -> dict:
         "follow_delta": merchant.follow_delta,
         "follow_day": merchant.follow_day.isoformat() if merchant.follow_day else None,
         "exposure": merchant.exposure,
+        # 今日曝光度 = 当日累计新增，每天自动清零（WP-42 文档 M01 §4）。
+        "exposure_delta": merchant.exposure_delta
+        if merchant.exposure_day == timezone.localdate()
+        else 0,
+        "exposure_day": merchant.exposure_day.isoformat() if merchant.exposure_day else None,
     }
 
 

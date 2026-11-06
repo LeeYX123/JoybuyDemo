@@ -4,7 +4,17 @@
 
 ## 1. 我们在做什么
 
-- **当前任务（2026-11-05 夜，三轮 + 图片本地上传全部完成）**：按 `商家端及平台管理端文档/` 重构商家后台与平台管理后台。**第 1 轮**：数据模型 + 平台 A02–A09。**第 2 轮**：A10–A17。**第 3 轮**：`merchant-web` + 商家端 M01–M10。**图片**：新增统一上传接口，落盘到 `var/media/`，业务表只存 `/media/...` URL，前端直接渲染。**已无遗留必做项**（对象存储/图片压缩变体可作为后续优化）。
+- **当前任务（2026-11-07，WP-42：需求迭代文档 01 全量落地，已完成）**：按 `功能需求迭代文档01.md` v2.2（十项拍板）一轮做完商家端 M01–M04、管理端 4 处改动、购物端 3 项新功能。核心交付：①商家级折扣体系（普通/活动折扣，成本价=向上取整(零售×折扣)）；②曝光"今日"口径（exposure_delta/exposure_day + `merchant_daily_stat` 日统计表）+ 看板曝光趋势/周月切换/通知 top3；③自动封店（`ban_after_days` 可空=null 不封店，唯一自动封店规则）+ 信誉分扣到 0 钳制不联动；④订单进度自动扭转（区间表写死，发货时随机生成 planned_node_times，14 天自动确认收货，`run_order_sweeps` 命令 + 读路径惰性兜底）；⑤下单即支付成功（PAID + payment_method）+ 按 offer.merchant 拆商家子单（真实下单首次自动产生 MerchantOrder）；⑥白名单后端打通（cart/place_order 校验 NOT_WHITELISTED，前端严格化）；⑦搜商家公开 API + 购物端双按键/`/merchants` 两页；⑧活动商品管理页 + `Spu.merchant_category` 12 固定品类 + 关键词回填。详见 §2 "2026-11-07（WP-42）" 小节与 `docs/08` WP-42。
+
+- **上一任务（2026-11-06，六国跨市场与商品规格本地化，WP-41 已完成）**：用户要求支持比利时、德国、法国、荷兰、卢森堡、英国，价格只统一显示 `$` 且不换算，SKU 规格翻译成各国语言。已完成六国 `Market/Locale/MarketLocale`、市场化商品内容、类目/属性/规格翻译表、搜索 locale 维度、详情/类目/搜索的 `market+locale` 解析、购物端国家/语言选择器和真实 MySQL 回填。开发库 159 个有效 SKU × 9 个欧洲 locale = **1,431** 份规格翻译，复审数 0；欧洲五国没有当地 Offer 时明确回退 GB，API 返回 `price_source_market=GB`，绝不改金额或伪装当地价。详见 §2 同日小节与 `docs/08` WP-41。
+
+- **当前任务（2026-11-06，需求文档 v2.2：10 项待确认已拍板 + 信誉分口径修订，纯文档）**：把 59 分钟会议录像 `D:/Users/lyx/Videos/Joybuy功能需求讨论01.mp4` 转写拆解，与 `功能需求迭代文档01.md`（v1 手记）对齐后出 v2，用户随后逐条拍板 10 项，现已回填为 **v2.1**，待确认项清零。**本轮只改文档，未动代码**。
+  - **最终口径（开发直接照此实现）**：①爬虫**不改**抓取价，抓取价=入库价=零售价，只有 `成本价 = 向上取整(零售价 × 折扣)`；②进度区间 待出库→已出库 **4–8h**、已出库→已揽收 **6–12h**（其余按表）；③自动封店天数在**管理端【商家管理】→【店铺详情】新增字段【订单未处理自动封店天数（天）】**，按商家自主设置，这是**唯一**的自动封店规则；④**信誉分扣至 0 不做任何处理、不自动封店**（100 分制，下限 0），是否封店由人工手动操作 —— v2.1 曾写成"扣完自动封店"，20:59 已修订；⑤总关注 `+N` = **当日累计新增**；⑥非白名单：前端弹窗已有，需打通后端白名单标识；⑦活动商品折扣不做校验，设多少算多少；⑧品类饼图**按订单量**；⑨商家搜索**按商家名称匹配**（不做 ID 搜）。
+  - 模块编号已按既有编号重排：M01 经营看板 / M02 店铺管理 / M03 商品上架中心 / M04 订单管理。
+
+- **当前任务（2026-11-06，跨国多语言与商品规格存储现状审查）**：用户询问当前实现是否已覆盖跨国多语言，以及商品规格与商品翻译是否分开存储。本轮只读核对需求、国际化设计、数据库说明和实际模型/API；结论是：**商品文本与 SKU 规格已经分开**（`spu_translation` 对 `spu + locale` 唯一，`sku.specification` 为规格 JSON + 签名），`Market`/`Currency`/`Offer` 也预留了市场与币种维度；但当前仍是 **GB 市场 + EN/ZH 局部双语**，未完成真正的跨市场多语言。缺口包括 `(spu, market, requested_locale)` 内容维度、字段级 `actual_locale`/来源哈希/观察时间、`Locale`/`MarketLocale`、类目/属性/属性选项/CMS 翻译表，以及按请求市场/语言解析详情与搜索。SKU 规格值仍是 JSON 原文快照，没有独立的多语言规格值表。详见 §2 同日小节。
+
+- **当前任务（2026-11-06，图片上传 + 首页两类卡片管理完成）**：重构两端 + 图片本地上传 + **首页卡片管理**。管理端【服务与运营】→「首页活动卡片」页面含**两个 Tab**：「活动卡片」（campaign_grid 10 宫格）与「品类发现」（link_grid tiles 6 卡），共用 `home_campaign_card` 表（`section` 字段区分）与一套接口；`storefront_home` 按分区注入覆盖快照，改标题/顺序 → 购物端即时同步（已端到端实测）。
 - 当前任务（2026-11-05，**运行日志已细化**）：用户要求日志里能看到访问的 URL、拿到的数据、处理结果和落盘路径。已加 `LISTING_FETCHED` / `PRODUCT_PARSED` / `DATASET_SAVED` 并增强 `PRODUCT_IMPORTED`（每商品 3 条：解析→落盘→入库），详情接口事件数 50→200；顺带修掉 `parse_detail` 里会导致每个详情页崩溃的 `UnboundLocalError`。详见 §2"补充 11"。
 - 当前任务（2026-11-05，**登录墙根因已修**）：用户反馈最新任务仍报登录墙。实测证明账号 Cookie 有效（带 Cookie curl 得 200），真因是 **Scrapy 默认缓存策略把匿名请求的 307 跳登录缓存了 6 小时，带 Cookie 的运行直接吃缓存、根本没发请求**；同时列表页改版导致解析出空标题/无价格。已加 `SuccessOnlyCachePolicy` + 清缓存 + 列表双布局解析器，端到端实抓验证 40/40 卡片有标题有原价。详见 §2"补充 10"。
 - 当前任务（2026-11-05，**账号组实体化 + 账号可编辑/删除**）：用户要求账号可改组、可编辑、可删除，新增账号时组要下拉选，并能新建账号组。已加 `CrawlerAccountGroup` 表 + 账号软删除 + 4 个接口 + 管理端下拉/编辑/删除。**删除是软删除**（会话销毁、行保留以保住历史运行的账号归属）。详见 §2"补充 9"。
@@ -42,6 +52,121 @@
 - 上一任务“平台管理端全面中文化（仅保留 Joybuy 标识）”已完成并通过验证，历史记录保留在下方。
 
 ## 2. 已经完成了什么
+
+### 2026-11-07（WP-42：需求迭代文档 01 全量落地——折扣/自动封店/进度自动扭转/搜商家/白名单/演示支付）
+
+- **需求依据**：`功能需求迭代文档01.md` v2.2（十项拍板全关闭）。用户拍板：一轮全做 + 做 12 类映射。
+- **迁移（已应用真实 MySQL）**：`merchants.0006`（discount_rate/activity_discount_rate、exposure_delta/exposure_day、ban_after_days 改可空、新表 `merchant_daily_stat`）、`orders.0004`（Order.Status 增 `PAID`、payment_method/paid_at、MerchantOrder.planned_node_times）、`catalog.0012`（Spu.merchant_category 12 类 choices）。
+- **折扣与成本价**：`merchant_ops/views_merchant_catalog.py::compute_listing_cost` —— 取折扣顺序 活动折扣→普通折扣→回退 `spu.cost_price`；`ROUND_CEILING` 取整到个位（12.10/12.90→13、121.98→122）。上架 POST 与商品池卡片成本都用它。管理端编辑弹窗设置折扣（PATCH `discount_rate/activity_discount_rate`，空串=清除，无区间校验）。
+- **信誉分**：`deduct_credit` 改按 0 钳制（原来超额报 `CREDIT_EXCEEDS_CURRENT`，已同步改测试）；扣完不联动封店。
+- **曝光日口径**：`add_exposure`/`add_followers` 惰性跨日清零 + `_bump_daily_stat` upsert `merchant_daily_stat`；growth 接口与商家详情返回 `exposure_delta`（当日累计）。
+- **自动封店**：`merchants.services.auto_suspend_overdue_merchants()`——ACTIVE 商家存在 PENDING 子单且下单时间超 `ban_after_days` 天 → SUSPENDED（reason="订单未处理超过设定天数，系统自动封店"）；null 跳过。
+- **进度自动扭转**：`merchant_ops.services.PROGRESS_INTERVAL_HOURS`（4–8/6–12/3–6/48–120/10–18/6–16 小时写死）+ `build_progress_schedule(shipped_at)`（每段随机、累进，第 7 位=14 天自动确认截止）；`ship_merchant_order` 发货时生成 `planned_node_times`；`auto_advance_progress()` 扫描 SHIPPED 子单到点推进（node_times 记计划时刻）、签收超 14 天自动确认收货（走 node7 结算）。无计划表的历史子单跳过（继续人工推进）。节点文案"到达目的地网点"→"到达网点"。
+- **调度**：新命令 `manage.py run_order_sweeps`（自动扭转+自动封店+过期取消）；商家看板与管理端商家订单列表 GET 惰性调用同一组服务（`run_lazy_sweeps`）。**生产必须挂 cron**（每 10 分钟左右），开发环境靠惰性兜底。
+- **下单拆单**：`place_order` 增 `payment_method` 参数（BALANCE/CARD/GOOGLE_PAY/KLARNA）→ 有值即置 `PAID` + paid_at；按 `offer.merchant` 建 `MerchantOrder`（items_total/cost_total 累计、payment_method 快照、recipient_region=address.country_code）；`OrderItem.unit_cost=offer.cost_price`、回填 merchant_order 外键；已付款时 `_bump_daily_stat(order_count=1)`。无 payment_method 保持 PENDING_PAYMENT（旧测试/旧路径兼容）。
+- **白名单后端**：`cart/services.add_item` 与 `place_order` 校验 `purchase_whitelisted` → `NOT_WHITELISTED`（400）；前端判断改严格 `=== true`，详情页加购返回该码也弹拦截弹窗；结账页提交所选支付方式（大写映射），`NOT_WHITELISTED` 显示白名单提示。
+- **搜商家**：`backend/merchants/public_views.py` + 公开路由 `/api/v1/merchants/search`（display_name/slug icontains，只返回有 ACTIVE Offer 的接单中商家）与 `/api/v1/merchants/<slug>`（商家头 + 在售商品 50 件）。storefront 头部"一个搜索框+两个按键"（红色【搜商家】键），新页 `pages/merchants/index.vue` 与 `[slug].vue`（SSR 用 apiBaseInternal、客户端走 devProxy——新页面必须按这个模式写，否则 SSR 404）。
+- **活动商品**：管理端新页 `/activity-products`（活动商品/全部商品两视图 + 打标/取消，走 `products/<id>/actions` 的 `mark_activity/unmark_activity`）；商品池编辑弹窗加"商家端品类（12 类）"下拉（`merchant_category` PATCH）；回填命令 `assign_merchant_categories`（local_category 名称关键词映射；本库 157 SPU：命中 59，62 个 Groceries & Food 与 36 个无类目落"未分类"，**12 类里没有食品品类**，需管理端手动指派或后续扩品类）。
+- **商家端 UI**：DashboardView 重写（今日订单口径提示、今日曝光度、总关注红色 +N、周/月切换、曝光度趋势条形、平台经营通知 top3+查看全部、店铺状态只映射 接单中/已封店）；CatalogueView 已上架 Tab 加名称/ID 搜索 + 品类筛选 + "下架请联系平台客服"提示（商家端本来就没有下架按钮，未添加）；StoreView 加"复制店铺 ID"。
+- **顺带修掉的预先存在 bug**：管理端"编辑商家"总是发送 `wallet_balance`，余额没变时后端 `adjust_wallet` 抛 `NO_CHANGE` 400，导致任何不改余额的编辑（包括折扣设置）都失败。已改为只在余额真的变化时才提交该字段。
+- **针对性验证（按验证纪律，未跑全量）**：
+  - 真实 MySQL：`merchants.tests.test_wp42_services + merchant_ops.tests.test_wp42_discount_listing + orders.tests.test_wp42_place_order + merchant_ops.tests.test_merchant_app` → **48 passed**；加上 `test_admin_commerce/test_merchant_modules/test_orders_flow/cart.tests` 回归共 **127 passed**。`test_merchant_domain` 里 `test_merchant_totp_policy_is_enforced_during_staff_login` 失败为**预先存在**（2026-11-05 移除 TOTP 登录后遗留的过期测试，stash 验证过基线也失败），本轮未修。
+  - `ruff check backend` 通过；`manage.py check`、`makemigrations --check --dry-run` 通过。
+  - 前端：Prettier/ESLint 通过；admin-web vitest 9 passed、vite build 通过；merchant-web vite build 通过；storefront vitest 47 passed、Nuxt build 通过。
+  - **浏览器实测**：管理端（临时账号 wp42check 登录）折扣设置 70/50 保存成功并回显、自动封店天数/总曝光度+今日曝光度字段显示；活动商品打标"OPPO A6x"成功；商家端看板（5174）今日曝光度 150 与趋势图即时同步（管理端 growth 调整后刷新即见）、通知 top3 渲染；购物端搜商家结果页（q=HOMCOM 命中）与商家页（头像/名称/总关注/总曝光度/在售商品 $ 价格）渲染正常。
+  - **API 全漏斗实测**：shell 造买家会话 → 建地址 → 加购（真实 offer）→ 下单 `payment_method=GOOGLE_PAY` → 201 `status=PAID` → 自动拆出 HOMCOM 子单（PENDING，cost 快照来自 offer.cost_price）→ `merchant_daily_stat.order_count=1`；移出白名单后加购返回 `NOT_WHITELISTED`。
+- **测试数据清理**：两家 HOMCOM 折扣已还原为空、OPPO 活动标记已取消、临时员工账号 `wp42check@joybuy.test` 已删除。保留：买家 `wp42-funnel@joybuy.test`（挂演示订单 `d59147dc`，PAID/GOOGLE_PAY，未发货）、HOMCOM 曝光 150 与当日统计（可当演示数据；要清零把 merchant.exposure/exposure_delta 置 0 并删 `merchant_daily_stat` 当日行）。
+- **踩坑（新会话必读）**：
+  1. **pnpm 在本机损坏**（MODULE_NOT_FOUND），起 dev 服务要用 `npx`：storefront 在其目录 `npx nuxt dev`，admin-web/merchant-web 用 `npx vite --port 5173/5174`。Nuxt 只绑 `::1`，`curl 127.0.0.1:3000` 会 000，用 `localhost`。
+  2. **admin@joybuy.test 的密码与记忆不符**（猜测均不匹配，勿再试）；本次用"shell 铸会话 token + 注入 curl/或建临时账号"做管理端验证，未改任何用户密码。
+  3. **storefront 新页面调 API 必须区分 SSR/客户端**：SSR 用 `config.apiBaseInternal`（直连 8000），客户端用 `/api/v1`（devProxy）；直接 `useFetch('/api/v1/...')` 在 SSR 会 404（nitro 内部路由不存在）。
+  4. Git Bash 里 `/tmp` 对 Windows Python 不可见；混合 bash+python 解析时把文件放仓库内或纯 bash 解析。
+  5. 后端 8000 用 `--noreload`，改后端代码要重启（本轮已重启）。
+- **遗留/后续**：①`run_order_sweeps` 生产 cron 未接（docs/08 WP-42 已注明）；②Groceries 商品 12 类映射待定（品类清单是否要加"食品"需产品决定）；③商家端商品卡成本价随商家折扣变化，但**已上架 Offer 的 cost 不随折扣调整自动刷新**（重上架时才重算，与"上架时快照"口径一致）；④钱包余额支付（BALANCE 真扣款）仍未实现，四种支付方式均为演示判定；⑤`test_merchant_domain` 的 TOTP 过期测试建议下轮清理。
+
+### 2026-11-06（WP-41：六国跨市场与 SKU 规格本地化）
+
+- **用户口径**：主要国家 BE/DE/FR/NL/LU/GB；价格统一显示美元符号但不换算；商品规格直接翻译到这些国家语言。
+- **语言映射**：GB=`en-GB`（保留既有 `zh-CN`）；DE=`de-DE`；FR=`fr-FR`；NL=`nl-NL`；BE=`nl-BE/fr-BE/de-BE`；LU=`lb-LU/fr-LU/de-LU`。比利时和卢森堡按官方多语言市场处理，不强行压成单语言。
+- **数据库与迁移**：
+  - `offers.0005`：`Locale`、`MarketLocale`、`Market.display_currency_symbol`、`Market.offer_fallback_market`；
+  - `offers.0006`：幂等种子六国、11 locale、11 个市场语言组合、EUR；六国展示符号均 `$`，欧洲五国 fallback=GB；
+  - `catalog.0011`：`SpuMarketContent`、`SkuSpecificationTranslation`、`LocalCategoryTranslation`、`AttributeDefinitionTranslation`、`AttributeOptionTranslation`；`ProductSearchDocument` 从 SPU 一对一升级为 `(spu, market, locale_code)` 唯一并重建复合索引；
+  - 三项迁移已应用真实 MySQL，`showmigrations offers catalog` 全部 `[X]`。
+- **读取链路**：新增 `offers.market_services.resolve_market_context`，query → Cookie → 市场默认语言回退；`GET /api/v1/markets` 返回可选国家/语言。详情按市场/locale 解析内容和规格；目标市场无 Offer 时按显式 fallback 链读取 GB Offer，并返回 `price_source_market`。搜索和类目接口同样接受上下文，搜索文档按 locale 隔离。
+- **规格翻译纪律**：原始 `sku.specification` 与 `specification_signature` 永不改写；展示翻译单独入 `sku_specification_translation`。`translate_product_specs` 内置德/法/荷/卢常用规格词典，数值、型号和单位原样保留；未知词不假装成功，写 `untranslated_terms` 并置 `needs_review=true`。
+- **真实数据回填**：执行 9 个欧洲 locale 的 dry-run 和正式回填，各 **1,431** 行；当前 `SkuSpecificationTranslation=1,431`、`needs_review=0`。真实接口 DE/de-DE 已返回 `Farbe: Weiß/Blau`，Offer 金额保持 `19.9900/21.9900/23.4900`，展示符号 `$`，来源市场 GB。
+- **购物端**：`useMarketLocale` 持久化 `joybuy-market`/`joybuy-locale`；顶部由原 EN/ZH 按钮升级为国家与语言两个选择器；详情、类目树和搜索请求带 `market + locale`。现有 `formatDisplayPrice` 继续纯展示 `$`，不碰后端金额。
+- **针对性验证（按验证纪律，没有跑全量）**：
+  - 真实 MySQL：`manage.py test catalog.tests.test_localization catalog.tests.test_product_detail_api catalog.tests.test_search offers.tests.test_product_offer_domain` → **29/29 通过**；
+  - `ruff check backend/offers backend/catalog` → 通过；`manage.py check` → 通过（仅既有 MySQL 条件唯一约束警告）；`makemigrations --check --dry-run` → No changes detected；
+  - storefront：Prettier/ESLint 通过，Vitest **47/47**，Nuxt production build 通过；
+  - 实机 API：`GET /api/v1/markets` 返回六国及全部 locale；DE 商品详情返回翻译规格、`display_currency_symbol='$'`、`price_source_market='GB'`。
+- **浏览器验证边界**：尝试使用自动化浏览器，但 in-app tab 创建超时且 Chrome browser provider 不可用，WorkBuddy 截图通道也超时；因此本轮没有声称浏览器 E2E 通过。前端已由组件测试与生产构建验证，UI 人工复核可作为下一轮第一项。
+- **仍需后续数据工作**：本轮只按用户要求直接翻译规格。商品标题/详情不会凭空生成机器翻译；后续应按市场抓取或人工录入 `SpuMarketContent`。目标市场真实 Offer 到位后会自动优先于 GB fallback。
+- **文档同步**：`docs/10-multilingual-content-and-market-design.md`、`docs/13-database-schema.md`、`docs/08-implementation-work-packages.md` WP-41 已更新。
+- **服务**：Django 8000 已重启（新 PID 42276，`--noreload`）并加载新模型/API；storefront 开发服务由既有进程负责。
+
+### 2026-11-06（需求文档 v2 → v2.1：录像拆解 + 10 项拍板回填）
+
+> 补充：v2 完成后用户在同日 20:28 逐条拍板 10 项，文档升 v2.1；20:59 又修订第 5 项 → **v2.2**。第六节从"待确认清单"改为"决策记录"。
+> 拍板要点：不改抓取价只改成本价；区间 4–8h / 6–12h；自动封店天数改为管理端【商家管理】→【店铺详情】的**【订单未处理自动封店天数（天）】**按商家配置；**信誉分扣完不做处理、不自动封店，交人工操作**；`+N` 当日累计；非白名单前端已有弹窗、待打通后端标识；活动商品折扣不做校验；饼图按订单量；商家搜索按名称匹配。
+> 同时把 v2 里自造的 A01/A02/A03 与错位的 M02/M03/M04 编号改掉，统一为项目既有编号：M01 经营看板 / M02 店铺管理 / M03 商品上架中心 / M04 订单管理；管理端只用「系统管理 / 平台运营管理 / 商家管理」中文名，不套 A 编号（项目里 A02 是商家管理、A03 是商品池，套错会误导）。
+
+### 2026-11-06（需求文档 v2：会议录像拆解与漏项补全）
+
+- **任务**：用户给出会议录像与手记文档，要求先拆解视频内容，再结合手记完善需求文档、防止漏需求；动手前先备份文档。
+- **备份**：`功能需求迭代文档01.md.bak-20261106-194557`（v1 原文 3548 字节，已保留，不要删）。
+- **视频拆解（按 `video-content-breakdown` 技能全流程）**：
+  - 产物目录 `D:/Users/lyx/Videos/Joybuy功能需求讨论01_拆解/`：`Joybuy功能需求讨论01.txt/.json/.srt`（444 段，有效语音 00:00–45:53，46:00 之后为静音，转写末尾出现"点赞订阅"类幻听已剔除）、`录屏关键帧/`（115 帧 + frames.json，`--max-frames 160 --max-gap 40`）、`Joybuy功能需求讨论-内容拆解.md`。
+  - 拆解文档含：时间轴（15 段）、逐章拆解（14 章，含关键句逐字引用）、速查卡、画面实证 4 帧、ASR 校正表 19 条、待确认 10 条。
+  - 画面核对 4 帧全部吻合：`f012` 管理端【商家关注与曝光】、`f034` 商家端【经营看板】、`f043` 【店铺管理】、`f086` 【订单详情】。**实证**：订单详情有"发货成本（合计）¥128.00"、右侧"利润 ¥111.00" = 零售价 239 − 成本价 128，证明利润公式已在原型落地；看板饼图标注"按已付款订单统计"，即按订单量。
+- **需求文档改写为 v2**（`功能需求迭代文档01.md`，结构：商家端 M01/M02/M03/M04 → 管理端 A01/A02/A03 → 购物端 → 爬虫 → 跨端一致性表 → 待确认表）：
+  - 用【新增】/【澄清】/【修订】/【待确认】四种标记区分来源，v1 的每一条都保留，未删条目。
+  - **口径反转 1 条**：爬虫价格。v1 要求"抓取时向上取整、入库只留整数"，会议 25:47 明确"价格不变"，只在算成本价时向上取整 → 已按会议改写，并标【待确认】历史数据回刷方案。
+  - **口径冲突 2 条**（未擅自定稿，标【待确认】）：待出库→已出库 4–8h（文档）vs 4–6h（口述）；已出库→已揽收 6–12h vs 3–5h。
+  - **补漏的实际条目**：发货成本字段、进度自动扭转的随机区间机制、"区间写死不做后台配置"、自动封店、信誉分只减不加、曝光度自动清零且不带 +N（+N 只属总关注）、看板三图表 + 通知前 3 条、店铺管理复制 ID/编辑资料/品类只显示已上架/名称+ID 搜索/无下架按钮、活动商品不改品类加标记、双折扣优先级（先判活动商品）、搜索框一个框两个按键 + 搜商家结果页结构。
+- **验证**：按验证纪律，本轮为纯文档任务，**未运行任何代码/测试**；核对方式为逐段比对手记与转写原文。抽帧任务仍在后台完成剩余部分。
+- **未做**：文档里的待确认 10 项需要用户/产品拍板后才能进入开发；本轮未修改后端、前端与爬虫代码。
+
+### 2026-11-06（跨国多语言与商品规格存储现状审查）
+
+- **本轮动作**：阅读 `HANDOFF.md`，并核对 `docs/01-requirements.md`、`docs/04-data-model-and-storage.md`、`docs/10-multilingual-content-and-market-design.md`、`docs/13-database-schema.md`、`backend/catalog/models.py`、`backend/catalog/product_services.py`、`backend/catalog/detail_views.py`、`backend/offers/models.py` 和购物端 `useLocale`/locale 资源。
+- **已实现/已预留**：`SpuTranslation` 独立保存商品标题、副标题、详情，唯一键为 `spu + locale`；`Sku.specification` 独立保存 SKU 规格 JSON，`specification_signature` 保证同 SPU 规格组合唯一；属性定义和选项另有 `attribute_definition`/`attribute_option`；`Offer` 具有 `market + currency` 维度，`Market` 保存默认 locale、时区和默认币种；购物端已有 EN/ZH 固定界面文案切换，类目和部分 CMS 使用双语字段。
+- **未完整实现**：当前 `market` 文档和详情 API 仍固定 GB，详情仍取第一条 `SpuTranslation`；`SpuTranslation` 不含 market、requested_locale、actual_locale、来源哈希和观察时间；没有 `Locale`/`MarketLocale`；品牌、属性名、属性选项标签没有翻译表；本地类目只是 `name_en`/`name_zh` 两列；搜索索引尚未按 `spu + market + requested_locale` 拆分；SKU 规格没有独立的 locale 规格值/翻译关系表。
+- **判断**：数据库已经做到“商品翻译表与商品规格数据分开存放”，但规格仍是 JSON 快照，且完整跨国多语言数据模型只完成了基础骨架，不能称为已完整支持。
+- **修改**：仅更新本 `HANDOFF.md`，未修改业务代码、迁移或数据。
+- **验证**：按验证纪律仅做了针对性只读核对（`rg`/`Get-Content` 检查上述模型、API 与文档）；本轮没有业务代码改动，**未运行测试**，不得把历史测试结果当成本轮验证。
+- **下一步建议**：在继续扩市场前单独建立国际化工作包，优先补齐 `Locale`/`MarketLocale`、市场化商品内容表、类目/属性/选项翻译表、规格稳定值与 locale 展示值分层，再改详情/搜索 API 解析上下文并执行真实 MySQL 迁移验证。
+
+### 2026-11-06（品类发现卡片纳入管理）
+
+- **需求**：购物端首页【品类发现】模块（搜索框下方 tiles 卡片）也要管理端可管理。
+- **数据内容（先摸清）**：`link_grid` + `variant=tiles`，模块级 `title='Category discovery'/'品类发现'`；item 为 `{label, label_zh, href:'/s?category=…', icon_path}`，实库 6 张（Home/Electronics/Clothing & Accessories/Games/Outdoor & Sports/Small Home Appliances）。渲染组件 `CmsLinkGrid.vue` 已支持，购物端零改动。
+- **实现**：`home_campaign_card` 加 `section`（campaign/discovery）字段共用一张表；服务层按 section 分支——序列化时 discovery 输出 `label/label_zh/icon_path`（数据库仍叫 title/image_url），上限 campaign 10 / discovery 12；`storefront_home` 对两个模块类型分别注入覆盖；迁移 `content/0007`。
+- **管理端**：`/campaign-cards` 页面顶部加两个 Tab（活动卡片/品类发现），共用列表/排序/弹窗组件；discovery 的表单隐藏副标题字段、文案用「名称」。接口 `?section=` 过滤 + body `section` 指定分区。
+- **回填**：`import_from_published_snapshot('discovery')` 导入 6 张（幂等，与 campaign 互不影响）。
+- **验证**：`content.tests.test_campaign_cards` → **17 passed**（新增：分区过滤、discovery 创建、非法 section 400、move 不跨分区、storefront 注入 tiles 覆盖快照且 item 用 label 字段名）；eslint/prettier/build/ruff 全过。
+  - **浏览器端到端**：品类发现 Tab 编辑第一张加标记 + 下移 → 购物端首页 6 张 discovery 卡含标记、顺序同步（Electronics 升第 1）。测试数据已还原。
+- **两个教训**：
+  1. **长 python 脚本对 ruff 格式化过的文件做字符串替换会静默失配**（缩进/引号变了）——大段改动要么全量重写文件，要么用 Edit 工具精确改，替换脚本必须 assert 每一处（这次 views.py 的替换静默失败，靠测试 KeyError 才暴露）。
+  2. **后端绝不能用 `&` 启动**——bash 命令结束子进程被带走（502 排查了一圈前端才想到），必须用后台任务。
+- **注意**：后端 8000 用 `--noreload`，改后端代码要重启；`D:/Docker/Docker Desktop.exe`（MySQL/Redis/Mailpit 容器随它启动）。
+
+### 2026-11-06（首页活动卡片：管理端设置 → 购物端同步）
+
+- **需求**：购物端搜索框下方 10 个卡片要在管理端【服务与运营】下可配置，改完同步到购物端，且顺序可调。
+- **数据内容（动手前先摸清，用户要求）**：这 10 张卡片 = CMS `campaign_grid` 模块的 items，每张 `{title, subtitle, href?, image_path?, title_zh?, subtitle_zh?}`；渲染组件 `CmsCampaignGrid.vue`（5 列网格、无图色块降级、中英双语）**已支持全部字段，购物端零改动**。数据原先硬编码在 CMS 快照 payload 里，管理端无入口。
+- **方案（沿用 A10 轮播图先例）**：不直接改版本化快照。新建独立表 `home_campaign_card`（title/title_zh/subtitle/subtitle_zh/image_url/href/sort_order/enabled），管理端 CRUD；`content.views.storefront_home` 序列化后用独立表数据**覆盖**快照里的 campaign_grid 模块（保留原 position），独立表为空则回退快照。快照保持只读历史，回滚不受运营数据污染。
+- **迁移**：`content/0005_homecampaigncard` + `content/0006_seed_campaign_permissions`（`cms.campaign.manage`/`.view`，授 platform_admin/operator）。首次访问前用 `import_from_published_snapshot()` 把快照 10 卡回填独立表（幂等）。
+- **接口**：`GET/POST /api/v1/admin/campaign-cards`、`GET/PATCH/DELETE .../<id>`、`POST .../<id>/actions`（`move` up/down、`toggle`）。上限 10 张（5×2 排）；href 白名单 `/` 或 http(s)（挡 `javascript:`）；新卡默认排末尾；移动前先压实重复 sort_order（历史数据可能是全 0）。
+- **前端**：`admin-web/src/views/CampaignCardsView.vue`（列表缩略图 + 上移/下移/编辑/移除/启停 + ImageUploader 上传卡片图），侧栏【服务与运营】组「首页活动卡片」，路由 `/campaign-cards`，module `cms.campaign`。
+- **顺带修掉一个隐蔽 bug**：管理端 `AppModal`/`AppDrawer` 组件**没有 open 属性也没有 v-if**（和商家端同款问题）。此前 20 处用法都靠外层 `v-if` 包裹才没炸；新页面用 `:open` 一传就暴露——全屏 mask 常驻 DOM 拦截一切点击。修法：组件补 `open` prop（**缺省 true**），模板 `v-if="open"`；老用法（不传 open + 外层 v-if）与新用法（`:open`）都成立。
+- **验证（按纪律仅针对性）**：
+  - `manage.py test content.tests.test_campaign_cards` → **12 passed**（CRUD、上限 10、href 白名单、缺标题 400、上移/下移换位、顶/底越界拒绝、重复 sort_order 压实、storefront 覆盖快照、停用排除、空表回退快照、快照导入幂等）。
+  - `npx vitest`（9 passed）、`eslint`、`prettier --check`、`vite build`、`ruff` 全过。
+  - **浏览器端到端**：管理端改第一张卡标题加标记 → 购物端首页出现该标记卡片（10/10 张渲染）；管理端把第一张下移 → 购物端前两张顺序同步变化；**0 console 错误、0 失败请求**。测试数据已还原（标题/顺序恢复原状）。
+- **踩坑**：heredoc 往 `manage.py shell` 灌多行 for 循环会被交互解析器吞掉——独立脚本必须 `sys.path.insert(0, <repo>/backend)` + `django.setup()` 后直接跑，别用 shell stdin。
 
 ### 2026-11-05（图片改本地存储 + 真实上传）
 

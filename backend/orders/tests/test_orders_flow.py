@@ -1,6 +1,10 @@
 import json
 from datetime import timedelta
 
+from django.test import RequestFactory, TestCase
+from django.urls import reverse
+from django.utils import timezone
+
 from accounts_buyers.models import BuyerAccount
 from accounts_buyers.services import create_buyer_session
 from cart.models import Cart
@@ -8,13 +12,9 @@ from cart.services import add_item, resolve_cart_context, serialize_cart
 from catalog.models import Spu
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
 from checkout.models import Address
-from django.test import RequestFactory, TestCase
-from django.urls import reverse
-from django.utils import timezone
 from merchants.services import get_import_fallback_merchant
 from offers.models import InventoryLedger, Market, Offer
 from offers.services import import_offer_from_source
-
 from orders.models import InventoryReservation, Order
 from orders.order_services import cancel_expired_orders, cancel_order, place_order
 from orders.order_views import _error  # noqa: F401  (kept for parity)

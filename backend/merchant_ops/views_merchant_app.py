@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
+from catalog.models import Spu
 from merchant_ops.api_utils import iso, money_str
 from merchant_ops.merchant_context import (
     MerchantAPIView,
@@ -16,7 +17,8 @@ from merchant_ops.merchant_context import (
 )
 from merchant_ops.models import AfterSale
 from merchants.services import update_merchant_profile
-from orders.models import MerchantOrder
+from notifications.models import MerchantNotification
+from orders.models import MerchantOrder, Order
 
 
 def _day_bounds(days: int):
@@ -27,11 +29,7 @@ def _day_bounds(days: int):
 
 
 def _order_bars(merchant, start) -> list:
-    """按天聚合下单数量。
-
-    曝光目前只有商家级累计值（``merchant.exposure``），没有按天的明细表，
-    所以这里**不伪造**曝光柱状图——等后端补日汇总再返回，避免前端展示假数据。
-    """
+    """按天聚合已付款商家子单数量（文档 M01 §8：订单数量柱状图）。"""
 
     rows = (
         MerchantOrder.objects.filter(merchant=merchant, created_at__date__gte=start)
@@ -49,16 +47,60 @@ def _order_bars(merchant, start) -> list:
     return series
 
 
+def _daily_stat_series(merchant, start) -> list:
+    """按天统计序列（曝光度趋势 / 关注增量），只含真实有动作的日期。"""
+
+    from merchants.models import MerchantDailyStat
+
+    rows = MerchantDailyStat.objects.filter(merchant=merchant, stat_date__gte=start).order_by(
+        "stat_date"
+    )
+    return [
+        {
+            "date": row.stat_date.isoformat(),
+            "exposure": row.exposure_delta,
+            "followers": row.followers_delta,
+            "orders": row.order_count,
+        }
+        for row in rows
+    ]
+
+
+def run_lazy_sweeps() -> None:
+    """开发环境无调度器的兜底：读看板时顺手推进自动扭转与自动封店。
+
+    生产环境应改为 cron 周期执行 ``manage.py run_order_sweeps``（见 docs/08 WP-42），
+    这里的读路径触发只是保证演示数据及时，不承担正式调度职责。
+    """
+
+    from merchant_ops.services import auto_advance_progress
+    from merchants.services import auto_suspend_overdue_merchants
+
+    try:
+        auto_advance_progress()
+        auto_suspend_overdue_merchants()
+    except Exception:  # pragma: no cover - 清扫失败不阻塞看板读取
+        pass
+
+
 class MerchantOverviewView(MerchantAPIView):
     permission_any = ("merchant.dashboard.view",)
 
     def get(self, request):
         merchant = request.merchant
         today = timezone.localtime().date()
-        start, start_dt = _day_bounds(7)
+        range_param = (request.query_params.get("range") or "week").lower()
+        days = 30 if range_param == "month" else 7
+        start, start_dt = _day_bounds(days)
 
+        # 惰性清扫：进看板先推进到期节点 / 自动封店（见 run_lazy_sweeps 注释）。
+        run_lazy_sweeps()
+
+        # 今日订单数量 = 【购买】成功（已付款）才算，加购不计入（文档 M01 §2）。
         today_orders = MerchantOrder.objects.filter(
-            merchant=merchant, created_at__date=today
+            merchant=merchant,
+            created_at__date=today,
+            order__status=Order.Status.PAID,
         ).count()
         pending = MerchantOrder.objects.filter(
             merchant=merchant, status=MerchantOrder.Status.PENDING
@@ -74,11 +116,16 @@ class MerchantOverviewView(MerchantAPIView):
         shipped_today = MerchantOrder.objects.filter(merchant=merchant, shipped_at__date=today)
         profit_today = sum((order.items_total - order.cost_total) for order in shipped_today)
 
+        # 订单品类占比饼图：按已付款订单量统计，不按金额（文档 M01 §8 拍板 9）。
         category_share = list(
-            MerchantOrder.objects.filter(merchant=merchant)
-            .values("items__offer__sku__spu__local_category__name")
+            MerchantOrder.objects.filter(merchant=merchant, order__status=Order.Status.PAID)
+            .values("items__offer__sku__spu__merchant_category")
             .annotate(count=Count("id"))
             .order_by("-count")[:6]
+        )
+
+        notifications = list(
+            MerchantNotification.objects.filter(merchant=merchant).order_by("-created_at")[:3]
         )
 
         return Response(
@@ -88,7 +135,10 @@ class MerchantOverviewView(MerchantAPIView):
                     "today_order_count": today_orders,
                     "pending_shipment_count": pending_count,
                     "pending_order_amount": money_str(pending_amount),
-                    "today_exposure": merchant.exposure,
+                    # 今日曝光度 = 当日累计新增，每天自动清零（文档 M01 §4）。
+                    "today_exposure": merchant.exposure_delta
+                    if merchant.exposure_day == today
+                    else 0,
                     "follower_total": merchant.followers,
                     "follower_delta": merchant.follow_delta if merchant.follow_day == today else 0,
                     "credit_score": str(merchant.credit_score),
@@ -98,17 +148,29 @@ class MerchantOverviewView(MerchantAPIView):
                     "wallet_balance": money_str(merchant.wallet_balance),
                 },
                 "charts": {
-                    "range": "week",
+                    "range": "week" if days == 7 else "month",
                     "order_bars": _order_bars(merchant, start),
+                    "exposure_trend": _daily_stat_series(merchant, start),
                     "category_share": [
                         {
-                            "category": row["items__offer__sku__spu__local_category__name"]
-                            or "未分类",
+                            "category": Spu.merchant_category_label(
+                                row["items__offer__sku__spu__merchant_category"] or ""
+                            ),
                             "count": row["count"],
                         }
                         for row in category_share
                     ],
                 },
+                "notifications": [
+                    {
+                        "id": str(notification.public_id),
+                        "kind": notification.kind,
+                        "title": notification.title,
+                        "content": notification.content,
+                        "created_at": iso(notification.created_at),
+                    }
+                    for notification in notifications
+                ],
                 "permissions": sorted(merchant_permission_codes(request.membership)),
             }
         )

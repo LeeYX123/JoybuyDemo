@@ -1,16 +1,28 @@
 from django.http import JsonResponse
 
-from catalog.models import LocalCategory
+from catalog.models import LocalCategory, ProductSearchDocument
 from catalog.search_services import SearchParamsInvalid, search_documents
-from offers.models import Market
+from offers.market_services import offer_market_chain, resolve_market_context
 
 PAGE_SIZE = 24
 
 
-def serialize_category(category: LocalCategory) -> dict:
+def serialize_category(category: LocalCategory, locale=None) -> dict:
+    localized_name = category.name
+    if locale is not None:
+        translation = next(
+            (item for item in category.translations.all() if item.locale_id == locale.pk),
+            None,
+        )
+        if translation:
+            localized_name = translation.name
+        elif locale.language_code == "en" and category.name_en:
+            localized_name = category.name_en
+        elif locale.language_code == "zh" and category.name_zh:
+            localized_name = category.name_zh
     return {
         "public_id": str(category.public_id),
-        "name": category.name,
+        "name": localized_name,
         "name_en": category.name_en,
         "name_zh": category.name_zh,
         "slug": category.slug,
@@ -26,30 +38,42 @@ def category_tree(request):
     standard category order (docs/12 global convention #1) is ``sort_order``.
     """
 
-    roots = LocalCategory.objects.filter(
-        status=LocalCategory.Status.ACTIVE, parent__isnull=True
-    ).order_by("sort_order", "path", "pk")
-    children = LocalCategory.objects.filter(
-        status=LocalCategory.Status.ACTIVE, parent__isnull=False
-    ).order_by("sort_order", "path", "pk")
+    context = resolve_market_context(request)
+    locale = context.locale if context else None
+    roots = (
+        LocalCategory.objects.filter(status=LocalCategory.Status.ACTIVE, parent__isnull=True)
+        .prefetch_related("translations__locale")
+        .order_by("sort_order", "path", "pk")
+    )
+    children = (
+        LocalCategory.objects.filter(status=LocalCategory.Status.ACTIVE, parent__isnull=False)
+        .prefetch_related("translations__locale")
+        .order_by("sort_order", "path", "pk")
+    )
     children_by_parent = {}
     for item in children:
         children_by_parent.setdefault(item.parent_id, []).append(item)
     payload = []
     for root in roots:
-        data = serialize_category(root)
+        data = serialize_category(root, locale)
         data["children"] = [
-            serialize_category(child) for child in children_by_parent.get(root.pk, [])
+            serialize_category(child, locale) for child in children_by_parent.get(root.pk, [])
         ]
         payload.append(data)
-    return JsonResponse({"categories": payload})
+    return JsonResponse(
+        {
+            "market": context.market.code if context else None,
+            "locale": locale.code if locale else None,
+            "categories": payload,
+        }
+    )
 
 
 def storefront_search(request):
     """Search and filter search documents; query params drive everything."""
 
-    market = Market.objects.filter(code="GB", is_active=True).first()
-    if market is None:
+    context = resolve_market_context(request)
+    if context is None:
         return JsonResponse(
             {
                 "error": {"code": "MARKET_UNAVAILABLE", "message": "Market not configured."},
@@ -57,6 +81,25 @@ def storefront_search(request):
             },
             status=503,
         )
+
+    market = context.market
+    locale_code = context.locale.code
+    search_market = market
+    search_locale_code = locale_code
+    candidates = []
+    for candidate_market in offer_market_chain(market):
+        candidates.append((candidate_market, locale_code))
+        if candidate_market.default_locale != locale_code:
+            candidates.append((candidate_market, candidate_market.default_locale))
+    for candidate_market, candidate_locale in candidates:
+        if ProductSearchDocument.objects.filter(
+            market=candidate_market,
+            locale_code=candidate_locale,
+            is_searchable=True,
+        ).exists():
+            search_market = candidate_market
+            search_locale_code = candidate_locale
+            break
 
     category = None
     category_slug = request.GET.get("category", "").strip()
@@ -79,7 +122,8 @@ def storefront_search(request):
         page = 1
     try:
         result = search_documents(
-            market=market,
+            market=search_market,
+            locale_code=search_locale_code,
             query=request.GET.get("q", ""),
             category=category,
             brand=request.GET.get("brand", ""),
@@ -96,4 +140,8 @@ def storefront_search(request):
             },
             status=400,
         )
+    result["requested_market"] = market.code
+    result["requested_locale"] = locale_code
+    result["price_source_market"] = search_market.code
+    result["display_currency_symbol"] = market.display_currency_symbol
     return JsonResponse(result)

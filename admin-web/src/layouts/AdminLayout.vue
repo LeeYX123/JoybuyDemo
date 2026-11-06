@@ -19,6 +19,7 @@ const ICONS = {
   flag: 'M5 22V3M5 4h14l-3 5 3 5H5',
   crawler: 'M12 4v4M6 8h12v12H6zM9 12h.01M15 12h.01M9 16h6',
   image: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6',
+  grid: 'M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z',
   bell: 'M5 17h14l-2-4V9a5 5 0 00-10 0v4zM10 20h4',
   chat: 'M4 5h16v11H9l-5 4z',
   users: 'M8 12a4 4 0 100-8 4 4 0 000 8M2 21v-3c0-5 12-5 12 0v3M17 4a4 4 0 010 8M17 15c4 0 5 2 5 6',
@@ -50,7 +51,9 @@ const NAV = [
     items: [
       { to: '/aftersales', label: '售后处理', icon: 'service', module: 'aftersales' },
       { to: '/activities', label: '平台活动与返佣', icon: 'flag', module: 'activities' },
+      { to: '/activity-products', label: '活动商品管理', icon: 'flag', module: 'catalog.pool' },
       { to: '/banners', label: '首页轮播图', icon: 'image', module: 'cms.banners' },
+      { to: '/campaign-cards', label: '首页活动卡片', icon: 'grid', module: 'cms.campaign' },
       { to: '/notifications', label: '平台通知推送', icon: 'bell', module: 'notifications' },
       { to: '/support', label: '客服中心', icon: 'chat', module: 'support' },
     ],

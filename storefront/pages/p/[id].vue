@@ -6,6 +6,7 @@ import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useCart } from '../../composables/useCart'
 import { useLocale } from '../../composables/useLocale'
+import { useMarketLocale } from '../../composables/useMarketLocale'
 import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
@@ -17,13 +18,15 @@ const { t, categoryName } = useLocale()
 
 const publicId = computed(() => String(route.params.id || ''))
 const config = useRuntimeConfig()
+const { apiQuery } = useMarketLocale()
+const productQuery = computed(() => new URLSearchParams(apiQuery.value).toString())
 
 const { data, error } = await useFetch(
   () =>
     import.meta.server
-      ? `${config.apiBaseInternal}/products/${publicId.value}`
-      : `/api/v1/products/${publicId.value}`,
-  { key: `product-${publicId.value}` },
+      ? `${config.apiBaseInternal}/products/${publicId.value}?${productQuery.value}`
+      : `/api/v1/products/${publicId.value}?${productQuery.value}`,
+  { key: `product-${publicId.value}-${productQuery.value}` },
 )
 
 const { isAuthenticated, account } = useBuyerAuth()
@@ -40,7 +43,8 @@ const showGatePopup = ref(false)
 
 const isWhitelisted = computed(() => {
   if (!isAuthenticated.value) return false
-  return account.value?.purchase_whitelisted !== false
+  // WP-42 拍板：以后端返回的白名单标识为准，未拿到标识按不可购买处理。
+  return account.value?.purchase_whitelisted === true
 })
 
 function gateBlocked() {
@@ -64,6 +68,12 @@ async function onAddToCart() {
   if (!offer.value?.is_purchasable) return
   addState.value = 'adding'
   const response = await addItem(offer.value.public_id, quantity.value)
+  // 后端白名单兜底：即使前端判断通过，后端返回 NOT_WHITELISTED 也弹拦截弹窗。
+  if (response?.error?.code === 'NOT_WHITELISTED') {
+    addState.value = 'idle'
+    showGatePopup.value = true
+    return
+  }
   addState.value = response?.error ? 'error' : 'added'
   setTimeout(() => {
     addState.value = 'idle'

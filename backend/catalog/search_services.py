@@ -39,7 +39,7 @@ def _parse_decimal(value):
     return parsed
 
 
-def rebuild_search_documents(*, market, full: bool = True) -> int:
+def rebuild_search_documents(*, market, locale_code: str | None = None, full: bool = True) -> int:
     """Rebuild search documents for one market from live catalog data.
 
     Full rebuild: refresh every SPU with an ACTIVE offer. Returns the
@@ -57,17 +57,23 @@ def rebuild_search_documents(*, market, full: bool = True) -> int:
         ).values_list("sku__spu_id", flat=True)
     )
     for spu in Spu.objects.filter(pk__in=spu_ids):
-        rebuild_search_document(spu, market=market)
+        rebuild_search_document(spu, market=market, locale_code=locale_code)
     return len(spu_ids)
 
 
-def rebuild_search_document(spu, *, market) -> ProductSearchDocument:
+def rebuild_search_document(
+    spu,
+    *,
+    market,
+    locale_code: str | None = None,
+) -> ProductSearchDocument:
     """Refresh the search document of one SPU from its ACTIVE offers."""
 
     from django.db.models import Avg, Count
 
+    from catalog.localization_services import resolve_product_content
     from catalog.models import Spu
-    from offers.models import Offer
+    from offers.models import Locale, Offer
     from reviews.models import Review
 
     active_offers = list(
@@ -75,7 +81,11 @@ def rebuild_search_document(spu, *, market) -> ProductSearchDocument:
             sku__spu=spu, market=market, status=Offer.Status.ACTIVE
         ).select_related("currency")
     )
-    translation = spu.translations.order_by("pk").first()
+    locale_code = locale_code or market.default_locale
+    locale = Locale.objects.filter(code=locale_code, is_active=True).first()
+    if locale is None:
+        raise ValueError(f"Unknown or inactive locale: {locale_code}")
+    content = resolve_product_content(spu, market, locale)
     review_stats = Review.objects.filter(spu=spu, status=Review.Status.ACTIVE).aggregate(
         average=Avg("rating"), count=Count("pk")
     )
@@ -84,8 +94,9 @@ def rebuild_search_document(spu, *, market) -> ProductSearchDocument:
     document, _ = ProductSearchDocument.objects.update_or_create(
         spu=spu,
         market=market,
+        locale_code=locale.code,
         defaults={
-            "title": (translation.title if translation else "")[:500],
+            "title": content.title[:500],
             "brand_name": spu.brand.name if spu.brand else "",
             "local_category": spu.local_category,
             "min_price": min(prices),
@@ -103,6 +114,7 @@ def rebuild_search_document(spu, *, market) -> ProductSearchDocument:
 def search_documents(
     *,
     market,
+    locale_code: str | None = None,
     query: str = "",
     category=None,
     brand: str = "",
@@ -119,8 +131,9 @@ def search_documents(
         raise SearchParamsInvalid("page must be a positive integer.")
     page = min(page, MAX_PAGE)
 
+    locale_code = locale_code or market.default_locale
     queryset = ProductSearchDocument.objects.filter(
-        market=market, is_searchable=True
+        market=market, locale_code=locale_code, is_searchable=True
     ).select_related("spu", "local_category")
     query = (query or "").strip()
     if query:
@@ -175,6 +188,9 @@ def search_documents(
     rows = list(queryset[offset : offset + PAGE_SIZE])
     image_paths = _first_gallery_images(rows)
     return {
+        "market": market.code,
+        "locale": locale_code,
+        "display_currency_symbol": market.display_currency_symbol,
         "query": query,
         "page": page,
         "page_size": PAGE_SIZE,

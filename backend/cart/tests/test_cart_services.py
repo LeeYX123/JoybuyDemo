@@ -1,10 +1,6 @@
-from accounts_buyers.models import BuyerAccount
-from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
 from django.test import RequestFactory, TestCase
-from merchants.services import get_import_fallback_merchant
-from offers.models import Market, Offer
-from offers.services import import_offer_from_source
 
+from accounts_buyers.models import BuyerAccount
 from cart.models import Cart, CartItem
 from cart.services import (
     CartError,
@@ -15,6 +11,10 @@ from cart.services import (
     serialize_cart,
     update_item,
 )
+from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
+from merchants.services import get_import_fallback_merchant
+from offers.models import Market, Offer
+from offers.services import import_offer_from_source
 
 
 class CartTestBase(TestCase):

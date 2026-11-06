@@ -1,10 +1,10 @@
-from catalog.models import Spu
-from catalog.product_services import get_or_create_spu_from_source
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
-from media.storage import store_bytes
 
+from catalog.models import Spu
+from catalog.product_services import get_or_create_spu_from_source
+from media.storage import store_bytes
 from reviews.import_services import import_sampled_reviews
 from reviews.services import attach_review_media, mark_source_review_deleted
 

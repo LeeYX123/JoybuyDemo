@@ -12,6 +12,8 @@ from common import admin_views, views
 from content import views as content_views
 from media.views import serve_media_file
 from merchant_ops.urls import urlpatterns as merchant_ops_urlpatterns
+from merchants import public_views as merchant_public_views
+from offers import views as offer_views
 from orders import order_views
 from reviews import review_views
 
@@ -25,7 +27,18 @@ urlpatterns = [
     path("api/v1/health", views.HealthView.as_view(), name="health"),
     path("api/v1/storefront/home", content_views.storefront_home, name="storefront-home"),
     path("api/v1/categories", search_views.category_tree, name="category-tree"),
+    path("api/v1/markets", offer_views.storefront_markets, name="storefront-markets"),
     path("api/v1/search", search_views.storefront_search, name="storefront-search"),
+    path(
+        "api/v1/merchants/search",
+        merchant_public_views.merchant_search,
+        name="merchant-search",
+    ),
+    path(
+        "api/v1/merchants/<slug:slug>",
+        merchant_public_views.merchant_detail,
+        name="merchant-public-detail",
+    ),
     path(
         "api/v1/products/<uuid:public_id>",
         detail_views.product_detail,

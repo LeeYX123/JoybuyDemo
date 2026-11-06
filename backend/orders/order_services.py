@@ -11,9 +11,9 @@ from datetime import timedelta
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
 from offers.models import Offer
 from offers.services import adjust_offer_inventory
-
 from orders.models import Order
 
 PAYMENT_WINDOW_MINUTES = int(getattr(settings, "ORDER_PAYMENT_WINDOW_MINUTES", "60"))
@@ -26,15 +26,37 @@ class OrderError(Exception):
         super().__init__(message)
 
 
-def place_order(*, account, cart_snapshot: dict, address_snapshot: dict) -> Order:
-    """Create a PENDING_PAYMENT order from a validated cart snapshot.
+def place_order(
+    *,
+    account,
+    cart_snapshot: dict,
+    address_snapshot: dict,
+    payment_method: str = "",
+) -> Order:
+    """Create a PAID order from a validated cart snapshot and split it into
+    per-merchant fulfilment sub-orders.
 
-    Raises OrderError (CART_INVALID / INSUFFICIENT_STOCK) without touching
-    any state when validation fails.
+    WP-42（文档 M01 §1 / 购物端）：白名单账户结账页选择任一支付方式后点
+    【下单】即判定支付成功（演示性质，不对接真实支付网关），因此下单直接
+    置 PAID 并记录支付方式；同时按 offer.merchant 拆出 MerchantOrder
+    （成本快照取 offer.cost_price）。
+
+    Raises OrderError (CART_INVALID / INSUFFICIENT_STOCK / NOT_WHITELISTED /
+    PAYMENT_METHOD_INVALID) without touching any state when validation fails.
     """
 
     from cart.models import Cart
     from checkout.models import Address
+
+    # 白名单后端打通（文档拍板 7）：后端标识驱动，未拿到标识按不可购买处理。
+    if account is None or not account.purchase_whitelisted:
+        raise OrderError("NOT_WHITELISTED", "当前账号不在购买白名单内，无法下单。")
+
+    if payment_method:
+        from orders.models import Order as OrderModel
+
+        if payment_method not in OrderModel.PAYMENT_METHODS:
+            raise OrderError("PAYMENT_METHOD_INVALID", "不支持的支付方式。")
 
     if cart_snapshot.get("needs_attention") or not cart_snapshot.get("items"):
         raise OrderError("CART_INVALID", "Your cart needs attention before checkout.")
@@ -73,8 +95,10 @@ def place_order(*, account, cart_snapshot: dict, address_snapshot: dict) -> Orde
 
         shipping_cost, _method = compute_shipping(subtotal, currency.code)
 
-        from orders.models import Order, OrderItem
+        from orders.models import MerchantOrder, Order, OrderItem
 
+        # 演示支付：选任一支付方式点【下单】即支付成功（文档 M01 §1 拍板）。
+        paid_now = bool(payment_method)
         order = Order.objects.create(
             account=account,
             currency=currency,
@@ -83,31 +107,64 @@ def place_order(*, account, cart_snapshot: dict, address_snapshot: dict) -> Orde
             total=subtotal + Decimal(shipping_cost),
             shipping_address=address.as_snapshot(),
             payment_expires_at=timezone.now() + timedelta(minutes=PAYMENT_WINDOW_MINUTES),
+            status=Order.Status.PAID if paid_now else Order.Status.PENDING_PAYMENT,
+            payment_method=payment_method,
+            paid_at=timezone.now() if paid_now else None,
         )
         from orders.models import InventoryReservation
 
+        # 按商家聚合：商家子单承接发货、进度与回款（WP-42 下单拆单）。
+        merchant_orders = {}
         for entry, offer in item_specs:
             translation = offer.sku.spu.translations.order_by("pk").first()
+            unit_cost = offer.cost_price or Decimal("0")
+            merchant_order = merchant_orders.get(offer.merchant_id)
+            if merchant_order is None:
+                merchant_order = MerchantOrder.objects.create(
+                    order=order,
+                    merchant_id=offer.merchant_id,
+                    currency=offer.currency.code,
+                    items_total=Decimal("0"),
+                    cost_total=Decimal("0"),
+                    payment_method=payment_method,
+                    recipient_region=address.country_code,
+                )
+                merchant_orders[offer.merchant_id] = merchant_order
+            quantity = entry["quantity"]
+            merchant_order.items_total += offer.current_price * quantity
+            merchant_order.cost_total += unit_cost * quantity
             OrderItem.objects.create(
                 order=order,
+                merchant_order=merchant_order,
                 offer=offer,
                 spu_public_id=str(offer.sku.spu.public_id),
                 title=translation.title if translation else "",
-                quantity=entry["quantity"],
+                quantity=quantity,
                 unit_price=offer.current_price,
+                unit_cost=unit_cost,
                 currency=offer.currency.code,
             )
             InventoryReservation.objects.create(
-                order=order, offer=offer, quantity=entry["quantity"]
+                order=order, offer=offer, quantity=quantity
             )
             adjust_offer_inventory(
                 offer=offer,
-                quantity_delta=-entry["quantity"],
+                quantity_delta=-quantity,
                 reason="RESERVATION",
                 idempotency_key=f"order-reserve:{order.public_id}:{offer.public_id}",
                 reference_type="order",
                 reference_id=str(order.public_id),
             )
+        for merchant_order in merchant_orders.values():
+            merchant_order.save(update_fields=["items_total", "cost_total", "updated_at"])
+            if paid_now:
+                from merchants.services import _bump_daily_stat
+
+                _bump_daily_stat(
+                    merchant_order.merchant,
+                    order_count=1,
+                    stat_date=timezone.localdate(),
+                )
         # The buyer's OPEN cart becomes CHECKED_OUT; a fresh one opens lazily.
         from django.db.models import Q
 

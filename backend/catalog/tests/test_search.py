@@ -20,7 +20,7 @@ from catalog.search_services import (
 from catalog.services import create_local_category
 from media.models import MediaAsset, MediaUsage
 from merchants.services import get_import_fallback_merchant
-from offers.models import Currency, Market, Offer
+from offers.models import Currency, Locale, Market, Offer
 from offers.services import import_offer_from_source
 from reviews.services import upsert_source_review
 
@@ -290,7 +290,7 @@ class SearchQueryPlanTests(SearchFixtureBase):
         # MySQL: possible_keys/key mention the composite index; ref/range access.
         explain_columns = [column[0] for column in cursor.description]
         plan_dict = dict(zip(explain_columns, plan))
-        self.assertIn("psd_market_cat_price_idx", plan_dict.get("possible_keys") or "")
+        self.assertIn("psd_market_locale_cat_idx", plan_dict.get("possible_keys") or "")
         self.assertIn(plan_dict.get("type") or "", {"ref", "range", "eq_ref"})
 
     def test_full_table_scan_is_absent_for_newest_sort(self):
@@ -335,6 +335,15 @@ class SearchTextTests(TransactionTestCase):
                 "default_locale": "en-GB",
                 "time_zone": "Europe/London",
                 "default_currency": self.currency,
+            },
+        )
+        Locale.objects.get_or_create(
+            code="en-GB",
+            defaults={
+                "language_code": "en",
+                "region_code": "GB",
+                "name": "English (United Kingdom)",
+                "native_name": "English",
             },
         )
         self.electronics = create_local_category(

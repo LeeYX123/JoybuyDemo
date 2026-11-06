@@ -1,11 +1,11 @@
-from audit.services import record_audit_entry
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.utils import timezone
-from offers.services import parse_money
 
+from audit.services import record_audit_entry
 from catalog.domain import FieldValueInvalid, OverrideStateInvalid
 from catalog.models import LocalFieldOverride, LocalFieldOverrideVersion, SourceFieldValue
+from offers.services import parse_money
 
 
 def _validate_text(target, value):

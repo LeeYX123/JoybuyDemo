@@ -50,7 +50,8 @@ class Merchant(models.Model):
     deposit_enabled = models.BooleanField(default=False)
     deposit_required = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     deposit_initial_paid = models.BooleanField(default=False)
-    ban_after_days = models.PositiveSmallIntegerField(default=4)
+    # 订单未处理自动封店天数（天）：null = 不自动封店；判定口径见 merchants.services.auto_suspend_overdue_merchants
+    ban_after_days = models.PositiveSmallIntegerField(null=True, blank=True)
     suspend_reason = models.CharField(max_length=255, blank=True, default="")
 
     # --- 经营看板指标（后台正向调整，跨日归零的当天增量单独存） ---
@@ -58,7 +59,17 @@ class Merchant(models.Model):
     follow_delta = models.PositiveIntegerField(default=0)
     follow_day = models.DateField(null=True, blank=True)
     exposure = models.PositiveIntegerField(default=0)
+    exposure_delta = models.PositiveIntegerField(default=0)
+    exposure_day = models.DateField(null=True, blank=True)
     last_online_at = models.DateTimeField(null=True, blank=True)
+
+    # --- 折扣（按商家统一设置，不做单商品差异化；百分数，70 = 70%） ---
+    # 成本价 = 向上取整(零售价 × 折扣)；活动商品优先用 activity_discount_rate。
+    # 文档拍板：不做区间校验、不做默认值兜底，管理端设多少按多少算。
+    discount_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    activity_discount_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
 
     referral_code = models.CharField(max_length=32, unique=True, null=True, blank=True)
 
@@ -96,6 +107,29 @@ class Merchant(models.Model):
         if not self.admission_approved:
             return False
         return not self.deposit_enabled or self.deposit_initial_paid
+
+
+class MerchantDailyStat(models.Model):
+    """商家按天统计（曝光度趋势 / 关注增量 / 订单量）。
+
+    只在动作发生时 upsert 当日行（后台调整曝光/关注、生成已付款商家子单），
+    历史行不回填——趋势图按实际有数据的日期展示。
+    """
+
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="daily_stats")
+    stat_date = models.DateField()
+    exposure_delta = models.PositiveIntegerField(default=0)
+    followers_delta = models.PositiveIntegerField(default=0)
+    order_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "merchant_daily_stat"
+        constraints = [
+            models.UniqueConstraint(fields=["merchant", "stat_date"], name="merchant_daily_unique")
+        ]
+        indexes = [models.Index(fields=["merchant", "stat_date"], name="merchant_daily_idx")]
 
 
 class MerchantPermission(models.Model):

@@ -24,6 +24,9 @@ const state = reactive({
   listingTotal: 0,
   listingPage: 1,
   listingHasNext: false,
+  // 本店已上架 Tab 的搜索与品类筛选（文档 M02：商品名称/ID 搜索 + 已上架品类导航）。
+  listingCategory: 'ALL',
+  listingQ: '',
 })
 
 const detail = reactive({ value: null, open: false })
@@ -76,6 +79,10 @@ async function loadListings() {
       page_size: String(PAGE_SIZE),
       status: 'ACTIVE',
     })
+    if (state.listingCategory && state.listingCategory !== 'ALL') {
+      params.set('category', state.listingCategory)
+    }
+    if (state.listingQ.trim()) params.set('q', state.listingQ.trim())
     const payload = await apiRequest(`/merchant/listings?${params}`)
     state.listings = payload.items || []
     state.listingTotal = payload.total || 0
@@ -85,6 +92,17 @@ async function loadListings() {
   } finally {
     state.loading = false
   }
+}
+
+function selectListingCategory(key) {
+  state.listingCategory = key
+  state.listingPage = 1
+  loadListings()
+}
+
+function searchListings() {
+  state.listingPage = 1
+  loadListings()
 }
 
 function selectCategory(key) {
@@ -233,7 +251,7 @@ onMounted(async () => {
           <div class="product-card__body">
             <h3 :title="item.name">{{ item.name }}</h3>
             <p class="product-card__meta">
-              {{ item.category?.name_zh || item.category?.name || '未分类' }}
+              {{ item.merchant_category_label || item.category?.name_zh || '未分类' }}
             </p>
             <div class="product-card__prices">
               <div>
@@ -271,6 +289,33 @@ onMounted(async () => {
     </template>
 
     <template v-else>
+      <div class="toolbar">
+        <div class="chip-row">
+          <button
+            type="button"
+            class="chip"
+            :class="{ 'is-active': state.listingCategory === 'ALL' }"
+            @click="selectListingCategory('ALL')"
+          >
+            全部
+          </button>
+          <button
+            v-for="category in state.categories"
+            :key="category.id"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': state.listingCategory === category.id }"
+            @click="selectListingCategory(category.id)"
+          >
+            {{ category.name }}
+          </button>
+        </div>
+        <form class="search-row" @submit.prevent="searchListings">
+          <input v-model="state.listingQ" type="search" placeholder="输入商品名称或 ID 搜索" />
+          <button type="submit" class="btn btn--primary">搜索</button>
+        </form>
+      </div>
+
       <div class="card">
         <div class="card__body">
           <table v-if="state.listings.length" class="data-table">
@@ -301,7 +346,10 @@ onMounted(async () => {
                     </div>
                   </div>
                 </td>
-                <td>{{ row.category?.name_zh || row.category?.name || '未分类' }}</td>
+                <td>
+                  {{ row.merchant_category_label || row.category?.name_zh || '未分类' }}
+                  <span v-if="row.activity" class="tag tag--red">活动</span>
+                </td>
                 <td class="num">¥ {{ row.cost || '—' }}</td>
                 <td class="num">¥ {{ row.price }}</td>
                 <td>{{ row.listed_at ? row.listed_at.slice(0, 10) : '—' }}</td>
@@ -310,6 +358,9 @@ onMounted(async () => {
             </tbody>
           </table>
           <p v-else class="empty-state">还没有上架任何商品，去「平台商品池」挑一件吧。</p>
+          <p class="hint-text" style="margin-top: 8px">
+            如需下架商品，请联系平台客服，由管理端代为操作。
+          </p>
         </div>
       </div>
       <AppPager
@@ -330,7 +381,9 @@ onMounted(async () => {
           </div>
           <div>
             <dt>品类</dt>
-            <dd>{{ detail.value.category?.name_zh || detail.value.category?.name || '未分类' }}</dd>
+            <dd>
+              {{ detail.value.merchant_category_label || '未分类' }}
+            </dd>
           </div>
           <div>
             <dt>成本价</dt>

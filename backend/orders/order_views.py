@@ -1,8 +1,8 @@
 import json
 
-from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from django.http import JsonResponse
 
+from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from orders.models import Order
 from orders.order_services import OrderError, attempt_payment, cancel_order, place_order
 
@@ -38,6 +38,7 @@ def order_list_create(request):
                 account=account,
                 cart_snapshot=serialize_cart(cart),
                 address_snapshot=body.get("address") or {},
+                payment_method=str(body.get("payment_method") or ""),
             )
         except OrderError as exc:
             status = 404 if exc.code == "ADDRESS_UNSUPPORTED" else 400
@@ -48,6 +49,7 @@ def order_list_create(request):
                 "status": order.status,
                 "total": str(order.total),
                 "currency": order.currency.code,
+                "payment_method": order.payment_method,
                 "payment_expires_at": order.payment_expires_at.isoformat(),
             },
             status=201,

@@ -1,11 +1,13 @@
 import { computed } from 'vue'
 import { useFetch, useRuntimeConfig } from '#imports'
+import { useMarketLocale } from './useMarketLocale'
 
 // Shared composable for the storefront search API (SSR direct, client proxied).
 export function useSearch(params) {
+  const { apiQuery } = useMarketLocale()
   const query = computed(() => {
     const search = new URLSearchParams()
-    for (const [key, value] of Object.entries(params.value || {})) {
+    for (const [key, value] of Object.entries({ ...apiQuery.value, ...(params.value || {}) })) {
       if (value !== undefined && value !== null && value !== '') {
         search.set(key, String(value))
       }

@@ -9,11 +9,11 @@ CRAWLER_DIR = Path(__file__).resolve().parents[3] / "crawler"
 if str(CRAWLER_DIR) not in sys.path:
     sys.path.insert(0, str(CRAWLER_DIR))
 
-from catalog.product_services import get_or_create_spu_from_source  # noqa: E402
-from crawler_control.tests.test_crawler_control_domain import CrawlerControlTestBase  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from joybuy_crawler.sampling import SampleCandidate  # noqa: E402
 
+from catalog.product_services import get_or_create_spu_from_source  # noqa: E402
+from crawler_control.tests.test_crawler_control_domain import CrawlerControlTestBase  # noqa: E402
 from reviews.import_services import (  # noqa: E402
     import_sampled_reviews,
     ingest_review_candidates,

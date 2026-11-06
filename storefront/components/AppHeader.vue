@@ -5,6 +5,7 @@ import { useRoute } from '#imports'
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 import { useCategoryTree } from '../composables/useCategoryTree'
 import { useLocale } from '../composables/useLocale'
+import { MARKET_OPTIONS, useMarketLocale } from '../composables/useMarketLocale'
 
 import AppCategoryPanel from './AppCategoryPanel.vue'
 
@@ -16,9 +17,18 @@ const props = defineProps({
 })
 
 const route = useRoute()
-const { t, locale, toggleLocale, categoryName } = useLocale()
+const { t, categoryName } = useLocale()
+const { market, localeCode, availableLocales, setMarket, setMarketLocale } = useMarketLocale()
 const { categories } = useCategoryTree()
 const { isAuthenticated, account, logout } = useBuyerAuth()
+
+// 搜商家：一个搜索框 + 两个按键（WP-42 文档「三、购物端 → 搜索框」拍板形态）。
+const searchInput = ref(null)
+
+function searchMerchants() {
+  const query = searchInput.value?.value?.trim() || ''
+  navigateTo(query ? `/merchants?q=${encodeURIComponent(query)}` : '/merchants')
+}
 
 // The product detail page has its own top nav (breadcrumb); the global
 // category row stays hidden there (real-site behaviour).
@@ -48,8 +58,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (noticeTimer) clearInterval(noticeTimer)
 })
-
-const regionLabel = computed(() => (locale.value === 'zh' ? 'UK | 中文(简体)' : 'UK | English'))
 
 // Category row: the 11 standard categories from the API (requirement 1-1),
 // spread edge to edge like the real header.
@@ -106,9 +114,31 @@ const brandLogoUrl = '/images/logo.png'
     <!-- Black notice strip: rotating service promises + locale switch. -->
     <div class="top-strip">
       <div class="top-strip__inner">
-        <button class="top-strip__region" type="button" @click="toggleLocale">
-          {{ regionLabel }}
-        </button>
+        <div class="top-strip__region" aria-label="Country and language">
+          <label class="visually-hidden" for="market-select">Country</label>
+          <select
+            id="market-select"
+            :value="market"
+            aria-label="Country"
+            @change="setMarket($event.target.value)"
+          >
+            <option v-for="option in MARKET_OPTIONS" :key="option.code" :value="option.code">
+              {{ option.name }}
+            </option>
+          </select>
+          <span aria-hidden="true">|</span>
+          <label class="visually-hidden" for="locale-select">Language</label>
+          <select
+            id="locale-select"
+            :value="localeCode"
+            aria-label="Language"
+            @change="setMarketLocale($event.target.value)"
+          >
+            <option v-for="option in availableLocales" :key="option.code" :value="option.code">
+              {{ option.name }}
+            </option>
+          </select>
+        </div>
         <div class="top-strip__notice">
           <button
             class="top-strip__arrow"
@@ -168,6 +198,7 @@ const brandLogoUrl = '/images/logo.png'
           <label class="visually-hidden" for="site-search">{{ t('header.searchLabel') }}</label>
           <input
             id="site-search"
+            ref="searchInput"
             class="search__input"
             type="search"
             name="q"
@@ -181,6 +212,9 @@ const brandLogoUrl = '/images/logo.png'
                 fill="currentColor"
               />
             </svg>
+          </button>
+          <button class="search__merchant" type="button" @click="searchMerchants">
+            {{ t('header.searchMerchants') }}
           </button>
         </form>
 
@@ -319,6 +353,9 @@ const brandLogoUrl = '/images/logo.png'
 }
 
 .top-strip__region {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
   padding: 0;
   border: 0;
@@ -327,6 +364,20 @@ const brandLogoUrl = '/images/logo.png'
   font: inherit;
   cursor: pointer;
   opacity: 0.92;
+}
+
+.top-strip__region select {
+  max-width: 140px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.top-strip__region option {
+  background: #1a1a1a;
+  color: #fff;
 }
 
 .top-strip__region:hover {
@@ -456,7 +507,7 @@ const brandLogoUrl = '/images/logo.png'
   flex: 1;
   min-width: 0;
   height: 100%;
-  padding: 0 76px 0 var(--space-5);
+  padding: 0 170px 0 var(--space-5);
   border: 0;
   background: transparent;
   font: inherit;
@@ -484,6 +535,27 @@ const brandLogoUrl = '/images/logo.png'
 }
 
 .search__submit:hover {
+  opacity: 0.9;
+}
+
+/* 搜商家按键（WP-42）：与搜商品按键并列，文字形态。 */
+.search__merchant {
+  position: absolute;
+  right: 72px;
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--colour-white);
+  background: #e1251b;
+  white-space: nowrap;
+}
+
+.search__merchant:hover {
   opacity: 0.9;
 }
 

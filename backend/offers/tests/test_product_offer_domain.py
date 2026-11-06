@@ -1,6 +1,9 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.test import TestCase
+from django.utils import timezone
+
 from accounts_staff.models import PlatformRole
 from catalog.domain import ProductSourceIdentityInvalid, SkuSpecificationInvalid
 from catalog.models import (
@@ -15,11 +18,8 @@ from catalog.product_services import (
     get_or_create_sku_from_source,
     get_or_create_spu_from_source,
 )
-from django.test import TestCase
-from django.utils import timezone
 from merchants.models import Merchant
 from merchants.services import get_import_fallback_merchant
-
 from offers.domain import (
     InventoryAdjustmentInvalid,
     InventoryIdempotencyConflict,
