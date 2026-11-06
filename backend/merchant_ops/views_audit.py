@@ -24,6 +24,55 @@ MODULE_LABELS = {
     "offer": "商家商品",
 }
 
+# 动作中文名（动作方法名保留原文展示在下方，保证可检索性）。
+ACTION_LABELS = {
+    "MERCHANT_CREATED": "新建商家",
+    "MERCHANT_UPDATED": "编辑商家",
+    "MERCHANT_ADMISSION_APPROVED": "入驻审核通过",
+    "MERCHANT_ADMISSION_REJECTED": "入驻审核驳回",
+    "MERCHANT_SUSPENDED": "封店",
+    "MERCHANT_UNSUSPENDED": "解封",
+    "MERCHANT_CREDIT_DEDUCTED": "扣除信誉分",
+    "MERCHANT_FOLLOWERS_ADDED": "新增关注",
+    "MERCHANT_EXPOSURE_ADDED": "调整曝光",
+    "MERCHANT_PRODUCT_LISTED": "商家上架商品",
+    "MERCHANT_ORDER_SHIPPED": "订单发货",
+    "MERCHANT_ORDER_TIME_UPDATED": "订单时间调整",
+    "MERCHANT_ORDER_NODE_ADVANCED": "订单节点推进",
+    "MERCHANT_ORDER_COMPLETED": "订单完成",
+    "MERCHANT_WALLET_PASSWORD_SET": "设置钱包密码",
+    "MERCHANT_WITHDRAWAL_REQUESTED": "提现申请",
+    "MERCHANT_ACTIVITY_JOINED": "参与平台活动",
+    "MERCHANT_AFTER_SALE_HANDLED": "售后处理",
+    "MERCHANT_NOTIFICATION_SENT": "平台通知发送",
+    "MERCHANT_NOTIFICATION_REPLIED": "平台通知回复",
+    "PRODUCT_CREATED": "新增商品",
+    "PRODUCT_UPDATED": "编辑商品",
+    "PRODUCT_STATUS_CHANGED": "商品状态变更",
+    "PRODUCT_ACTIVITY_MARKED": "活动商品标记",
+    "LISTING_REMOVED": "商品下架",
+    "WALLET_RECHARGED": "钱包充值",
+    "WHITELIST_ADD": "加入白名单",
+    "WHITELIST_REMOVE": "移出白名单",
+    "WHITELIST_RECHARGE": "白名单充值",
+    "WHITELIST_ADJUST": "白名单余额调整",
+    "BANNER_CREATED": "新建轮播图",
+    "BANNER_UPDATED": "编辑轮播图",
+    "BANNER_DELETED": "删除轮播图",
+    "CAMPAIGN_CARD_CREATED": "新建活动卡片",
+    "CAMPAIGN_CARD_UPDATED": "编辑活动卡片",
+    "CAMPAIGN_CARD_DELETED": "删除活动卡片",
+    "STAFF_ACCOUNT_CREATED": "新建员工账号",
+    "STAFF_ACCOUNT_UPDATED": "更新员工账号",
+    "SUPPORT_CONVERSATION_RESOLVED": "客服会话结案",
+    "ACTIVITY_CREATED": "新建平台活动",
+    "ACTIVITY_UPDATED": "编辑平台活动",
+    "REFERRAL_CALCULATED": "返佣核算",
+    "REFERRAL_COMMISSION_PAID": "返佣发放",
+    "REFERRAL_PROGRAM_UPDATED": "返佣规则更新",
+    "MEDIA_UPLOADED": "上传图片",
+}
+
 
 def _payload(log: AuditLog) -> dict:
     return {
@@ -35,12 +84,59 @@ def _payload(log: AuditLog) -> dict:
         "module_label": MODULE_LABELS.get(log.target_type, log.target_type),
         "target": log.target_id,
         "action": log.action,
+        "action_label": ACTION_LABELS.get(log.action, ""),
         "reason": log.reason,
         "before": log.before_state,
         "after": log.after_state,
         "ip_address": log.ip_address,
         "request_id": str(log.request_id) if log.request_id else None,
     }
+
+
+def _resolve_target_names(rows) -> dict:
+    """按业务对象类型一次性解析名称（上方显示名称、下方显示 ID）。
+
+    支持的类型：merchant（店铺名）、spu（商品标题）、offer（所属商品标题）、
+    buyer_account（邮箱）、staff_account（姓名）；其余类型回退为空。
+    """
+
+    ids_by_type = {}
+    for log in rows:
+        ids_by_type.setdefault(log.target_type, set()).add(log.target_id)
+    names = {}
+
+    from accounts_buyers.models import BuyerAccount
+    from accounts_staff.models import StaffAccount
+    from catalog.models import Spu, SpuTranslation
+    from merchants.models import Merchant
+    from offers.models import Offer
+
+    merchant_ids = ids_by_type.get("merchant", set())
+    for merchant in Merchant.objects.filter(public_id__in=merchant_ids):
+        names[("merchant", str(merchant.public_id))] = merchant.display_name
+
+    spu_ids = ids_by_type.get("spu", set())
+    if spu_ids:
+        titles = {}
+        for translation in SpuTranslation.objects.filter(
+            spu__public_id__in=spu_ids, locale__in=["zh-CN", "zh", "en-GB", "en"]
+        ).order_by("pk"):
+            titles.setdefault(str(translation.spu.public_id), translation.title)
+        for spu in Spu.objects.filter(public_id__in=spu_ids):
+            names[("spu", str(spu.public_id))] = titles.get(str(spu.public_id), "")
+
+    offer_ids = ids_by_type.get("offer", set())
+    if offer_ids:
+        for offer in Offer.objects.filter(public_id__in=offer_ids).select_related("sku__spu"):
+            spu = offer.sku.spu
+            translation = spu.translations.order_by("pk").first()
+            names[("offer", str(offer.public_id))] = translation.title if translation else ""
+
+    for account in BuyerAccount.objects.filter(public_id__in=ids_by_type.get("buyer_account", set())):
+        names[("buyer_account", str(account.public_id))] = account.email or ""
+    for staff in StaffAccount.objects.filter(public_id__in=ids_by_type.get("staff_account", set())):
+        names[("staff_account", str(staff.public_id))] = staff.display_name
+    return names
 
 
 def _filtered(request):
@@ -80,7 +176,13 @@ class AdminAuditLogsView(OpsAPIView):
 
     def get(self, request):
         rows, meta = paginate(_filtered(request), request)
-        return Response({"items": [_payload(row) for row in rows], **meta})
+        names = _resolve_target_names(rows)
+        items = []
+        for row in rows:
+            payload = _payload(row)
+            payload["target_name"] = names.get((row.target_type, row.target_id), "")
+            items.append(payload)
+        return Response({"items": items, **meta})
 
 
 class AdminAuditLogModulesView(OpsAPIView):

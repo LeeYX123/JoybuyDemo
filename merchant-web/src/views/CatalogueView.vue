@@ -231,11 +231,12 @@ onMounted(async () => {
             {{ category.name }}
           </button>
         </div>
-        <form class="search-row" @submit.prevent="search">
-          <input v-model="state.q" type="search" placeholder="输入商品名称或 ID 搜索" />
-          <button type="submit" class="btn btn--primary">搜索</button>
-        </form>
       </div>
+      <!-- 搜索框独立成行（不跟品类挤在一行）。 -->
+      <form class="search-row" @submit.prevent="search">
+        <input v-model="state.q" type="search" placeholder="输入商品名称或 ID 搜索" />
+        <button type="submit" class="btn btn--primary">搜索</button>
+      </form>
 
       <p v-if="state.loading" class="inline-loading">加载中…</p>
       <p v-else-if="poolEmpty" class="empty-state">没有匹配的商品，换个关键词或品类试试。</p>
@@ -263,7 +264,6 @@ onMounted(async () => {
                 <b class="num">¥ {{ item.price || '未定价' }}</b>
               </div>
             </div>
-            <p class="product-card__id mono">{{ item.id.slice(0, 8) }}…</p>
             <div class="product-card__actions">
               <button type="button" class="btn btn--sm" @click="openDetail(item)">查看详情</button>
               <button
@@ -310,11 +310,11 @@ onMounted(async () => {
             {{ category.name }}
           </button>
         </div>
-        <form class="search-row" @submit.prevent="searchListings">
-          <input v-model="state.listingQ" type="search" placeholder="输入商品名称或 ID 搜索" />
-          <button type="submit" class="btn btn--primary">搜索</button>
-        </form>
       </div>
+      <form class="search-row" @submit.prevent="searchListings">
+        <input v-model="state.listingQ" type="search" placeholder="输入商品名称或 ID 搜索" />
+        <button type="submit" class="btn btn--primary">搜索</button>
+      </form>
 
       <div class="card">
         <div class="card__body">
@@ -559,12 +559,6 @@ onMounted(async () => {
 
 .product-card__label {
   display: block;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.product-card__id {
-  margin: 0;
   font-size: 11px;
   color: var(--muted);
 }

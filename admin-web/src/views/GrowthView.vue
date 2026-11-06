@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 
+import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
 import { adminWrite } from '@/composables/useAdminApi'
@@ -16,7 +17,8 @@ const state = reactive({
   notice: '',
 })
 
-const records = ref([])
+// 每个商家单独的调整记录抽屉（不再和列表同屏展示）。
+const recordDrawer = reactive({ open: false, merchant: null, items: [], loading: false, error: '' })
 
 const target = ref(null)
 const kind = ref('')
@@ -41,12 +43,19 @@ async function load(resetPage = false) {
   }
 }
 
-async function loadRecords() {
+async function openRecords(row) {
+  recordDrawer.open = true
+  recordDrawer.merchant = row
+  recordDrawer.items = []
+  recordDrawer.error = ''
+  recordDrawer.loading = true
   try {
-    const payload = await apiRequest('/growth/records?page_size=20')
-    records.value = payload.items
-  } catch {
-    records.value = []
+    const payload = await apiRequest(`/growth/records?page_size=50&merchant=${row.id}`)
+    recordDrawer.items = payload.items
+  } catch (error) {
+    recordDrawer.error = error.message
+  } finally {
+    recordDrawer.loading = false
   }
 }
 
@@ -62,13 +71,19 @@ async function submit() {
   busy.value = true
   formError.value = ''
   try {
-    await adminWrite(`/growth/${target.value.id}/actions`, {
+    const adjustedId = target.value.id
+    await adminWrite(`/growth/${adjustedId}/actions`, {
       action: kind.value,
       count: Number(form.count),
     })
     target.value = null
     state.notice = '调整已完成，商家看板会同步刷新。'
-    await Promise.all([load(), loadRecords()])
+    // 列表按入驻时间固定排序，调整后顺序不变；只刷新数值。
+    await load()
+    // 该商家的记录抽屉开着时同步刷新记录。
+    if (recordDrawer.open && recordDrawer.merchant?.id === adjustedId) {
+      await openRecords(recordDrawer.merchant)
+    }
   } catch (error) {
     formError.value = error.message
   } finally {
@@ -78,6 +93,10 @@ async function submit() {
 
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 16) : '—'
+}
+
+function actionLabel(action) {
+  return action === 'MERCHANT_FOLLOWERS_ADDED' ? '新增关注' : '调整曝光'
 }
 
 function resetFilters() {
@@ -92,7 +111,6 @@ function goPage(page) {
 
 onMounted(() => {
   load()
-  loadRecords()
 })
 </script>
 
@@ -171,6 +189,9 @@ onMounted(() => {
                   >
                     调整曝光
                   </button>
+                  <button type="button" class="btn btn--sm" @click="openRecords(row)">
+                    调整记录
+                  </button>
                 </div>
               </td>
             </tr>
@@ -190,40 +211,47 @@ onMounted(() => {
       />
     </div>
 
-    <div class="panel">
-      <div class="panel__head"><h2>最近调整记录</h2></div>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>操作人</th>
-              <th>动作</th>
-              <th>店铺</th>
-              <th>调整前</th>
-              <th>调整后</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in records" :key="row.id">
-              <td>{{ formatTime(row.occurred_at) }}</td>
-              <td>{{ row.operator }}</td>
-              <td>{{ row.action === 'MERCHANT_FOLLOWERS_ADDED' ? '新增关注' : '调整曝光' }}</td>
-              <td class="mono">{{ row.target_id.slice(0, 8) }}</td>
-              <td class="mono">
-                关注 {{ row.before?.followers ?? '—' }} / 曝光 {{ row.before?.exposure ?? '—' }}
-              </td>
-              <td class="mono">
-                关注 {{ row.after?.followers ?? '—' }} / 曝光 {{ row.after?.exposure ?? '—' }}
-              </td>
-            </tr>
-            <tr v-if="records.length === 0">
-              <td colspan="6" class="data-table__empty">还没有调整记录。</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <AppDrawer
+      :open="recordDrawer.open"
+      :title="`调整记录 · ${recordDrawer.merchant?.name || ''}`"
+      @close="recordDrawer.open = false"
+    >
+      <p v-if="recordDrawer.loading" class="inline-loading">加载中…</p>
+      <p v-else-if="recordDrawer.error" class="notice notice--error">{{ recordDrawer.error }}</p>
+      <template v-else>
+        <div class="record-shop">
+          <b>{{ recordDrawer.merchant?.name }}</b>
+          <span class="mono">{{ recordDrawer.merchant?.id }}</span>
+        </div>
+        <div v-if="recordDrawer.items.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>操作人</th>
+                <th>动作</th>
+                <th>调整前</th>
+                <th>调整后</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in recordDrawer.items" :key="row.id">
+                <td>{{ formatTime(row.occurred_at) }}</td>
+                <td>{{ row.operator }}</td>
+                <td>{{ actionLabel(row.action) }}</td>
+                <td class="mono">
+                  关注 {{ row.before?.followers ?? '—' }} / 曝光 {{ row.before?.exposure ?? '—' }}
+                </td>
+                <td class="mono">
+                  关注 {{ row.after?.followers ?? '—' }} / 曝光 {{ row.after?.exposure ?? '—' }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="empty-state">还没有对该商家的调整记录。</p>
+      </template>
+    </AppDrawer>
 
     <AppModal
       v-if="target"
@@ -249,3 +277,17 @@ onMounted(() => {
     </AppModal>
   </section>
 </template>
+
+<style scoped>
+.record-shop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.record-shop .mono {
+  font-size: 11px;
+  color: var(--muted, #78869a);
+}
+</style>

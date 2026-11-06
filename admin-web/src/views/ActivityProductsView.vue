@@ -100,24 +100,27 @@ onMounted(() => load())
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
     <p v-if="state.notice" class="notice notice--ok">{{ state.notice }}</p>
 
+    <!-- 与【首页活动卡片】一致的独立 Tab 条（不与搜索同行）。 -->
+    <div class="tabs">
+      <button
+        type="button"
+        :class="{ 'is-active': state.view === 'activity' }"
+        @click="switchView('activity')"
+      >
+        活动商品
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': state.view === 'all' }"
+        @click="switchView('all')"
+      >
+        全部商品
+      </button>
+    </div>
+
     <div class="panel">
       <div class="toolbar">
-        <div class="tabs">
-          <button
-            type="button"
-            :class="{ 'is-active': state.view === 'activity' }"
-            @click="switchView('activity')"
-          >
-            活动商品
-          </button>
-          <button
-            type="button"
-            :class="{ 'is-active': state.view === 'all' }"
-            @click="switchView('all')"
-          >
-            全部商品
-          </button>
-        </div>
+        <h2 class="section-title" style="margin: 0">{{ columns }}</h2>
         <div class="toolbar__search">
           <input
             v-model="state.q"
@@ -129,7 +132,6 @@ onMounted(() => load())
         </div>
       </div>
 
-      <h2 class="section-title">{{ columns }}</h2>
       <p v-if="state.loading" class="inline-loading">加载中…</p>
       <div v-else class="data-table-wrap">
         <table class="data-table">

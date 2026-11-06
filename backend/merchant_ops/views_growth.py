@@ -42,7 +42,11 @@ class AdminGrowthView(OpsAPIView):
         query = (request.query_params.get("q") or "").strip()
         if query:
             queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
-        rows, meta = paginate(queryset.order_by("-followers", "-pk"), request)
+        rows, meta = paginate(
+            # 按入驻时间固定排序：调整关注/曝光后列表顺序不变（用户要求）。
+            queryset.order_by("-created_at", "-pk"),
+            request,
+        )
         return Response({"items": [_row(merchant) for merchant in rows], **meta})
 
 
@@ -105,6 +109,18 @@ class AdminGrowthRecordsView(OpsAPIView):
         if merchant_id:
             queryset = queryset.filter(target_id=merchant_id)
         rows, meta = paginate(queryset.order_by("-created_at"), request)
+        # 店铺名一次性解析，避免每行查库；记录里的店铺可能已删除，名字回退为空。
+        from merchants.models import Merchant as MerchantModel
+
+        target_ids = {log.target_id for log in rows}
+        names = (
+            {
+                str(m.public_id): m.display_name
+                for m in MerchantModel.objects.filter(public_id__in=target_ids)
+            }
+            if target_ids
+            else {}
+        )
         return Response(
             {
                 "items": [
@@ -114,6 +130,7 @@ class AdminGrowthRecordsView(OpsAPIView):
                         "operator": log.actor.display_name if log.actor else "系统",
                         "action": log.action,
                         "target_id": log.target_id,
+                        "target_name": names.get(log.target_id, ""),
                         "before": log.before_state,
                         "after": log.after_state,
                     }

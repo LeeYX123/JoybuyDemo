@@ -156,8 +156,18 @@ onMounted(() => {
               <td>{{ formatTime(row.occurred_at) }}</td>
               <td>{{ row.operator }}</td>
               <td>{{ row.module_label }}</td>
-              <td class="mono">{{ row.action }}</td>
-              <td class="mono">{{ row.target.slice(0, 8) }}</td>
+              <td>
+                <div class="stacked-cell">
+                  <b>{{ row.action_label || '—' }}</b>
+                  <span class="mono">{{ row.action }}</span>
+                </div>
+              </td>
+              <td>
+                <div class="stacked-cell">
+                  <b>{{ row.target_name || '—' }}</b>
+                  <span class="mono">{{ row.target.slice(0, 8) }}</span>
+                </div>
+              </td>
               <td class="mono">{{ summarize(row.after) }}</td>
               <td>
                 <div class="row-actions">
@@ -197,11 +207,14 @@ onMounted(() => {
         </div>
         <div>
           <dt>动作</dt>
-          <dd>{{ detail.action }}</dd>
+          <dd>{{ detail.action_label || '—' }}（{{ detail.action }}）</dd>
         </div>
         <div>
           <dt>业务对象</dt>
-          <dd class="mono">{{ detail.target }}</dd>
+          <dd>
+            {{ detail.target_name || '—' }}
+            <span class="mono">{{ detail.target }}</span>
+          </dd>
         </div>
         <div>
           <dt>请求 ID</dt>
@@ -226,6 +239,17 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.stacked-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stacked-cell .mono {
+  font-size: 11px;
+  color: var(--muted, #78869a);
+}
+
 .json-block {
   margin: 0;
   padding: 12px 14px;
