@@ -315,6 +315,20 @@ onMounted(load)
                   >
                     审核
                   </button>
+                  <button type="button" class="btn btn--sm" @click="openModal('edit', row)">
+                    编辑
+                  </button>
+                  <button type="button" class="btn btn--sm" @click="openModal('credit', row)">
+                    扣信誉分
+                  </button>
+                  <button
+                    v-if="row.status === 'ACTIVE'"
+                    type="button"
+                    class="btn btn--sm btn--danger"
+                    @click="openModal('suspend', row)"
+                  >
+                    封店
+                  </button>
                   <button
                     v-if="row.status === 'SUSPENDED'"
                     type="button"
@@ -442,19 +456,6 @@ onMounted(load)
           </tbody>
         </table>
         <p v-else class="empty-state">暂无扣分记录。</p>
-      </template>
-
-      <template v-if="detail" #footer>
-        <button type="button" class="btn" @click="openModal('edit', detail)">编辑商家</button>
-        <button type="button" class="btn" @click="openModal('credit', detail)">扣信誉分</button>
-        <button
-          v-if="detail.status === 'ACTIVE'"
-          type="button"
-          class="btn btn--danger"
-          @click="openModal('suspend', detail)"
-        >
-          封店
-        </button>
       </template>
     </AppDrawer>
 
