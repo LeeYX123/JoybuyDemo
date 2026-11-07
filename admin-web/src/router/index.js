@@ -24,7 +24,6 @@ const LANDING_CANDIDATES = [
   { path: '/notifications', module: 'notifications' },
   { path: '/support', module: 'support' },
   { path: '/buyers', module: 'buyers' },
-  { path: '/whitelist', module: 'whitelist' },
   { path: '/growth', module: 'merchants.growth' },
   { path: '/staff', module: 'staff.roles' },
   { path: '/audit-logs', module: 'audit.logs' },
@@ -136,12 +135,6 @@ const router = createRouter({
           name: 'support',
           component: () => import('@/views/SupportView.vue'),
           meta: { title: '客服中心', module: 'support' },
-        },
-        {
-          path: 'whitelist',
-          name: 'whitelist',
-          component: () => import('@/views/WhitelistView.vue'),
-          meta: { title: '白名单账号', module: 'whitelist' },
         },
         {
           path: 'growth',

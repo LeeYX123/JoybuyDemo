@@ -50,6 +50,11 @@ export function useBuyerAuth() {
     return post('/register', payload)
   }
 
+  // 迭代02：邮箱手动注册（免验证码：自填账号 + 密码即可注册成功）。
+  async function registerEmail(email, password) {
+    return post('/register/email', { email, password })
+  }
+
   async function login(payload) {
     return post('/login', payload)
   }
@@ -65,6 +70,7 @@ export function useBuyerAuth() {
     refresh,
     sendVerificationCode,
     register,
+    registerEmail,
     login,
     logout,
   }

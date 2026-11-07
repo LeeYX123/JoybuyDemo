@@ -62,7 +62,6 @@ const NAV = [
     group: '用户与权限',
     items: [
       { to: '/buyers', label: '用户端管理', icon: 'users', module: 'buyers' },
-      { to: '/whitelist', label: '白名单账号', icon: 'card', module: 'whitelist' },
       { to: '/growth', label: '商家关注与曝光', icon: 'trend', module: 'merchants.growth' },
       { to: '/staff', label: '账号与权限', icon: 'key', module: 'staff.roles' },
       { to: '/audit-logs', label: '操作日志', icon: 'logs', module: 'audit.logs' },

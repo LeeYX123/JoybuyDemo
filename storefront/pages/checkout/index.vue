@@ -90,10 +90,8 @@ function formatMoney(value) {
 }
 
 const balanceDisplay = computed(() => {
-  // Wallet balances arrive with the phase-3 backend; show the placeholder.
-  return account.value?.wallet_balance != null
-    ? formatDisplayPrice(account.value.wallet_balance)
-    : null
+  // 迭代02：余额支付真扣 BuyerAccount.balance，登录后展示真实余额。
+  return account.value?.balance != null ? formatDisplayPrice(account.value.balance) : null
 })
 
 const paymentMethods = computed(() => [
@@ -104,6 +102,8 @@ const paymentMethods = computed(() => [
   },
   { value: 'card', label: 'Credit/Debit Card', note: '' },
   { value: 'google_pay', label: 'Google Pay', note: '' },
+  { value: 'apple_pay', label: 'Apple Pay', note: '' },
+  { value: 'wechat_pay', label: t('checkout.wechatPay'), note: '' },
   { value: 'klarna', label: 'Klarna', note: '' },
 ])
 

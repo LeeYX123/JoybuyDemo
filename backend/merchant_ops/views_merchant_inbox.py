@@ -190,6 +190,17 @@ def _notification_payload(record: MerchantNotification, *, detail=False) -> dict
         "rating": record.rating,
         "images": list(record.images or []),
         "product": record.product_snapshot or None,
+        # 迭代02：好评通知展示关联订单。
+        "order": (
+            {
+                "id": str(record.order.public_id),
+                "order_no": str(record.order.public_id)[:8].upper(),
+                "amount": str(record.order.items_total),
+                "completed_at": iso(record.order.settled_at),
+            }
+            if record.order_id
+            else None
+        ),
         "read": record.read_at is not None,
         "read_at": iso(record.read_at),
         "reply_count": record.replies.count(),

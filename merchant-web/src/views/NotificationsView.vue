@@ -202,9 +202,9 @@ onMounted(load)
     <AppDrawer :open="detail.open" title="通知详情" @close="closeDetail">
       <p v-if="detail.loading" class="inline-loading">加载中…</p>
       <template v-else-if="detail.value">
-        <h2 class="notice-detail__title">{{ detail.value.title }}</h2>
-
+        <!-- 迭代02：详情去掉顶部大标题，只展示标题+内容+时间（好评除外）。 -->
         <template v-if="detail.value.kind === 'REVIEW'">
+          <h2 class="notice-detail__title">{{ detail.value.title }}</h2>
           <p class="review-stars" :aria-label="`${detail.value.rating} 星`">
             {{ '★'.repeat(detail.value.rating || 0)
             }}{{ '☆'.repeat(5 - (detail.value.rating || 0)) }}
@@ -221,33 +221,41 @@ onMounted(load)
           </div>
           <p class="cell-sub">评论时间：{{ fmtDate(detail.value.created_at) }}</p>
 
+          <!-- 好评例外：展示关联订单信息（迭代02）。 -->
+          <template v-if="detail.value.order">
+            <h3 class="section-title">关联订单</h3>
+            <dl class="detail-grid">
+              <div>
+                <dt>订单号</dt>
+                <dd class="mono">{{ detail.value.order.order_no }}</dd>
+              </div>
+              <div>
+                <dt>订单金额</dt>
+                <dd class="num">¥ {{ detail.value.order.amount }}</dd>
+              </div>
+              <div>
+                <dt>完成时间</dt>
+                <dd>{{ fmtDate(detail.value.order.completed_at) }}</dd>
+              </div>
+            </dl>
+          </template>
+
           <template v-if="detail.value.product">
             <h3 class="section-title">商品信息</h3>
             <dl class="detail-grid">
               <div>
                 <dt>商品</dt>
-                <dd>{{ detail.value.product.name }}</dd>
-              </div>
-              <div>
-                <dt>品类</dt>
-                <dd>{{ detail.value.product.category || '—' }}</dd>
-              </div>
-              <div>
-                <dt>零售价</dt>
-                <dd class="num">¥ {{ detail.value.product.price || '—' }}</dd>
-              </div>
-              <div>
-                <dt>成本价</dt>
-                <dd class="num">¥ {{ detail.value.product.cost || '—' }}</dd>
+                <dd>{{ detail.value.product.title || detail.value.product.name }}</dd>
               </div>
             </dl>
             <p class="hint-text">
-              商品信息为推送时的快照，后续改价不影响这条好评；好评由平台运营推送，不代表买家公开评价。
+              商品信息为推送时的快照；好评由平台运营推送，不代表买家公开评价。
             </p>
           </template>
         </template>
 
         <template v-else>
+          <p class="muted-text">{{ detail.value.title }}</p>
           <p class="muted-text">{{ detail.value.content }}</p>
           <p class="cell-sub">发送时间：{{ fmtDate(detail.value.created_at) }}</p>
         </template>

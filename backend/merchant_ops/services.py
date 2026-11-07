@@ -590,11 +590,13 @@ def calculate_commissions(period: str, *, merchant_filter=None) -> list:
         if months >= program.valid_months:
             continue
 
+        # 迭代02 拍板：计佣基数 = 被邀请商家当月【发货成功订单的成本价合计】
+        # （按成本价，不按零售价；明细列名"发货成功金额"沿用此口径）。
         shipped = MerchantOrder.objects.filter(
             merchant=referral.referee,
             shipped_at__gte=start,
             shipped_at__lt=end,
-        ).aggregate(total=Sum("items_total"))["total"] or Decimal("0")
+        ).aggregate(total=Sum("cost_total"))["total"] or Decimal("0")
         shipped = money(shipped)
         rate = resolve_tier_rate(program, shipped)
         if shipped <= 0 or rate <= 0:

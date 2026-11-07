@@ -58,6 +58,15 @@ def place_order(
         if payment_method not in OrderModel.PAYMENT_METHODS:
             raise OrderError("PAYMENT_METHOD_INVALID", "不支持的支付方式。")
 
+    # 迭代02 拍板：余额支付真扣 BuyerAccount.balance。先读快照做前置校验，
+    # 实际扣款在下单事务内（同事务回滚，不会出现扣了钱没下单）。
+    balance_payment = payment_method == "BALANCE"
+    if balance_payment:
+        from decimal import Decimal
+
+        if account.balance < Decimal(str(cart_snapshot.get("total") or "0")):
+            raise OrderError("NOT_ENOUGH_BALANCE", "您当前可使用余额不足，请充值或更换支付方式。")
+
     if cart_snapshot.get("needs_attention") or not cart_snapshot.get("items"):
         raise OrderError("CART_INVALID", "Your cart needs attention before checkout.")
 
@@ -111,6 +120,34 @@ def place_order(
             payment_method=payment_method,
             paid_at=timezone.now() if paid_now else None,
         )
+        # 迭代02：余额支付真扣买家余额（与下单同事务，失败即整体回滚）。
+        if balance_payment:
+            from accounts_buyers.models import BuyerAccount
+
+            locked_buyer = (
+                BuyerAccount.objects.select_for_update().filter(pk=account.pk).first()
+            )
+            total_due = Decimal(str(cart_snapshot.get("total") or "0"))
+            if locked_buyer is None or locked_buyer.balance < total_due:
+                raise OrderError("NOT_ENOUGH_BALANCE", "您当前可使用余额不足，请充值或更换支付方式。")
+            balance_before = locked_buyer.balance
+            locked_buyer.balance = balance_before - total_due
+            locked_buyer.save(update_fields=["balance", "updated_at"])
+            # 买家余额流水（PURCHASE 负向），幂等键防重复扣。
+            from accounts_buyers.models import BuyerWalletEntry
+
+            BuyerWalletEntry.objects.create(
+                account=locked_buyer,
+                kind=BuyerWalletEntry.Kind.PURCHASE,
+                amount=-total_due,
+                balance_before=balance_before,
+                balance_after=locked_buyer.balance,
+                currency=currency.code,
+                order=order,
+                note="商城消费（余额支付）",
+                idempotency_key=f"order-pay:{order.public_id}",
+                occurred_at=timezone.now(),
+            )
         from orders.models import InventoryReservation
 
         # 按商家聚合：商家子单承接发货、进度与回款（WP-42 下单拆单）。

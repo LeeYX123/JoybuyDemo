@@ -9,6 +9,11 @@ urlpatterns = [
         name="buyer-verification-code",
     ),
     path("api/v1/auth/buyer/register", views.BuyerRegisterView.as_view(), name="buyer-register"),
+    path(
+        "api/v1/auth/buyer/register/email",
+        views.BuyerEmailRegisterView.as_view(),
+        name="buyer-register-email",
+    ),
     path("api/v1/auth/buyer/login", views.BuyerLoginView.as_view(), name="buyer-login"),
     path("api/v1/auth/buyer/logout", views.BuyerLogoutView.as_view(), name="buyer-logout"),
     path("api/v1/auth/buyer/session", views.BuyerSessionView.as_view(), name="buyer-session"),

@@ -4,9 +4,10 @@ import { navigateTo, useHead } from '#imports'
 
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 
-// Unified auth form: login mode uses identifier+password; register mode
-// adds the 6-digit verification code (dev responses include test_code so
-// the flow is demoable; production sends real email/SMS).
+// 迭代02：登录/注册改造——
+// - 登录方式 = Facebook + Google + 邮箱（不做手机号、登录页无国家选择）；
+// - 邮箱注册免验证码：自填账号 + 密码即可注册成功（账号唯一，以系统 ID 区分用户）；
+// - Facebook / Google 本机开发阶段为占位按钮（真实 OAuth 需开发者凭据 + 公网回调）。
 const props = defineProps({
   mode: {
     type: String,
@@ -15,31 +16,15 @@ const props = defineProps({
   },
 })
 
-const { login, register, sendVerificationCode, isAuthenticated } = useBuyerAuth()
+const { login, registerEmail, isAuthenticated } = useBuyerAuth()
 
-const identifier = ref('')
+const email = ref('')
 const password = ref('')
-const code = ref('')
-const channel = ref('EMAIL')
-const codeSent = ref(false)
-const devCode = ref('')
 const submitting = ref(false)
 const formError = ref('')
 const notice = ref('')
 
 const isRegister = computed(() => props.mode === 'register')
-const identifierType = computed(() => {
-  const value = identifier.value.trim()
-  if (/^\+?\d[\d\s-]{6,}$/.test(value)) return 'phone'
-  return 'email'
-})
-const identifierPlaceholder = computed(() =>
-  isRegister.value
-    ? channel.value === 'EMAIL'
-      ? 'you@example.com'
-      : '+44 7000 000000'
-    : 'Email or phone number',
-)
 
 watch(isAuthenticated, (authed) => {
   if (authed) navigateTo('/account')
@@ -48,15 +33,9 @@ if (isAuthenticated.value) {
   navigateTo('/account')
 }
 
-function fieldErrors(payload) {
-  if (!payload) return {}
-  const raw = payload.error?.details || payload.details
-  if (raw && typeof raw === 'object') {
-    return Object.fromEntries(
-      Object.entries(raw).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
-    )
-  }
-  return {}
+function socialPlaceholder(provider) {
+  formError.value = ''
+  notice.value = `${provider} 登录暂未接入（需要开发者凭据与公网回调），请先使用邮箱注册 / 登录。`
 }
 
 async function submit() {
@@ -64,56 +43,25 @@ async function submit() {
   formError.value = ''
   try {
     if (isRegister.value) {
-      const response = await register({
-        channel: channel.value,
-        target: identifier.value.trim(),
-        purpose: 'REGISTER',
-        verification_code: code.value.trim(),
-        password: password.value,
-      })
+      const response = await registerEmail(email.value.trim(), password.value)
       if (response?.error) {
-        const errors = fieldErrors(response)
-        formError.value =
-          Object.values(errors)[0] || response.error?.message || 'Registration failed.'
+        formError.value = response.error?.message || 'Registration failed.'
         return
       }
       navigateTo('/account')
     } else {
       const response = await login({
-        identifier: identifier.value.trim(),
+        identifier: email.value.trim(),
         password: password.value,
       })
       if (response?.error) {
-        const errors = fieldErrors(response)
-        formError.value = Object.values(errors)[0] || response.error?.message || 'Sign in failed.'
+        formError.value = response.error?.message || 'Sign in failed.'
         return
       }
       navigateTo('/account')
     }
   } finally {
     submitting.value = false
-  }
-}
-
-async function request_code() {
-  codeSent.value = false
-  devCode.value = ''
-  notice.value = ''
-  formError.value = ''
-  const response = await sendVerificationCode(channel.value, identifier.value.trim())
-  if (response?.error) {
-    const errors = fieldErrors(response)
-    formError.value =
-      Object.values(errors)[0] || response.error?.message || 'Could not send the code.'
-    return
-  }
-  codeSent.value = true
-  if (response?.test_code) {
-    devCode.value = response.test_code
-    notice.value = 'Development mode: the verification code is filled in automatically.'
-    code.value = response.test_code
-  } else {
-    notice.value = 'Verification code sent. Check your inbox.'
   }
 }
 
@@ -125,54 +73,27 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
     <section class="auth-panel" aria-labelledby="auth-title">
       <h1 id="auth-title">{{ isRegister ? 'Create your Joybuy account' : 'Sign in' }}</h1>
 
-      <form class="auth-form" novalidate @submit.prevent="submit">
-        <div v-if="isRegister" class="auth-field">
-          <label for="auth-channel">Verification channel</label>
-          <select id="auth-channel" v-model="channel">
-            <option value="EMAIL">Email</option>
-            <option value="PHONE">Phone</option>
-          </select>
-        </div>
+      <div class="social-row">
+        <button type="button" class="social-btn" @click="socialPlaceholder('Facebook')">
+          <span class="social-btn__dot social-btn__dot--fb">f</span> Facebook
+        </button>
+        <button type="button" class="social-btn" @click="socialPlaceholder('Google')">
+          <span class="social-btn__dot social-btn__dot--g">G</span> Google
+        </button>
+      </div>
+      <p class="social-divider"><span>or use email</span></p>
 
+      <form class="auth-form" novalidate @submit.prevent="submit">
         <div class="auth-field">
-          <label for="auth-identifier">{{
-            isRegister
-              ? channel === 'PHONE'
-                ? 'Phone number'
-                : 'Email address'
-              : 'Email or phone number'
-          }}</label>
+          <label for="auth-identifier">Email address</label>
           <input
             id="auth-identifier"
-            v-model="identifier"
-            :type="identifierType === 'phone' ? 'tel' : 'email'"
+            v-model="email"
+            type="email"
             autocomplete="username"
-            :placeholder="identifierPlaceholder"
+            placeholder="you@example.com"
             required
           />
-        </div>
-
-        <div v-if="isRegister" class="auth-field auth-field--code">
-          <label for="auth-code">Verification code</label>
-          <div class="code-row">
-            <input
-              id="auth-code"
-              v-model="code"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              maxlength="6"
-              autocomplete="one-time-code"
-              required
-            />
-            <BaseButton
-              variant="secondary"
-              type="button"
-              :disabled="identifier.trim().length < 5"
-              @click="request_code"
-            >
-              Send code
-            </BaseButton>
-          </div>
         </div>
 
         <div class="auth-field">
@@ -182,8 +103,12 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
             v-model="password"
             type="password"
             autocomplete="current-password"
+            :minlength="isRegister ? 8 : undefined"
             required
           />
+          <span v-if="isRegister" class="auth-hint"
+            >至少 8 位；注册即创建账号，无需邮箱验证码。</span
+          >
         </div>
 
         <p v-if="formError" class="auth-error" role="alert">{{ formError }}</p>
@@ -219,11 +144,73 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
   background: var(--colour-surface);
 }
 
+.social-row {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.social-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  border: 1px solid var(--colour-border);
+  border-radius: var(--radius-md);
+  background: var(--colour-surface);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.social-btn:hover {
+  border-color: var(--colour-text-secondary);
+}
+
+.social-btn__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.social-btn__dot--fb {
+  background: #1877f2;
+}
+
+.social-btn__dot--g {
+  background: #ea4335;
+}
+
+.social-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  color: var(--colour-muted);
+  font-size: var(--font-size-sm);
+}
+
+.social-divider::before,
+.social-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--colour-border);
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
 }
 
 .auth-field {
@@ -237,8 +224,7 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
   font-weight: var(--font-weight-semibold);
 }
 
-.auth-field input,
-.auth-field select {
+.auth-field input {
   min-height: 44px;
   padding: 0 var(--space-3);
   border: 1px solid var(--colour-border);
@@ -246,14 +232,9 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
   font: inherit;
 }
 
-.code-row {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.code-row input {
-  flex: 1;
-  letter-spacing: 0.2em;
+.auth-hint {
+  color: var(--colour-muted);
+  font-size: var(--font-size-xs, 12px);
 }
 
 .auth-error {

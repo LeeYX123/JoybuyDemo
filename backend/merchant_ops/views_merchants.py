@@ -207,6 +207,8 @@ class AdminMerchantsView(OpsAPIView):
             ban_after_days=parse_positive_int(
                 payload.get("ban_after_days", 4), field="未发货封店天数"
             ),
+            # 迭代02：填了推荐码即为邀请入驻，与邀请者建立返佣绑定。
+            referrer_code=payload.get("referrer_code") or "",
         )
         record_audit(
             request=request,

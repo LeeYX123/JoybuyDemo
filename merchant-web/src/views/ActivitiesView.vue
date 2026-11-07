@@ -124,6 +124,8 @@ function fmtDate(value) {
 }
 
 function periodLabel(activity) {
+  // 迭代02：常驻活动不展示任何时间（创建即生效）。
+  if (!activity.start && !activity.end) return '长期有效 · 创建即生效'
   if (!activity.end) return `${fmtDate(activity.start)} 起 · 长期有效`
   return `${fmtDate(activity.start)} 至 ${fmtDate(activity.end)}`
 }
@@ -194,6 +196,27 @@ onMounted(async () => {
             </tr>
           </tbody>
         </table>
+
+        <h3 class="section-title">我推荐的新商家</h3>
+        <table v-if="state.referral?.referrals?.length" class="data-table">
+          <thead>
+            <tr>
+              <th>店铺名称</th>
+              <th>店铺 ID</th>
+              <th>推荐码</th>
+              <th>审核通过时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in state.referral.referrals" :key="row.merchant_id">
+              <td>{{ row.name }}</td>
+              <td class="mono">{{ row.merchant_id.slice(0, 8) }}</td>
+              <td class="mono">{{ row.code_used || '—' }}</td>
+              <td>{{ fmtDate(row.joined_at) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="empty-state">还没有推荐的新商家。</p>
 
         <h3 class="section-title">返佣明细</h3>
         <table v-if="state.referral?.commissions?.length" class="data-table">

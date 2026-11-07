@@ -15,6 +15,16 @@ class BuyerAccount(models.Model):
     phone_e164 = models.CharField(max_length=16, unique=True, null=True, blank=True)
     password = models.CharField(max_length=128)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    # 登录渠道（迭代02）：FACEBOOK / GOOGLE / EMAIL。三方 OAuth 本机开发阶段
+    # 只做按钮占位，实际注册路径目前只有 EMAIL。
+    class AuthProvider(models.TextChoices):
+        EMAIL = "EMAIL", "Email"
+        FACEBOOK = "FACEBOOK", "Facebook"
+        GOOGLE = "GOOGLE", "Google"
+
+    auth_provider = models.CharField(
+        max_length=16, choices=AuthProvider.choices, default=AuthProvider.EMAIL
+    )
     email_verified_at = models.DateTimeField(null=True, blank=True)
     phone_verified_at = models.DateTimeField(null=True, blank=True)
     last_login_at = models.DateTimeField(null=True, blank=True)

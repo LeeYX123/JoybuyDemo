@@ -13,21 +13,27 @@ from orders.order_services import cancel_expired_orders
 
 
 class Command(BaseCommand):
-    help = "订单进度自动扭转 + 未处理订单自动封店 + 过期未支付订单取消"
+    help = "订单进度自动扭转 + 未处理订单自动封店 + 过期未支付订单取消 + 限时活动到期下架"
 
     def handle(self, *args, **options):
         progress = auto_advance_progress()
         suspended = auto_suspend_overdue_merchants()
         canceled = cancel_expired_orders()
+        # 迭代02：限时活动到期自动下架。
+        from merchant_ops.views_merchant_service import _expire_due_activities
+
+        expired_activities = _expire_due_activities()
         self.stdout.write(
             self.style.SUCCESS(
                 "进度推进 {advanced} 单、自动确认收货 {confirmed} 单、"
-                "自动封店 {merchants} 家（{names}）、取消过期订单 {canceled} 单".format(
+                "自动封店 {merchants} 家（{names}）、取消过期订单 {canceled} 单、"
+                "限时活动到期下架 {activities} 个".format(
                     advanced=progress["advanced"],
                     confirmed=progress["confirmed"],
                     merchants=len(suspended),
                     names="、".join(m.display_name for m in suspended) or "无",
                     canceled=canceled.get("canceled", 0),
+                    activities=expired_activities,
                 )
             )
         )

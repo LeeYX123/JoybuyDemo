@@ -219,7 +219,7 @@ class AdminAfterSaleActionsView(OpsAPIView):
 
 
 def _activity_payload(activity: MerchantActivity, *, participants=None) -> dict:
-    return {
+    payload = {
         "id": str(activity.public_id),
         "title": activity.title,
         "kind": activity.kind,
@@ -235,6 +235,11 @@ def _activity_payload(activity: MerchantActivity, *, participants=None) -> dict:
         else activity.participations.count(),
         "created_at": iso(activity.created_at),
     }
+    # 迭代02：常驻活动不展示任何时间（创建即生效），管理端同样隐藏。
+    if activity.kind == MerchantActivity.Kind.PERMANENT:
+        payload["start"] = None
+        payload["end"] = None
+    return payload
 
 
 class AdminActivitiesView(OpsAPIView):
@@ -256,9 +261,20 @@ class AdminActivitiesView(OpsAPIView):
     def post(self, request):
         payload = request.data or {}
         title = require(payload, "title", label="活动标题").strip()
-        start = parse_date(require(payload, "start", label="开始日期"), field="开始日期")
-        end = parse_date(payload.get("end"), field="结束日期")
-        if end and end < start:
+        # 迭代02：类型勾选 限时/长期。长期（常驻）不设时间、创建即立即生效；
+        # 限时活动必须自主设置起止日期，到期自动下架（run_order_sweeps）。
+        kind = (
+            payload.get("kind")
+            if payload.get("kind") in dict(MerchantActivity.Kind.choices)
+            else MerchantActivity.Kind.PERMANENT
+        )
+        if kind == MerchantActivity.Kind.LIMITED:
+            start = parse_date(require(payload, "start", label="开始日期"), field="开始日期")
+            end = parse_date(require(payload, "end", label="结束日期"), field="结束日期")
+        else:
+            start = parse_date(payload.get("start"), field="开始日期") or timezone.localdate()
+            end = None
+        if end and start and end < start:
             raise StaffApiError(
                 business_code="DATE_ORDER_INVALID",
                 message="结束日期不能早于开始日期。",
@@ -273,9 +289,7 @@ class AdminActivitiesView(OpsAPIView):
             )
         activity = MerchantActivity.objects.create(
             title=title,
-            kind=payload.get("kind")
-            if payload.get("kind") in dict(MerchantActivity.Kind.choices)
-            else MerchantActivity.Kind.PERMANENT,
+            kind=kind,
             start_date=start,
             end_date=end,
             description=(payload.get("description") or "").strip(),

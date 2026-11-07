@@ -545,19 +545,22 @@ onMounted(load)
           <input id="activity-title" v-model="editor.title" type="text" maxlength="160" />
         </div>
         <div class="field">
-          <label for="activity-kind">活动类型</label>
+          <label for="activity-kind">活动类型（勾选限时/长期）</label>
           <select id="activity-kind" v-model="editor.kind">
-            <option value="PERMANENT">常驻活动</option>
-            <option value="LIMITED">限时活动</option>
+            <option value="PERMANENT">长期（常驻）：创建即生效，不展示时间</option>
+            <option value="LIMITED">限时：需设置起止日期，到期自动下架</option>
           </select>
         </div>
-        <div class="field">
+        <div v-if="editor.kind === 'LIMITED'" class="field">
           <label for="activity-start">开始日期</label>
           <input id="activity-start" v-model="editor.start" type="date" />
         </div>
-        <div class="field">
-          <label for="activity-end">结束日期（常驻可留空）</label>
+        <div v-if="editor.kind === 'LIMITED'" class="field">
+          <label for="activity-end">结束日期（到期自动下架）</label>
           <input id="activity-end" v-model="editor.end" type="date" />
+        </div>
+        <div v-if="editor.kind === 'PERMANENT'" class="field">
+          <span class="field__hint">长期活动创建即立即生效，商家端不展示任何时间。</span>
         </div>
         <div class="field">
           <label for="activity-sort">排序</label>

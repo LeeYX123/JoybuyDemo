@@ -34,6 +34,17 @@ def _notification_payload(record: MerchantNotification, *, detail: bool = False)
         "rating": record.rating,
         "images": list(record.images or []),
         "product": record.product_snapshot or None,
+        # 好评通知的关联订单（迭代02）：商家端好评详情展示。
+        "order": (
+            {
+                "id": str(record.order.public_id),
+                "order_no": str(record.order.public_id)[:8].upper(),
+                "amount": str(record.order.items_total),
+                "completed_at": iso(record.order.settled_at),
+            }
+            if record.order_id
+            else None
+        ),
         "read": record.read_at is not None,
         "read_at": iso(record.read_at),
         "reply_count": record.replies.count(),
@@ -86,10 +97,36 @@ class AdminNotificationsView(OpsAPIView):
 
         if kind == "REVIEW":
             merchant = _resolve_merchant(require(payload, "merchant_id", label="店铺"))
-            spu = _resolve_listed_product(
-                merchant,
-                require(payload, "product_id", label="商品"),
+            # 迭代02：好评推送改为关联【店铺订单】——必须选一笔该店
+            # 【已完成】且【未评价】（从未推送过好评）的订单。
+            order_id = require(payload, "order_id", label="店铺订单")
+            from orders.models import MerchantOrder
+
+            suborder = (
+                MerchantOrder.objects.select_related("merchant")
+                .filter(public_id=str(order_id), merchant=merchant)
+                .first()
             )
+            if suborder is None:
+                raise StaffApiError(
+                    business_code="ORDER_NOT_FOUND",
+                    message="订单不存在或不属于该店铺。",
+                    status_code=404,
+                )
+            if suborder.status != MerchantOrder.Status.COMPLETED:
+                raise StaffApiError(
+                    business_code="ORDER_NOT_COMPLETED",
+                    message="只能对【已完成】的订单推送商品好评。",
+                    status_code=400,
+                )
+            if MerchantNotification.objects.filter(order=suborder).exists():
+                raise StaffApiError(
+                    business_code="ORDER_ALREADY_REVIEWED",
+                    message="该订单已推送过好评（未评价订单才会展示）。",
+                    status_code=409,
+                )
+            first_item = suborder.items.first()
+            spu = first_item.offer.sku.spu if first_item else None
             rating = int(payload.get("rating") or 5)
             if rating < 1 or rating > 5:
                 raise StaffApiError(
@@ -104,13 +141,24 @@ class AdminNotificationsView(OpsAPIView):
                     message="评论图片最多 5 张。",
                     status_code=400,
                 )
+            product_snapshot = (
+                {
+                    "product_id": str(spu.public_id),
+                    "title": first_item.title,
+                    "quantity": first_item.quantity,
+                    "unit_price": str(first_item.unit_price),
+                }
+                if first_item
+                else {}
+            )
             record = MerchantNotification.objects.create(
                 merchant=merchant,
                 kind=MerchantNotification.Kind.REVIEW,
                 title=title,
                 content=content,
                 spu=spu,
-                product_snapshot=_product_snapshot(spu),
+                product_snapshot=product_snapshot,
+                order=suborder,
                 rating=rating,
                 images=[str(url).strip() for url in images if str(url).strip()],
                 read_at=None,
@@ -258,6 +306,46 @@ class AdminNotificationMerchantsView(OpsAPIView):
                 ]
             }
         )
+
+
+class AdminNotificationOrdersView(OpsAPIView):
+    """好评推送的【店铺订单】下拉：该店已完成且未评价的订单，支持订单号搜索。
+
+    迭代02：【店铺商品】改为【店铺订单】——"已完成"= 子单状态 COMPLETED，
+    "未评价"= 该订单从未被推送过好评通知。
+    """
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["notifications.manage"]
+    view_permissions = ["notifications.view"]
+
+    def get(self, request):
+        from orders.models import MerchantOrder
+
+        merchant = _resolve_merchant(require(request.query_params, "merchant_id", label="店铺"))
+        query = (request.query_params.get("q") or "").strip()
+        queryset = MerchantOrder.objects.select_related("order__account").filter(
+            merchant=merchant, status=MerchantOrder.Status.COMPLETED
+        )
+        queryset = queryset.exclude(review_notifications__isnull=False)
+        if query:
+            queryset = queryset.filter(public_id=str(query))
+        rows = []
+        for order in queryset.order_by("-settled_at", "-pk")[:30]:
+            first_item = order.items.first()
+            rows.append(
+                {
+                    "id": str(order.public_id),
+                    "order_no": str(order.public_id)[:8].upper(),
+                    "buyer": order.order.account.email
+                    or order.order.account.phone_e164
+                    or "买家",
+                    "completed_at": iso(order.settled_at) or iso(order.updated_at),
+                    "amount": money_str(order.items_total),
+                    "product": first_item.title if first_item else "",
+                }
+            )
+        return Response({"items": rows})
 
 
 class AdminNotificationProductsView(OpsAPIView):

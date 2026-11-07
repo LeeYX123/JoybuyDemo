@@ -43,7 +43,7 @@ const compose = reactive({
   title: '',
   content: '',
   rating: 5,
-  images: [],
+  images: '',
 })
 
 const merchantOptions = ref([])
@@ -118,15 +118,16 @@ async function pickMerchant(option) {
   compose.merchantId = option.id
   compose.merchantQuery = option.name
   merchantOptions.value = []
-  if (compose.kind === 'REVIEW') await searchProducts()
+  if (compose.kind === 'REVIEW') await searchOrders()
 }
 
-async function searchProducts() {
+// 迭代02：好评推送改选【店铺订单】（已完成 + 未评价），支持按订单号搜索。
+async function searchOrders() {
   if (!compose.merchantId) return
   try {
     const params = new URLSearchParams({ merchant_id: compose.merchantId })
     if (compose.productQuery.trim()) params.set('q', compose.productQuery.trim())
-    const payload = await apiRequest(`/notifications/products?${params}`)
+    const payload = await apiRequest(`/notifications/orders?${params}`)
     productOptions.value = payload.items
   } catch {
     productOptions.value = []
@@ -135,9 +136,9 @@ async function searchProducts() {
 
 function pickProduct(option) {
   compose.productId = option.id
-  compose.productQuery = option.name
+  compose.productQuery = `${option.order_no} · ${option.product}`
   productOptions.value = []
-  if (!compose.title) compose.title = '商品好评'
+  if (!compose.title) compose.title = '您收到一个商品好评'
 }
 
 async function submitCompose() {
@@ -148,11 +149,11 @@ async function submitCompose() {
       await adminWrite('/notifications', {
         kind: 'REVIEW',
         merchant_id: compose.merchantId,
-        product_id: compose.productId,
+        order_id: compose.productId,
         title: compose.title,
         content: compose.content,
         rating: Number(compose.rating),
-        images: compose.images
+        images: (Array.isArray(compose.images) ? compose.images.join('\n') : compose.images)
           .split('\n')
           .map((line) => line.trim())
           .filter(Boolean)
@@ -178,7 +179,7 @@ async function submitCompose() {
       title: '',
       content: '',
       rating: 5,
-      images: [],
+      images: '',
     })
     await load(true)
   } catch (error) {
@@ -479,13 +480,13 @@ onMounted(load)
       </div>
 
       <div v-if="compose.kind === 'REVIEW'" class="field" style="margin-top: 12px">
-        <label for="compose-product">本店已上架商品（输入名称搜索）</label>
+        <label for="compose-product">店铺订单（已完成且未评价，按订单号搜索）</label>
         <input
           id="compose-product"
           v-model="compose.productQuery"
           type="search"
-          placeholder="先选店铺，再搜商品"
-          @input="searchProducts"
+          placeholder="先选店铺，再输入订单号搜索"
+          @input="searchOrders"
         />
         <div v-if="productOptions.length" class="thumb-row">
           <button
@@ -495,10 +496,12 @@ onMounted(load)
             class="btn btn--sm"
             @click="pickProduct(option)"
           >
-            {{ option.name }}
+            {{ option.order_no }} · {{ option.product }} · {{ option.amount }}
           </button>
         </div>
-        <span class="field__hint">只能推送该店确实已上架的商品，服务端会再次校验。</span>
+        <span class="field__hint"
+          >只能推送该店已完成且未评价的订单；星级默认五星，可另选；图片最多 5 张。</span
+        >
       </div>
 
       <div class="field" style="margin-top: 12px">

@@ -172,8 +172,14 @@ def create_merchant(
     require_deposit: bool = False,
     deposit_required=None,
     ban_after_days: int = 4,
+    referrer_code: str = "",
 ) -> Merchant:
-    """管理端补录商家（正式入驻申请由用户端提交，这里供演示与迁移补数据）。"""
+    """管理端补录商家（正式入驻申请由用户端提交，这里供演示与迁移补数据）。
+
+    迭代02：``referrer_code`` 非空即为邀请入驻——按推荐码找到邀请者并建立
+    推荐绑定（MerchantReferral）；码无效不阻断入驻，返回后由调用方提示。
+    """
+    from merchant_ops.models import MerchantReferral
 
     name = (display_name or "").strip()
     if not name:
@@ -203,6 +209,15 @@ def create_merchant(
         ban_after_days=ban_after_days,
         referral_code=generate_referral_code(),
     )
+    # 迭代02：邀请入驻——填了推荐码即与邀请者建立绑定关系（不阻断入驻）。
+    code = (referrer_code or "").strip()
+    if code:
+        referrer = Merchant.objects.filter(referral_code=code).exclude(pk=merchant.pk).first()
+        if referrer is not None:
+            MerchantReferral.objects.get_or_create(
+                referee=merchant,
+                defaults={"referrer": referrer, "code_used": code},
+            )
     return merchant
 
 

@@ -2,7 +2,6 @@
 import { onMounted, reactive, ref } from 'vue'
 
 import AppDrawer from '@/components/AppDrawer.vue'
-import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -20,10 +19,6 @@ const state = reactive({
 
 const detail = ref(null)
 const detailLoading = ref(false)
-
-const profileTarget = ref(null)
-const profileBusy = ref(false)
-const profileForm = reactive({ region: '' })
 
 async function load(resetPage = false) {
   if (resetPage) state.page = 1
@@ -68,27 +63,19 @@ async function toggleStatus(row) {
   }
 }
 
-function openProfile(row) {
-  profileTarget.value = row
-  profileForm.region = row.region || ''
-}
-
-async function saveProfile() {
-  if (!profileTarget.value) return
-  profileBusy.value = true
+// 迭代02：白名单就地加入/移出（原独立白名单模块已删除）。
+async function toggleWhitelist(row) {
   try {
-    await adminWrite(`/buyers/accounts/${profileTarget.value.id}/profile`, {
-      action: 'set_region',
-      region: profileForm.region,
+    await adminWrite(`/buyers/accounts/${row.id}/whitelist`, {
+      action: row.whitelisted ? 'remove' : 'add',
     })
-    profileTarget.value = null
     await load()
   } catch (error) {
     state.error = error.message
-  } finally {
-    profileBusy.value = false
   }
 }
+
+const AUTH_PROVIDER_LABELS = { EMAIL: '邮箱', FACEBOOK: 'Facebook', GOOGLE: 'Google' }
 
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 16) : '—'
@@ -154,7 +141,7 @@ onMounted(load)
           <thead>
             <tr>
               <th>账号</th>
-              <th>地区</th>
+              <th>登录渠道</th>
               <th>启用</th>
               <th>白名单</th>
               <th>余额</th>
@@ -169,7 +156,14 @@ onMounted(load)
                 <b>{{ row.account || '—' }}</b>
                 <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
               </td>
-              <td>{{ row.region || '未设置' }}</td>
+              <td>
+                <span
+                  class="tag"
+                  :class="row.auth_provider === 'EMAIL' ? 'tag--gray' : 'tag--info'"
+                >
+                  {{ AUTH_PROVIDER_LABELS[row.auth_provider] || row.auth_provider }}
+                </span>
+              </td>
               <td>
                 <span class="tag" :class="row.enabled ? 'tag--ok' : 'tag--danger'">
                   {{ row.enabled ? '启用' : '停用' }}
@@ -182,17 +176,22 @@ onMounted(load)
               </td>
               <td class="num">¥ {{ row.balance }}</td>
               <td>
-                <span class="cell-sub">{{ row.checkout_allowed ? '可进入支付' : '不可支付' }}</span>
-                <span class="cell-sub">
-                  {{ row.balance_pay_allowed ? '支持余额支付' : '不支持余额支付' }}
+                <span class="tag" :class="row.whitelisted ? 'tag--ok' : 'tag--gray'">
+                  {{ row.payment_permission || '—' }}
                 </span>
               </td>
               <td>{{ formatTime(row.joined_at) }}</td>
               <td>
                 <div class="row-actions">
                   <button type="button" class="btn btn--sm" @click="openDetail(row)">详情</button>
-                  <button type="button" class="btn btn--sm" @click="openProfile(row)">
-                    改地区
+                  <!-- 迭代02：白名单就地操作（原独立白名单模块已并入本页）。 -->
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    :class="row.whitelisted ? 'btn--danger' : 'btn--primary'"
+                    @click="toggleWhitelist(row)"
+                  >
+                    {{ row.whitelisted ? '移出白名单' : '加入白名单' }}
                   </button>
                   <button type="button" class="btn btn--sm" @click="toggleStatus(row)">
                     {{ row.enabled ? '停用' : '启用' }}
@@ -242,8 +241,12 @@ onMounted(load)
             <dd>{{ detail.phone || '—' }}</dd>
           </div>
           <div>
-            <dt>地区</dt>
-            <dd>{{ detail.region || '未设置' }}</dd>
+            <dt>登录渠道</dt>
+            <dd>{{ AUTH_PROVIDER_LABELS[detail.auth_provider] || detail.auth_provider }}</dd>
+          </div>
+          <div>
+            <dt>支付权限</dt>
+            <dd>{{ detail.whitelisted ? '全部可用' : '不可支付' }}</dd>
           </div>
           <div>
             <dt>余额</dt>
@@ -260,10 +263,6 @@ onMounted(load)
           <div>
             <dt>注册时间</dt>
             <dd>{{ formatTime(detail.joined_at) }}</dd>
-          </div>
-          <div>
-            <dt>上次在线</dt>
-            <dd>{{ formatTime(detail.last_online_at) }}</dd>
           </div>
         </dl>
 
@@ -306,22 +305,5 @@ onMounted(load)
         <p v-else class="empty-state">暂无资金明细。</p>
       </template>
     </AppDrawer>
-
-    <AppModal
-      v-if="profileTarget"
-      title="修改用户地区"
-      confirm-text="保存"
-      :busy="profileBusy"
-      @cancel="profileTarget = null"
-      @confirm="saveProfile"
-    >
-      <div class="field">
-        <label for="buyer-region">所在地区（ISO 代码，如 GB / CN）</label>
-        <input id="buyer-region" v-model="profileForm.region" type="text" maxlength="32" />
-        <span class="field__hint">
-          未开放地区需加入白名单才能进入支付；已开放地区（GB / CN / HK / US）普通用户即可支付。
-        </span>
-      </div>
-    </AppModal>
   </section>
 </template>

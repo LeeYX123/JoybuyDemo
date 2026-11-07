@@ -34,6 +34,7 @@ export const messages = {
     'gate.messageWhitelist':
       'Your account is not on the purchase whitelist yet. Please contact customer service.',
     'checkout.balancePay': 'Balance payment',
+    'checkout.wechatPay': 'WeChat Pay',
     'common.loading': 'Loading…',
     'header.searchMerchants': 'Shops',
     'merchant.searchTitle': 'Shop search',
@@ -83,6 +84,7 @@ export const messages = {
     'gate.confirm': '确定',
     'gate.messageWhitelist': '您的账号还未加入购买白名单，暂不能购买，请联系客服。',
     'checkout.balancePay': '余额支付',
+    'checkout.wechatPay': '微信支付',
     'common.loading': '加载中…',
     'header.searchMerchants': '搜商家',
     'merchant.searchTitle': '搜索商家',

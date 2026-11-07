@@ -11,7 +11,9 @@ class Order(models.Model):
         PAID = "PAID", "Paid"
         CANCELED = "CANCELED", "Canceled"
 
-    PAYMENT_METHODS = ("BALANCE", "CARD", "GOOGLE_PAY", "KLARNA")
+    # 迭代02：支付渠道任意选、直接购买成功（演示性质），但渠道记录进订单，
+    # 商家端订单管理可见"这笔是什么支付的"。
+    PAYMENT_METHODS = ("BALANCE", "CARD", "GOOGLE_PAY", "APPLE_PAY", "WECHAT_PAY", "KLARNA")
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     account = models.ForeignKey(

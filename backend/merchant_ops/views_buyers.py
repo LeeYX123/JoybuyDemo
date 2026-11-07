@@ -21,6 +21,8 @@ def _buyer_payload(account: BuyerAccount) -> dict:
         "email": account.email,
         "phone": account.phone_e164,
         "name": account.email or account.phone_e164 or "买家",
+        # 迭代02：登录渠道（Facebook / Google / 邮箱）。
+        "auth_provider": account.auth_provider or BuyerAccount.AuthProvider.EMAIL,
         "region": account.region,
         "region_open": (account.region or "") in OPEN_REGIONS if account.region else True,
         "enabled": account.status == BuyerAccount.Status.ACTIVE,
@@ -32,6 +34,10 @@ def _buyer_payload(account: BuyerAccount) -> dict:
         and ((account.region or "") in OPEN_REGIONS or account.purchase_whitelisted),
         "balance_pay_allowed": account.status == BuyerAccount.Status.ACTIVE
         and account.purchase_whitelisted,
+        # 迭代02：支付权限统一展示「全部可用」（白名单即全部可用，详情不再逐个列）。
+        "payment_permission": "全部可用"
+        if (account.status == BuyerAccount.Status.ACTIVE and account.purchase_whitelisted)
+        else "不可支付",
     }
 
 

@@ -255,6 +255,11 @@ urlpatterns = [
         name="admin-notification-products",
     ),
     path(
+        "api/v1/admin/notifications/orders",
+        views_notifications.AdminNotificationOrdersView.as_view(),
+        name="admin-notification-orders",
+    ),
+    path(
         "api/v1/admin/notifications/<uuid:public_id>",
         views_notifications.AdminNotificationDetailView.as_view(),
         name="admin-notification-detail",

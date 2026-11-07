@@ -49,8 +49,12 @@ def _account_payload(account: BuyerAccount) -> dict:
         "email": account.email,
         "phone": account.phone_e164,
         "status": account.status,
+        # 迭代02：登录渠道（EMAIL / FACEBOOK / GOOGLE）。
+        "auth_provider": account.auth_provider or BuyerAccount.AuthProvider.EMAIL,
         # docs/12 6-6: storefront gates Buy now / Add to cart on this flag.
         "purchase_whitelisted": account.purchase_whitelisted,
+        # 余额支付真扣，购物端结账页展示真实余额（与商家钱包是两套独立账户）。
+        "balance": str(account.balance),
     }
 
 
@@ -153,6 +157,67 @@ class BuyerRegisterView(BuyerCsrfAPIView):
             raise BuyerApiError(
                 business_code="BUYER_ACCOUNT_EXISTS",
                 message="An account already exists for this identifier.",
+                status_code=409,
+            ) from exc
+
+        token, _ = create_buyer_session(
+            account=account,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        response = Response({"account": _account_payload(account)}, status=201)
+        set_buyer_session_cookie(response, token)
+        return response
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
+class BuyerEmailRegisterView(BuyerCsrfAPIView):
+    """邮箱手动注册（迭代02 拍板）：自填账号 + 密码即可注册成功，不做邮箱验证码。
+
+    账号（邮箱）唯一，系统 ID 始终唯一，以 ID 区分用户；登录渠道记录为 EMAIL。
+    """
+
+    def post(self, request):
+        import re
+
+        from django.db import IntegrityError
+        from rest_framework.response import Response
+
+        from accounts_buyers.services import create_buyer_session, set_buyer_session_cookie
+
+        payload = request.data or {}
+        email = str(payload.get("email") or "").strip().lower()
+        password = str(payload.get("password") or "")
+        if not email or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            raise BuyerApiError(
+                business_code="EMAIL_INVALID", message="请输入有效的邮箱地址。", status_code=400
+            )
+        if len(password) < 8:
+            raise BuyerApiError(
+                business_code="PASSWORD_TOO_SHORT", message="密码至少 8 位。", status_code=400
+            )
+        if BuyerAccount.objects.filter(email=email).exists():
+            raise BuyerApiError(
+                business_code="BUYER_ACCOUNT_EXISTS",
+                message="该邮箱已注册，请直接登录。",
+                status_code=409,
+            )
+        try:
+            with transaction.atomic():
+                now = timezone.now()
+                account = BuyerAccount(
+                    email=email,
+                    last_login_at=now,
+                    auth_provider=BuyerAccount.AuthProvider.EMAIL,
+                    email_verified_at=now,
+                )
+                account.set_password(password)
+                account.save()
+        except IntegrityError as exc:
+            raise BuyerApiError(
+                business_code="BUYER_ACCOUNT_EXISTS",
+                message="该邮箱已注册，请直接登录。",
                 status_code=409,
             ) from exc
 

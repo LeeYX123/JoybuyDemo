@@ -146,7 +146,8 @@ class OverviewTests(MerchantAppTestBase):
         stats = response.json()["stats"]
         self.assertEqual(stats["today_order_count"], 1)
         self.assertEqual(stats["pending_shipment_count"], 1)
-        self.assertEqual(stats["pending_order_amount"], "40.00")
+        # 迭代02：待发货金额 = 成本价合计。
+        self.assertEqual(stats["pending_order_amount"], "20.00")
 
     def test_charts_cover_seven_days_and_never_divide_by_zero(self):
         response = self.get("/api/v1/merchant/overview")

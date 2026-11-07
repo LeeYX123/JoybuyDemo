@@ -49,6 +49,7 @@ const createOpen = ref(false)
 const createForm = reactive({
   name: '',
   legal_name: '',
+  referrer_code: '',
   ban_after_days: 4,
   admission_approved: false,
   busy: false,
@@ -205,6 +206,7 @@ async function submitCreate() {
     await adminWrite('/merchants', {
       name: createForm.name,
       legal_name: createForm.legal_name,
+      referrer_code: createForm.referrer_code || undefined,
       ban_after_days: Number(createForm.ban_after_days),
       admission_approved: createForm.admission_approved,
     })
@@ -625,6 +627,11 @@ onMounted(load)
         <div class="field">
           <label for="new-legal">主体名称（选填）</label>
           <input id="new-legal" v-model="createForm.legal_name" type="text" maxlength="200" />
+        </div>
+        <div class="field">
+          <label for="new-referral">邀请码（选填，填了即为邀请入驻）</label>
+          <input id="new-referral" v-model="createForm.referrer_code" type="text" maxlength="32" />
+          <span class="field__hint">填邀请商家的推荐码，审核通过后建立返佣绑定。</span>
         </div>
         <div class="field">
           <label for="new-ban">订单未处理自动封店天数（天）</label>

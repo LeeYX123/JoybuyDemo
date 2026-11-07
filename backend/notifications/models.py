@@ -99,6 +99,15 @@ class MerchantNotification(models.Model):
     product_snapshot = models.JSONField(default=dict, blank=True)
     rating = models.PositiveSmallIntegerField(null=True, blank=True)
     images = models.JSONField(default=list, blank=True)
+    # 好评通知关联的商家子单（迭代02）：推送时必须选一笔已完成且未评价的
+    # 订单；一单只能被推送一次好评（商家端据此判定"未评价"）。
+    order = models.ForeignKey(
+        "orders.MerchantOrder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="review_notifications",
+    )
     read_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(
         "accounts_staff.StaffAccount",

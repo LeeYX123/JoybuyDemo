@@ -268,7 +268,7 @@ class MerchantAfterSaleActionsView(MerchantAPIView):
 
 
 def _activity_payload(activity: MerchantActivity, *, joined: bool, joined_at=None) -> dict:
-    return {
+    payload = {
         "id": str(activity.public_id),
         "title": activity.title,
         "kind": activity.kind,
@@ -282,13 +282,33 @@ def _activity_payload(activity: MerchantActivity, *, joined: bool, joined_at=Non
         "joined_at": iso(joined_at),
         "participants": activity.participations.count(),
     }
+    # 迭代02：常驻活动不展示任何时间（创建即生效）。
+    if activity.kind == MerchantActivity.Kind.PERMANENT:
+        payload["start"] = None
+        payload["end"] = None
+    return payload
+
+
+def _expire_due_activities() -> int:
+    """限时活动到期自动下架（迭代02）：end_date < 今天 → ENDED，同步商家端。"""
+
+    from django.utils import timezone as tz
+
+    expired = MerchantActivity.objects.filter(
+        kind=MerchantActivity.Kind.LIMITED,
+        state=MerchantActivity.State.ONGOING,
+        end_date__lt=tz.localdate(),
+    ).update(state=MerchantActivity.State.ENDED)
+    return expired
 
 
 class MerchantActivitiesView(MerchantAPIView):
     permission_any = ("merchant.activities.view",)
 
     def get(self, request):
-        queryset = MerchantActivity.objects.filter(is_referral=False)
+        # 惰性到期检查（生产由 run_order_sweeps 兜底）。
+        _expire_due_activities()
+        queryset = MerchantActivity.objects.filter(is_referral=False, state=MerchantActivity.State.ONGOING)
         kind = (request.query_params.get("kind") or "").strip().upper()
         if kind in (MerchantActivity.Kind.PERMANENT, MerchantActivity.Kind.LIMITED):
             queryset = queryset.filter(kind=kind)
@@ -351,6 +371,13 @@ class MerchantActivityJoinView(MerchantAPIView):
             activity=activity, merchant=request.merchant
         )
         if created:
+            # 迭代02：参与活动 = 加一点曝光（与【商家关注与曝光】同源），
+            # exposure_added 记在参与记录上，商家端/管理端都能看到。
+            from merchants.services import add_exposure
+
+            add_exposure(request.merchant, count=1)
+            participation.exposure_added = 1
+            participation.save(update_fields=["exposure_added"])
             record_audit(
                 request=request,
                 actor=request.staff_account,
@@ -359,7 +386,10 @@ class MerchantActivityJoinView(MerchantAPIView):
                 target_id=str(activity.public_id),
                 reason="",
                 before_state={},
-                after_state={"merchant": str(request.merchant.public_id)},
+                after_state={
+                    "merchant": str(request.merchant.public_id),
+                    "exposure_added": 1,
+                },
                 tenant_type="MERCHANT",
                 tenant_id=str(request.merchant.public_id),
             )
@@ -367,6 +397,7 @@ class MerchantActivityJoinView(MerchantAPIView):
             {
                 "joined": True,
                 "created": created,
+                "exposure_added": participation.exposure_added,
                 "activity": _activity_payload(
                     activity, joined=True, joined_at=participation.joined_at
                 ),

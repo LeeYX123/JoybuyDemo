@@ -597,14 +597,16 @@ class ReferralApiTests(CommerceTestBase):
         self.assertEqual(response.json()["count"], 1)
 
         commission = ReferralCommission.objects.get()
+        # 迭代02：计佣基数 = 发货成功订单的成本价合计（10000），不是零售额。
         self.assertEqual(commission.rate, Decimal("2.000"))
-        self.assertEqual(commission.amount, Decimal("400.0000"))
+        self.assertEqual(commission.shipped_amount, Decimal("10000.0000"))
+        self.assertEqual(commission.amount, Decimal("200.0000"))
 
         url = f"/api/v1/admin/referrals/commissions/{commission.public_id}/actions"
         self.assertEqual(self.post_json(url, {"action": "pay"}).status_code, 200)
         self.assertEqual(self.post_json(url, {"action": "pay"}).status_code, 200)
         self.merchant.refresh_from_db()
-        self.assertEqual(self.merchant.wallet_balance, Decimal("400.00"))
+        self.assertEqual(self.merchant.wallet_balance, Decimal("200.00"))
         self.assertEqual(
             MerchantWalletEntry.objects.filter(
                 merchant=self.merchant,
