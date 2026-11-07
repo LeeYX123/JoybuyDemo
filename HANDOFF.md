@@ -53,6 +53,14 @@
 
 ## 2. 已经完成了什么
 
+### 2026-11-07（UI 细节优化第二轮：搜索框/状态色/活动商品页排查）
+
+- 商家端上架中心：搜索框独立行补齐外边距（`margin: 12px 20px 16px`，与商品卡间距 16px），并补上脱离 `.toolbar` 后缺失的输入框样式；聚焦边框从品牌红改为中性灰（`merchant.css` 的 `.toolbar input:focus` 与 CatalogueView scoped 规则，红色只留给错误/危险动作）。
+- 商家端看板：店铺状态配色——接单中=绿 `#16a34a`、已封店=红 `#e1251b`、待缴保证金=橙 `#d97706`；welcome strip 的"店铺当前状态"与统计卡"● 状态"两处同步。
+- 管理端商品池：状态列按状态配色（可售=绿、已下架=灰、草稿=橙）。实现方式：`StatusTag.vue` 的 labels 值支持 `[文案, 色调]` 数组形态（字符串用法向后兼容），ProductPoolView 传数组。
+- **活动商品管理"页面不存在"排查结论**：路由 `/activity-products`、视图文件、侧栏入口、`admin@joybuy.test`（platform_admin，44 个权限码含 catalog.pool.view/manage）全部正常，浏览器实测页面正常渲染。判断为重启后浏览器旧会话/缓存残留（当时后端尚未启动）；若再遇到请 Ctrl+F5 强刷，仍不复现则提供账号。
+- 验证（针对性）：admin-web vitest 9 passed、双端 vite build 通过、prettier/eslint 通过；浏览器实测 getComputedStyle：商品池状态 tag 绿/橙生效、商家端状态两处 rgb(22,163,74)、搜索框聚焦边框 rgb(201,206,214) 且与卡片间距 16px。临时检查账号已删除。
+
 ### 2026-11-07（管理端/商家端 UI 优化 5 项 + 关机）
 
 - 应用户要求完成 5 项 UI 优化并关机：

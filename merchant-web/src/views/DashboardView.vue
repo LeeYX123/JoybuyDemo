@@ -33,6 +33,15 @@ const statusText = computed(() => {
   return status || '—'
 })
 
+// 店铺状态颜色：接单中=绿、已封店=红、待缴保证金=橙，其余灰。
+const statusColorClass = computed(() => {
+  const status = state.data?.stats?.store_status
+  if (status === 'ACTIVE') return 'status-active'
+  if (status === 'SUSPENDED') return 'status-suspended'
+  if (status === 'PENDING_DEPOSIT') return 'status-pending'
+  return 'status-muted'
+})
+
 async function load() {
   state.loading = true
   state.error = ''
@@ -76,7 +85,7 @@ onMounted(load)
     <template v-if="state.data">
       <div class="welcome-strip">
         <div>
-          店铺当前状态：<b>{{ statusText }}</b>
+          店铺当前状态：<b :class="statusColorClass">{{ statusText }}</b>
           <template v-if="state.data.stats.pending_shipment_count">
             ｜ 你有 <b>{{ state.data.stats.pending_shipment_count }}</b> 笔订单待发货
           </template>
@@ -119,7 +128,9 @@ onMounted(load)
         </div>
         <div class="stat-card">
           <div class="stat-card__label">店铺状态</div>
-          <div class="stat-card__value" style="font-size: 20px">● {{ statusText }}</div>
+          <div class="stat-card__value" :class="statusColorClass" style="font-size: 20px">
+            ● {{ statusText }}
+          </div>
           <div class="stat-card__hint">
             {{ state.data.merchant.can_operate ? '平台自动接单中' : '请联系平台客服' }}
           </div>
@@ -293,6 +304,22 @@ onMounted(load)
 </template>
 
 <style scoped>
+.status-active {
+  color: #16a34a;
+}
+
+.status-suspended {
+  color: #e1251b;
+}
+
+.status-pending {
+  color: #d97706;
+}
+
+.status-muted {
+  color: var(--muted, #78869a);
+}
+
 .dashboard-grid {
   display: grid;
   gap: 16px;

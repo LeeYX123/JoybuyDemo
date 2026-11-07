@@ -488,8 +488,9 @@
 .toolbar input:focus,
 .toolbar select:focus {
   outline: 0;
-  border-color: var(--red);
-  box-shadow: 0 0 0 2px rgb(223 38 54 / 10%);
+  /* 聚焦用中性灰，不用品牌红（红色只留给错误/危险动作）。 */
+  border-color: #c9ced6;
+  box-shadow: 0 0 0 2px rgb(148 163 184 / 15%);
 }
 
 /* ---------- 标签页 ---------- */

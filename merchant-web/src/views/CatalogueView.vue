@@ -478,12 +478,24 @@ onMounted(async () => {
 .search-row {
   display: flex;
   gap: 8px;
-  margin-top: 12px;
-  max-width: 420px;
+  /* 与品类条、下方商品卡片都留出空隙；水平对齐工具条的 20px 内边距。 */
+  margin: 12px 20px 16px;
+  max-width: 460px;
 }
 
 .search-row input {
   flex: 1;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #e3e6eb;
+  border-radius: 5px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.search-row input:focus {
+  outline: 0;
+  border-color: #c9ced6;
 }
 
 .product-grid {

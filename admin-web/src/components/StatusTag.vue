@@ -49,8 +49,13 @@ const props = defineProps({
   labels: { type: Object, default: () => ({}) },
 })
 
+// labels 的值支持两种形态：
+// - 字符串：只改文案，色调仍走内置 MAP（保持既有用法）；
+// - [文案, 色调] 数组：文案与色调一起覆盖（如商品池「可售」要绿色）。
 const entry = computed(() => {
-  if (props.labels[props.value]) return [props.labels[props.value], '']
+  const custom = props.labels[props.value]
+  if (Array.isArray(custom)) return custom
+  if (custom) return [custom, '']
   return MAP[props.value] || [props.value || '—', '']
 })
 </script>

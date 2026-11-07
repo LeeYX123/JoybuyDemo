@@ -28,7 +28,12 @@ const state = reactive({
 })
 
 // 商品池的 ACTIVE 表示「可售」，与店铺的「接单中」不是同一个语义。
-const PRODUCT_STATUS_LABELS = { ACTIVE: '可售', INACTIVE: '已下架', DRAFT: '草稿' }
+// [文案, 色调]：可售=绿、已下架=灰、草稿=橙（StatusTag 支持数组形态）。
+const PRODUCT_STATUS_LABELS = {
+  ACTIVE: ['可售', 'ok'],
+  INACTIVE: ['已下架', ''],
+  DRAFT: ['草稿', 'warn'],
+}
 
 const categories = ref([])
 const detail = ref(null)
