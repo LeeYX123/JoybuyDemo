@@ -47,6 +47,11 @@ export const messages = {
     'merchant.shopSubtitle': 'Official shop on Joybuy',
     'merchant.productsTitle': 'All listed products',
     'merchant.noProducts': 'This shop has no listed products yet.',
+    'order.confirmReceipt': 'Confirm receipt',
+    'order.confirming': 'Confirming…',
+    'order.completed': 'Order completed. Thank you!',
+    'order.notFound': 'Order not found.',
+    'product.unavailable': 'This product has been delisted and cannot be viewed.',
   },
   zh: {
     'topStrip.region': '英国 | 中文',
@@ -91,6 +96,11 @@ export const messages = {
     'merchant.shopSubtitle': 'Joybuy 入驻商家',
     'merchant.productsTitle': '该商家全部上架商品',
     'merchant.noProducts': '该商家暂无上架商品。',
+    'order.confirmReceipt': '确认收货',
+    'order.confirming': '确认中…',
+    'order.completed': '订单已完成，感谢您的确认！',
+    'order.notFound': '订单不存在。',
+    'product.unavailable': '商品已下架，无法查看',
   },
 }
 

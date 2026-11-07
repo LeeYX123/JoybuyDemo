@@ -106,7 +106,8 @@ class MerchantOverviewView(MerchantAPIView):
             merchant=merchant, status=MerchantOrder.Status.PENDING
         )
         pending_count = pending.count()
-        pending_amount = pending.aggregate(total=Sum("items_total"))["total"] or 0
+        # 迭代02：待发货金额 = 待处理订单的成本价合计（与管理端商家列表一致）。
+        pending_amount = pending.aggregate(total=Sum("cost_total"))["total"] or 0
 
         pending_aftersales = AfterSale.objects.filter(
             merchant=merchant,

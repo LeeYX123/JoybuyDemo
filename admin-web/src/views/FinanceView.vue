@@ -444,22 +444,22 @@ onMounted(() => {
       </p>
       <div class="form-grid">
         <div v-if="actionKind === 'approve'" class="field">
-          <label for="fee">手续费</label>
+          <label for="fee">手续费（审核通过后展示）</label>
           <input id="fee" v-model="actionForm.fee" type="number" min="0" step="0.01" />
-          <span class="field__hint">实际到账 = 申请金额 - 手续费，出款时不再重复扣可用余额。</span>
-        </div>
-        <div v-if="actionKind === 'start_transfer'" class="field">
-          <label for="reference">出款凭证 / 交易编号</label>
-          <input id="reference" v-model="actionForm.reference" type="text" maxlength="160" />
+          <span class="field__hint"
+            >通过后状态直接变为【转账中】；商家端不展示手续费，实际到账 = 申请金额 - 手续费。</span
+          >
         </div>
         <div v-if="actionKind === 'mark_paid'" class="field">
           <label for="paid-reference">凭证（选填）</label>
           <input id="paid-reference" v-model="actionForm.reference" type="text" maxlength="160" />
         </div>
         <div v-if="actionKind === 'reject' || actionKind === 'mark_failed'" class="field">
-          <label for="wd-reason">原因（选填）</label>
+          <label for="wd-reason">{{ actionKind === 'reject' ? '打回原因' : '失败原因' }}</label>
           <input id="wd-reason" v-model="actionForm.reason" type="text" maxlength="255" />
-          <span class="field__hint">打回或失败会退回一次可用余额。</span>
+          <span class="field__hint"
+            >{{ actionKind === 'reject' ? '打回' : '转账失败' }}会立即把金额退回商家钱包余额。</span
+          >
         </div>
       </div>
     </AppModal>

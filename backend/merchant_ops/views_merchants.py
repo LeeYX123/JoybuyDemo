@@ -91,6 +91,54 @@ def _merchant_payload(merchant: Merchant, *, pending=None) -> dict:
     }
 
 
+def _overdue_pending_info(merchant, days: int) -> dict:
+    """按新天数检查是否存在超时未处理订单（封店天数二次确认用）。"""
+
+    from datetime import timedelta
+
+    from django.utils import timezone as tz
+
+    cutoff = tz.now() - timedelta(days=days)
+    earliest = (
+        MerchantOrder.objects.filter(
+            merchant=merchant,
+            status=MerchantOrder.Status.PENDING,
+            created_at__lt=cutoff,
+        )
+        .order_by("created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    overdue_days = None
+    if earliest:
+        overdue_days = int((tz.now() - earliest).total_seconds() // 86400)
+    return {
+        "overdue": earliest is not None,
+        "earliest_pending_created_at": iso(earliest) if earliest else None,
+        "overdue_days": overdue_days,
+        "days": days,
+    }
+
+
+class AdminMerchantBanCheckView(OpsAPIView):
+    """自动封店天数预检：改小天数时前端据此弹二次确认（迭代02）。"""
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["merchants.manage"]
+    view_permissions = ["merchants.view"]
+
+    def get(self, request, public_id):
+        merchant = Merchant.objects.filter(public_id=public_id).first()
+        if merchant is None:
+            from accounts_staff.api_exceptions import StaffApiError
+
+            raise StaffApiError(
+                business_code="MERCHANT_NOT_FOUND", message="商家不存在。", status_code=404
+            )
+        days = parse_positive_int(request.query_params.get("days"), field="天数")
+        return Response({"ban_check": _overdue_pending_info(merchant, days)})
+
+
 def _pending_aggregate(merchant_ids) -> dict:
     rows = (
         MerchantOrder.objects.filter(
@@ -98,9 +146,13 @@ def _pending_aggregate(merchant_ids) -> dict:
             status=MerchantOrder.Status.PENDING,
         )
         .values("merchant_id")
-        .annotate(count=Count("id"), amount=Sum("items_total"))
+        .annotate(count=Count("id"), amount=Sum("cost_total"))
     )
-    return {row["merchant_id"]: {"count": row["count"], "amount": row["amount"]} for row in rows}
+    # 迭代02：待发货总金额 = 这些订单的成本价合计（不是零售成交额）。
+    return {
+        row["merchant_id"]: {"count": row["count"], "amount": row["amount"] or 0}
+        for row in rows
+    }
 
 
 def _filtered_queryset(request):
@@ -239,8 +291,33 @@ class AdminMerchantDetailView(OpsAPIView):
 
         if payload.get("ban_after_days") not in (None, ""):
             days = parse_positive_int(payload["ban_after_days"], field="未发货封店天数")
+            confirm_suspend = bool(payload.get("confirm_suspend"))
+            # 迭代02：把天数改小且该店存在超过新天数的未处理订单时，
+            # 必须带 confirm_suspend=true 二次确认；确认后立即封店。
+            shrank = merchant.ban_after_days is None or days < merchant.ban_after_days
+            if shrank:
+                overdue_info = _overdue_pending_info(merchant, days)
+                if overdue_info["overdue"] and not confirm_suspend:
+                    from accounts_staff.api_exceptions import StaffApiError
+
+                    error = StaffApiError(
+                        business_code="BAN_CONFIRM_REQUIRED",
+                        message="该店铺有超过设定天数未处理的订单，需要二次确认。",
+                        status_code=409,
+                    )
+                    error.overdue_info = overdue_info
+                    raise error
             merchant.ban_after_days = days
             merchant.save(update_fields=["ban_after_days", "updated_at"])
+            if shrank and confirm_suspend and overdue_info["overdue"]:
+                if merchant.onboarding_status == Merchant.OnboardingStatus.ACTIVE:
+                    from merchants.services import set_merchant_suspension
+
+                    merchant = set_merchant_suspension(
+                        merchant,
+                        suspended=True,
+                        reason="订单未处理超过设定天数，调整自动封店天数后立即封店",
+                    )
 
         # 折扣设置（WP-42 文档管理端 §1）：按商家统一设置，百分数（70 = 70%）。
         # 文档拍板：不做区间校验、不做默认值兜底，设多少按多少算。

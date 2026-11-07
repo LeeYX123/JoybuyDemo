@@ -275,7 +275,7 @@ onMounted(load)
             <b class="num">¥ {{ detail.value.items_total }}</b>
           </div>
           <div>
-            <span>{{ detail.value.settled ? '盈利' : '回款后预估盈利' }}</span>
+            <span>{{ detail.value.settled ? '盈利' : '预估盈利' }}</span>
             <b class="num up">¥ {{ detail.value.profit }}</b>
           </div>
           <button

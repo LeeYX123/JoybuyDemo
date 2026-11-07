@@ -208,7 +208,8 @@ class CatalogListingTests(MerchantModuleTestBase):
         )
         response = self.post("/api/v1/merchant/listings", {"product_id": str(product.public_id)})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "MERCHANT_NOT_OPERABLE")
+        # 迭代02：未缴保证金有专门提示文案。
+        self.assertEqual(response.json()["error"]["code"], "DEPOSIT_NOT_PAID")
 
     def test_list_delisted_product_is_rejected(self):
         product = self.make_product(status=Spu.Status.INACTIVE)

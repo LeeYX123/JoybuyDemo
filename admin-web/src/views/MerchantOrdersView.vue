@@ -46,6 +46,8 @@ const busy = ref(false)
 const nodeForm = reactive({ node_index: '', reference: '' })
 const timeForm = reactive({ created_at: '', nodes: Array(8).fill('') })
 const confirmComplete = ref(false)
+// 保存节点时间前的确认弹框（迭代02：点保存先弹框确认再提交）。
+const confirmSaveTimes = ref(false)
 
 const nextNodes = computed(() => {
   if (!detail.value) return []
@@ -154,6 +156,7 @@ async function saveTimes() {
       'PATCH',
     )
     detail.value = payload.order
+    confirmSaveTimes.value = false
     await load()
   } catch (error) {
     actionError.value = error.message
@@ -448,10 +451,18 @@ onMounted(load)
         </p>
 
         <h3 class="section-title">修改时间（后台留痕）</h3>
+        <p class="field__hint" style="margin: 0 0 8px">
+          下单时间仅【已完成】订单可改；节点时间只能改已出现的节点，必须晚于上一节点且不晚于当前系统时间。
+        </p>
         <div class="form-grid form-grid--tight">
           <div class="field">
-            <label for="created-at">下单时间</label>
-            <input id="created-at" v-model="timeForm.created_at" type="datetime-local" />
+            <label for="created-at">下单时间（仅已完成可改）</label>
+            <input
+              id="created-at"
+              v-model="timeForm.created_at"
+              type="datetime-local"
+              :disabled="detail.status !== 'COMPLETED'"
+            />
           </div>
           <div v-for="(label, index) in NODE_LABELS" :key="label" class="field">
             <label :for="`node-time-${index}`">{{ label }}</label>
@@ -459,11 +470,14 @@ onMounted(load)
               :id="`node-time-${index}`"
               v-model="timeForm.nodes[index]"
               type="datetime-local"
+              :disabled="!(detail.node_times || [])[index]"
             />
           </div>
         </div>
         <div class="form-actions">
-          <button type="button" class="btn" :disabled="busy" @click="saveTimes">保存时间</button>
+          <button type="button" class="btn" :disabled="busy" @click="confirmSaveTimes = true">
+            保存节点时间
+          </button>
         </div>
       </template>
 
@@ -471,7 +485,7 @@ onMounted(load)
         <button
           type="button"
           class="btn"
-          :disabled="detail.status === 'PENDING' || detail.progress >= 7"
+          :disabled="detail.progress >= 7"
           @click="confirmComplete = true"
         >
           一键完成全部节点
@@ -499,6 +513,17 @@ onMounted(load)
         将把当前订单推进到「用户确认收货」，订单状态改为已完成，并按订单金额一次性回款到商家钱包。
         该操作只影响当前这一笔，且不会重复入账。
       </p>
+    </AppModal>
+
+    <AppModal
+      v-if="confirmSaveTimes"
+      title="确认保存节点时间"
+      confirm-text="确认保存"
+      :busy="busy"
+      @cancel="confirmSaveTimes = false"
+      @confirm="saveTimes"
+    >
+      <p>确认保存修改后的节点时间？下一个节点时间必须大于上一个节点，且不能晚于当前系统时间。</p>
     </AppModal>
   </section>
 </template>

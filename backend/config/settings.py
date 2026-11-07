@@ -38,7 +38,10 @@ ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 CSRF_TRUSTED_ORIGINS = env_list(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
     # 3000 商城端 / 5173 平台管理端 / 5174 商家端（三个前端都要能发写请求）
-    "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174",
+    # localhost 与 127.0.0.1 是不同的 Origin，两个变体都必须配置，
+    # 否则用 localhost 访问时所有写请求都会被 CSRF 中间件 403。
+    "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,"
+    "http://localhost:3000,http://localhost:5173,http://localhost:5174",
 )
 
 INSTALLED_APPS = [

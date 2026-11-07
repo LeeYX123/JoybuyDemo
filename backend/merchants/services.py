@@ -371,6 +371,24 @@ def _bump_daily_stat(merchant: Merchant, *, stat_date=None, **deltas) -> None:
         MerchantDailyStat.objects.filter(pk=row.pk).update(**fields)
 
 
+def touch_merchant_online(merchant: Merchant, *, now=None) -> None:
+    """商家端任何动作都记为在线（迭代02 管理端 §2）。
+
+    展示口径：每 10 分钟刷新一次——距上次记录不足 10 分钟不写库，
+    避免商家端每个请求都产生一次 UPDATE。
+    """
+
+    from datetime import timedelta
+
+    now = now or timezone.now()
+    if (
+        merchant.last_online_at is not None
+        and now - merchant.last_online_at < timedelta(minutes=10)
+    ):
+        return
+    Merchant.objects.filter(pk=merchant.pk).update(last_online_at=now)
+
+
 def add_followers(merchant: Merchant, *, count: int) -> Merchant:
     if count <= 0:
         raise MerchantAdminError("COUNT_INVALID", "新增关注必须是正整数。")

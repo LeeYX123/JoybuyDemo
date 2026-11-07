@@ -188,7 +188,8 @@ class AdminWithdrawalActionsView(OpsAPIView):
                     message="手续费必须小于申请金额。",
                     status_code=400,
                 )
-            withdrawal.state = MerchantWithdrawal.State.APPROVED
+            # 迭代02：审核通过后状态直接是【转账中】，手续费此时填写并展示。
+            withdrawal.state = MerchantWithdrawal.State.TRANSFERRING
             withdrawal.fee = fee
             withdrawal.net_amount = withdrawal.amount - fee
             withdrawal.approved_at = now
@@ -210,9 +211,9 @@ class AdminWithdrawalActionsView(OpsAPIView):
             withdrawal.save(update_fields=["state", "reason", "reviewed_by", "updated_at"])
             return_withdrawal(withdrawal, actor=request.staff_account, reason=withdrawal.reason)
         elif action == "start_transfer":
-            reference = require(payload, "reference", label="出款凭证")
+            # 兼容旧调用：出款凭证改为选填（迭代02 去掉银行凭证/链上编号必填）。
             withdrawal.state = MerchantWithdrawal.State.TRANSFERRING
-            withdrawal.reference = reference.strip()
+            withdrawal.reference = str(payload.get("reference") or "").strip()
             withdrawal.save(update_fields=["state", "reference", "updated_at"])
         elif action == "mark_paid":
             withdrawal.state = MerchantWithdrawal.State.PAID

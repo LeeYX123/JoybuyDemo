@@ -185,7 +185,8 @@ class MerchantAdminApiTests(CommerceTestBase):
             item for item in response.json()["items"] if item["id"] == str(self.merchant.public_id)
         )
         self.assertEqual(row["pending_order_count"], 1)
-        self.assertEqual(row["pending_order_amount"], "40.00")
+        # 迭代02：待发货金额 = 成本价合计（不是零售额）。
+        self.assertEqual(row["pending_order_amount"], "20.00")
 
     def test_review_with_deposit_moves_to_pending_deposit_then_active(self):
         merchant = Merchant.objects.create(slug="new-store", display_name="新店铺")
@@ -359,13 +360,18 @@ class MerchantOrderApiTests(CommerceTestBase):
         self.assertEqual(response.json()["error"]["code"], "NODE_NOT_FORWARD")
 
     def test_created_at_cannot_be_later_than_first_node(self):
+        # 迭代02：只有已完成订单能改下单时间 + 节点时间不能晚于当前系统时间。
         order = self.make_merchant_order()
         url = f"/api/v1/admin/merchant-orders/{order.public_id}"
-        future_node = (timezone.now() + timedelta(hours=2)).isoformat()
-        response = self.patch_json(url, {"node_times": [future_node]})
-        self.assertEqual(response.status_code, 200, response.content)
+        first_node = timezone.now() - timedelta(hours=2)
+        MerchantOrder.objects.filter(pk=order.pk).update(
+            status=MerchantOrder.Status.COMPLETED,
+            node_times=[first_node.isoformat()] + [None] * 7,
+            progress=7,
+        )
+        order.refresh_from_db()
         response = self.patch_json(
-            url, {"created_at": (timezone.now() + timedelta(hours=3)).isoformat()}
+            url, {"created_at": (timezone.now() - timedelta(hours=1)).isoformat()}
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "CREATED_AFTER_NODE")
@@ -373,8 +379,12 @@ class MerchantOrderApiTests(CommerceTestBase):
     def test_node_times_must_be_ordered(self):
         order = self.make_merchant_order()
         url = f"/api/v1/admin/merchant-orders/{order.public_id}"
-        first = (timezone.now() + timedelta(hours=1)).isoformat()
-        second = (timezone.now() + timedelta(hours=2)).isoformat()
+        # 下单时间提前到 3 小时前，避免先触发"早于下单时间"校验。
+        MerchantOrder.objects.filter(pk=order.pk).update(
+            created_at=timezone.now() - timedelta(hours=3)
+        )
+        first = (timezone.now() - timedelta(hours=2)).isoformat()
+        second = (timezone.now() - timedelta(hours=1)).isoformat()
         response = self.patch_json(url, {"node_times": [second, first]})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "NODE_OUT_OF_ORDER")
@@ -426,9 +436,7 @@ class FinanceApiTests(CommerceTestBase):
         response = self.post_json(url, {"action": "approve", "fee": "2.00"})
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["withdrawal"]["net_amount"], "48.00")
-
-        response = self.post_json(url, {"action": "start_transfer", "reference": "TX-001"})
-        self.assertEqual(response.status_code, 200, response.content)
+        # 迭代02：审核通过后直接进入【转账中】（不再需要出款凭证）。
         self.assertEqual(response.json()["withdrawal"]["state"], "TRANSFERRING")
 
         response = self.post_json(url, {"action": "mark_paid"})
@@ -438,13 +446,16 @@ class FinanceApiTests(CommerceTestBase):
         # 出款不再扣一次可用余额
         self.assertEqual(self.merchant.wallet_balance, Decimal("50.00"))
 
-    def test_start_transfer_requires_reference(self):
+    def test_approve_then_fail_returns_balance(self):
+        """审核通过→转账失败（填原因）→ 立马退回余额。"""
         withdrawal = self._make_withdrawal()
         url = f"/api/v1/admin/finance/withdrawals/{withdrawal.public_id}/actions"
         self.post_json(url, {"action": "approve", "fee": "0"})
-        response = self.post_json(url, {"action": "start_transfer"})
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "FIELD_REQUIRED")
+        response = self.post_json(url, {"action": "mark_failed", "reason": "卡号输入错误"})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["withdrawal"]["state"], "FAILED")
+        self.merchant.refresh_from_db()
+        self.assertEqual(self.merchant.wallet_balance, Decimal("100.00"))
 
     def test_recharge_creates_ledger_entry(self):
         response = self.post_json(

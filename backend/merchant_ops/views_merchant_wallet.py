@@ -48,9 +48,9 @@ def _order_snapshot(entry: MerchantWalletEntry) -> dict | None:
         "cost_total": money_str(order.cost_total),
         "items_total": money_str(order.items_total),
         "profit": money_str(order.items_total - order.cost_total),
-        # 发货时是预估，回款后才是真实盈利。
+        # 迭代02：订单完成前显示【预估盈利】，完成后为实际盈利。
         "profit_label": (
-            "回款后预估盈利" if entry.kind == MerchantWalletEntry.Kind.ORDER_SHIPPING else "盈利"
+            "预估盈利" if entry.kind == MerchantWalletEntry.Kind.ORDER_SHIPPING else "盈利"
         ),
     }
 

@@ -143,6 +143,14 @@ class AdminMerchantOrderDetailView(OpsAPIView):
         changed = []
 
         if "created_at" in payload:
+            # 迭代02：只有【已完成】订单才能修改下单时间——非完成态改下单时间
+            # 会让已生成的节点时间错乱，按钮在前端置灰，后端二次校验。
+            if order.status != MerchantOrder.Status.COMPLETED:
+                raise StaffApiError(
+                    business_code="ORDER_NOT_COMPLETED",
+                    message="只有已完成的订单才能修改下单时间。",
+                    status_code=400,
+                )
             created_at = _parse_datetime(payload.get("created_at"), field="下单时间")
             if created_at is None:
                 raise StaffApiError(
@@ -170,15 +178,32 @@ class AdminMerchantOrderDetailView(OpsAPIView):
                 )
             nodes = []
             previous = None
+            now = timezone.now()
             for index, raw in enumerate(raw_nodes):
                 value = _parse_datetime(raw, field=f"第 {index + 1} 个节点时间")
                 if value is None:
                     nodes.append(None)
                     continue
+                # 只能修改已经出现的节点时间（原来就有值且本次仍提交了值）。
+                existed = bool((order.node_times or [None] * 8)[index]) if index < len(
+                    order.node_times or []
+                ) else False
+                if existed and raw in (None, ""):
+                    raise StaffApiError(
+                        business_code="NODE_TIME_REQUIRED",
+                        message=f"第 {index + 1} 个节点时间已存在，不能清空。",
+                        status_code=400,
+                    )
                 if value < order.created_at:
                     raise StaffApiError(
                         business_code="NODE_BEFORE_CREATED",
                         message="节点时间不能早于下单时间。",
+                        status_code=400,
+                    )
+                if value > now:
+                    raise StaffApiError(
+                        business_code="NODE_IN_FUTURE",
+                        message="节点时间不能晚于当前系统时间。",
                         status_code=400,
                     )
                 if previous and value < previous:

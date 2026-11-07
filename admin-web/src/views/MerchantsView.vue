@@ -144,6 +144,27 @@ async function submitModal() {
       if (form.wallet_balance !== (modal.merchant?.wallet_balance || '0.00')) {
         payload.wallet_balance = form.wallet_balance
       }
+      // 迭代02：把自动封店天数改小时先预检——存在超时未处理订单要二次确认，
+      // 确认后带 confirm_suspend=true 保存并立即封店。
+      const currentDays = modal.merchant?.ban_after_days
+      const newDays = Number(form.ban_after_days)
+      const shrinking = currentDays == null || newDays < currentDays
+      if (shrinking) {
+        if (banConfirm.pending.value) {
+          // 用户已在确认弹框点了确认：带 confirm_suspend 直接保存。
+          payload.confirm_suspend = true
+          banConfirm.pending.value = false
+        } else {
+          const check = await apiRequest(`/merchants/${id}/ban-check?days=${newDays}`)
+          if (check.ban_check?.overdue) {
+            banConfirm.days.value = check.ban_check.overdue_days ?? newDays
+            banConfirm.payload.value = payload
+            banConfirm.pending.value = true
+            modal.busy = false
+            return
+          }
+        }
+      }
       await adminWrite(`/merchants/${id}`, payload, 'PATCH')
     } else if (modal.kind === 'credit') {
       await adminWrite(`/merchants/${id}/actions`, {
@@ -164,6 +185,18 @@ async function submitModal() {
   } finally {
     modal.busy = false
   }
+}
+
+// 自动封店天数缩小 → 二次确认弹框状态（pending 保持 true 直到提交成功）。
+const banConfirm = {
+  pending: ref(false),
+  days: ref(0),
+  payload: ref(null),
+}
+
+function confirmBanShrink() {
+  // 不清 pending：submitModal 检测到 pending=true 会带 confirm_suspend 提交。
+  submitModal()
 }
 
 async function submitCreate() {
@@ -272,7 +305,7 @@ onMounted(load)
           <thead>
             <tr>
               <th>店铺</th>
-              <th>待发货</th>
+              <th>待发货（金额=成本合计）</th>
               <th>钱包余额</th>
               <th>保证金</th>
               <th>信誉分</th>
@@ -604,6 +637,20 @@ onMounted(load)
           </label>
         </div>
       </div>
+    </AppModal>
+
+    <AppModal
+      v-if="banConfirm.pending.value"
+      title="确认修改自动封店天数"
+      confirm-text="确认修改并封店"
+      :busy="modal.busy"
+      @cancel="banConfirm.pending.value = false"
+      @confirm="confirmBanShrink"
+    >
+      <p class="notice notice--warn">
+        该店铺有超过 {{ banConfirm.days.value }} 天未处理的订单，是否要修改？
+      </p>
+      <p>确认修改后店铺将立即置为【已封店】；超时订单发完后由客服在管理端手动解封。</p>
     </AppModal>
   </section>
 </template>

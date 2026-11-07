@@ -2,41 +2,33 @@
 import { computed } from 'vue'
 import { useFetch, useRequestHeaders, useRuntimeConfig } from '#imports'
 
-import { formatDisplayPrice } from '../../utils/display'
+import { formatDisplayPrice } from '../../../utils/display'
 
-// Buyer orders: pending and canceled (phase 1 states). The pay button
-// surfaces the region-unsupported business error from the backend.
+// 买家订单列表（迭代02）：下单即支付成功（PAID），展示状态/金额，
+// 点击进入订单详情（详情里可确认收货）。
 const config = useRuntimeConfig()
 
 const url = computed(() =>
   import.meta.server ? `${config.apiBaseInternal}/orders` : `/api/v1/orders`,
 )
 
-const { data, refresh } = await useFetch(url, {
+const { data } = await useFetch(url, {
   key: 'buyer-orders',
   headers: { cookie: useRequestHeaders(['cookie']).cookie || '' },
 })
 
 const orders = computed(() => (Array.isArray(data.value?.orders) ? data.value.orders : []))
 
-async function tryPay(publicId) {
-  const session = await $fetch(
-    import.meta.server
-      ? `${config.apiBaseInternal}/auth/buyer/session`
-      : '/api/v1/auth/buyer/session',
-    { credentials: 'include' },
-  )
-  const response = await $fetch(`/api/v1/orders/${publicId}/payment-attempt`, {
-    method: 'POST',
-    headers: { 'X-CSRFToken': session?.csrf_token || '' },
-    credentials: 'include',
-    ignoreResponseError: true,
-  })
-  if (response?.error) {
-    // docs/06 §4.2: the pay button always ends here in phase 1.
-    window.alert('当前地区暂不支持 / Payment is not available in your region.')
-  }
-  await refresh()
+const STATUS_LABELS = {
+  PAID: '已支付 / Paid',
+  PENDING_PAYMENT: '待支付 / Pending payment',
+  CANCELED: '已取消 / Canceled',
+}
+
+function statusClass(status) {
+  if (status === 'PAID') return 'paid'
+  if (status === 'CANCELED') return 'canceled'
+  return ''
 }
 
 useHead({ title: 'Your orders' })
@@ -51,22 +43,18 @@ useHead({ title: 'Your orders' })
 
       <ul class="orders__list">
         <li v-for="order in orders" :key="order.public_id" class="order-row">
-          <div class="order-row__info">
+          <NuxtLink :to="`/account/orders/${order.public_id}`" class="order-row__info">
             <span class="order-row__id">#{{ order.public_id.slice(0, 8) }}</span>
-            <span class="order-row__status" :class="{ canceled: order.status === 'CANCELED' }">
-              {{ order.status === 'CANCELED' ? 'Canceled' : 'Pending payment' }}
+            <span class="order-row__status" :class="statusClass(order.status)">
+              {{ STATUS_LABELS[order.status] || order.status }}
             </span>
             <span class="order-row__meta">
               {{ order.item_count }} item(s) · {{ formatDisplayPrice(order.total) }}
             </span>
-          </div>
-          <BaseButton
-            v-if="order.status !== 'CANCELED'"
-            variant="primary"
-            @click="tryPay(order.public_id)"
-          >
-            Pay now
-          </BaseButton>
+          </NuxtLink>
+          <NuxtLink :to="`/account/orders/${order.public_id}`" class="order-row__link">
+            View details →
+          </NuxtLink>
         </li>
       </ul>
     </section>
@@ -96,6 +84,12 @@ useHead({ title: 'Your orders' })
   padding-block: var(--space-4);
 }
 
+.order-row__info {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
 .order-row__id {
   font-weight: var(--font-weight-semibold);
 }
@@ -106,6 +100,10 @@ useHead({ title: 'Your orders' })
   font-size: var(--font-size-sm);
 }
 
+.order-row__status.paid {
+  color: var(--colour-success, #16a34a);
+}
+
 .order-row__status.canceled {
   color: var(--colour-error);
 }
@@ -113,6 +111,11 @@ useHead({ title: 'Your orders' })
 .order-row__meta {
   display: block;
   color: var(--colour-muted);
+  font-size: var(--font-size-sm);
+}
+
+.order-row__link {
+  color: var(--colour-text);
   font-size: var(--font-size-sm);
 }
 </style>

@@ -120,6 +120,11 @@ urlpatterns = [
     path("api/v1/orders", order_views.order_list_create, name="orders"),
     path("api/v1/orders/<uuid:public_id>", order_views.order_detail, name="order-detail"),
     path(
+        "api/v1/orders/<uuid:public_id>/confirm-receipt",
+        order_views.order_confirm_receipt,
+        name="order-confirm-receipt",
+    ),
+    path(
         "api/v1/orders/<uuid:public_id>/payment-attempt",
         order_views.payment_attempt,
         name="payment-attempt",

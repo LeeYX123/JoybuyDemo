@@ -76,9 +76,10 @@ def record_wallet_entry(
         before = merchant.wallet_balance
         after = money(before + amount)
         if after < 0:
+            # 迭代02 文案拍板：商家端看到的余额不足提示统一为这句。
             raise MerchantOpsError(
                 "INSUFFICIENT_WALLET_BALANCE",
-                "钱包可用余额不足，无法完成本次扣款。",
+                "您当前可使用余额不足",
             )
 
         entry = MerchantWalletEntry.objects.create(
@@ -408,12 +409,14 @@ def advance_progress(
 
 
 def complete_all_nodes(merchant_order: MerchantOrder, *, actor=None):
-    """一键完成：补齐空时间并推进到「用户确认收货」，触发一次回款。"""
+    """一键完成：补齐空时间并推进到「用户确认收货」，触发一次回款。
+
+    迭代02：待处理订单也允许一键完成（跳过发货直接完成）——所有节点时间
+    统一记当前时刻，不扣发货成本（没发货），只生成回款。
+    """
 
     with transaction.atomic():
         locked = MerchantOrder.objects.select_for_update().get(pk=merchant_order.pk)
-        if locked.status == MerchantOrder.Status.PENDING:
-            raise MerchantOpsError("ORDER_NOT_SHIPPED", "订单尚未发货，不能完成物流节点。")
         if locked.progress >= 7:
             return locked
         now = timezone.now()
@@ -817,36 +820,15 @@ def request_withdrawal(
     value = money(parsed)
 
     if method == MerchantWithdrawal.Method.BANK:
+        # 迭代02 拍板：除金额外所有字段不做校验——银行卡号、银行名称、
+        # 支行编号等填什么是什么，不做格式校验，只原样存档。
         bank = bank or {}
-        bank_name = str(bank.get("name") or "").strip()
-        account = str(bank.get("account") or "").replace(" ", "")
-        holder = str(bank.get("holder") or "").strip()
-        branch = str(bank.get("branch") or "").strip()
-        code = str(bank.get("code") or "").strip()
-        if not bank_name:
-            raise MerchantOpsError("BANK_NAME_REQUIRED", "请填写银行名称。")
-        if not (account.isdigit() and 12 <= len(account) <= 22):
-            raise MerchantOpsError("BANK_ACCOUNT_INVALID", "银行卡号需为 12 至 22 位数字。")
-        if not holder:
-            raise MerchantOpsError("BANK_HOLDER_REQUIRED", "请填写收款人姓名。")
-        if not branch:
-            raise MerchantOpsError("BANK_BRANCH_REQUIRED", "请填写银行支行名称。")
-        if not code:
-            raise MerchantOpsError("BANK_CODE_REQUIRED", "请填写支行编号。")
         chain = {}
     elif method == MerchantWithdrawal.Method.CHAIN:
+        # 链上转账同样不校验 BTC/ETH 地址格式，字段原样存档。
         chain = chain or {}
-        coin = str(chain.get("coin") or "").strip().upper()
-        network = str(chain.get("network") or "").strip().upper()
-        address = str(chain.get("address") or "").strip()
-        if coin not in {"ETH", "USDT"}:
-            raise MerchantOpsError("COIN_INVALID", "币种只能是 ETH 或 USDT。")
-        if network not in {"ERC-20", "TRC-20"}:
-            raise MerchantOpsError("NETWORK_INVALID", "链类型只能是 ERC-20 或 TRC-20。")
-        if coin == "ETH" and network != "ERC-20":
-            raise MerchantOpsError("NETWORK_COIN_MISMATCH", "ETH 只能选择 ERC-20。")
-        if len(address) < 20:
-            raise MerchantOpsError("CHAIN_ADDRESS_INVALID", "请填写有效的链上钱包地址。")
+        chain["coin"] = str(chain.get("coin") or "").strip()
+        chain["network"] = str(chain.get("network") or "").strip()
         bank = {}
     else:
         raise MerchantOpsError("WITHDRAWAL_METHOD_INVALID", "请选择提现方式。")
@@ -862,14 +844,14 @@ def request_withdrawal(
             method=method,
             currency=locked.currency,
             amount=value,
-            bank_name=(bank or {}).get("name", "").strip(),
-            bank_account=str((bank or {}).get("account", "")).replace(" ", ""),
-            bank_holder=(bank or {}).get("holder", "").strip(),
-            bank_branch=(bank or {}).get("branch", "").strip(),
-            bank_code=(bank or {}).get("code", "").strip(),
-            coin=(chain or {}).get("coin", ""),
-            network=(chain or {}).get("network", ""),
-            chain_address=(chain or {}).get("address", "").strip(),
+            bank_name=str((bank or {}).get("name", "")).strip()[:120],
+            bank_account=str((bank or {}).get("account", "")).replace(" ", "")[:64],
+            bank_holder=str((bank or {}).get("holder", "")).strip()[:120],
+            bank_branch=str((bank or {}).get("branch", "")).strip()[:160],
+            bank_code=str((bank or {}).get("code", "")).strip()[:40],
+            coin=str((chain or {}).get("coin", "")).strip()[:8],
+            network=str((chain or {}).get("network", "")).strip()[:16],
+            chain_address=str((chain or {}).get("address", "")).strip()[:160],
         )
         reserve_withdrawal(locked, withdrawal=withdrawal, actor=actor)
         return withdrawal

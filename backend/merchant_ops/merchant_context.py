@@ -88,6 +88,10 @@ class MerchantAPIView(StaffCsrfAPIView):
         merchant, membership = resolve_merchant_context(request)
         request.merchant = merchant
         request.membership = membership
+        # 迭代02：商家端任何动作都记为在线（内部 10 分钟节流，见 touch_merchant_online）。
+        from merchants.services import touch_merchant_online
+
+        touch_merchant_online(merchant)
 
         codes = merchant_permission_codes(membership)
         needed = set(getattr(self, "required_merchant_permissions", ()) or ())

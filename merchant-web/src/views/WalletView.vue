@@ -365,8 +365,6 @@ onMounted(async () => {
                 <th>申请时间</th>
                 <th>方式</th>
                 <th>申请金额</th>
-                <th>手续费</th>
-                <th>实际到账</th>
                 <th>状态</th>
                 <th class="actions-col">操作</th>
               </tr>
@@ -376,8 +374,6 @@ onMounted(async () => {
                 <td>{{ fmtDate(row.created_at) }}</td>
                 <td>{{ row.method === 'BANK' ? '银行卡' : '链上转账' }}</td>
                 <td class="num">¥ {{ row.amount }}</td>
-                <td class="num">¥ {{ row.fee }}</td>
-                <td class="num">¥ {{ row.net_amount }}</td>
                 <td>
                   <span
                     class="tag"

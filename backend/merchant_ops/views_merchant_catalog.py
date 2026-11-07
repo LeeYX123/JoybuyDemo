@@ -198,6 +198,9 @@ class MerchantListingsView(MerchantAPIView):
         status = (request.query_params.get("status") or "ACTIVE").upper()
         if status != "ALL":
             queryset = queryset.filter(status=status)
+        # 迭代02：平台下架（SPU INACTIVE）后，商家商品中心里也不可见（历史行保留）。
+        if status == "ACTIVE":
+            queryset = queryset.filter(sku__spu__status=Spu.Status.ACTIVE)
         # M02：支持商品名称与商品 ID 搜索；品类只显示本店已上架商品所属品类。
         query = (request.query_params.get("q") or "").strip()
         if query:
@@ -234,9 +237,16 @@ class MerchantListingsView(MerchantAPIView):
         product_id = require(payload, "product_id", label="商品ID")
 
         if not merchant.can_operate:
+            # 迭代02：未缴保证金给出明确提示，卡在上架流程直到缴纳完成。
+            if merchant.deposit_enabled and not merchant.deposit_initial_paid:
+                raise StaffApiError(
+                    business_code="DEPOSIT_NOT_PAID",
+                    message="您当前未缴纳保证金，缴纳完成后才能上架商品。",
+                    status_code=400,
+                )
             raise StaffApiError(
                 business_code="MERCHANT_NOT_OPERABLE",
-                message="当前店铺不是接单中或保证金未缴足，不能上架商品。",
+                message="当前店铺不是接单中，不能上架商品。",
                 status_code=400,
             )
 

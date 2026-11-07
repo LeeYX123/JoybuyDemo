@@ -168,7 +168,14 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   <div class="detail-page-bg">
     <AppContainer>
       <div v-if="error" class="detail-state" role="alert">
-        <p>This product is not available.</p>
+        <!-- 迭代02：平台下架/商家下架统一提示「商品已下架，无法查看」。 -->
+        <p>
+          {{
+            error?.statusCode === 404
+              ? t('product.unavailable')
+              : error?.message || t('product.unavailable')
+          }}
+        </p>
         <NuxtLink to="/">Continue shopping</NuxtLink>
       </div>
 

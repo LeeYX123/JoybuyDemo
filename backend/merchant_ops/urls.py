@@ -41,6 +41,11 @@ urlpatterns = [
         name="admin-merchant-detail",
     ),
     path(
+        "api/v1/admin/merchants/<uuid:public_id>/ban-check",
+        views_merchants.AdminMerchantBanCheckView.as_view(),
+        name="admin-merchant-ban-check",
+    ),
+    path(
         "api/v1/admin/merchants/<uuid:public_id>/actions",
         views_merchants.AdminMerchantActionsView.as_view(),
         name="admin-merchant-actions",

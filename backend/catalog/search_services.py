@@ -39,6 +39,33 @@ def _parse_decimal(value):
     return parsed
 
 
+def refresh_spu_search_documents(spu) -> int:
+    """平台下架/单 Offer 下架后即时刷新一个 SPU 的全部搜索文档（迭代02）。
+
+    - SPU 非 ACTIVE 或没有任何 ACTIVE Offer → 删除该 SPU 全部文档（搜索立刻搜不到）；
+    - 否则按现有口径重建每个有 ACTIVE Offer 的市场文档。
+    返回删除的文档数（重建返回 0，方便调用方记日志）。
+    """
+
+    from catalog.models import Spu
+    from offers.models import Market, Offer
+
+    has_active_offer = Offer.objects.filter(
+        sku__spu=spu, status=Offer.Status.ACTIVE
+    ).exists()
+    if spu.status != Spu.Status.ACTIVE or not has_active_offer:
+        deleted, _ = ProductSearchDocument.objects.filter(spu=spu).delete()
+        return deleted
+    markets = Market.objects.filter(
+        pk__in=Offer.objects.filter(sku__spu=spu, status=Offer.Status.ACTIVE).values_list(
+            "market_id", flat=True
+        )
+    )
+    for market in markets:
+        rebuild_search_document(spu, market=market)
+    return 0
+
+
 def rebuild_search_documents(*, market, locale_code: str | None = None, full: bool = True) -> int:
     """Rebuild search documents for one market from live catalog data.
 

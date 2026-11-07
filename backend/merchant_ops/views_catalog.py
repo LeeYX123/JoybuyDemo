@@ -8,6 +8,7 @@
 import uuid
 
 from django.db.models import Count, Q
+from django.utils import timezone
 from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
@@ -362,6 +363,24 @@ class AdminProductPoolActionsView(OpsAPIView):
                 else ["is_activity", "updated_at"]
             )
         )
+        # 迭代02：平台下架 → 商家端和购物端统一下掉——把该商品所有商家 ACTIVE
+        # Offer 一并下架（removed_by_platform 留痕，历史行保留），并即时刷新搜索文档。
+        cascade_offers = 0
+        if action == "unpublish":
+            cascade_offers = Offer.objects.filter(
+                sku__spu=spu, status=Offer.Status.ACTIVE
+            ).update(
+                status=Offer.Status.INACTIVE,
+                removed_by_platform=True,
+                removed_at=timezone.now(),
+                updated_at=timezone.now(),
+            )
+        if action in {"publish", "unpublish"}:
+            from catalog.search_services import refresh_spu_search_documents
+
+            removed_docs = refresh_spu_search_documents(spu)
+        else:
+            removed_docs = 0
         record_audit(
             request=request,
             actor=request.staff_account,
@@ -372,9 +391,17 @@ class AdminProductPoolActionsView(OpsAPIView):
             target_id=str(spu.public_id),
             reason="",
             before_state=before,
-            after_state={"status": spu.status, "activity": spu.is_activity},
+            after_state={
+                "status": spu.status,
+                "activity": spu.is_activity,
+                "cascade_removed_offers": cascade_offers,
+                "removed_search_documents": removed_docs,
+            },
         )
-        return Response({"product": _spu_payload(spu, images=list(spu.image_urls or []))})
+        payload = _spu_payload(spu, images=list(spu.image_urls or []))
+        if action == "unpublish":
+            payload["cascade_removed_offers"] = cascade_offers
+        return Response({"product": payload})
 
 
 # --------------------------------------------------------------------------
@@ -480,6 +507,10 @@ class AdminMerchantListingActionsView(OpsAPIView):
         offer.removed_at = timezone.now()
         offer.removed_by_platform = True
         offer.save(update_fields=["status", "removed_at", "removed_by_platform", "updated_at"])
+        # 迭代02：单商家下架后购物端该商家此商品不再展示——即时刷新搜索文档。
+        from catalog.search_services import refresh_spu_search_documents
+
+        removed_docs = refresh_spu_search_documents(offer.sku.spu)
         record_audit(
             request=request,
             actor=request.staff_account,
@@ -488,7 +519,7 @@ class AdminMerchantListingActionsView(OpsAPIView):
             target_id=str(offer.public_id),
             reason=(request.data or {}).get("reason") or "",
             before_state=before,
-            after_state={"status": "REMOVED"},
+            after_state={"status": "REMOVED", "removed_search_documents": removed_docs},
             tenant_type="merchant",
             tenant_id=str(offer.merchant.public_id),
         )
