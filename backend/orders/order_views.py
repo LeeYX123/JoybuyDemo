@@ -7,6 +7,26 @@ from orders.models import Order
 from orders.order_services import OrderError, attempt_payment, cancel_order, place_order
 
 
+def _local_iso(value) -> str | None:
+    """购物端时间展示（迭代02）：按 X-Client-Timezone 转当地时区，只影响展示。"""
+
+    if not value:
+        return None
+    from django.utils import timezone as dj_tz
+
+    from common.client_timezone import get_client_timezone
+
+    tz_name = get_client_timezone()
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return dj_tz.localtime(value, ZoneInfo(tz_name)).isoformat()
+        except Exception:
+            pass
+    return dj_tz.localtime(value).isoformat()
+
+
 def _error(request, exc_or_code, message=None, status=400):
     if isinstance(exc_or_code, OrderError):
         code, message = exc_or_code.code, exc_or_code.message
@@ -50,7 +70,7 @@ def order_list_create(request):
                 "total": str(order.total),
                 "currency": order.currency.code,
                 "payment_method": order.payment_method,
-                "payment_expires_at": order.payment_expires_at.isoformat(),
+                "payment_expires_at": _local_iso(order.payment_expires_at),
             },
             status=201,
         )
@@ -62,8 +82,8 @@ def order_list_create(request):
             "status": order.status,
             "total": str(order.total),
             "currency": order.currency.code,
-            "created_at": order.created_at.isoformat(),
-            "payment_expires_at": order.payment_expires_at.isoformat(),
+            "created_at": _local_iso(order.created_at),
+            "payment_expires_at": _local_iso(order.payment_expires_at),
             "item_count": order.items.count(),
         }
         for order in Order.objects.filter(account=account).order_by("-created_at")[:50]
@@ -87,8 +107,8 @@ def order_detail(request, public_id):
             "total": str(order.total),
             "currency": order.currency.code,
             "payment_method": order.payment_method,
-            "created_at": order.created_at.isoformat(),
-            "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+            "created_at": _local_iso(order.created_at),
+            "paid_at": _local_iso(order.paid_at),
             "items": [
                 {
                     "title": item.title,
@@ -99,8 +119,8 @@ def order_detail(request, public_id):
                 for item in order.items.all()
             ],
             "shipping_address": order.shipping_address,
-            "payment_expires_at": order.payment_expires_at.isoformat(),
-            "canceled_at": order.canceled_at.isoformat() if order.canceled_at else None,
+            "payment_expires_at": _local_iso(order.payment_expires_at),
+            "canceled_at": _local_iso(order.canceled_at),
             "cancel_reason": order.cancel_reason,
             # 商家子单进度（确认收货按钮据此判断是否还有未完成的子单）。
             "merchant_orders": [

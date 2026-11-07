@@ -651,6 +651,23 @@ WP-42 后：白名单账户选择任一支付方式点【下单】即置 `PAID`�
 | payment_method / recipient_region / tracking_reference | varchar | 支付方式快照 / 收件地区 / 物流凭证 |
 | settled / settled_at / shipped_at / fulfillment_reset_at | tinyint / datetime 可空 | 回款标记与时间、发货时间、解封后履约起算时间 |
 
+### auto_order_task — 一键下单定时任务（迭代02）
+
+管理端向导创建的自动化下单任务：触发时间按服务器时间判定，到点执行 `place_order`（余额支付真扣）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| public_id | char(32) 唯一 | 任务号 |
+| account_id | bigint | 白名单买家（CASCADE） |
+| merchant_id / offer_id | bigint / bigint 可空 | 商家 / 规格（SET_NULL，创建时存快照） |
+| product_title / specification / unit_price | varchar(500) / json / decimal 可空 | 创建时快照 |
+| quantity | int | 数量 |
+| trigger_at | datetime(6) 索引 | 触发时间（服务器时间） |
+| status | varchar(16) 索引 | `PENDING`/`EXECUTED`/`FAILED`/`CANCELED` |
+| executed_order_id / executed_at | bigint 可空 / datetime 可空 | 执行生成的买家订单与时间 |
+| failure_reason | varchar(255) | 失败原因（余额不足/规格失效/无地址等，管理端可见） |
+| created_by_id | bigint 可空 | 创建管理员 |
+
 ### inventory_reservation — 库存占用
 
 每个订单行一条：public_id、order_id、offer_id、quantity、released（是否已释放；取消时释放并写一条库存流水）。

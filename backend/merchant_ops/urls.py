@@ -3,6 +3,7 @@ from django.urls import path
 from merchant_ops import (
     views_accounts,
     views_audit,
+    views_auto_orders,
     views_banners,
     views_buyers,
     views_campaign,
@@ -92,6 +93,21 @@ urlpatterns = [
         "api/v1/admin/merchant-orders",
         views_orders.AdminMerchantOrdersView.as_view(),
         name="admin-merchant-orders",
+    ),
+    path(
+        "api/v1/admin/auto-orders",
+        views_auto_orders.AdminAutoOrdersView.as_view(),
+        name="admin-auto-orders",
+    ),
+    path(
+        "api/v1/admin/auto-orders/options",
+        views_auto_orders.AdminAutoOrderOptionsView.as_view(),
+        name="admin-auto-orders-options",
+    ),
+    path(
+        "api/v1/admin/auto-orders/<uuid:public_id>/actions",
+        views_auto_orders.AdminAutoOrderActionsView.as_view(),
+        name="admin-auto-order-actions",
     ),
     path(
         "api/v1/admin/merchant-orders/export",

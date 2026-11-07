@@ -37,6 +37,7 @@ const NAV = [
       { to: '/products', label: '商品池管理', icon: 'box', module: 'catalog.pool' },
       { to: '/listings', label: '商家商品管理', icon: 'box', module: 'catalog.listings' },
       { to: '/orders', label: '订单管理', icon: 'orders', module: 'orders' },
+      { to: '/auto-orders', label: '一键下单', icon: 'orders', module: 'orders' },
     ],
   },
   {

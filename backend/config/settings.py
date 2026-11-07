@@ -72,6 +72,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "common.middleware.RequestIdMiddleware",
+    "common.client_timezone.ClientTimezoneMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "accounts_buyers.middleware.BuyerSessionMiddleware",
     "accounts_staff.middleware.StaffSessionMiddleware",

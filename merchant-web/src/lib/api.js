@@ -37,6 +37,8 @@ export async function apiRequest(path, options = {}) {
   const headers = {
     Accept: 'application/json',
     'X-Request-ID': requestId,
+    'X-Client-Timezone':
+      typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone || '' : '',
     ...options.headers,
   }
   if (currentShopId) headers['X-Merchant-Id'] = currentShopId

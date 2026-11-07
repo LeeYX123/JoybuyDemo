@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from accounts_staff.api_exceptions import StaffApiError
 from accounts_staff.views import StaffCsrfAPIView
+from common.client_timezone import get_client_timezone
 from merchant_ops.services import MerchantOpsError
 from merchants.services import MerchantAdminError
 
@@ -47,9 +48,23 @@ def money_str(value) -> str:
 
 
 def iso(value) -> str | None:
+    """序列化时间为 ISO 字符串；按请求头 X-Client-Timezone 转当地时区（迭代02）。
+
+    时区来自 ``ClientTimezoneMiddleware`` 存的 ContextVar；头缺失/无效时
+    回退服务器 TIME_ZONE。只影响展示，不触碰任何业务逻辑。
+    """
+
     if not value:
         return None
     if isinstance(value, datetime):
+        tz_name = get_client_timezone()
+        if tz_name:
+            try:
+                from zoneinfo import ZoneInfo
+
+                return timezone.localtime(value, ZoneInfo(tz_name)).isoformat()
+            except Exception:
+                pass
         return timezone.localtime(value).isoformat()
     return value.isoformat()
 

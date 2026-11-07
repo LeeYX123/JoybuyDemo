@@ -16,6 +16,7 @@ const LANDING_CANDIDATES = [
   { path: '/products', module: 'catalog.pool' },
   { path: '/listings', module: 'catalog.listings' },
   { path: '/orders', module: 'orders' },
+  { path: '/auto-orders', module: 'orders' },
   { path: '/finance', module: 'finance' },
   { path: '/deposits', module: 'deposits' },
   { path: '/aftersales', module: 'aftersales' },
@@ -81,6 +82,12 @@ const router = createRouter({
           name: 'orders',
           component: () => import('@/views/MerchantOrdersView.vue'),
           meta: { title: '订单管理', module: 'orders' },
+        },
+        {
+          path: 'auto-orders',
+          name: 'auto-orders',
+          component: () => import('@/views/AutoOrdersView.vue'),
+          meta: { title: '一键下单', module: 'orders' },
         },
         {
           path: 'finance',

@@ -21,7 +21,12 @@ const detailUrl = computed(() =>
 
 const { data, status, error, refresh } = await useFetch(detailUrl, {
   key: `buyer-order-${publicId.value}`,
-  headers: { cookie: useRequestHeaders(['cookie']).cookie || '' },
+  headers: {
+    cookie: useRequestHeaders(['cookie']).cookie || '',
+    // 迭代02：时间展示按看的人所在时区（后端按此头转换，只影响展示）。
+    'X-Client-Timezone':
+      typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone || '' : '',
+  },
 })
 
 const order = computed(() => data.value || null)

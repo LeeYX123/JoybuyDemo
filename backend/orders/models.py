@@ -150,3 +150,61 @@ class InventoryReservation(models.Model):
 
     class Meta:
         db_table = "inventory_reservation"
+
+
+class AutoOrderTask(models.Model):
+    """一键下单定时任务（迭代02，管理端创建）。
+
+    向导：白名单用户 → 商家 → 商品 → 规格(offer) → 数量 → 触发时间。
+    触发时间按**电脑（服务器）时间**判定（doc02 第四节拍板），由
+    ``execute_due_auto_orders``（run_order_sweeps / 管理端列表惰性）到点执行；
+    下单走与用户正常购买完全相同的 ``place_order``，买家端和商家端正常生成订单。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "待执行"
+        EXECUTED = "EXECUTED", "已下单"
+        FAILED = "FAILED", "下单失败"
+        CANCELED = "CANCELED", "已取消"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    account = models.ForeignKey(
+        "accounts_buyers.BuyerAccount", on_delete=models.CASCADE, related_name="auto_orders"
+    )
+    merchant = models.ForeignKey(
+        "merchants.Merchant", on_delete=models.CASCADE, related_name="auto_orders"
+    )
+    offer = models.ForeignKey(
+        "offers.Offer", on_delete=models.SET_NULL, null=True, blank=True, related_name="auto_orders"
+    )
+    # 创建时的快照（任务列表展示 & offer 被删后仍可读）。
+    product_title = models.CharField(max_length=500, blank=True, default="")
+    specification = models.JSONField(default=dict, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    trigger_at = models.DateTimeField(db_index=True)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    executed_order = models.ForeignKey(
+        Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="auto_order_tasks"
+    )
+    failure_reason = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        "accounts_staff.StaffAccount",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="auto_order_tasks",
+    )
+    executed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "auto_order_task"
+        ordering = ["trigger_at", "-pk"]
+        indexes = [
+            models.Index(fields=["status", "trigger_at"], name="auto_order_due_idx"),
+            models.Index(fields=["merchant", "status"], name="auto_order_merchant_idx"),
+        ]

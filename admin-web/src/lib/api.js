@@ -1,5 +1,15 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1/admin'
 
+// 迭代02：三端时间展示按"看的人所在时区"——请求头携带浏览器 IANA 时区，
+// 后端序列化时间时据此转换（只影响展示，不改业务逻辑）。
+function clientTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+  } catch {
+    return ''
+  }
+}
+
 const API_ERROR_MESSAGES = {
   ACTION_FAILED: '操作失败，请检查当前状态后重试。',
   ACTION_INVALID: '不支持该操作。',
@@ -49,6 +59,7 @@ export async function apiRequest(path, options = {}) {
     headers: {
       Accept: 'application/json',
       'X-Request-ID': requestId,
+      'X-Client-Timezone': clientTimezone(),
       ...options.headers,
     },
   }).catch(() => {
