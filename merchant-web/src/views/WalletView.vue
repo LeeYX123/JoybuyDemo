@@ -586,7 +586,8 @@ onMounted(async () => {
       @cancel="closeWithdraw"
       @confirm="submitWithdraw"
     >
-      <div class="tabs">
+      <!-- 迭代02 反馈：切换 Tab 与下方表单之间留出空隙。 -->
+      <div class="tabs withdraw-method-tabs">
         <button
           type="button"
           :class="{ 'is-active': withdrawModal.method === 'BANK' }"
@@ -730,5 +731,11 @@ onMounted(async () => {
   color: var(--red);
   background: var(--red-soft);
   font-weight: 600;
+}
+
+/* 提现弹窗内的方式切换 Tab：与表单拉开间距（页面级 .tabs 是给整页用的，带底边线）。 */
+.withdraw-method-tabs {
+  margin-bottom: 16px;
+  padding: 0 0 10px;
 }
 </style>

@@ -858,15 +858,24 @@
   box-shadow: 0 0 0 3px rgb(223 38 54 / 16%);
 }
 
+/* 迭代02 反馈：节点状态在左、时间在右侧同一行，两端对齐拉开距离。 */
+.timeline__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .timeline__title {
   font-size: 13px;
   font-weight: 600;
 }
 
 .timeline__time {
-  margin-top: 2px;
   font-size: 11px;
   color: #9ba0a9;
+  text-align: right;
+  white-space: nowrap;
 }
 
 /* ---------- 条形图 ---------- */

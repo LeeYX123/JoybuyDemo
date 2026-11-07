@@ -328,8 +328,10 @@ onMounted(load)
                     'is-current': index === detail.value.progress,
                   }"
                 >
-                  <span class="timeline__title">{{ label }}</span>
-                  <span class="timeline__time">{{ nodeTime(detail.value, index) }}</span>
+                  <div class="timeline__row">
+                    <span class="timeline__title">{{ label }}</span>
+                    <span class="timeline__time">{{ nodeTime(detail.value, index) }}</span>
+                  </div>
                 </li>
               </ol>
               <p v-if="detail.value.progress < 0" class="hint-text">

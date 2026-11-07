@@ -369,7 +369,7 @@ onMounted(load)
           v-for="(label, index) in ['买家', '商家', '商品', '规格数量时间', '确认']"
           :key="label"
           class="wizard-step"
-          :class="{ 'is-active': wizard.step === index + 1 }"
+          :class="{ 'is-active': wizard.step === index + 1, 'is-done': wizard.step > index + 1 }"
         >
           {{ index + 1 }}. {{ label }}
         </span>
@@ -378,13 +378,17 @@ onMounted(load)
       <p v-if="createError" class="notice notice--error">{{ createError }}</p>
 
       <template v-if="wizard.step === 1">
-        <p class="field__hint">只能选择白名单用户的账号。</p>
-        <input
-          v-model="wizard.buyerQuery"
-          type="search"
-          placeholder="输入买家邮箱搜索（仅白名单）"
-          @input="searchBuyers"
-        />
+        <div class="wizard-field">
+          <label for="wizard-buyer" class="wizard-field__label">白名单用户</label>
+          <input
+            id="wizard-buyer"
+            v-model="wizard.buyerQuery"
+            type="search"
+            placeholder="输入买家邮箱搜索（仅白名单）"
+            @input="searchBuyers"
+          />
+          <p class="field__hint">只能选择白名单用户的账号。</p>
+        </div>
         <div class="pick-list">
           <button
             v-for="row in wizard.buyers"
@@ -401,12 +405,16 @@ onMounted(load)
       </template>
 
       <template v-else-if="wizard.step === 2">
-        <input
-          v-model="wizard.merchantQuery"
-          type="search"
-          placeholder="输入商家名称搜索"
-          @input="searchMerchants"
-        />
+        <div class="wizard-field">
+          <label for="wizard-merchant" class="wizard-field__label">商家</label>
+          <input
+            id="wizard-merchant"
+            v-model="wizard.merchantQuery"
+            type="search"
+            placeholder="输入商家名称搜索"
+            @input="searchMerchants"
+          />
+        </div>
         <div class="pick-list">
           <button
             v-for="row in wizard.merchants"
@@ -421,13 +429,17 @@ onMounted(load)
       </template>
 
       <template v-else-if="wizard.step === 3">
-        <p class="field__hint">已下架商品不会出现在这里。</p>
-        <input
-          v-model="wizard.merchantQuery"
-          type="search"
-          placeholder="输入商品名称搜索"
-          @input="loadProducts"
-        />
+        <div class="wizard-field">
+          <label for="wizard-product" class="wizard-field__label">商品</label>
+          <input
+            id="wizard-product"
+            v-model="wizard.merchantQuery"
+            type="search"
+            placeholder="输入商品名称搜索"
+            @input="loadProducts"
+          />
+          <p class="field__hint">已下架商品不会出现在这里。</p>
+        </div>
         <div class="pick-list">
           <button
             v-for="row in wizard.products"
@@ -587,23 +599,63 @@ onMounted(load)
 
 .wizard-steps {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
 .wizard-step {
   font-size: 12px;
   color: var(--muted, #78869a);
-  padding: 4px 10px;
+  padding: 5px 12px;
   border: 1px solid var(--border, #e2e8f0);
-  border-radius: 12px;
+  border-radius: 14px;
+  background: #fff;
 }
 
 .wizard-step.is-active {
   color: #fff;
   background: var(--primary, #2563eb);
   border-color: var(--primary, #2563eb);
+  font-weight: 600;
+}
+
+.wizard-step.is-done {
+  color: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+}
+
+/* 向导里的搜索框：全宽 + 与管理端输入框一致的外观（修复宽度太小文字显示不全）。 */
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.wizard-field__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink, #18263b);
+}
+
+.wizard-field input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.wizard-field input:focus {
+  outline: 0;
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 12%);
 }
 
 .pick-list {
@@ -620,6 +672,7 @@ onMounted(load)
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
+  width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;

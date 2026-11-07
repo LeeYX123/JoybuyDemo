@@ -64,6 +64,10 @@
 
 ## 2. 已经完成了什么
 
+### 2026-11-08（UI 细节第三轮：向导美化 / 物流进度行 / 提现 Tab 间距）
+
+- 按 ui-ux-pro-max 规范（可见 label、全宽输入、≥8px 区块间距）修 4 处：①管理端一键下单向导——第 1–3 步搜索框原本无样式（默认约 180px 宽文字显示不全），改为带可见 label 的全宽字段（`.wizard-field`，632px 实测）；步骤条升级为分段进度样式（进行中蓝底/已过蓝边/未到灰）；选项卡片补 width:100%。②商家端订单详情物流进度——节点状态与时间改为同行两端对齐（`.timeline__row` flex + gap 16px），时间右对齐不再贴着状态。③商家端提现弹窗——「银行卡/数字货币链上转账」Tab 与表单间距 16px（`withdraw-method-tabs` scoped 覆盖页面级 .tabs 的紧贴样式）。管理端/商家端构建全过，四处均 getComputedStyle 实测。
+
 ### 2026-11-07（迭代02 第 2 轮：活动 / 返佣 / 通知 / 用户管理 / 购物端登录支付）
 
 - **迁移（已应用真实 MySQL）**：`accounts_buyers/0006`（BuyerAccount.auth_provider，EMAIL/FACEBOOK/GOOGLE）、`notifications/0003`（MerchantNotification.order FK → orders.MerchantOrder，SET_NULL）。
