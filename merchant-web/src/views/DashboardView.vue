@@ -305,7 +305,7 @@ onMounted(load)
 
 <style scoped>
 .status-active {
-  color: #16a34a;
+  color: #57ea64;
 }
 
 .status-suspended {
