@@ -263,7 +263,7 @@ onMounted(() => {
       </p>
 
       <div class="data-table-wrap">
-        <table class="data-table">
+        <table class="data-table pool-table">
           <thead>
             <tr>
               <th>商品</th>
@@ -277,11 +277,11 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="row in state.items" :key="row.id">
-              <td>
-                <div style="display: flex; gap: 10px; align-items: center">
+              <td class="pool-cell-product">
+                <div class="pool-product">
                   <img v-if="row.images?.length" :src="row.images[0]" alt="" class="thumb" />
-                  <div>
-                    <span class="cell-strong">{{ row.name }}</span>
+                  <div class="pool-product__text">
+                    <span class="cell-strong" :title="row.name">{{ row.name }}</span>
                     <span class="cell-sub"
                       >{{ row.id.slice(0, 8)
                       }}<template v-if="row.activity"> · 活动商品</template></span
@@ -480,3 +480,81 @@ onMounted(() => {
     </AppModal>
   </section>
 </template>
+
+<style scoped>
+/* 商品列定宽 + 名称单行省略，避免长标题把右侧字段挤成两行。 */
+.pool-table {
+  table-layout: fixed;
+}
+
+.pool-table th,
+.pool-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* 商品列吃掉剩余宽度（固定布局下由它吸收），其余列按内容定宽。 */
+.pool-cell-product {
+  width: auto;
+}
+
+.pool-table th:nth-child(1),
+.pool-table td:nth-child(1) {
+  width: 42%;
+  white-space: normal;
+}
+
+.pool-table th:nth-child(2),
+.pool-table td:nth-child(2) {
+  width: 15%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pool-table th:nth-child(3),
+.pool-table td:nth-child(3),
+.pool-table th:nth-child(4),
+.pool-table td:nth-child(4) {
+  width: 11%;
+}
+
+.pool-table th:nth-child(5),
+.pool-table td:nth-child(5) {
+  width: 8%;
+}
+
+.pool-table th:nth-child(6),
+.pool-table td:nth-child(6) {
+  width: 9%;
+}
+
+.pool-table th:nth-child(7),
+.pool-table td:nth-child(7) {
+  width: 190px;
+}
+
+.pool-product {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.pool-product__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pool-product__text .cell-strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作列的按钮不换行、不撑宽。 */
+.pool-table td:nth-child(7) .row-actions {
+  flex-wrap: nowrap;
+}
+</style>
