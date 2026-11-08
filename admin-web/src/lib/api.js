@@ -30,7 +30,11 @@ const API_ERROR_MESSAGES = {
   STAFF_FORBIDDEN: '当前账号无权执行该操作。',
 }
 
-function localizedErrorMessage(code, status) {
+function localizedErrorMessage(code, status, serverMessage) {
+  // 后端给了明确的中文业务提示（如余额不足、规格失效）优先直接展示，
+  // 只有通用/空提示时才回退到本地映射与默认文案。
+  const generic = !serverMessage || serverMessage === 'The request could not be processed.'
+  if (!generic) return serverMessage
   if (API_ERROR_MESSAGES[code]) return API_ERROR_MESSAGES[code]
   if (status === 403) return '当前账号无权执行该操作。'
   if (status === 404) return '未找到请求的数据。'
@@ -71,7 +75,7 @@ export async function apiRequest(path, options = {}) {
 
   if (!response.ok) {
     const code = payload?.error?.code || 'API_ERROR'
-    throw new ApiError(localizedErrorMessage(code, response.status), {
+    throw new ApiError(localizedErrorMessage(code, response.status, payload?.error?.message), {
       status: response.status,
       code,
       requestId: payload?.request_id || response.headers.get('X-Request-ID') || requestId,

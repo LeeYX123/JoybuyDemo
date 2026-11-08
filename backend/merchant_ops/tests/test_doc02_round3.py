@@ -107,12 +107,13 @@ class AutoOrderBase(TestCase):
 
 
 class AutoOrderCreateTests(AutoOrderBase):
-    def test_create_task_with_balance_warning(self):
-        BuyerAccount.objects.filter(pk=self.buyer.pk).update(balance=Decimal("5.00"))
-        self.buyer.refresh_from_db()
-        response = self._create(quantity=1, balance=None)
-        self.assertEqual(response.status_code, 201, response.content)
-        self.assertIn("余额不足", response.json()["balance_warning"])
+    def test_create_task_rejected_when_balance_insufficient(self):
+        # 迭代02 反馈：创建时余额不足直接拒绝并提醒，不生成任务。
+        response = self._create(quantity=1, balance="5.00")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"]["code"], "BALANCE_INSUFFICIENT")
+        self.assertIn("余额不足", response.json()["error"]["message"])
+        self.assertFalse(AutoOrderTask.objects.exists())
 
     def test_create_rejects_non_whitelisted(self):
         BuyerAccount.objects.filter(pk=self.buyer.pk).update(purchase_whitelisted=False)
@@ -257,7 +258,8 @@ class AutoOrderExecuteTests(AutoOrderBase):
 
 class TimezoneDisplayTests(TestCase):
     def test_iso_uses_client_timezone_header(self):
-        from datetime import datetime, timezone as dt_timezone
+        from datetime import datetime
+        from datetime import timezone as dt_timezone
 
         from common.client_timezone import set_client_timezone
         from merchant_ops.api_utils import iso

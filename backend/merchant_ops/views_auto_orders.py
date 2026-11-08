@@ -133,6 +133,15 @@ class AdminAutoOrdersView(OpsAPIView):
             raise StaffApiError(
                 business_code="MERCHANT_NOT_FOUND", message="商家不存在。", status_code=404
             )
+        # 迭代02 反馈：创建时余额不足直接拒绝并提醒（触发时还会再校验一次）。
+        # 注意在 create_auto_order_task 之前校验，避免拒绝后残留任务。
+        balance_warning = check_account_balance(account, offer, quantity)
+        if balance_warning:
+            raise StaffApiError(
+                business_code="BALANCE_INSUFFICIENT",
+                message=balance_warning,
+                status_code=400,
+            )
         try:
             task = create_auto_order_task(
                 account=account,
@@ -147,8 +156,6 @@ class AdminAutoOrdersView(OpsAPIView):
                 business_code=exc.code, message=exc.message, status_code=400
             ) from exc
 
-        # 余额提醒（不阻断创建，触发时再严格校验——doc02 拍板）。
-        balance_warning = check_account_balance(account, offer, quantity)
         record_audit(
             request=request,
             actor=request.staff_account,
@@ -166,8 +173,7 @@ class AdminAutoOrdersView(OpsAPIView):
                 "balance_warning": balance_warning,
             },
         )
-        result = {"task": _task_payload(task), "balance_warning": balance_warning}
-        return Response(result, status=201)
+        return Response({"task": _task_payload(task)}, status=201)
 
 
 class AdminAutoOrderActionsView(OpsAPIView):

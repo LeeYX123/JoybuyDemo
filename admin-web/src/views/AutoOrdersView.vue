@@ -251,7 +251,7 @@ async function submitCreate() {
   createError.value = ''
   try {
     const triggerIso = wizard.triggerAt ? new Date(wizard.triggerAt).toISOString() : undefined
-    const payload = await adminWrite('/auto-orders', {
+    await adminWrite('/auto-orders', {
       account_id: wizard.buyer.id,
       merchant_id: wizard.merchant.id,
       offer_id: wizard.offerId,
@@ -259,9 +259,7 @@ async function submitCreate() {
       trigger_at: triggerIso,
     })
     createOpen.value = false
-    state.notice = payload.balance_warning
-      ? `任务已创建。提醒：${payload.balance_warning}`
-      : '任务已创建，到触发时间将自动下单。'
+    state.notice = '任务已创建，到触发时间将自动下单。'
     await load(true)
   } catch (error) {
     createError.value = error.message
@@ -466,12 +464,14 @@ onMounted(load)
                 :class="{ 'is-sel': wizard.buyer && wizard.buyer.id === row.id }"
                 @click="pickBuyer(row)"
               >
-                <span class="ava ava--buyer"><i data-lucide="user" aria-hidden="true"></i></span>
+                <span class="ava ava--buyer">{{
+                  (row.account || '?').slice(0, 1).toUpperCase()
+                }}</span>
                 <span class="meta">
                   <b>{{ row.account || row.name }}</b>
                   <span class="sub">可用余额 ¥ {{ row.balance }}</span>
                 </span>
-                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+                <span class="pick-check" aria-hidden="true">✓</span>
               </button>
               <p v-if="!wizard.buyers.length" class="empty-state">输入关键字搜索白名单用户。</p>
             </div>
@@ -511,7 +511,7 @@ onMounted(load)
                     <span>信誉分 {{ row.credit_score ?? '—' }}</span>
                   </span>
                 </span>
-                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+                <span class="pick-check" aria-hidden="true">✓</span>
               </button>
               <p v-if="!wizard.merchants.length" class="empty-state">没有匹配的商家。</p>
             </div>
@@ -543,14 +543,14 @@ onMounted(load)
               >
                 <span class="thumb">
                   <img v-if="row.image" :src="row.image" alt="" />
-                  <i v-else data-lucide="package" aria-hidden="true"></i>
+                  <span class="thumb-empty">无图</span>
                 </span>
                 <span class="cardbody">
                   <b :title="row.title">{{ row.title }}</b>
                   <span class="price">¥ {{ row.price }}</span>
                   <span class="sub">{{ row.offers.length }} 个规格可选</span>
                 </span>
-                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+                <span class="pick-check" aria-hidden="true">✓</span>
               </button>
               <p v-if="!pagedProducts.length" class="empty-state">该商家没有可售商品。</p>
             </div>
@@ -561,7 +561,7 @@ onMounted(load)
                 :disabled="productPage <= 1"
                 @click="goProductPage(productPage - 1)"
               >
-                <i data-lucide="chevron-left" aria-hidden="true"></i>
+                ‹
               </button>
               <button
                 v-for="n in productTotalPages"
@@ -578,7 +578,7 @@ onMounted(load)
                 :disabled="productPage >= productTotalPages"
                 @click="goProductPage(productPage + 1)"
               >
-                <i data-lucide="chevron-right" aria-hidden="true"></i>
+                ›
               </button>
               <span class="pager-total"
                 >共 {{ wizard.products.length }} 件商品 · 第 {{ productPage }}/{{
@@ -668,10 +668,10 @@ onMounted(load)
         <span class="foot-sum" :title="footSummary">{{ footSummary }}</span>
         <div class="foot-actions">
           <button type="button" class="btn" :disabled="wizard.step === 1" @click="prevStep">
-            <i data-lucide="arrow-left" aria-hidden="true"></i> 上一步
+            ← 上一步
           </button>
           <button v-if="wizard.step < 5" type="button" class="btn btn--primary" @click="nextStep">
-            下一步 <i data-lucide="arrow-right" aria-hidden="true"></i>
+            下一步 →
           </button>
           <button
             v-else
@@ -969,11 +969,16 @@ onMounted(load)
 }
 
 .product-card .thumb {
-  height: 88px;
+  aspect-ratio: 1 / 1;
+  height: auto;
   display: grid;
   place-items: center;
   background: #f2f5f9;
   color: var(--muted, #78869a);
+}
+
+.product-card .thumb-empty {
+  font-size: 12px;
 }
 
 .product-card .thumb img {
