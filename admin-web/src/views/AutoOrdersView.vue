@@ -543,12 +543,26 @@ onMounted(load)
               >
                 <span class="thumb">
                   <img v-if="row.image" :src="row.image" alt="" />
-                  <span class="thumb-empty">无图</span>
+                  <span v-else class="thumb-empty">无图</span>
                 </span>
                 <span class="cardbody">
                   <b :title="row.title">{{ row.title }}</b>
-                  <span class="price">¥ {{ row.price }}</span>
-                  <span class="sub">{{ row.offers.length }} 个规格可选</span>
+                  <span class="spec-chips">
+                    <span
+                      v-for="(offer, index) in row.offers.slice(0, 3)"
+                      :key="index"
+                      class="spec-chip"
+                    >
+                      {{ specText(offer) }}
+                    </span>
+                    <span v-if="row.offers.length > 3" class="spec-chip"
+                      >+{{ row.offers.length - 3 }}</span
+                    >
+                  </span>
+                  <span class="card-foot">
+                    <span class="price">¥ {{ row.price }}</span>
+                    <span class="sub">{{ row.offers.length }} 个规格可选</span>
+                  </span>
                 </span>
                 <span class="pick-check" aria-hidden="true">✓</span>
               </button>
@@ -936,26 +950,34 @@ onMounted(load)
   opacity: 0;
 }
 
+.product-card .pick-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  margin: 0;
+}
+
 .pick-item.is-sel .pick-check {
   opacity: 1;
 }
 
 /* ===== 商品卡片 + 分页 ===== */
 .product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
+/* 左图右规格的横向卡片 */
 .product-card {
   position: relative;
   display: flex;
-  flex-direction: column;
-  padding: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;
   background: #fff;
-  overflow: hidden;
   text-align: left;
 }
 
@@ -969,10 +991,13 @@ onMounted(load)
 }
 
 .product-card .thumb {
-  aspect-ratio: 1 / 1;
-  height: auto;
+  width: 72px;
+  height: 72px;
+  flex: none;
   display: grid;
   place-items: center;
+  border-radius: 4px;
+  overflow: hidden;
   background: #f2f5f9;
   color: var(--muted, #78869a);
 }
@@ -990,9 +1015,10 @@ onMounted(load)
 .product-card .cardbody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px;
+  gap: 5px;
   min-width: 0;
+  flex: 1;
+  padding-right: 18px;
 }
 
 .product-card .cardbody b {
@@ -1000,6 +1026,32 @@ onMounted(load)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 右侧规格标签 */
+.spec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.spec-chip {
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: #f0f4f9;
+  color: var(--muted, #78869a);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-card .card-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .product-card .price {
