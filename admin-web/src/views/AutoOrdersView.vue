@@ -10,12 +10,17 @@ import { apiRequest } from '@/lib/api'
 
 // 一键下单（迭代02，整节新增）：向导式创建自动化下单任务。
 // 白名单用户 → 商家 → 商品 → 规格 → 数量 → 触发时间（按电脑/服务器时间到点执行）。
+// 向导为 C 版布局（用户选版）：左栏步骤导航（已完成可点击回跳）+ 右侧内容 + 底部已选摘要栏。
 const TASK_STATUS_LABELS = {
   PENDING: '待执行',
   EXECUTED: '已下单',
   FAILED: '下单失败',
   CANCELED: '已取消',
 }
+
+const STEP_LABELS = ['选择买家', '选择商家', '选择商品', '规格数量时间', '确认创建']
+// 商品分页：每页 4 张卡片（客户端分页，options 端点最多返回 30 件可售商品）。
+const PRODUCT_PAGE_SIZE = 4
 
 const state = reactive({
   status: 'ALL',
@@ -46,6 +51,7 @@ const wizard = reactive({
   triggerAt: '',
   balanceWarning: '',
 })
+const productPage = ref(1)
 
 const detail = reactive({ open: false, value: null, loading: false })
 const cancelTarget = ref(null)
@@ -99,6 +105,7 @@ function openCreate() {
     triggerAt: '',
     balanceWarning: '',
   })
+  productPage.value = 1
   createError.value = ''
   createOpen.value = true
 }
@@ -114,12 +121,6 @@ async function searchBuyers() {
   }
 }
 
-function pickBuyer(row) {
-  wizard.buyer = row
-  wizard.step = 2
-  searchMerchants()
-}
-
 async function searchMerchants() {
   try {
     const payload = await apiRequest(
@@ -131,50 +132,118 @@ async function searchMerchants() {
   }
 }
 
-async function pickMerchant(row) {
-  wizard.merchant = row
-  wizard.merchantQuery = '' // 清掉商家名，避免误当商品关键字过滤
-  wizard.step = 3
-  await loadProducts()
-}
-
 // 已下架商品不展示（doc02 拍板）。
 async function loadProducts() {
+  if (!wizard.merchant) return
   try {
     const params = new URLSearchParams({ merchant_id: wizard.merchant.id })
     if (wizard.merchantQuery.trim()) params.set('q', wizard.merchantQuery.trim())
     const payload = await apiRequest(`/auto-orders/options?${params}`)
     wizard.products = payload.items
+    productPage.value = 1
   } catch {
     wizard.products = []
   }
 }
 
-function pickProduct(row) {
-  wizard.product = row
-  wizard.offerId = row.offers.length === 1 ? row.offers[0].offer_id : ''
-  wizard.step = 4
+function pickBuyer(row) {
+  wizard.buyer = row
 }
 
-function goStep(step) {
-  wizard.step = step
-  if (step === 3) loadProducts()
+function pickMerchant(row) {
+  if (wizard.merchant && wizard.merchant.id !== row.id) {
+    // 换商家后商品要重新拉取，清掉旧的商品/规格选择。
+    wizard.product = null
+    wizard.offerId = ''
+  }
+  wizard.merchant = row
+  // 清空搜索词：进入第 3 步时它是商品搜索框，残留商家名会误过滤商品。
+  wizard.merchantQuery = ''
+  loadProducts()
 }
+
+function pickProduct(row) {
+  wizard.product = row
+  wizard.offerId = row.offers.length === 1 ? row.offers[0].offer_id : wizard.offerId
+}
+
+// 商品分页（客户端）。
+const pagedProducts = computed(() => {
+  const start = (productPage.value - 1) * PRODUCT_PAGE_SIZE
+  return wizard.products.slice(start, start + PRODUCT_PAGE_SIZE)
+})
+const productTotalPages = computed(() =>
+  Math.max(1, Math.ceil(wizard.products.length / PRODUCT_PAGE_SIZE)),
+)
+function goProductPage(n) {
+  productPage.value = n
+}
+
+// 步骤导航：已完成步骤可点击回跳（只能往后，不能跳步往前——doc02 流程约束）。
+function goBackStep(n) {
+  if (n < wizard.step) wizard.step = n
+}
+function prevStep() {
+  if (wizard.step > 1) wizard.step--
+}
+function nextStep() {
+  createError.value = ''
+  if (wizard.step === 1 && !wizard.buyer) {
+    createError.value = '请先选择一个白名单用户。'
+    return
+  }
+  if (wizard.step === 2 && !wizard.merchant) {
+    createError.value = '请先选择一个商家。'
+    return
+  }
+  if (wizard.step === 3 && !wizard.product) {
+    createError.value = '请先选择一个商品。'
+    return
+  }
+  if (wizard.step === 4) {
+    if (!wizard.offerId) {
+      createError.value = '请选择一个商品规格。'
+      return
+    }
+    if (!wizard.triggerAt) {
+      createError.value = '请设置任务触发时间。'
+      return
+    }
+  }
+  wizard.step++
+}
+
+const footSummary = computed(() => {
+  const parts = []
+  if (wizard.buyer) parts.push(wizard.buyer.account || wizard.buyer.name)
+  if (wizard.merchant) parts.push(wizard.merchant.name)
+  if (wizard.product) parts.push(`${wizard.product.title} × ${wizard.quantity}`)
+  if (wizard.triggerAt) parts.push(`触发 ${wizard.triggerAt.replace('T', ' ')}`)
+  return parts.length ? `已选：${parts.join(' · ')}` : '未选择买家'
+})
+
+const wizardSummary = computed(() => {
+  const offer = wizard.product?.offers.find((item) => item.offer_id === wizard.offerId)
+  return {
+    buyer: wizard.buyer?.account || '—',
+    balance: wizard.buyer?.balance || '—',
+    merchant: wizard.merchant?.name || '—',
+    product: wizard.product?.title || '—',
+    spec: offer ? specText(offer) : '—',
+    price: offer?.price || '—',
+    quantity: wizard.quantity,
+    triggerAt: wizard.triggerAt.replace('T', ' ') || '—',
+  }
+})
 
 function specText(offer) {
   const spec = offer.specification || {}
-  const text = Object.entries(spec)
-    .map(([key, value]) => `${key}:${value}`)
-    .join(' / ')
-  return text || '默认规格'
+  const entries = Object.entries(spec)
+  return entries.length ? entries.map(([key, value]) => `${key}:${value}`).join(' / ') : '默认规格'
 }
 
-function goReview() {
-  if (!wizard.offerId) {
-    createError.value = '请选择一个商品规格。'
-    return
-  }
-  wizard.step = 5
+function merchantInitial(row) {
+  return (row.name || '?').slice(0, 1)
 }
 
 async function submitCreate() {
@@ -232,19 +301,6 @@ async function confirmCancel() {
     cancelBusy.value = false
   }
 }
-
-const wizardSummary = computed(() => {
-  const offer = wizard.product?.offers.find((item) => item.offer_id === wizard.offerId)
-  return {
-    buyer: wizard.buyer?.account || '—',
-    merchant: wizard.merchant?.name || '—',
-    product: wizard.product?.title || '—',
-    spec: offer ? specText(offer) : '—',
-    price: offer?.price || '—',
-    quantity: wizard.quantity,
-    triggerAt: wizard.triggerAt.replace('T', ' ') || '—',
-  }
-})
 
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 16) : '—'
@@ -363,158 +419,262 @@ onMounted(load)
       />
     </div>
 
-    <AppDrawer :open="createOpen" title="新建一键下单任务" @close="createOpen = false">
-      <div class="wizard-steps">
-        <span
-          v-for="(label, index) in ['买家', '商家', '商品', '规格数量时间', '确认']"
-          :key="label"
-          class="wizard-step"
-          :class="{ 'is-active': wizard.step === index + 1, 'is-done': wizard.step > index + 1 }"
-        >
-          {{ index + 1 }}. {{ label }}
-        </span>
+    <!-- ===== C 版向导：左栏步骤导航 + 右侧内容 + 底部已选摘要栏 ===== -->
+    <AppDrawer :open="createOpen" title="新建一键下单任务" wide @close="createOpen = false">
+      <div class="wizard-rail">
+        <nav class="rail-nav" aria-label="创建步骤">
+          <button
+            v-for="(label, index) in STEP_LABELS"
+            :key="label"
+            type="button"
+            class="rail-item"
+            :class="{
+              'is-active': wizard.step === index + 1,
+              'is-done': wizard.step > index + 1,
+              'is-locked': wizard.step < index + 1,
+            }"
+            :disabled="wizard.step < index + 1"
+            @click="goBackStep(index + 1)"
+          >
+            <span class="n">{{ wizard.step > index + 1 ? '✓' : index + 1 }}</span>
+            <span>{{ label }}</span>
+          </button>
+        </nav>
+
+        <div class="rail-body">
+          <p v-if="createError" class="notice notice--error">{{ createError }}</p>
+
+          <!-- 步骤 1：选择买家 -->
+          <template v-if="wizard.step === 1">
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-buyer">白名单用户</label>
+              <input
+                id="wizard-buyer"
+                v-model="wizard.buyerQuery"
+                type="search"
+                placeholder="输入买家邮箱搜索（仅白名单）"
+                @input="searchBuyers"
+              />
+              <p class="field__hint">只能选择白名单用户的账号；卡片上直接显示可用余额。</p>
+            </div>
+            <div class="pick-list">
+              <button
+                v-for="row in wizard.buyers"
+                :key="row.id"
+                type="button"
+                class="pick-item"
+                :class="{ 'is-sel': wizard.buyer && wizard.buyer.id === row.id }"
+                @click="pickBuyer(row)"
+              >
+                <span class="ava ava--buyer"><i data-lucide="user" aria-hidden="true"></i></span>
+                <span class="meta">
+                  <b>{{ row.account || row.name }}</b>
+                  <span class="sub">可用余额 ¥ {{ row.balance }}</span>
+                </span>
+                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+              </button>
+              <p v-if="!wizard.buyers.length" class="empty-state">输入关键字搜索白名单用户。</p>
+            </div>
+          </template>
+
+          <!-- 步骤 2：选择商家 -->
+          <template v-else-if="wizard.step === 2">
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-merchant">商家</label>
+              <input
+                id="wizard-merchant"
+                v-model="wizard.merchantQuery"
+                type="search"
+                placeholder="输入商家名称搜索"
+                @input="searchMerchants"
+              />
+              <p class="field__hint">卡片展示头像、店铺 ID 与接单状态。</p>
+            </div>
+            <div class="pick-list">
+              <button
+                v-for="row in wizard.merchants"
+                :key="row.id"
+                type="button"
+                class="pick-item"
+                :class="{ 'is-sel': wizard.merchant && wizard.merchant.id === row.id }"
+                @click="pickMerchant(row)"
+              >
+                <span class="ava">
+                  <img v-if="row.avatar" :src="row.avatar" alt="" />
+                  <template v-else>{{ merchantInitial(row) }}</template>
+                </span>
+                <span class="meta">
+                  <b>{{ row.name }}</b>
+                  <span class="sub">
+                    <span class="mono">ID {{ row.id.slice(0, 8) }}</span>
+                    <span>{{ row.status === 'ACTIVE' ? '接单中' : row.status }}</span>
+                    <span>信誉分 {{ row.credit_score ?? '—' }}</span>
+                  </span>
+                </span>
+                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+              </button>
+              <p v-if="!wizard.merchants.length" class="empty-state">没有匹配的商家。</p>
+            </div>
+          </template>
+
+          <!-- 步骤 3：选择商品（带缩略图与分页） -->
+          <template v-else-if="wizard.step === 3">
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-product"
+                >商品（{{ wizard.merchant?.name }}）</label
+              >
+              <input
+                id="wizard-product"
+                v-model="wizard.merchantQuery"
+                type="search"
+                placeholder="输入商品名称搜索"
+                @input="loadProducts"
+              />
+              <p class="field__hint">已下架商品不展示；卡片带缩略图、价格与规格数，支持分页。</p>
+            </div>
+            <div class="product-grid">
+              <button
+                v-for="row in pagedProducts"
+                :key="row.id"
+                type="button"
+                class="product-card"
+                :class="{ 'is-sel': wizard.product && wizard.product.id === row.id }"
+                @click="pickProduct(row)"
+              >
+                <span class="thumb">
+                  <img v-if="row.image" :src="row.image" alt="" />
+                  <i v-else data-lucide="package" aria-hidden="true"></i>
+                </span>
+                <span class="cardbody">
+                  <b :title="row.title">{{ row.title }}</b>
+                  <span class="price">¥ {{ row.price }}</span>
+                  <span class="sub">{{ row.offers.length }} 个规格可选</span>
+                </span>
+                <i data-lucide="check" class="pick-check" aria-hidden="true"></i>
+              </button>
+              <p v-if="!pagedProducts.length" class="empty-state">该商家没有可售商品。</p>
+            </div>
+            <div class="product-pager">
+              <button
+                type="button"
+                aria-label="上一页"
+                :disabled="productPage <= 1"
+                @click="goProductPage(productPage - 1)"
+              >
+                <i data-lucide="chevron-left" aria-hidden="true"></i>
+              </button>
+              <button
+                v-for="n in productTotalPages"
+                :key="n"
+                type="button"
+                :class="{ 'is-on': productPage === n }"
+                @click="goProductPage(n)"
+              >
+                {{ n }}
+              </button>
+              <button
+                type="button"
+                aria-label="下一页"
+                :disabled="productPage >= productTotalPages"
+                @click="goProductPage(productPage + 1)"
+              >
+                <i data-lucide="chevron-right" aria-hidden="true"></i>
+              </button>
+              <span class="pager-total"
+                >共 {{ wizard.products.length }} 件商品 · 第 {{ productPage }}/{{
+                  productTotalPages
+                }}
+                页</span
+              >
+            </div>
+          </template>
+
+          <!-- 步骤 4：规格数量时间 -->
+          <template v-else-if="wizard.step === 4">
+            <div class="wizard-field">
+              <span class="wizard-field__label">商品规格</span>
+              <label
+                v-for="offer in wizard.product?.offers || []"
+                :key="offer.offer_id"
+                class="spec-row"
+                :class="{ 'is-sel': wizard.offerId === offer.offer_id }"
+              >
+                <input
+                  v-model="wizard.offerId"
+                  type="radio"
+                  :value="offer.offer_id"
+                  name="wizard-offer"
+                />
+                <span class="spec-text">
+                  {{ specText(offer) }}
+                  <em>¥ {{ offer.price }}</em>
+                  <em class="muted">库存 {{ offer.inventory }}</em>
+                </span>
+              </label>
+              <p class="field__hint">规格失效会在创建时与触发下单时校验并提醒。</p>
+            </div>
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-qty">数量</label>
+              <input id="wizard-qty" v-model="wizard.quantity" type="number" min="1" step="1" />
+            </div>
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-trigger"
+                >触发时间（按电脑/服务器时间）</label
+              >
+              <input id="wizard-trigger" v-model="wizard.triggerAt" type="datetime-local" />
+              <p class="field__hint">
+                到触发时间自动下单；买家余额不足或规格已失效时任务标记失败并给出原因。
+              </p>
+            </div>
+          </template>
+
+          <!-- 步骤 5：确认创建 -->
+          <template v-else>
+            <dl class="detail-grid">
+              <div>
+                <dt>买家</dt>
+                <dd>{{ wizardSummary.buyer }}（余额 ¥ {{ wizardSummary.balance }}）</dd>
+              </div>
+              <div>
+                <dt>商家</dt>
+                <dd>{{ wizardSummary.merchant }}</dd>
+              </div>
+              <div>
+                <dt>商品</dt>
+                <dd>{{ wizardSummary.product }}</dd>
+              </div>
+              <div>
+                <dt>规格</dt>
+                <dd>{{ wizardSummary.spec }}</dd>
+              </div>
+              <div>
+                <dt>单价 / 数量</dt>
+                <dd>¥ {{ wizardSummary.price }} × {{ wizardSummary.quantity }}</dd>
+              </div>
+              <div>
+                <dt>触发时间</dt>
+                <dd>{{ wizardSummary.triggerAt }}</dd>
+              </div>
+            </dl>
+            <p class="hint-text">
+              触发时间按电脑（服务器）时间判定；到点自动下单，若买家余额不足或规格已失效，任务会标记失败并给出原因。
+            </p>
+          </template>
+        </div>
       </div>
 
-      <p v-if="createError" class="notice notice--error">{{ createError }}</p>
-
-      <template v-if="wizard.step === 1">
-        <div class="wizard-field">
-          <label for="wizard-buyer" class="wizard-field__label">白名单用户</label>
-          <input
-            id="wizard-buyer"
-            v-model="wizard.buyerQuery"
-            type="search"
-            placeholder="输入买家邮箱搜索（仅白名单）"
-            @input="searchBuyers"
-          />
-          <p class="field__hint">只能选择白名单用户的账号。</p>
-        </div>
-        <div class="pick-list">
-          <button
-            v-for="row in wizard.buyers"
-            :key="row.id"
-            type="button"
-            class="pick-item"
-            @click="pickBuyer(row)"
-          >
-            <b>{{ row.account }}</b>
-            <span class="cell-sub">余额 ¥ {{ row.balance }}</span>
+      <!-- 底部已选摘要栏 + 上一步/下一步 -->
+      <div class="wizard-foot">
+        <span class="foot-sum" :title="footSummary">{{ footSummary }}</span>
+        <div class="foot-actions">
+          <button type="button" class="btn" :disabled="wizard.step === 1" @click="prevStep">
+            <i data-lucide="arrow-left" aria-hidden="true"></i> 上一步
           </button>
-          <p v-if="!wizard.buyers.length" class="empty-state">输入关键字搜索白名单用户。</p>
-        </div>
-      </template>
-
-      <template v-else-if="wizard.step === 2">
-        <div class="wizard-field">
-          <label for="wizard-merchant" class="wizard-field__label">商家</label>
-          <input
-            id="wizard-merchant"
-            v-model="wizard.merchantQuery"
-            type="search"
-            placeholder="输入商家名称搜索"
-            @input="searchMerchants"
-          />
-        </div>
-        <div class="pick-list">
-          <button
-            v-for="row in wizard.merchants"
-            :key="row.id"
-            type="button"
-            class="pick-item"
-            @click="pickMerchant(row)"
-          >
-            <b>{{ row.name }}</b>
+          <button v-if="wizard.step < 5" type="button" class="btn btn--primary" @click="nextStep">
+            下一步 <i data-lucide="arrow-right" aria-hidden="true"></i>
           </button>
-        </div>
-      </template>
-
-      <template v-else-if="wizard.step === 3">
-        <div class="wizard-field">
-          <label for="wizard-product" class="wizard-field__label">商品</label>
-          <input
-            id="wizard-product"
-            v-model="wizard.merchantQuery"
-            type="search"
-            placeholder="输入商品名称搜索"
-            @input="loadProducts"
-          />
-          <p class="field__hint">已下架商品不会出现在这里。</p>
-        </div>
-        <div class="pick-list">
           <button
-            v-for="row in wizard.products"
-            :key="row.id"
-            type="button"
-            class="pick-item"
-            @click="pickProduct(row)"
-          >
-            <b>{{ row.title }}</b>
-            <span class="cell-sub">¥ {{ row.price }} · {{ row.offers.length }} 个规格</span>
-          </button>
-          <p v-if="!wizard.products.length" class="empty-state">该商家没有可售商品。</p>
-        </div>
-      </template>
-
-      <template v-else-if="wizard.step === 4">
-        <div class="field">
-          <span class="field__label">商品规格</span>
-          <label
-            v-for="offer in wizard.product?.offers || []"
-            :key="offer.offer_id"
-            class="checkline"
-          >
-            <input v-model="wizard.offerId" type="radio" :value="offer.offer_id" />
-            {{ specText(offer) }}（¥ {{ offer.price }}，库存 {{ offer.inventory }}）
-          </label>
-          <span class="field__hint">规格失效会在创建时与触发下单时校验并提醒。</span>
-        </div>
-        <div class="field">
-          <label for="wizard-qty">数量</label>
-          <input id="wizard-qty" v-model="wizard.quantity" type="number" min="1" step="1" />
-        </div>
-        <div class="field">
-          <label for="wizard-trigger">触发时间（按电脑/服务器时间）</label>
-          <input id="wizard-trigger" v-model="wizard.triggerAt" type="datetime-local" />
-        </div>
-        <div class="form-actions">
-          <button type="button" class="btn" @click="goStep(3)">上一步</button>
-          <button type="button" class="btn btn--primary" @click="goReview">下一步</button>
-        </div>
-      </template>
-
-      <template v-else>
-        <dl class="detail-grid">
-          <div>
-            <dt>买家</dt>
-            <dd>{{ wizardSummary.buyer }}</dd>
-          </div>
-          <div>
-            <dt>商家</dt>
-            <dd>{{ wizardSummary.merchant }}</dd>
-          </div>
-          <div>
-            <dt>商品</dt>
-            <dd>{{ wizardSummary.product }}</dd>
-          </div>
-          <div>
-            <dt>规格</dt>
-            <dd>{{ wizardSummary.spec }}</dd>
-          </div>
-          <div>
-            <dt>单价 / 数量</dt>
-            <dd>¥ {{ wizardSummary.price }} × {{ wizardSummary.quantity }}</dd>
-          </div>
-          <div>
-            <dt>触发时间</dt>
-            <dd>{{ wizardSummary.triggerAt }}</dd>
-          </div>
-        </dl>
-        <p class="hint-text">
-          触发时间按电脑（服务器）时间判定；到点自动下单，若买家余额不足或规格已失效，任务会标记失败并给出原因。
-        </p>
-        <div class="form-actions">
-          <button type="button" class="btn" @click="goStep(4)">上一步</button>
-          <button
+            v-else
             type="button"
             class="btn btn--primary"
             :disabled="createBusy"
@@ -523,7 +683,7 @@ onMounted(load)
             {{ createBusy ? '创建中…' : '创建任务' }}
           </button>
         </div>
-      </template>
+      </div>
     </AppDrawer>
 
     <AppDrawer :open="detail.open" title="任务详情" @close="detail.open = false">
@@ -597,37 +757,80 @@ onMounted(load)
   min-width: 220px;
 }
 
-.wizard-steps {
+/* ===== C 版向导：左栏步骤导航 ===== */
+.wizard-rail {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
+  min-height: 0;
 }
 
-.wizard-step {
-  font-size: 12px;
+.rail-nav {
+  width: 190px;
+  border-right: 1px solid var(--border, #e2e8f0);
+  padding: 4px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 5px;
   color: var(--muted, #78869a);
-  padding: 5px 12px;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 14px;
-  background: #fff;
+  text-align: left;
 }
 
-.wizard-step.is-active {
-  color: #fff;
-  background: var(--primary, #2563eb);
-  border-color: var(--primary, #2563eb);
+.rail-item .n {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  background: #eef1f6;
+  flex: none;
+}
+
+.rail-item.is-active {
+  background: var(--primary-soft, #eaf1fd);
+  color: var(--primary, #2563eb);
   font-weight: 600;
 }
 
-.wizard-step.is-done {
-  color: var(--primary, #2563eb);
-  border-color: var(--primary, #2563eb);
+.rail-item.is-active .n {
+  background: var(--primary, #2563eb);
+  color: #fff;
 }
 
-/* 向导里的搜索框：全宽 + 与管理端输入框一致的外观（修复宽度太小文字显示不全）。 */
+.rail-item.is-done {
+  color: var(--ink, #18263b);
+  cursor: pointer;
+}
+
+.rail-item.is-done:hover {
+  background: var(--primary-soft, #eaf1fd);
+}
+
+.rail-item.is-done .n {
+  background: var(--green, #16856a);
+  color: #fff;
+}
+
+.rail-item.is-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.rail-body {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 14px 16px;
+}
+
+/* ===== 向导字段：全宽 + 可见 label ===== */
 .wizard-field {
   display: flex;
   flex-direction: column;
@@ -650,6 +853,7 @@ onMounted(load)
   background: #fff;
   font: inherit;
   font-size: 13px;
+  color: var(--ink, #18263b);
 }
 
 .wizard-field input:focus {
@@ -658,30 +862,246 @@ onMounted(load)
   box-shadow: 0 0 0 2px rgb(37 99 235 / 12%);
 }
 
+/* ===== 选项卡片 ===== */
 .pick-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 12px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 
 .pick-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;
   background: #fff;
-  cursor: pointer;
   text-align: left;
 }
 
 .pick-item:hover {
   border-color: var(--primary, #2563eb);
+}
+
+.pick-item.is-sel {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eaf1fd);
+}
+
+.ava {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  background: var(--primary, #2563eb);
+  flex: none;
+}
+
+.ava img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.meta b {
+  font-size: 13px;
+}
+
+.meta .sub {
+  color: var(--muted, #78869a);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pick-check {
+  margin-left: auto;
+  color: var(--primary, #2563eb);
+  opacity: 0;
+}
+
+.pick-item.is-sel .pick-check {
+  opacity: 1;
+}
+
+/* ===== 商品卡片 + 分页 ===== */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.product-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  text-align: left;
+}
+
+.product-card:hover {
+  border-color: var(--primary, #2563eb);
+}
+
+.product-card.is-sel {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eaf1fd);
+}
+
+.product-card .thumb {
+  height: 88px;
+  display: grid;
+  place-items: center;
+  background: #f2f5f9;
+  color: var(--muted, #78869a);
+}
+
+.product-card .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product-card .cardbody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+
+.product-card .cardbody b {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-card .price {
+  color: var(--red, #dc2638);
+  font-weight: 600;
+}
+
+.product-card .sub {
+  color: var(--muted, #78869a);
+  font-size: 12px;
+}
+
+.product-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.product-pager button {
+  min-width: 26px;
+  height: 26px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink, #18263b);
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.product-pager button.is-on {
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+  color: #fff;
+}
+
+.product-pager button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pager-total {
+  color: var(--muted, #78869a);
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+/* ===== 规格行 ===== */
+.spec-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.spec-row.is-sel {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eaf1fd);
+}
+
+.spec-row .spec-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.spec-row em {
+  font-style: normal;
+  color: var(--red, #dc2638);
+  font-weight: 600;
+}
+
+.spec-row em.muted {
+  color: var(--muted, #78869a);
+  font-weight: 400;
+}
+
+/* ===== 底部已选摘要栏 + 上一步/下一步 ===== */
+.wizard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  background: #fafbfd;
+}
+
+.foot-sum {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted, #78869a);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.foot-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
 }
 </style>
