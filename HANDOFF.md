@@ -2,9 +2,9 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0. 最新会话记录（2026-11-17，申请开店表单改 7 项字段 + 买家侧图片上传 + 审核页展示 + approve 联动，✅ 完成，未 commit）
+## 0. 最新会话记录（2026-11-17，申请开店表单改 7 项字段 + 买家侧图片上传 + 审核页展示 + approve 联动，✅ 完成，已 commit & push）
 
-- **任务**：用户要求「申请开店」表单改为 7 项——店铺logo、用户名字、店铺名、手机号码、邀请码（选填）、个人证件（身份证/护照/驾照 三选一 + 证件照片）、个人居住地址。全链路（买家表单→上传→提交校验→管理端审核展示→approve 开店联动→商家端进入）实测通过，双语各一轮，console error 0（唯一 console 错误来自故意的 400 负例分支页）。**只测不提交 git。**
+- **任务**：用户要求「申请开店」表单改为 7 项——店铺logo、用户名字、店铺名、手机号码、邀请码（选填）、个人证件（身份证/护照/驾照 三选一 + 证件照片）、个人居住地址。全链路（买家表单→上传→提交校验→管理端审核展示→approve 开店联动→商家端进入）实测通过，双语各一轮，console error 0（唯一 console 错误来自故意的 400 负例分支页）。**只测不提交 git（本轮之后已由用户指示统一提交推送）。**
 - **模型与迁移**：`merchants/models.py::MerchantApplication` 新增 `user_name`(60)/`phone`(32)/`id_document_type`(TextChoices: ID_CARD/PASSPORT/DRIVER_LICENSE，默认 ID_CARD)/`residential_address`(255)/`logo_image_url`(500)/`id_document_image_url`(500)；`legal_name` 为旧表单遗留字段保留（新表单不再收集、不覆盖旧值）。迁移 **`0008_merchantapplication_shop_fields`** 已 apply 到 dev MySQL。旧字段 `referrer_code` 语义不变（选填）。
 - **后端行为变化（`merchant_ops/views_shop_application.py`）**：
   * POST 必填：user_name/shop_name/phone/residential_address/logo_image_url/id_document_image_url；手机号宽松校验（去空格/横线/括号后 `^\+?\d{6,20}$`，覆盖 +44 与 0 开头，正则 `PHONE_PATTERN` 在测试固化）；证件类型三选一（大小写不敏感归一 upper）；图片 URL 只接受 `/media/` 前缀且必须命中真实 `MediaAsset.relative_path`（错误码 `<FIELD>_INVALID` / `<FIELD>_NOT_FOUND`，如 `LOGO_IMAGE_INVALID`/`ID_DOCUMENT_IMAGE_NOT_FOUND`）；**邀请码不再在提交时校验有效性**（旧 `REFERRER_CODE_INVALID` 提交校验已删——无效码可提交，approve 时按 WP-42 绑定、无效忽略）；REJECTED 重申覆盖全部新字段。
@@ -26,7 +26,8 @@
   3. storefront 的 eslint 在 Git Bash 里直呼 `node node_modules/eslint/bin/eslint.js` 会 MODULE_NOT_FOUND（storefront/node_modules 无 eslint 实体，.bin 是 pnpm shim）；要 `cd storefront && cmd //c "node_modules\\.bin\\eslint.CMD <file>"`。
   4. admin-web 的 `/media` 已有 Vite 代理（`admin-web/vite.config.js`），`<img src="/media/...">` 在 5173 可直接显示，无需改。
   5. 旧测试 `test_invalid_referrer_code_rejected` 已按新口径改写为「无效邀请码提交 201 + approve 忽略」——不要再把提交时校验邀请码加回来（WP-42 口径：无效不阻断）。
-- **下一步建议**：①`shopApply.legalName*` 键与 `legal_name` 字段已成遗留，可另开清理任务；②商家端「店铺资料」页可顺带展示 avatar_url（本次只回填字段未改商家端展示）；③git 未 commit。
+- **Git 同步（2026-11-17，用户指示「提交到 github」之后）**：本轮把工作区积压的全部改动（此前多个会话的功能，含本次 7 字段申请表单）一次性提交：`4d3f077 Sync accumulated storefront, admin, merchant and crawler work`（407 个文件，+35712/−1501），`git push origin main` 成功（远程 `633c481..4d3f077`）。提交前把 `_preview.html`、`*.bak-*` 加入 `.gitignore` 排除；`var/`、`translation_agent/`、`crawler/debug_session.py`、`backend/raw/` 等仍被忽略，未泄露 cookie/密钥。`backend/media/` 是 Django app 代码（34 个文件，226K），已入库。提交后工作区干净。
+- **下一步建议**：①`shopApply.legalName*` 键与 `legal_name` 字段已成遗留，可另开清理任务；②商家端「店铺资料」页可顺带展示 avatar_url（本次只回填字段未改商家端展示）；③HANDOFF.md 已膨胀到 ~750KB，后续可压缩已失效的历史会话记录（AGENTS.md 允许压缩已失效细节，但不得删掉仍影响决策的约束和踩坑）。
 
 ## 0a. 上一会话记录（2026-11-17，PDP 商品详情未完整翻译修复 + 详情接口接译文表，✅ 完成，未 commit）
 
