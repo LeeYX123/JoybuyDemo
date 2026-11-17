@@ -108,30 +108,32 @@ onMounted(load)
       <div v-if="state.deposit.enabled" class="card">
         <div class="card__head"><h2>保证金记录</h2></div>
         <div class="card__body">
-          <table v-if="state.items.length" class="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>类型</th>
-                <th>金额</th>
-                <th>变动后余额</th>
-                <th>关联单号</th>
-                <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in state.items" :key="row.id">
-                <td>{{ fmtDate(row.occurred_at) }}</td>
-                <td>{{ row.kind_label }}</td>
-                <td class="num" :class="Number(row.amount) >= 0 ? 'up' : 'down'">
-                  {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
-                </td>
-                <td class="num">¥ {{ row.balance_after }}</td>
-                <td class="mono">{{ row.related_id || '—' }}</td>
-                <td class="cell-sub">{{ row.note || '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-if="state.items.length" class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>类型</th>
+                  <th>金额</th>
+                  <th>变动后余额</th>
+                  <th>关联单号</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in state.items" :key="row.id">
+                  <td>{{ fmtDate(row.occurred_at) }}</td>
+                  <td>{{ row.kind_label }}</td>
+                  <td class="num" :class="Number(row.amount) >= 0 ? 'up' : 'down'">
+                    {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
+                  </td>
+                  <td class="num">¥ {{ row.balance_after }}</td>
+                  <td class="mono">{{ row.related_id || '—' }}</td>
+                  <td class="cell-sub">{{ row.note || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p v-else class="empty-state">还没有保证金记录。</p>
         </div>
       </div>

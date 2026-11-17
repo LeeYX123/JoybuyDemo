@@ -8,6 +8,7 @@ from catalog.models import (
     Sku,
     SkuSpecificationTranslation,
     SpuMarketContent,
+    SpuTranslation,
 )
 from offers.market_services import offer_market_chain
 from offers.models import Locale, Market
@@ -211,6 +212,14 @@ def localized_specification(sku: Sku, locale: Locale) -> tuple[dict, bool]:
     return record.specification, True
 
 
+def _pick_legacy(legacy, codes) -> SpuTranslation | None:
+    for code in codes:
+        for item in legacy:
+            if item.locale == code:
+                return item
+    return None
+
+
 def resolve_product_content(spu, market: Market, locale: Locale) -> ResolvedProductContent:
     market_contents = list(spu.market_contents.all())
     for candidate_market in offer_market_chain(market):
@@ -230,20 +239,36 @@ def resolve_product_content(spu, market: Market, locale: Locale) -> ResolvedProd
                     origin=content.origin,
                 )
 
-    legacy = list(spu.translations.all())
+    # 稳定排序：MySQL 对同一 key 的多行返回顺序不保证，先按 pk 固定基线，
+    # 后面的「兜底取第一行」才是确定性的（2026-11-17：zh-CN 曾随机落在
+    # de-BE 行显示别国语言，就是吃了这个无序返回）。
+    legacy = sorted(spu.translations.all(), key=lambda item: item.pk)
     accepted_codes = [locale.code, locale.language_code]
-    for code in accepted_codes:
-        translation = next((item for item in legacy if item.locale == code), None)
-        if translation:
-            return ResolvedProductContent(
-                title=translation.title,
-                subtitle=translation.subtitle,
-                description=translation.description,
-                requested_locale=locale.code,
-                content_locale=translation.locale,
-                content_market=None,
-                origin="LEGACY",
-            )
+    translation = _pick_legacy(legacy, accepted_codes)
+    if translation:
+        return ResolvedProductContent(
+            title=translation.title,
+            subtitle=translation.subtitle,
+            description=translation.description,
+            requested_locale=locale.code,
+            content_locale=translation.locale,
+            content_market=None,
+            origin="LEGACY",
+        )
+    # 显式回退源语言：请求 locale 没有译文时优先英文源行（en-GB → en），
+    # 而不是随机落到其它语言的 legacy 行；origin 用 FALLBACK_SOURCE 与
+    # 最后的兜底区分，便于排查「zh-CN 显示德语」这类问题。
+    translation = _pick_legacy(legacy, ["en-GB", "en"])
+    if translation:
+        return ResolvedProductContent(
+            title=translation.title,
+            subtitle=translation.subtitle,
+            description=translation.description,
+            requested_locale=locale.code,
+            content_locale=translation.locale,
+            content_market=None,
+            origin="FALLBACK_SOURCE",
+        )
     translation = legacy[0] if legacy else None
     return ResolvedProductContent(
         title=translation.title if translation else "",

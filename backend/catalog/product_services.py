@@ -7,9 +7,11 @@ from django.utils import timezone
 
 from catalog.domain import ProductSourceIdentityInvalid, SkuSpecificationInvalid
 from catalog.models import (
+    LOCAL_PARENT_MERCHANT_CATEGORY,
     AttributeDefinition,
     Brand,
     LocalCategory,
+    ProductCategory,
     Sku,
     SkuSourceIdentity,
     SourceCategory,
@@ -27,6 +29,22 @@ def _normalize_source_identity(source_system: str, source_id: str) -> tuple[str,
     return normalized_system, normalized_id
 
 
+def merchant_category_from_local(local_category: LocalCategory | None) -> str:
+    """商家端固定品类 = 本地类目父级（一级类目）的映射（2026-11-10）。
+
+    爬虫商品的 ``local_category`` 来自任务所选菜单类目的 CategoryMapping（docs/14
+    §9.8），商家端品类 ``Spu.merchant_category`` 按它的父类目 slug 从
+    ``LOCAL_PARENT_MERCHANT_CATEGORY`` 推导（如 fridges-freezers →
+    small-home-appliances → SMALL_APPLIANCE）。挂在一级类目本身时用自身 slug。
+    推导不出映射返回空串；调用方必须「只填空、绝不覆盖」人工/管理端设置的值。
+    """
+
+    if local_category is None:
+        return ""
+    node = local_category.parent or local_category
+    return LOCAL_PARENT_MERCHANT_CATEGORY.get(node.slug, "")
+
+
 def get_or_create_spu_from_source(
     *,
     source_system: str,
@@ -35,6 +53,8 @@ def get_or_create_spu_from_source(
     source_category: SourceCategory | None = None,
     brand: Brand | None = None,
     local_category: LocalCategory | None = None,
+    product_category: ProductCategory | None = None,
+    is_activity: bool = False,
     title: str,
     locale: str = "en-GB",
 ) -> tuple[Spu, bool]:
@@ -50,14 +70,49 @@ def get_or_create_spu_from_source(
         existing.source_category = source_category
         existing.last_seen_at = now
         existing.save(update_fields=["source_url", "source_category", "last_seen_at", "updated_at"])
-        return existing.spu, False
+
+        # 商品类目以源站为准：每次导入都刷新；本地类目（品类）只在 SPU 还没挂
+        # 类目时补上——优先用本轮解析出的 local_category（任务所选菜单类目的
+        # CategoryMapping），兜底 product_category.local_category；活动商品
+        # 保持无本地类目；不覆盖人工维护的 local_category。
+        spu = existing.spu
+        spu_updates = []
+        if product_category is not None and spu.product_category_id != product_category.pk:
+            spu.product_category = product_category
+            spu_updates.append("product_category")
+        if spu.local_category_id is None and not spu.is_activity:
+            resolved_local = local_category or (
+                product_category.local_category
+                if product_category is not None and product_category.local_category_id
+                else None
+            )
+            if resolved_local is not None:
+                spu.local_category = resolved_local
+                spu_updates.append("local_category")
+        # 商家端品类按本地类目的父类目映射推导：只填空、绝不覆盖人工/管理端
+        # 设置的值；活动商品（无 local_category）推导不出，保持空串。
+        if spu.local_category_id is not None and not spu.merchant_category:
+            derived = merchant_category_from_local(spu.local_category)
+            if derived:
+                spu.merchant_category = derived
+                spu_updates.append("merchant_category")
+        if is_activity and not spu.is_activity:
+            # 活动商品是标记，可以加不能自动清（人工取消由管理端操作）。
+            spu.is_activity = True
+            spu_updates.append("is_activity")
+        if spu_updates:
+            spu.save(update_fields=[*spu_updates, "updated_at"])
+        return spu, False
 
     try:
         with transaction.atomic():
             spu = Spu.objects.create(
                 brand=brand,
                 local_category=local_category,
+                product_category=product_category,
+                is_activity=is_activity,
                 status=Spu.Status.DRAFT,
+                merchant_category=merchant_category_from_local(local_category),
             )
             SpuTranslation.objects.create(
                 spu=spu,

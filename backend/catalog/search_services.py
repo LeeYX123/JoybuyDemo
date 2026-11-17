@@ -6,6 +6,7 @@ a fallback to prefix LIKE for short queries; sorting and pagination are
 stable (price/rating tiebreak on spu id) and depth-capped.
 """
 
+import re
 from decimal import Decimal, InvalidOperation
 
 from django.db.models import Q
@@ -23,6 +24,26 @@ SORT_CHOICES = (
 
 MAX_PAGE = 50
 PAGE_SIZE = 24
+
+# InnoDB FULLTEXT 的最小索引词长（innodb_ft_min_token_size，默认 3）。
+# 比它短的词（如「17」「4L」）在 BOOLEAN MODE 里带 + 号会让整条 MATCH 命中 0，
+# 所以这些词走 LIKE 兜底，其余词仍用全文索引。
+MIN_FULLTEXT_TOKEN = 3
+
+
+def _search_terms(text: str) -> list[str]:
+    """把用户输入拆成安全的检索词：去掉 BOOLEAN MODE 运算符，避免语法/语义注入。"""
+
+    return [term for term in re.sub(r'[+\-<>()~*"@]', " ", text or "").split() if term]
+
+
+def _term_filter(terms: list[str]) -> Q:
+    """逐词 LIKE（AND）：标题或品牌包含每个词。用于短词与全文检索的兜底。"""
+
+    combined = Q()
+    for term in terms:
+        combined &= Q(title__icontains=term) | Q(brand_name__icontains=term)
+    return combined
 
 
 class SearchParamsInvalid(Exception):
@@ -165,25 +186,33 @@ def search_documents(
     query = (query or "").strip()
     if query:
         cleaned = " ".join(query.split())[:100]
+        terms = _search_terms(cleaned)
         from django.db import connection
         from django.db.models.expressions import RawSQL
 
-        if connection.vendor == "mysql":
-            boolean = " ".join(f"+{term}*" for term in cleaned.split() if term)
-            if boolean:
+        if connection.vendor == "mysql" and terms:
+            # 短词（< innodb_ft_min_token_size）不能进 BOOLEAN MODE：带 + 号会让
+            # 整条 MATCH 返回空（「iPhone 17」曾因此搜不到任何商品）。它们改用
+            # LIKE；长词仍走全文索引，索引结果为空时再整体 LIKE 兜底。
+            long_terms = [term for term in terms if len(term) >= MIN_FULLTEXT_TOKEN]
+            like_filter = _term_filter(terms)
+            if long_terms:
+                boolean = " ".join(f"+{term}*" for term in long_terms)
                 relevance = RawSQL(
                     "(MATCH(title) AGAINST (%s IN BOOLEAN MODE)"
                     " + MATCH(brand_name) AGAINST (%s IN BOOLEAN MODE))",
                     (boolean, boolean),
                 )
-                queryset = queryset.alias(relevance=relevance).filter(relevance__gt=0)
-                if sort == "relevance":
-                    queryset = queryset.order_by("-relevance", "pk")
-        else:
+                matched = queryset.alias(relevance=relevance).filter(relevance__gt=0)
+                queryset = matched if matched.exists() else queryset.filter(like_filter)
+            else:
+                queryset = queryset.filter(like_filter)
+        elif terms:
             # Non-MySQL backends (local SQLite checks) fall back to contains.
-            queryset = queryset.filter(
-                Q(title__icontains=cleaned) | Q(brand_name__icontains=cleaned)
-            )
+            queryset = queryset.filter(_term_filter(terms))
+        else:
+            # 输入只有运算符（如 "+"）：没有任何有效检索词，返回空结果而不是全部商品。
+            queryset = queryset.none()
     if category is not None:
         from catalog.services import local_category_descendants
 

@@ -4,11 +4,12 @@
 （merchant × sku × market × currency）。「上架」只是在本店创建或复活一条 Offer，
 并把折扣折算后的成本价/零售价快照过去，不复制商品主档。
 
-WP-42（文档 M03 §2）：零售价 = 抓取到的价格原样保留；成本价按**商家级统一折扣**
-计算 = 向上取整(零售价 × 折扣)，活动商品优先用活动折扣。折扣由管理端按商家设置。
+WP-42（文档 M03 §2，2026-11-10 最终口径）：零售价 = 抓取到的价格原样保留；
+成本价按**商家级统一折扣**计算 = 零售价 × (1 - 折扣%)，向上取整到分——折扣是
+管理端设置的减免百分比，不改变顾客价；未设置折扣视为减免 0%（成本价 = 零售价）；
+活动商品优先用活动折扣。折扣由管理端按商家设置（取代 2026-11-08 的
+「平台成本价 × (1 - 折扣%)」口径）。
 """
-
-from decimal import ROUND_CEILING, Decimal
 
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
@@ -20,8 +21,11 @@ from audit.services import record_audit
 from catalog.models import Spu
 from merchant_ops.api_utils import money_str, paginate, require
 from merchant_ops.merchant_context import MerchantAPIView
+from merchant_ops.services import compute_listing_cost
 from merchant_ops.views_catalog import _category_payload, _primary_images, _spu_payload
 from offers.models import Market, Offer
+
+__all__ = ["compute_listing_cost"]
 
 # 文档里的「活动商品」不是真实类目，是商品池上的 is_activity 标记。
 ACTIVITY_CATEGORY = "ACTIVITY"
@@ -37,27 +41,6 @@ def merchant_category_items() -> list:
     ]
     items.append({"id": ACTIVITY_CATEGORY, "name": "活动商品", "name_en": "Activity"})
     return items
-
-
-def compute_listing_cost(merchant, spu):
-    """按商家折扣计算上架成本价：向上取整(零售价 × 折扣)，取整到个位。
-
-    取折扣顺序（文档拍板）：先判断活动商品 → 用活动折扣；否则用普通折扣；
-    商家未设置折扣时回退商品池建议成本价（保持既有行为）。
-    例：12.10 与 12.90 取整后都是 13；121.98 → 122。
-    """
-
-    if spu.retail_price is None:
-        return spu.cost_price
-    rate = None
-    if spu.is_activity and merchant.activity_discount_rate is not None:
-        rate = merchant.activity_discount_rate
-    elif merchant.discount_rate is not None:
-        rate = merchant.discount_rate
-    if rate is None:
-        return spu.cost_price
-    factor = (Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.000001"))
-    return (spu.retail_price * factor).to_integral_value(rounding=ROUND_CEILING)
 
 
 def _default_market() -> Market:
@@ -281,12 +264,14 @@ class MerchantListingsView(MerchantAPIView):
                 message="商品零售价低于成本价，不能上架。",
                 status_code=400,
             )
-        # 成本价 = 向上取整(零售价 × 商家折扣)；未设折扣时回退商品池建议成本价。
+        # 成本价 = 向上取整(零售价 × (1 − 商家折扣%))；未设置折扣 = 零售价。
+        # 商品池 cost_price 不参与公式，retail_price 为 None 时才返回 None
+        # （上面已拦截），此分支只是防御。
         listing_cost = compute_listing_cost(merchant, spu)
         if listing_cost is None:
             raise StaffApiError(
                 business_code="PRODUCT_PRICE_MISSING",
-                message="商家未设置折扣且商品缺少成本价，暂不能上架。",
+                message="商品缺少零售价，暂不能上架。",
                 status_code=400,
             )
         sku = spu.skus.filter(status="ACTIVE").order_by("pk").first()
@@ -360,6 +345,11 @@ class MerchantListingsView(MerchantAPIView):
                 tenant_type="MERCHANT",
                 tenant_id=str(merchant.public_id),
             )
+        # 上架（含平台下架后重新上架）必须刷新搜索文档：商品池新建的商品
+        # 在上架前没有任何文档，不刷新就永远搜不到、类目页也不显示。
+        from catalog.search_services import refresh_spu_search_documents
+
+        refresh_spu_search_documents(spu)
         images = _primary_images([spu.pk])
         return Response(
             {"listing": _listing_payload(offer, image=images.get(spu.pk, ""))}, status=201

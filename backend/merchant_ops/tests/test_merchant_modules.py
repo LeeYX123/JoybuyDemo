@@ -181,10 +181,25 @@ class CatalogListingTests(MerchantModuleTestBase):
         response = self.post("/api/v1/merchant/listings", {"product_id": str(product.public_id)})
         self.assertEqual(response.status_code, 201, response.content)
         offer = Offer.objects.get(merchant=self.shop, sku__spu=product)
-        self.assertEqual(offer.cost_price, Decimal("11.50"))
+        # 2026-11-10 口径：本店未设置折扣（减免 0%）→ 成本价 = 零售价 25.00，
+        # 商品池 cost_price（11.50）不参与公式。
+        self.assertEqual(offer.cost_price, Decimal("25.00"))
         self.assertEqual(offer.current_price, Decimal("25.00"))
         self.assertEqual(offer.status, Offer.Status.ACTIVE)
         self.assertIsNotNone(offer.listed_at)
+
+    def test_list_product_creates_search_document(self):
+        """上架后必须立刻能搜到：没有文档的商品在购物端完全不可见。"""
+        from catalog.models import ProductSearchDocument
+
+        product = self.make_product()
+        self.assertFalse(ProductSearchDocument.objects.filter(spu=product).exists())
+        response = self.post("/api/v1/merchant/listings", {"product_id": str(product.public_id)})
+        self.assertEqual(response.status_code, 201, response.content)
+        document = ProductSearchDocument.objects.filter(spu=product).first()
+        self.assertIsNotNone(document)
+        self.assertTrue(document.is_searchable)
+        self.assertEqual(document.local_category_id, product.local_category_id)
 
     def test_list_same_product_twice_is_conflict(self):
         product = self.make_product()

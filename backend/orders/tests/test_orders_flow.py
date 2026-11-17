@@ -227,3 +227,33 @@ class OrderPlacementTests(CheckoutOrderTestBase):
         cancel_order(order, reason="PAYMENT_WINDOW_EXPIRED")
         canceled_listing = self.client.get(reverse("orders")).json()
         self.assertEqual(canceled_listing["orders"][0]["status"], "CANCELED")
+
+    def test_buyer_order_listing_exposes_card_payload_and_state(self):
+        order = self.place(quantity=2)
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "PENDING_PAYMENT")
+        self.assertEqual(listing["item_count"], 1)
+        self.assertEqual(listing["total"], "50.0000")
+        self.assertEqual(listing["items"][0]["title"], "Ordered product")
+        self.assertEqual(listing["items"][0]["quantity"], 2)
+        self.assertEqual(listing["items"][0]["unit_price"], "25.0000")
+        self.assertEqual(listing["items"][0]["spu_public_id"], str(self.spu.public_id))
+
+        # Paid but not shipped yet: present in All, no dedicated Joybuy tab.
+        Order.objects.filter(pk=order.pk).update(status=Order.Status.PAID)
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "PROCESSING")
+
+        from orders.models import MerchantOrder
+
+        order.merchant_orders.update(
+            progress=2, status=MerchantOrder.Status.SHIPPED
+        )
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "SHIPPED")
+
+        order.merchant_orders.update(
+            progress=7, status=MerchantOrder.Status.COMPLETED
+        )
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "COMPLETED")

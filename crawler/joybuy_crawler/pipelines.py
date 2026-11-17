@@ -11,6 +11,7 @@ run progress/events.
 
 import logging
 
+from crawler_control.domain import ImportSourceConflict
 from crawler_control.models import CrawlRun
 from crawler_control.services import (
     complete_run_failed,
@@ -20,6 +21,76 @@ from crawler_control.services import (
 )
 
 logger = logging.getLogger("joybuy_crawler.pipelines")
+
+#: Used only when the listing pages were actually fetched but yielded
+#: nothing — that is the risk-control / login wall / revamp signature.
+GENERIC_EMPTY_REASON = (
+    "没有发现任何商品：列表页可能被风控拦截、需要登录，或站点结构已改版。"
+)
+NETWORK_FAILURE_HINT = (
+    "请检查网络、VPN 或代理；这是下载/TLS 层错误，不是风控、登录或站点结构改版。"
+)
+
+
+def _as_int(value) -> int:
+    """Untyped counter reader: MagicMock/None/spider must not leak through."""
+
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _as_error_types(value) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(name): _as_int(count) for name, count in value.items() if _as_int(count) > 0
+    }
+
+
+def format_error_types(error_types) -> str:
+    """``{"ConnectionLost": 2}`` -> ``ConnectionLost 2 次``."""
+
+    types = _as_error_types(error_types)
+    if not types:
+        return ""
+    return "、".join(
+        f"{name} {count} 次"
+        for name, count in sorted(types.items(), key=lambda item: (-item[1], item[0]))
+    )
+
+
+def zero_item_failure_reason(
+    *,
+    listing_errors=0,
+    error_types=None,
+    listing_successes=0,
+    robotstxt_failed=False,
+    last_error="",
+) -> str:
+    """Explain a finished run that discovered zero products.
+
+    Download failures and a parsed-but-empty page are different diagnoses:
+    the first is local network / VPN / proxy / TLS, the second may be risk
+    control, a login wall or a site revamp. Only the second keeps the
+    generic wording, so an unreachable host is never blamed on the site.
+    """
+
+    errors = _as_int(listing_errors)
+    if errors <= 0:
+        return GENERIC_EMPTY_REASON
+
+    kind = format_error_types(error_types) or "网络/TLS 错误（未记录异常类型）"
+    scope = (
+        "全部列表页请求失败"
+        if _as_int(listing_successes) == 0
+        else "部分列表页请求失败"
+    )
+    message = f"{scope}：列表页请求失败 {errors} 次（{kind}）。{NETWORK_FAILURE_HINT}"
+    if robotstxt_failed:
+        message += "robots.txt 同样无法获取。"
+    detail = " ".join(str(last_error or "").split())[:200]
+    if detail:
+        message += f"最近一次错误：{detail}"
+    return message
 
 
 class RawArchivePipeline:
@@ -163,6 +234,7 @@ class StagingPipeline:
             return item
 
         # 1. Local dataset folder (requirement: folder ↔ data 1:1 mapping).
+        index_line = {}
         try:
             root = dataset_root(str(self.run.public_id), self.job.name)
             index_line = save_product(
@@ -180,6 +252,8 @@ class StagingPipeline:
             failed_images = len(images.get("main_errors") or []) + len(
                 images.get("detail_errors") or []
             )
+            videos = index_line.get("videos") or []
+            failed_videos = len(index_line.get("video_errors") or [])
             record_run_event(
                 self.run,
                 level="INFO",
@@ -189,6 +263,8 @@ class StagingPipeline:
                     f"{root.name}/{index_line.get('product_dir') or '?'}"
                     f"（product.json；主图 {main_count} 张、详情图 {detail_count} 张"
                     + (f"，失败 {failed_images} 张" if failed_images else "")
+                    + (f"、视频 {len(videos)} 个" if videos else "")
+                    + (f"，视频失败 {failed_videos} 个" if failed_videos else "")
                     + (
                         "，内容无变化，索引未追加"
                         if not index_line.get("changed")
@@ -247,6 +323,9 @@ class StagingPipeline:
                 market=market,
                 currency=currency or market.default_currency,
                 locale=self.job.locale,
+                # dataset 已下载的媒体文件：导入时直接复用，避免同一张图/同一个
+                # 视频再下载一遍（2026-11-10 提速）。
+                local_media=index_line.get("local_media"),
             )
         except StagingImportRejected as exc:
             update_run_progress(self.run, failed=1)
@@ -254,6 +333,19 @@ class StagingPipeline:
                 self.run,
                 level="ERROR",
                 code="IMPORT_REJECTED",
+                message=str(exc),
+                source_url=item.get("source_url", ""),
+            )
+            return item
+        except ImportSourceConflict as exc:
+            # 来源身份已绑定到别的业务记录：不自动改绑，中文提示 + 稳定事件码。
+            update_run_progress(self.run, failed=1)
+            staging.error_message = str(exc)[:500]
+            staging.save(update_fields=["error_message", "updated_at"])
+            record_run_event(
+                self.run,
+                level="ERROR",
+                code=exc.event_code,
                 message=str(exc),
                 source_url=item.get("source_url", ""),
             )
@@ -304,12 +396,33 @@ class StagingPipeline:
         if run.status != CrawlRun.Status.RUNNING:
             return  # paused/canceled by an admin while crawling
         finish_reason = "finished"
+        stats: dict = {}
         try:
-            stats = spider.crawler.stats.get_stats()
+            stats = spider.crawler.stats.get_stats() or {}
             finish_reason = str(stats.get("finish_reason", "finished"))
         except Exception:  # noqa: BLE001, S110 - stats may be gone during teardown
             pass
         fatal = getattr(spider, "fatal_error", "")
+        listing_errors, error_types, listing_successes, last_error = (
+            self._listing_counters(spider)
+        )
+        robotstxt_failed = any(
+            str(key).startswith("robotstxt/exception_count") for key in stats
+        )
+        if listing_errors and run.discovered_count > 0:
+            # A partial outage must stay visible even though the run itself
+            # still has usable products.
+            record_run_event(
+                self.run,
+                level="WARNING",
+                code="LISTING_FETCH_PARTIAL",
+                message=(
+                    f"列表页有 {listing_errors} 次下载失败"
+                    f"（{format_error_types(error_types) or '网络/TLS 错误'}），"
+                    f"其余页面仍发现 {run.discovered_count} 个商品，结果可能不完整。"
+                    f"{NETWORK_FAILURE_HINT}"
+                ),
+            )
         if finish_reason not in {"finished", "completed"} or fatal:
             complete_run_failed(
                 run,
@@ -323,10 +436,30 @@ class StagingPipeline:
         elif run.succeeded_count == 0 and run.discovered_count == 0:
             complete_run_failed(
                 run,
-                reason="没有发现任何商品：列表页可能被风控拦截、需要登录，"
-                "或站点结构已改版。",
+                reason=zero_item_failure_reason(
+                    listing_errors=listing_errors,
+                    error_types=error_types,
+                    listing_successes=listing_successes,
+                    robotstxt_failed=robotstxt_failed,
+                    last_error=last_error,
+                ),
             )
         else:
             from crawler_control.services import complete_run
 
             complete_run(run, outcome=CrawlRun.Status.SUCCEEDED)
+
+    @staticmethod
+    def _listing_counters(spider) -> tuple[int, dict, int, str]:
+        """Listing download counters from the spider (safe for fakes/mocks)."""
+
+        errors = _as_int(getattr(spider, "listing_fetch_errors", 0))
+        error_types = _as_error_types(getattr(spider, "listing_error_types", None))
+        successes = _as_int(getattr(spider, "listing_successes", 0))
+        last_error = getattr(spider, "last_listing_error", "")
+        return (
+            errors,
+            error_types,
+            successes,
+            last_error if isinstance(last_error, str) else "",
+        )

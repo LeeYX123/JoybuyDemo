@@ -242,3 +242,90 @@ class ListingCardLayoutTests(unittest.TestCase):
         entries = parse_uk_listing(legacy)
         self.assertEqual(entries[0].title, "Kettle 1.7L")
         self.assertEqual(entries[0].original_price, "29.99")
+
+
+def nested_review_flight() -> str:
+    """2026-11-16 RSC 改版后的实际形态：ratingInfo / aiSummary 嵌在更大的对象里。
+
+    实测 ``/dp/x/100020670022401``：`"ratingInfo"` 不再是扁平花括号对象里的
+    值，旧的 ``\{[^{}]*"ratingInfo"[^{}]*\}`` 锚点匹配不到，评分整块丢失。
+    """
+
+    inner = {
+        "commentInfo": {
+            "tnInfo": None,
+            "ratingInfo": {
+                "commentCount": 49,
+                "averageScore": 4,
+                "score1Count": 5,
+                "score2Count": 0,
+                "score3Count": 3,
+                "score4Count": 5,
+                "score5Count": 36,
+            },
+            "aiSummary": {
+                "summaryContent": "商品性价比高，份量足，但饼干容易碎。",
+                "summaryText": "AI summarised from users' reviews",
+            },
+        }
+    }
+    return json.dumps(inner, ensure_ascii=False)
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy (parsel) is not installed")
+class NestedReviewBlockTests(unittest.TestCase):
+    """RSC 改版后评分/AI 摘要仍要能解出来（2026-11-16）。"""
+
+    def _html(self) -> str:
+        html = FIXTURE.read_text(encoding="utf-8")
+        return with_flight(html, nested_review_flight())
+
+    def test_nested_rating_info_is_decoded(self):
+        from joybuy_crawler.parsers.joybuy_uk import parse_uk_product_detail
+
+        product = parse_uk_product_detail(
+            self._html(), source_url="https://www.joybuy.co.uk/dp/bc-babycare/10524192"
+        )
+        self.assertEqual(product.rating_count, 49)
+        self.assertEqual(product.rating_distribution, {"1": 5, "2": 0, "3": 3, "4": 5, "5": 36})
+        self.assertEqual(product.rating_source, "flight")
+
+    def test_nested_ai_summary_is_decoded(self):
+        from joybuy_crawler.parsers.joybuy_uk import parse_uk_product_detail
+
+        product = parse_uk_product_detail(
+            self._html(), source_url="https://www.joybuy.co.uk/dp/bc-babycare/10524192"
+        )
+        self.assertIn("饼干容易碎", product.ai_summary)
+
+    def test_json_ld_aggregate_rating_is_last_resort(self):
+        """flight 与 DOM 都没有评分时，用 JSON-LD 的 aggregateRating 兜底。"""
+
+        from joybuy_crawler.parsers.joybuy_uk import parse_uk_product_detail
+
+        ld = json.dumps(
+            {
+                "@context": "https://schema.org/",
+                "@type": "Product",
+                "name": "Bc Babycare 湿巾",
+                "offers": {"price": "6.99", "priceCurrency": "GBP"},
+                "aggregateRating": {
+                    "@type": "AggregateRating",
+                    "ratingValue": "4.4",
+                    "ratingCount": 49,
+                },
+            },
+            ensure_ascii=False,
+        )
+        html = (
+            "<html><body><h1>Bc Babycare 湿巾</h1>"
+            '<span class="crossOffPrice">£8.99</span>'
+            f'<script type="application/ld+json">{ld}</script>'
+            "</body></html>"
+        )
+        product = parse_uk_product_detail(
+            html, source_url="https://www.joybuy.co.uk/dp/bc-babycare/10524192"
+        )
+        self.assertEqual(product.rating_average, "4.4")
+        self.assertEqual(product.rating_count, 49)
+        self.assertEqual(product.rating_source, "json_ld")

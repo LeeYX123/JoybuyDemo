@@ -457,6 +457,29 @@ class StagingPipelineTests(CrawlerControlTestBase):
             "parser_version": "joybuy_uk.v2",
         }
 
+    def test_process_item_passes_dataset_local_media_to_import(self):
+        """dataset 的本地媒体映射必须传给导入，否则同一张图会被下载两次。"""
+        pipeline, _run = self._pipeline()
+        local_media = {
+            "gallery": {"https://cdn.joy-sourcing.com/product/a.webp": "/tmp/a.webp"},
+            "videos": {},
+        }
+        index_line = {
+            "product_dir": "x/y/104001",
+            "images": {"main": ["images/main/01.webp"], "detail": []},
+            "videos": [],
+            "changed": True,
+            "local_media": local_media,
+        }
+        with (
+            mock.patch("joybuy_crawler.dataset.save_product", return_value=index_line),
+            mock.patch("crawler_control.import_services.import_staging_product") as importer,
+        ):
+            importer.return_value = mock.MagicMock(skus=[], offers=[])
+            pipeline.process_item(self._item(), spider=None)
+
+        self.assertEqual(importer.call_args.kwargs["local_media"], local_media)
+
     def test_process_item_imports_records_progress_and_event(self):
         pipeline, run = self._pipeline()
         with mock.patch("crawler_control.import_services._fetch_image_bytes", return_value=None):
@@ -467,14 +490,42 @@ class StagingPipelineTests(CrawlerControlTestBase):
         self.assertEqual(run.succeeded_count, 1)
         staging = StagingProduct.objects.get(source_id="104001")
         self.assertEqual(staging.status, StagingProduct.Status.IMPORTED)
-        self.assertEqual(staging.imported_refs["gallery_images"], {"downloaded": 0, "failed": 1})
+        # reused=0：dataset 下载失败时没有本地文件可复用，仍走网络（这里被 patch 成失败）。
+        self.assertEqual(
+            staging.imported_refs["gallery_images"],
+            {"downloaded": 0, "failed": 1, "reused": 0},
+        )
         self.assertTrue(CrawlRunEvent.objects.filter(run=run, code="PRODUCT_IMPORTED").exists())
         from catalog.models import Spu
 
         self.assertTrue(Spu.objects.filter(source_identities__source_id="104001").exists())
 
+    def test_offer_source_conflict_emits_chinese_event_and_keeps_staging_reason(self):
+        """卖家名漂移导致同一来源 Offer 指向不同商家：固定事件码 + 中文提示。"""
+
+        pipeline, run = self._pipeline()
+        with mock.patch("crawler_control.import_services._fetch_image_bytes", return_value=None):
+            pipeline.process_item(self._item(), spider=None)
+
+        drifted = self._item()
+        drifted["payload"]["source_seller_id"] = "seller-cn"
+        drifted["payload"]["source_seller_name"] = "卖家 查看店铺"
+        with mock.patch("crawler_control.import_services._fetch_image_bytes", return_value=None):
+            pipeline.process_item(drifted, spider=None)
+
+        run.refresh_from_db()
+        self.assertEqual(run.succeeded_count, 1)
+        self.assertEqual(run.failed_count, 1)
+        event = CrawlRunEvent.objects.get(run=run, code="IMPORT_SOURCE_CONFLICT")
+        self.assertIn("来源 Offer", event.message)
+        self.assertIn("卖家名称/本地化", event.message)
+        self.assertIn("系统不会自动改绑", event.message)
+        staging = StagingProduct.objects.get(source_id="104001")
+        self.assertEqual(staging.status, StagingProduct.Status.PENDING)
+        self.assertIn("来源 Offer", staging.error_message)
+
     @staticmethod
-    def _fake_spider(fatal_error="", finish_reason="finished"):
+    def _fake_spider(fatal_error="", finish_reason="finished", **attrs):
         """Scrapy 2.13 calls close_spider(spider); reason comes from stats."""
 
         from unittest.mock import MagicMock
@@ -482,6 +533,8 @@ class StagingPipelineTests(CrawlerControlTestBase):
         spider = MagicMock()
         spider.fatal_error = fatal_error
         spider.crawler.stats.get_stats.return_value = {"finish_reason": finish_reason}
+        for name, value in attrs.items():
+            setattr(spider, name, value)
         return spider
 
     def test_close_spider_marks_success_and_failure(self):
@@ -516,6 +569,213 @@ class StagingPipelineTests(CrawlerControlTestBase):
         pipeline.close_spider(self._fake_spider())
         run.refresh_from_db()
         self.assertEqual(run.status, CrawlRun.Status.FAILED)
+
+    def test_close_spider_names_network_failure_instead_of_risk_control(self):
+        """2026-11-09: all listing downloads died at the TLS layer."""
+
+        pipeline, run = self._pipeline()
+        pipeline.close_spider(
+            self._fake_spider(
+                listing_fetch_errors=8,
+                listing_error_types={
+                    "ResponseNeverReceived": 6,
+                    "ConnectionLost": 2,
+                },
+                listing_successes=0,
+                last_listing_error="ResponseNeverReceived: Connection lost",
+            )
+        )
+        run.refresh_from_db()
+        self.assertEqual(run.status, CrawlRun.Status.FAILED)
+        event = CrawlRunEvent.objects.filter(run=run, code="RUN_FAILED").latest("pk")
+        self.assertIn("全部列表页请求失败", event.message)
+        self.assertIn("列表页请求失败 8 次", event.message)
+        self.assertIn("ResponseNeverReceived 6 次", event.message)
+        self.assertIn("ConnectionLost 2 次", event.message)
+        self.assertIn("VPN", event.message)
+        self.assertIn("不是风控", event.message)
+        self.assertNotIn("没有发现任何商品", event.message)
+
+    def test_close_spider_keeps_generic_reason_without_download_errors(self):
+        """A page that was fetched but parsed empty may still be risk/login."""
+
+        from joybuy_crawler.pipelines import GENERIC_EMPTY_REASON
+
+        pipeline, run = self._pipeline()
+        pipeline.close_spider(self._fake_spider(listing_successes=1))
+        run.refresh_from_db()
+        self.assertEqual(run.status, CrawlRun.Status.FAILED)
+        event = CrawlRunEvent.objects.filter(run=run, code="RUN_FAILED").latest("pk")
+        self.assertEqual(event.message, GENERIC_EMPTY_REASON)
+        self.assertIn("可能被风控拦截", event.message)
+
+    def test_partial_listing_failure_is_reported_but_run_can_succeed(self):
+        from crawler_control.services import update_run_progress
+
+        pipeline, run = self._pipeline()
+        update_run_progress(run, discovered=2, downloaded=2, succeeded=2)
+        pipeline.close_spider(
+            self._fake_spider(
+                listing_fetch_errors=1,
+                listing_error_types={"ConnectionLost": 1},
+                listing_successes=1,
+            )
+        )
+        run.refresh_from_db()
+        self.assertEqual(run.status, CrawlRun.Status.SUCCEEDED)
+        partial = CrawlRunEvent.objects.get(run=run, code="LISTING_FETCH_PARTIAL")
+        self.assertIn("1 次下载失败", partial.message)
+        self.assertIn("ConnectionLost", partial.message)
+
+
+class ZeroItemFailureReasonTests(unittest.TestCase):
+    """The zero-product reason must name the real cause (2026-11-09)."""
+
+    def test_download_errors_produce_network_tls_reason(self):
+        from joybuy_crawler.pipelines import zero_item_failure_reason
+
+        message = zero_item_failure_reason(
+            listing_errors=2,
+            error_types={"ConnectionLost": 2},
+            listing_successes=0,
+            robotstxt_failed=True,
+            last_error="ConnectionLost: Connection to the other side was lost",
+        )
+        self.assertIn("全部列表页请求失败", message)
+        self.assertIn("列表页请求失败 2 次", message)
+        self.assertIn("ConnectionLost 2 次", message)
+        self.assertIn("请检查网络、VPN 或代理", message)
+        self.assertIn("不是风控", message)
+        self.assertIn("robots.txt 同样无法获取", message)
+        self.assertIn("最近一次错误：ConnectionLost", message)
+
+    def test_partial_scope_when_some_listings_succeeded(self):
+        from joybuy_crawler.pipelines import zero_item_failure_reason
+
+        message = zero_item_failure_reason(
+            listing_errors=1,
+            error_types={"ResponseNeverReceived": 1},
+            listing_successes=1,
+        )
+        self.assertIn("部分列表页请求失败", message)
+
+    def test_no_download_errors_keeps_generic_reason(self):
+        from joybuy_crawler.pipelines import GENERIC_EMPTY_REASON, zero_item_failure_reason
+
+        self.assertEqual(zero_item_failure_reason(), GENERIC_EMPTY_REASON)
+        # robots.txt alone is not evidence of a network failure: the listing
+        # request still went out and the page was simply empty.
+        self.assertEqual(
+            zero_item_failure_reason(robotstxt_failed=True, listing_successes=1),
+            GENERIC_EMPTY_REASON,
+        )
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class ProxyConfigMiddlewareTests(unittest.TestCase):
+    def test_proxy_meta_is_scheme_scoped_and_opt_in(self):
+        from joybuy_crawler.middlewares import ProxyConfigMiddleware
+        from scrapy.http import Request
+
+        middleware = ProxyConfigMiddleware(
+            http_proxy="127.0.0.1:7890",
+            https_proxy="http://user:pass@127.0.0.1:7891",
+        )
+        https_request = Request("https://www.joybuy.co.uk/s?k=Phones")
+        middleware.process_request(https_request, spider=None)
+        self.assertEqual(https_request.meta["proxy"], "http://user:pass@127.0.0.1:7891")
+        http_request = Request("http://www.joybuy.co.uk/s?k=Phones")
+        middleware.process_request(http_request, spider=None)
+        self.assertEqual(http_request.meta["proxy"], "http://127.0.0.1:7890")
+
+        off = ProxyConfigMiddleware()
+        direct = Request("https://www.joybuy.co.uk/s?k=Phones")
+        off.process_request(direct, spider=None)
+        self.assertNotIn("proxy", direct.meta)
+
+    def test_proxy_credentials_are_redacted(self):
+        from joybuy_crawler.middlewares import (
+            normalize_proxy_url,
+            redact_proxy_url,
+        )
+
+        self.assertEqual(
+            redact_proxy_url("http://user:pass@127.0.0.1:7890"),
+            "http://127.0.0.1:7890",
+        )
+        self.assertEqual(normalize_proxy_url("socks5://127.0.0.1:1080"), "")
+        self.assertEqual(normalize_proxy_url("127.0.0.1:7890"), "http://127.0.0.1:7890")
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class ConnectivityPreflightTests(CrawlerControlTestBase):
+    def test_check_connectivity_reports_transport_failure(self):
+        from joybuy_crawler import runner
+
+        with mock.patch(
+            "socket.create_connection",
+            side_effect=ConnectionResetError("reset by peer"),
+        ):
+            ok, detail = runner.check_connectivity("www.joybuy.co.uk", 443, timeout=0.1)
+        self.assertFalse(ok)
+        self.assertIn("ConnectionResetError", detail)
+
+    def test_check_connectivity_closes_socket_on_success(self):
+        from joybuy_crawler import runner
+
+        connection = mock.MagicMock()
+        with mock.patch("socket.create_connection", return_value=connection):
+            ok, detail = runner.check_connectivity(
+                "www.joybuy.co.uk", 443, timeout=0.1, use_tls=False
+            )
+        self.assertTrue(ok)
+        self.assertEqual(detail, "")
+        connection.close.assert_called_once()
+
+    def test_proxy_endpoint_prefers_https_setting(self):
+        from joybuy_crawler import runner
+
+        self.assertEqual(
+            runner._proxy_endpoint({"CRAWL_HTTPS_PROXY": "http://user:pass@127.0.0.1:7890"}),
+            ("127.0.0.1", 7890),
+        )
+        self.assertEqual(
+            runner._proxy_endpoint({"CRAWL_HTTP_PROXY": "127.0.0.1:7890"}),
+            ("127.0.0.1", 7890),
+        )
+        self.assertIsNone(runner._proxy_endpoint({}))
+
+    def test_unreachable_network_fails_fast_with_preflight_event(self):
+        from joybuy_crawler import runner
+
+        run = start_run(self.make_job(name="Preflight job"))
+        with (
+            mock.patch.object(
+                runner,
+                "_run_settings",
+                return_value={
+                    "CRAWL_PREFLIGHT_ENABLED": True,
+                    "CRAWL_PREFLIGHT_TIMEOUT": 1,
+                    "CRAWL_HTTPS_PROXY": "",
+                    "CRAWL_HTTP_PROXY": "",
+                },
+            ),
+            mock.patch.object(
+                runner,
+                "check_connectivity",
+                return_value=(False, "ConnectionResetError: reset by peer"),
+            ),
+            mock.patch.object(runner, "CrawlerProcess") as process,
+        ):
+            runner.execute_run(str(run.public_id))
+
+        process.assert_not_called()
+        run.refresh_from_db()
+        self.assertEqual(run.status, CrawlRun.Status.FAILED)
+        event = CrawlRunEvent.objects.get(run=run, code="CONNECTIVITY_PREFLIGHT_FAILED")
+        self.assertIn("网络不可达", event.message)
+        self.assertIn("ConnectionResetError", event.message)
+        self.assertIn("CRAWL_HTTPS_PROXY", event.message)
 
 
 @unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
@@ -584,10 +844,13 @@ class SpiderLoggingTests(CrawlerControlTestBase):
     def _spider(self):
         from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
 
-        run = start_run(self.make_job(name="Spider log job"))
+        # 本组只断言日志文案；关掉翻页（默认开）避免 page=2 请求混入计数。
+        run = start_run(self.make_job(name="Spider log job", allow_pagination=False))
         return JoybuyRunSpider(run_public_id=str(run.public_id)), run
 
     def test_detail_page_logs_url_fields_and_parse_summary(self):
+        import types
+
         spider, run = self._spider()
         html = (
             "<html><body><h1>Stainless Kettle 1.7L</h1>"
@@ -596,13 +859,29 @@ class SpiderLoggingTests(CrawlerControlTestBase):
             "<img src='https://images4.joy-sourcing.com/product/k1.webp'/>"
             "</body></html>"
         )
+        yielded = list(
+            spider.parse_detail(
+                self._response(
+                    "https://www.joybuy.co.uk/dp/kettle/104001",
+                    html,
+                    spider.targets[0],
+                )
+            )
+        )
+        # 2026-11-09: the detail page hands off to the 图文详情 request first
+        # (see docs/14 §7.4). This test only cares about the PC side, so the
+        # flow is finished here with an empty mobile page.
+        self.assertEqual(len(yielded), 1)
+        request = yielded[0]
         item = next(
             iter(
-                spider.parse_detail(
-                    self._response(
-                        "https://www.joybuy.co.uk/dp/kettle/104001",
-                        html,
-                        spider.targets[0],
+                spider.parse_mobile_detail(
+                    types.SimpleNamespace(
+                        url=request.url,
+                        status=200,
+                        body=b"",
+                        text="<html></html>",
+                        meta=request.meta,
                     )
                 )
             )
@@ -636,3 +915,417 @@ class SpiderLoggingTests(CrawlerControlTestBase):
         event = CrawlRunEvent.objects.get(run=run, code="LISTING_FETCHED")
         self.assertIn("解析出 1 张卡片", event.message)
         self.assertIn("本轮入队 1 个商品", event.message)
+        self.assertEqual(spider.listing_successes, 1)
+        self.assertEqual(spider.listing_fetch_errors, 0)
+
+    def test_listing_download_failure_records_event_and_counters(self):
+        """2026-11-09: a transport failure must be logged as such."""
+
+        from scrapy.http import Request
+        from twisted.python.failure import Failure
+
+        spider, run = self._spider()
+        try:
+            raise ConnectionResetError("Connection to the other side was lost")
+        except ConnectionResetError:
+            failure = Failure()
+        failure.request = Request("https://www.joybuy.co.uk/s?k=Phones")
+
+        spider.listing_failed(failure)
+
+        self.assertEqual(spider.listing_fetch_errors, 1)
+        self.assertEqual(dict(spider.listing_error_types), {"ConnectionResetError": 1})
+        self.assertEqual(spider.listing_successes, 0)
+        self.assertIn("ConnectionResetError", spider.last_listing_error)
+
+        event = CrawlRunEvent.objects.get(run=run, code="LISTING_FETCH_FAILED")
+        self.assertEqual(event.level, "ERROR")
+        self.assertIn("https://www.joybuy.co.uk/s?k=Phones", event.message)
+        self.assertIn("ConnectionResetError", event.message)
+        self.assertIn("不是风控", event.message)
+
+
+class MenuJsonRoundTripNameZhTests(TestCase):
+    """``--from-json`` 必须保留中文名（2026-11-11，新节点在库里没有 name_zh 可回退）。"""
+
+    def test_json_round_trip_keeps_chinese_names(self):
+        from catalog.models import SourceCategorySnapshot
+        from crawler_control.management.commands.sync_joybuy_category_tree import (
+            Command,
+        )
+        from crawler_control.tree_sync import MenuNode
+
+        cmd = Command()
+        nodes = [
+            MenuNode(
+                name="Pets",
+                source_id="minihome:UK-Mini-HP-Pets",
+                name_zh="宠物用品",
+                children=[
+                    MenuNode(
+                        name="Cat Litter",
+                        source_id="l2:4707",
+                        name_zh="猫砂",
+                    )
+                ],
+            )
+        ]
+        payload = cmd._nodes_to_json(nodes)
+        self.assertEqual(payload[0]["name_zh"], "宠物用品")
+        self.assertEqual(payload[0]["children"][0]["name_zh"], "猫砂")
+
+        restored = cmd._json_to_nodes(payload)
+        self.assertEqual(restored[0].name_zh, "宠物用品")
+        self.assertEqual(restored[0].children[0].name_zh, "猫砂")
+
+        # 写库后快照也带中文名。
+        from catalog.models import SourceCatalog
+        from crawler_control.tree_sync import sync_category_tree
+
+        catalog, _ = SourceCatalog.objects.get_or_create(
+            source_system="joybuy_uk", defaults={"display_name": "Joybuy UK"}
+        )
+        result = sync_category_tree(catalog, restored, publish=True)
+        child = SourceCategorySnapshot.objects.get(tree_version=result.tree_version, depth=1)
+        self.assertEqual(child.name_zh, "猫砂")
+        self.assertEqual(child.name, "Cat Litter")
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class SkipImportedProductsTests(CrawlerControlTestBase):
+    """「跳过已入库」任务开关（2026-11-12）。
+
+    开启后列表阶段先按来源身份查库，已入库商品不再产生详情页请求；
+    未入库商品照常抓取，跳过数写运行事件。
+    """
+
+    LISTING = (
+        '<div class="style_UK_product_card__x"><div class="style_UK_content_wrapper">'
+        '<a class="style_UK_image_wrapper" href="/dp/kettle/104001">'
+        '<img alt="Kettle" src="//images4.joy-sourcing.com/k1.webp"/></a>'
+        '<div class="style_title__x">Kettle</div></div></div>'
+        '<div class="style_UK_product_card__x"><div class="style_UK_content_wrapper">'
+        '<a class="style_UK_image_wrapper" href="/dp/toaster/104002">'
+        '<img alt="Toaster" src="//images4.joy-sourcing.com/k2.webp"/></a>'
+        '<div class="style_title__x">Toaster</div></div></div>'
+    )
+
+    def _spider(self, *, skip: bool):
+        from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+
+        run = start_run(
+            self.make_job(
+                name="Skip imported job",
+                product_limit=10,
+                skip_imported_products=skip,
+                # 本组只测「跳过已入库」，关掉翻页避免 page=2 请求混入断言。
+                allow_pagination=False,
+            )
+        )
+        return JoybuyRunSpider(run_public_id=str(run.public_id)), run
+
+    def _response(self, spider):
+        import types
+
+        return types.SimpleNamespace(
+            url="https://www.joybuy.co.uk/s?k=Kettles",
+            status=200,
+            body=self.LISTING.encode("utf-8"),
+            text=self.LISTING,
+            meta={"target": spider.targets[0], "rank": 1, "download_latency": 1.0},
+        )
+
+    def _make_imported(self, source_id="104001"):
+        from catalog.product_services import get_or_create_spu_from_source
+
+        get_or_create_spu_from_source(
+            source_system="joybuy", source_id=source_id, title="Already imported"
+        )
+
+    def test_skips_imported_products_when_enabled(self):
+        from crawler_control.models import CrawlRunEvent
+
+        self._make_imported("104001")
+        spider, run = self._spider(skip=True)
+
+        requests = list(spider.parse_listing(self._response(spider)))
+
+        self.assertEqual(len(requests), 1)
+        self.assertIn("/dp/toaster/104002", requests[0].url)
+        self.assertIn("104001", spider.seen_product_ids)
+        self.assertEqual(spider.targets[0]["collected"], 1)
+        event = CrawlRunEvent.objects.get(run=run, code="PRODUCTS_SKIPPED_IMPORTED")
+        self.assertIn("跳过 1 个", event.message)
+
+    def test_crawls_everything_when_disabled(self):
+        self._make_imported("104001")
+        spider, _run = self._spider(skip=False)
+
+        requests = list(spider.parse_listing(self._response(spider)))
+
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(spider.targets[0]["collected"], 2)
+
+    def test_skip_flag_is_frozen_into_run_snapshot(self):
+        job = self.make_job(name="Snapshot job", product_limit=5, skip_imported_products=True)
+        run = start_run(job)
+        self.assertTrue(run.params_snapshot["skip_imported_products"])
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class ListingPaginationTests(CrawlerControlTestBase):
+    """列表翻页开关（2026-11-12，默认开）。
+
+    开启时第一页没抓满 limit 就请求 &page=2（ robots 由 runner 关闭 OBEY）；
+    关闭时保持旧行为（只抓第一屏 + LISTING_SHORTFALL）。
+    """
+
+    LISTING_PAGE = (
+        '<div class="style_UK_product_card__x"><div class="style_UK_content_wrapper">'
+        '<a class="style_UK_image_wrapper" href="/dp/kettle/104001">'
+        '<img alt="Kettle" src="//images4.joy-sourcing.com/k1.webp"/></a>'
+        '<div class="style_title__x">Kettle</div></div></div>'
+    )
+
+    def _spider(self, *, allow_pagination: bool, product_limit: int = 10):
+        from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+
+        run = start_run(
+            self.make_job(
+                name="Pagination job",
+                product_limit=product_limit,
+                allow_pagination=allow_pagination,
+            )
+        )
+        return JoybuyRunSpider(run_public_id=str(run.public_id)), run
+
+    def _response(self, spider, html, page=1):
+        import types
+
+        return types.SimpleNamespace(
+            url=f"https://www.joybuy.co.uk/s?k=Kettles&page={page}"
+            if page > 1
+            else "https://www.joybuy.co.uk/s?k=Kettles",
+            status=200,
+            body=html.encode("utf-8"),
+            text=html,
+            meta={"target": spider.targets[0], "page": page, "download_latency": 1.0},
+        )
+
+    def _listing(self, start_id, count=1):
+        return "".join(
+            self.LISTING_PAGE.replace("104001", str(start_id + index)).replace(
+                "Kettle", f"Kettle {start_id + index}"
+            )
+            for index in range(count)
+        )
+
+    def test_pagination_enabled_yields_next_page(self):
+        spider, _run = self._spider(allow_pagination=True, product_limit=10)
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        # 1 个商品详情请求 + 1 个翻页请求。
+        self.assertEqual(len(requests), 2)
+        next_page = requests[-1]
+        self.assertIn("page=2", next_page.url)
+        self.assertEqual(next_page.meta["page"], 2)
+        self.assertFalse(
+            CrawlRunEvent.objects.filter(run=spider.run, code="LISTING_SHORTFALL").exists()
+        )
+
+    def test_pagination_disabled_keeps_single_page_and_shortfall(self):
+        spider, run = self._spider(allow_pagination=False, product_limit=10)
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        self.assertEqual(len(requests), 1)  # 只有商品详情请求，没有翻页。
+        event = CrawlRunEvent.objects.get(run=run, code="LISTING_SHORTFALL")
+        self.assertIn("未开启翻页", event.message)
+
+    def test_duplicate_only_page_stops_pagination(self):
+        spider, run = self._spider(allow_pagination=True, product_limit=10)
+        spider.seen_product_ids.add("104001")
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        self.assertEqual(len(requests), 0)
+        event = CrawlRunEvent.objects.get(run=run, code="LISTING_SHORTFALL")
+        self.assertIn("没有更多结果", event.message)
+
+    def test_imported_only_page_keeps_paginating_with_skip_switch(self):
+        """整页都是已入库商品时不能停翻页：后面页可能还有新商品。"""
+        from catalog.product_services import get_or_create_spu_from_source
+
+        spider, _run = self._spider(allow_pagination=True, product_limit=10)
+        spider.skip_imported_products = True
+        get_or_create_spu_from_source(
+            source_system="joybuy", source_id="104001", title="Already imported"
+        )
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        # 详情请求被跳过（已入库），但翻页请求仍要发出。
+        self.assertEqual(len(requests), 1)
+        self.assertIn("page=2", requests[0].url)
+
+    def test_pagination_cap_bounds_pages(self):
+        spider, run = self._spider(allow_pagination=True, product_limit=10)
+        spider._max_listing_pages = lambda: 1  # 页数上限=1 → 第一页后就不再翻。
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        self.assertEqual(len(requests), 1)
+        event = CrawlRunEvent.objects.get(run=run, code="LISTING_SHORTFALL")
+        self.assertIn("没有更多结果", event.message)
+
+    def test_channel_target_does_not_paginate(self):
+        spider, run = self._spider(allow_pagination=True, product_limit=10)
+        spider.targets[0]["pagination_base"] = ""  # minihome 频道页没有翻页基准。
+
+        requests = list(spider.parse_listing(self._response(spider, self._listing(104001))))
+
+        self.assertEqual(len(requests), 1)
+        self.assertTrue(CrawlRunEvent.objects.filter(run=run, code="LISTING_SHORTFALL").exists())
+
+    def test_runner_disables_robots_obey_for_pagination_runs(self):
+        from joybuy_crawler.runner import _run_settings
+
+        from crawler_control.services import start_run
+
+        pagination_run = start_run(self.make_job(name="Pag on", allow_pagination=True))
+        single_run = start_run(self.make_job(name="Pag off", allow_pagination=False))
+
+        self.assertFalse(_run_settings(pagination_run)["ROBOTSTXT_OBEY"])
+        self.assertTrue(_run_settings(single_run)["ROBOTSTXT_OBEY"])
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class PaginationTwoPageRelayTests(CrawlerControlTestBase):
+    """翻页接力端到端模拟（2026-11-12）。
+
+    page1 产出 page=2 请求 → 处理 page2 后因 limit 抓满而停止；
+    全程事件流（LISTING_FETCHED×2、无 SHORTFALL）与 URL 形态正确。
+    """
+
+    CARD = (
+        '<div class="style_UK_product_card__x"><div class="style_UK_content_wrapper">'
+        '<a class="style_UK_image_wrapper" href="/dp/k/{pid}">'
+        '<img alt="K" src="//images4.joy-sourcing.com/k.webp"/></a>'
+        '<div class="style_title__x">K {pid}</div></div></div>'
+    )
+
+    def _spider(self, product_limit):
+        from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+
+        run = start_run(
+            self.make_job(name="Relay job", product_limit=product_limit, allow_pagination=True)
+        )
+        return JoybuyRunSpider(run_public_id=str(run.public_id)), run
+
+    def _listing(self, start_id, count=2):
+        return "".join(self.CARD.replace("{pid}", str(start_id + i)) for i in range(count))
+
+    def _response(self, spider, page, html):
+        import types
+
+        return types.SimpleNamespace(
+            url=f"https://www.joybuy.co.uk/s?k=Kettles&page={page}",
+            status=200,
+            body=html.encode("utf-8"),
+            text=html,
+            meta={"target": spider.targets[0], "page": page, "download_latency": 1.0},
+        )
+
+    def test_two_page_relay_stops_at_limit(self):
+        spider, run = self._spider(product_limit=3)
+
+        page1 = list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 2))))
+        detail_urls = [r.url for r in page1 if "/dp/" in r.url]
+        page2_requests = [r for r in page1 if "page=2" in r.url]
+        self.assertEqual(len(detail_urls), 2)
+        self.assertEqual(len(page2_requests), 1)
+        self.assertTrue(page2_requests[0].url.endswith("&page=2"))
+
+        page2 = list(spider.parse_listing(self._response(spider, 2, self._listing(104091, 2))))
+        # page2 两个新商品，但 limit=3 → 只入队 1 个详情 + 不再翻页。
+        detail_page2 = [r.url for r in page2 if "/dp/" in r.url]
+        self.assertEqual(len(detail_page2), 1)
+        self.assertFalse(any("page=3" in r.url for r in page2))
+        self.assertEqual(spider.targets[0]["collected"], 3)
+
+        fetched = CrawlRunEvent.objects.filter(run=run, code="LISTING_FETCHED")
+        self.assertEqual(fetched.count(), 2)
+        self.assertFalse(CrawlRunEvent.objects.filter(run=run, code="LISTING_SHORTFALL").exists())
+
+
+class ListingEntryFallbackTests(TestCase):
+    """2026-11-16：详情页缺字段时用列表卡片数据补最小可导入 payload。"""
+
+    def _product(self):
+        from joybuy_crawler.parsers.joybuy_uk import UkProduct
+
+        return UkProduct(
+            source_id="100000000001",
+            title="",
+            currency="",
+            current_price="",
+            list_price="",
+            main_price="",
+            promotion_label="",
+            availability="UNKNOWN",
+            brand="",
+            breadcrumbs=[],
+            skus=[],
+            gallery=[],
+            description="",
+            detail_images=[],
+            spec_options=[],
+            variants=[],
+            specifications=[],
+            specification_tables=[],
+            content_sections=[],
+            videos=[],
+            seller_name="",
+            seller_url="",
+            rating_average=None,
+            rating_count=None,
+            rating_distribution={},
+            rating_source="",
+            ai_summary="",
+            ai_summary_title="",
+            ai_summary_tags=[],
+            missing_fields=["title", "currency", "current_price", "skus"],
+            source_url="https://www.joybuy.co.uk/dp/x/100000000001",
+        )
+
+    def test_listing_entry_fills_required_fields(self):
+        from joybuy_crawler.spiders.joybuy_run import _fill_from_listing_entry
+
+        product = self._product()
+        filled = _fill_from_listing_entry(
+            product,
+            {
+                "title": "iPhone 18 Pro 256GB",
+                "original_price": "1199.00",
+                "image_url": "https://images4.joy-sourcing.com/product/x.jpg",
+                "source_id": "100000000001",
+            },
+        )
+        self.assertEqual(product.title, "iPhone 18 Pro 256GB")
+        self.assertEqual(product.current_price, "1199.00")
+        self.assertEqual(product.currency, "GBP")
+        self.assertEqual(len(product.skus), 1)
+        self.assertEqual(product.skus[0]["skuId"], "100000000001")
+        self.assertEqual(product.gallery, ["https://images4.joy-sourcing.com/product/x.jpg"])
+        self.assertEqual(product.missing_fields, [])
+        self.assertIn("title", filled)
+        self.assertIn("skus", filled)
+
+    def test_empty_entry_changes_nothing(self):
+        from joybuy_crawler.spiders.joybuy_run import _fill_from_listing_entry
+
+        product = self._product()
+        before = list(product.missing_fields)
+        self.assertEqual(_fill_from_listing_entry(product, {}), [])
+        self.assertEqual(product.missing_fields, before)

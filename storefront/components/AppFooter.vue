@@ -1,6 +1,9 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from '#imports'
+import { useLocale } from '../composables/useLocale'
+
+const { t } = useLocale()
 
 // Static footer structure for WP-20; link groups become data-driven later.
 // On the checkout page the footer collapses to the docs/12 §8 minimal
@@ -8,20 +11,25 @@ import { useRoute } from '#imports'
 const route = useRoute()
 const simplified = computed(() => route.path === '/checkout')
 
-const columns = [
+const columns = computed(() => [
   {
-    title: 'Customer service',
-    links: ['Help centre', 'Shipping & delivery', 'Returns', 'Contact us'],
+    title: t('footer.colCustomerService'),
+    links: [t('footer.helpCentre'), t('footer.shipping'), t('footer.returns'), t('footer.contact')],
   },
   {
-    title: 'About Joybuy',
-    links: ['About us', 'Careers', 'JoyPlus membership', 'App download'],
+    title: t('footer.colAbout'),
+    links: [t('footer.aboutUs'), t('footer.careers'), t('footer.joyplus'), t('footer.appDownload')],
   },
   {
-    title: 'Payment & policies',
-    links: ['Payment methods', 'Price promise', 'Privacy notice', 'Terms of use'],
+    title: t('footer.colPolicies'),
+    links: [
+      t('footer.paymentMethods'),
+      t('footer.pricePromise'),
+      t('footer.privacy'),
+      t('footer.terms'),
+    ],
   },
-]
+])
 
 const paymentBrands = ['Visa', 'Mastercard', 'Google Pay', 'Klarna']
 </script>
@@ -29,9 +37,9 @@ const paymentBrands = ['Visa', 'Mastercard', 'Google Pay', 'Klarna']
 <template>
   <footer class="site-footer" :class="{ 'site-footer--simplified': simplified }">
     <div v-if="simplified" class="site-footer__inner site-footer__slogan-row">
-      <p class="site-footer__slogan"><strong>Joybuy</strong> | Don't just buy, Joybuy</p>
+      <p class="site-footer__slogan"><strong>Joybuy</strong> | {{ t('footer.tagline') }}</p>
       <p class="site-footer__support">
-        We support
+        {{ t('footer.weSupport') }}
         <span v-for="brand in paymentBrands" :key="brand" class="site-footer__brand">{{
           brand
         }}</span>
@@ -51,10 +59,9 @@ const paymentBrands = ['Visa', 'Mastercard', 'Google Pay', 'Klarna']
 
       <div class="site-footer__legal">
         <p>
-          Demo project for internal research. Not a real store: checkout and payment are disabled by
-          design.
+          {{ t('footer.disclaimer') }}
         </p>
-        <p>© 2026 Joybuy replica study. All assets served locally.</p>
+        <p>{{ t('footer.copyright') }}</p>
       </div>
     </div>
   </footer>

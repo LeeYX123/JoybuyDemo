@@ -17,6 +17,7 @@ from merchant_ops.merchant_context import MerchantAPIView, merchant_permission_c
 ADMIN_PURPOSE_PERMISSIONS = {
     "product": "catalog.pool.manage",
     "banner": "cms.banners.manage",
+    "channel_banner": "cms.channel_banners.manage",
     "review": "notifications.manage",
     "activity": "activities.manage",
     "avatar": "merchants.manage",

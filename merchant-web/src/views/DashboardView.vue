@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import { apiRequest } from '@/lib/api'
 
@@ -9,7 +9,34 @@ const state = reactive({
   data: null,
 })
 
-const chartRange = ref('week')
+// 两个趋势图档位独立：订单数量趋势（orderRange）与曝光度趋势（exposureRange）。
+const orderRange = ref('week')
+const exposureRange = ref('week')
+
+// 手机档（≤768px，柱状图收窄并横滚的档位）只隐藏【订单数量】趋势的【近一月】：
+// 30 根柱在手机上太宽；曝光趋势两端都保留全部档位。
+// 隐藏用纯 CSS 媒体查询（.range-switch--orders .range-switch__btn--month，
+// 容器 class 区分：range-switch--orders / range-switch--exposure）；
+// JS 只负责订单趋势的档位回退——若订单趋势正选中近一月（如桌面窄窗口缩小后），
+// 切回近一周，避免按钮没了但图表仍按月渲染。曝光趋势档位不受视口影响。
+const RANGES = [
+  { key: 'week', label: '近一周' },
+  { key: 'month', label: '近一月' },
+]
+
+let narrowMql = null
+
+function syncRangeToViewport() {
+  const narrow = window.innerWidth <= 768 || Boolean(narrowMql?.matches)
+  if (narrow && orderRange.value === 'month') {
+    orderRange.value = 'week'
+    load()
+  }
+}
+
+function onNarrowChange() {
+  syncRangeToViewport()
+}
 
 const today = computed(() => {
   const now = new Date()
@@ -42,11 +69,25 @@ const statusColorClass = computed(() => {
   return 'status-muted'
 })
 
+async function fetchOverview(range) {
+  return apiRequest(`/merchant/overview?range=${range}`)
+}
+
 async function load() {
   state.loading = true
   state.error = ''
   try {
-    state.data = await apiRequest(`/merchant/overview?range=${chartRange.value}`)
+    if (orderRange.value === exposureRange.value) {
+      state.data = await fetchOverview(orderRange.value)
+    } else {
+      // 档位拆分后：主请求按订单趋势档位取全量数据，曝光趋势按自己的档位补取。
+      const [orders, exposure] = await Promise.all([
+        fetchOverview(orderRange.value),
+        fetchOverview(exposureRange.value),
+      ])
+      orders.charts.exposure_trend = exposure.charts.exposure_trend
+      state.data = orders
+    }
   } catch (error) {
     state.error = error.message
   } finally {
@@ -54,9 +95,14 @@ async function load() {
   }
 }
 
-function switchRange(range) {
-  if (chartRange.value === range) return
-  chartRange.value = range
+function switchRange(scope, range) {
+  const current = scope === 'orders' ? orderRange.value : exposureRange.value
+  if (current === range) return
+  if (scope === 'orders') {
+    orderRange.value = range
+  } else {
+    exposureRange.value = range
+  }
   load()
 }
 
@@ -64,7 +110,18 @@ function dayLabel(value) {
   return value.slice(5)
 }
 
-onMounted(load)
+onMounted(() => {
+  narrowMql = window.matchMedia('(max-width: 768px)')
+  narrowMql.addEventListener('change', onNarrowChange)
+  window.addEventListener('resize', syncRangeToViewport)
+  syncRangeToViewport()
+  load()
+})
+
+onBeforeUnmount(() => {
+  narrowMql?.removeEventListener('change', onNarrowChange)
+  window.removeEventListener('resize', syncRangeToViewport)
+})
 </script>
 
 <template>
@@ -144,30 +201,27 @@ onMounted(load)
 
       <div class="dashboard-grid">
         <div class="card">
-          <div class="card__head">
-            <h2>订单数量</h2>
-            <div class="card__actions">
-              <div class="range-switch">
-                <button
-                  type="button"
-                  class="range-switch__btn"
-                  :class="{ 'range-switch__btn--active': chartRange === 'week' }"
-                  @click="switchRange('week')"
-                >
-                  近一周
-                </button>
-                <button
-                  type="button"
-                  class="range-switch__btn"
-                  :class="{ 'range-switch__btn--active': chartRange === 'month' }"
-                  @click="switchRange('month')"
-                >
-                  近一月
-                </button>
+            <div class="card__head">
+              <h2>订单数量</h2>
+              <div class="card__actions">
+                <div class="range-switch range-switch--orders">
+                  <button
+                    v-for="range in RANGES"
+                    :key="range.key"
+                    type="button"
+                    class="range-switch__btn"
+                    :class="[
+                      { 'range-switch__btn--active': orderRange === range.key },
+                      { 'range-switch__btn--month': range.key === 'month' },
+                    ]"
+                    @click="switchRange('orders', range.key)"
+                  >
+                    {{ range.label }}
+                  </button>
+                </div>
+                <span class="tag">今日新增收益 ¥ {{ state.data.stats.shipping_profit_today }}</span>
               </div>
-              <span class="tag">今日新增收益 ¥ {{ state.data.stats.shipping_profit_today }}</span>
             </div>
-          </div>
           <div class="card__body">
             <div class="bar-chart">
               <div v-for="item in bars" :key="item.date" class="bar-chart__item">
@@ -187,24 +241,26 @@ onMounted(load)
           <div class="card__head"><h2>订单品类占比</h2></div>
           <div class="card__body">
             <p class="card__note">按已付款订单量统计</p>
-            <table v-if="categoryShare.length" class="data-table">
-              <thead>
-                <tr>
-                  <th>品类</th>
-                  <th>订单数</th>
-                  <th>占比</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in categoryShare" :key="row.category">
-                  <td>{{ row.category }}</td>
-                  <td class="num">{{ row.count }}</td>
-                  <td class="num">
-                    {{ categoryTotal ? ((row.count / categoryTotal) * 100).toFixed(1) : '0.0' }}%
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div v-if="categoryShare.length" class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>品类</th>
+                    <th>订单数</th>
+                    <th>占比</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in categoryShare" :key="row.category">
+                    <td>{{ row.category }}</td>
+                    <td class="num">{{ row.count }}</td>
+                    <td class="num">
+                      {{ categoryTotal ? ((row.count / categoryTotal) * 100).toFixed(1) : '0.0' }}%
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <p v-else class="empty-state">还没有订单数据。</p>
           </div>
         </div>
@@ -215,22 +271,16 @@ onMounted(load)
           <div class="card__head">
             <h2>曝光度趋势</h2>
             <div class="card__actions">
-              <div class="range-switch">
+              <div class="range-switch range-switch--exposure">
                 <button
+                  v-for="range in RANGES"
+                  :key="range.key"
                   type="button"
                   class="range-switch__btn"
-                  :class="{ 'range-switch__btn--active': chartRange === 'week' }"
-                  @click="switchRange('week')"
+                  :class="{ 'range-switch__btn--active': exposureRange === range.key }"
+                  @click="switchRange('exposure', range.key)"
                 >
-                  近一周
-                </button>
-                <button
-                  type="button"
-                  class="range-switch__btn"
-                  :class="{ 'range-switch__btn--active': chartRange === 'month' }"
-                  @click="switchRange('month')"
-                >
-                  近一月
+                  {{ range.label }}
                 </button>
               </div>
             </div>
@@ -352,6 +402,14 @@ onMounted(load)
 .range-switch__btn--active {
   background: var(--primary, #2563eb);
   color: #fff;
+}
+
+/* 手机档只在【订单数量】趋势隐藏【近一月】：30 根柱状图在手机上太宽
+   （≤768 与柱状图横滚档位一致）。曝光趋势（--exposure）保留全部档位。 */
+@media (max-width: 768px) {
+  .range-switch--orders .range-switch__btn--month {
+    display: none;
+  }
 }
 
 .follow-delta {

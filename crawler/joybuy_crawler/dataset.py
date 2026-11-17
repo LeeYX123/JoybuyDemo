@@ -25,10 +25,42 @@ identical rows.
 
 import hashlib
 import json
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from joybuy_crawler.image_variants import resolve_highest_resolution
+
+#: 商品媒体（主图/详情图/视频）的并发下载数。CDN 单张约 1.5–2s，串行下载
+#: 15 张就要 25–30s，是正式爬虫比调试脚本慢的主因（2026-11-10）。
+MEDIA_DOWNLOAD_WORKERS = int(os.getenv("CRAWL_MEDIA_DOWNLOAD_WORKERS", "6"))
+
+#: 商品视频下载所用 UA：joy-sourcing CDN 对爬虫 UA 直接 403（2026-11-05 实测）。
+_VIDEO_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+)
+
+
+def download_video(url: str, *, timeout: int = 120) -> bytes:
+    """下载画廊视频（浏览器 UA + 重试）。
+
+    视频可达数 MB（蒸锅 23s / 7.1MB 实测），所以超时放宽到 120s；
+    重试与退避复用 ``core.http_client.fetch_url`` 的策略。
+    """
+
+    from joybuy_crawler.core.http_client import fetch_url
+
+    result = fetch_url(
+        url,
+        headers={"User-Agent": _VIDEO_UA, "Accept": "*/*"},
+        timeout_seconds=timeout,
+        max_attempts=3,
+    )
+    if result.status_code != 200 or not result.body:
+        raise RuntimeError(f"HTTP {result.status_code}")
+    return result.body
 
 
 def _slugify(name: str) -> str:
@@ -74,18 +106,47 @@ def category_folder(root: Path, breadcrumb_names: list[str]) -> Path:
     return root.joinpath(*parts)
 
 
+def _download_many(urls: list[str], resolve) -> list[tuple[bytes | None, str | None]]:
+    """并发下载一组 URL，按输入顺序返回 ``(bytes, error)``。
+
+    ``resolve`` 可能是图片的 ``(url, bytes)`` 也可能是视频的 ``bytes``，
+    这里统一取字节；单个失败只记录错误，不影响其它 URL（与原串行行为一致）。
+    """
+
+    if not urls:
+        return []
+
+    def _one(url: str) -> tuple[bytes | None, str | None]:
+        try:
+            downloaded = resolve(url)
+        except Exception as exc:  # noqa: BLE001 - 单张/单个失败不终止整批
+            return None, str(exc)
+        if isinstance(downloaded, tuple):
+            downloaded = downloaded[-1]
+        return downloaded, None
+
+    workers = max(1, min(MEDIA_DOWNLOAD_WORKERS, len(urls)))
+    if workers == 1:
+        return [_one(url) for url in urls]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # ``map`` 按提交顺序返回，图片/视频文件编号与源站顺序保持一致。
+        return list(pool.map(_one, urls))
+
+
 def save_product(
     root: Path,
     *,
     breadcrumb_names: list[str],
     payload: dict,
     resolve_image=resolve_highest_resolution,
+    resolve_video=download_video,
 ) -> dict:
     """Write one product folder; returns the index-line mapping.
 
-    ``resolve_image`` is injectable for tests. Image download failures are
-    recorded on the returned mapping instead of aborting the crawl — the
-    JSON fields stay complete even when a CDN object is unavailable.
+    ``resolve_image`` / ``resolve_video`` are injectable for tests. Download
+    failures are recorded on the returned mapping instead of aborting the
+    crawl — the JSON fields stay complete even when a CDN object is
+    unavailable.
     """
 
     source_id = str(payload.get("source_id") or "unknown")
@@ -112,22 +173,51 @@ def save_product(
     )
 
     image_files = {"main": [], "detail": []}
+    image_paths_by_url: dict[str, str] = {}
     urls = payload.get("image_urls") or []
     main_urls, detail_urls = (urls[:1], urls[1:]) if urls else ([], [])
     detail_urls += payload.get("detail_image_urls") or []
+    image_tasks: list[tuple[str, int, str]] = []
     for group, group_urls in (("main", main_urls), ("detail", detail_urls)):
         for position, url in enumerate(group_urls, start=1):
-            try:
-                _resolved_url, image_bytes = resolve_image(url)
-            except Exception as exc:  # noqa: BLE001 - one bad CDN object must not stop the run
-                image_files[f"{group}_errors"] = image_files.get(
-                    f"{group}_errors", []
-                ) + [{"url": url, "error": str(exc)}]
-                continue
-            suffix = ".webp" if ".webp" in url else ".jpg"
-            target = product_dir / "images" / group / f"{position:02d}{suffix}"
-            target.write_bytes(image_bytes)
-            image_files[group].append(str(target.relative_to(product_dir)))
+            image_tasks.append((group, position, url))
+    downloads = _download_many(
+        [url for _group, _position, url in image_tasks], resolve_image
+    )
+    for (group, position, url), (image_bytes, error) in zip(image_tasks, downloads):
+        if error is not None:
+            image_files[f"{group}_errors"] = image_files.get(f"{group}_errors", []) + [
+                {"url": url, "error": error}
+            ]
+            continue
+        suffix = ".webp" if ".webp" in url else ".jpg"
+        target = product_dir / "images" / group / f"{position:02d}{suffix}"
+        target.write_bytes(image_bytes)
+        image_files[group].append(str(target.relative_to(product_dir)))
+        image_paths_by_url[url] = str(target.resolve())
+
+    # 画廊视频（2026-11-09）：保存到 <商品>/videos/01.mp4，失败只记账。
+    # 只落 dataset 与 payload，不进 var/media 媒体库（详见 docs/05 §9.2）。
+    video_files: list[str] = []
+    video_errors: list[dict] = []
+    video_paths_by_url: dict[str, str] = {}
+    video_urls = []
+    for position, video in enumerate(payload.get("videos") or [], start=1):
+        video_url = str((video or {}).get("url") or "").strip()
+        if video_url:
+            video_urls.append((position, video_url))
+    video_downloads = _download_many(
+        [url for _position, url in video_urls], resolve_video
+    )
+    for (position, video_url), (video_bytes, error) in zip(video_urls, video_downloads):
+        if error is not None:
+            video_errors.append({"url": video_url, "error": error})
+            continue
+        target = product_dir / "videos" / f"{position:02d}.mp4"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(video_bytes)
+        video_files.append(str(target.relative_to(product_dir)))
+        video_paths_by_url[video_url] = str(target.resolve())
 
     meta_path.write_text(
         json.dumps(
@@ -151,6 +241,7 @@ def save_product(
         "product_dir": str(product_dir.relative_to(root)),
         "product_json": str((product_dir / "product.json").relative_to(root)),
         "images": image_files,
+        "videos": video_files,
         "title": payload.get("title", ""),
         "payload_sha256": fingerprint,
         "captured_at": captured_at.isoformat(),
@@ -160,6 +251,8 @@ def save_product(
             for crumb in (payload.get("joybuy", {}).get("breadcrumbs") or [])
         ],
     }
+    if video_errors:
+        index_line["video_errors"] = video_errors
     # One index per top-level category folder. Unchanged products keep
     # their earlier line instead of appending a duplicate.
     category_dir = category_folder(root, breadcrumb_names)
@@ -168,4 +261,14 @@ def save_product(
         with open(index_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(index_line, ensure_ascii=False) + "\n")
     index_line["index_path"] = str(index_path)
+    # 本次抓取已落盘的媒体文件（URL → 绝对路径）。导入媒体库时直接复用这些
+    # 文件，不再对同一张图/同一个视频发起第二次下载（2026-11-10 提速）。
+    # 只放在返回值里、不写进 dataset_index.jsonl，避免索引被本地路径撑大。
+    gallery_urls = set(urls)
+    index_line["local_media"] = {
+        "gallery": {
+            url: path for url, path in image_paths_by_url.items() if url in gallery_urls
+        },
+        "videos": video_paths_by_url,
+    }
     return index_line

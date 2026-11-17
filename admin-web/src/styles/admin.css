@@ -393,6 +393,10 @@
 .field {
   display: grid;
   gap: 6px;
+  /* 同一行里带提示文字的字段更高时，不要拉伸控件：否则相邻列的输入框/下拉
+     会出现高度和上下位置都不一致（左右对不齐）。 */
+  align-content: start;
+  align-items: start;
 }
 
 .field > label,
@@ -417,6 +421,12 @@
 .field textarea {
   min-height: 84px;
   resize: vertical;
+}
+
+/* 输入框与下拉统一高度，避免同一行左右控件差 1–2px。 */
+.field input:not([type='checkbox']):not([type='radio']),
+.field select {
+  height: 35px;
 }
 
 .field input::placeholder,
@@ -446,6 +456,7 @@
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: start;
 }
 
 .form-grid--tight {
@@ -912,6 +923,229 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* ---------- 商品池爬虫详情（2026-11-09） ---------- */
+/* 列表徽标：图文 N / 表格 N / 视频 N */
+.pool-badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.badge-mini {
+  padding: 2px 7px;
+  border: 1px solid #d5e4f7;
+  border-radius: 9px;
+  background: #eef4fd;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #3b6db4;
+  white-space: nowrap;
+}
+
+/* 图文详情：区块标题 + heading/paragraph 分层 + 区块图片 */
+.pool-content__section {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-subtle-border);
+  border-radius: 3px;
+  background: var(--panel-subtle);
+}
+
+.pool-content__section h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #203555;
+}
+
+.pool-content__heading {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.pool-content__paragraph {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #3d4d63;
+}
+
+/* 详情抽屉「图文详情」的人工编辑标记（content_source=manual） */
+.pool-content__manual {
+  margin-left: 8px;
+}
+
+/* 图文详情编辑器（商品池编辑弹窗，2026-11-10）：区块卡片 + 子标题/段落块 */
+.pool-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--panel-subtle-border);
+  border-radius: 4px;
+  background: var(--panel-subtle);
+}
+
+.pool-editor-section__head {
+  align-items: center;
+}
+
+.pool-editor-section__head .field {
+  margin: 0;
+}
+
+.pool-editor-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.pool-editor-block > input,
+.pool-editor-block > textarea {
+  flex: 1;
+}
+
+.pool-editor-block__label {
+  flex: none;
+  width: 44px;
+  padding-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
+/* 子标题块在编辑器里也按最终展示样式加粗加深（对应 heading 渲染口径） */
+.pool-editor-block--heading > input {
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.pool-editor-block__tools {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.pool-editor-add {
+  display: flex;
+  gap: 8px;
+}
+
+/* 规格参数表格：每组一张「属性 | 值」两列表，行表头左对齐 */
+.pool-spec-table {
+  margin-bottom: 12px;
+}
+
+.pool-spec-table h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #203555;
+}
+
+.pool-spec-table tbody th {
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: #52627c;
+  background: var(--panel-subtle);
+  border-bottom: 1px solid #e9eef5;
+  white-space: normal;
+}
+
+.pool-spec-table tbody th + td {
+  color: #263b59;
+}
+
+/* 规格选项 chips（带 s96 缩略图） */
+.pool-spec-options__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pool-spec-options__name {
+  min-width: 52px;
+  font-size: 12px;
+  color: #7b8aa0;
+}
+
+.pool-spec-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: #fff;
+  font-size: 12px;
+  color: #263b59;
+}
+
+.pool-spec-chip img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+/* AI 摘要卡 */
+.pool-ai-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #dbe7f7;
+  border-radius: 4px;
+  background: #f4f8fe;
+}
+
+.pool-ai-card__title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #3b6db4;
+}
+
+.pool-ai-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #263b59;
+}
+
+.pool-ai-card__tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.pool-ai-card__tags span {
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: #e3edfb;
+  font-size: 11px;
+  color: #3b6db4;
+}
+
+/* 商品视频 */
+.pool-video-list {
+  display: grid;
+  gap: 12px;
+}
+
+.pool-video {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 4px;
+  background: #000;
 }
 
 /* ---------- 时间线 ---------- */

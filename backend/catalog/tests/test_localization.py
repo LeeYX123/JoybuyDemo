@@ -3,6 +3,7 @@ from django.urls import reverse
 
 from catalog.localization_services import (
     direct_translate_specification,
+    resolve_product_content,
     translate_sku_specification,
 )
 from catalog.models import Spu, SpuMarketContent
@@ -118,3 +119,49 @@ class ProductLocalizationTests(TestCase):
         self.assertNotEqual(english.pk, german.pk)
         self.assertEqual(english.title, "Wireless Earbuds")
         self.assertEqual(german.title, "Kopfhörer")
+
+
+class ProductContentFallbackTests(TestCase):
+    """请求 locale 无译文时的回退顺序（2026-11-17）。
+
+    回归背景：zh-CN 等 locale 没有对应 ``spu_translation`` 行时，旧实现
+    ``legacy[0]`` 依赖 MySQL 无序返回，zh-CN 曾随机落到 de-BE 行显示别国
+    语言。新顺序：精确 locale/language 命中 → en-GB/en 显式回退
+    （FALLBACK_SOURCE）→ pk 稳定排序兜底（FALLBACK）。
+    """
+
+    def setUp(self):
+        self.spu, _ = get_or_create_spu_from_source(
+            source_system="joybuy",
+            source_id="fallback-spu",
+            title="English Source Title",
+            locale="en-GB",
+        )
+        self.spu.translations.update_or_create(
+            locale="de-DE",
+            defaults={"title": "Deutsche Übersetzung", "description": "de"},
+        )
+        self.zh_locale = Locale.objects.get(code="zh-CN")
+        self.gb = Market.objects.get(code="GB")
+
+    def test_locale_without_translation_falls_back_to_source_language(self):
+        resolved = resolve_product_content(self.spu, self.gb, self.zh_locale)
+        self.assertEqual(resolved.origin, "FALLBACK_SOURCE")
+        self.assertEqual(resolved.content_locale, "en-GB")
+        self.assertEqual(resolved.title, "English Source Title")
+
+    def test_last_resort_fallback_is_deterministic_without_source_language(self):
+        self.spu.translations.filter(locale="en-GB").delete()
+        resolved = resolve_product_content(self.spu, self.gb, self.zh_locale)
+        self.assertEqual(resolved.origin, "FALLBACK")
+        self.assertEqual(resolved.content_locale, "de-DE")
+        self.assertEqual(resolved.title, "Deutsche Übersetzung")
+
+    def test_exact_locale_still_wins_over_fallback(self):
+        self.spu.translations.update_or_create(
+            locale="zh-CN",
+            defaults={"title": "中文标题", "description": "zh"},
+        )
+        resolved = resolve_product_content(self.spu, self.gb, self.zh_locale)
+        self.assertEqual(resolved.origin, "LEGACY")
+        self.assertEqual(resolved.title, "中文标题")

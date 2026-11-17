@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '#imports': fileURLToPath(new URL('./tests/nuxt-imports-stub.js', import.meta.url)),
+      '#components': fileURLToPath(new URL('./tests/nuxt-components-stub.js', import.meta.url)),
     },
   },
   test: {

@@ -10,6 +10,7 @@ a run can never be left stuck in RUNNING.
 
 import logging
 import os
+from urllib.parse import urlsplit
 
 from scrapy.crawler import CrawlerProcess
 
@@ -17,9 +18,60 @@ REPOSITORY_ROOT_CRAWLER = __file__.rsplit("crawler", 1)[0]
 
 logger = logging.getLogger("joybuy_crawler.runner")
 
+DEFAULT_SITE_HOST = "www.joybuy.co.uk"
+DEFAULT_SITE_PORT = 443
+DEFAULT_PREFLIGHT_TIMEOUT = 8.0
+
 # Scrapy 2.13 runs callbacks on the asyncio reactor; the executor is a
 # dedicated crawl process, so Django's sync-ORM guard is disabled there.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
+
+
+def _proxy_endpoint(settings: dict) -> tuple[str, int] | None:
+    """Host/port of the operator-configured proxy, or None for a direct crawl."""
+
+    for key in ("CRAWL_HTTPS_PROXY", "CRAWL_HTTP_PROXY"):
+        raw = str(settings.get(key) or "").strip()
+        if not raw:
+            continue
+        if "://" not in raw:
+            raw = f"http://{raw}"
+        parts = urlsplit(raw)
+        if not parts.hostname:
+            continue
+        default_port = 443 if parts.scheme == "https" else 80
+        return parts.hostname, parts.port or default_port
+    return None
+
+
+def check_connectivity(
+    host: str, port: int, *, timeout: float, use_tls: bool = True
+) -> tuple[bool, str]:
+    """Bounded TCP/TLS connectivity probe (no HTTP request, robots untouched).
+
+    The 2026-11-09 incident: the host accepted the TCP connection and then
+    dropped it mid-TLS-handshake, so every listing request failed and the
+    run was blamed on risk control. One connect proves reachability cheaply;
+    it never fetches a page, so it cannot bypass robots.txt.
+    """
+
+    import socket
+    import ssl
+
+    sock = None
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        if use_tls:
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 - any failure is the diagnosis
+        return False, f"{type(exc).__name__}: {exc}"
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:  # noqa: BLE001, S110 - closing a dead socket
+                pass
 
 
 def _run_settings(run) -> dict:
@@ -44,8 +96,16 @@ def _run_settings(run) -> dict:
                 "joybuy_crawler.middlewares.AccountCookieMiddleware": 550,
                 "joybuy_crawler.middlewares.HeaderRedactionMiddleware": 560,
                 "joybuy_crawler.middlewares.RiskControlRenderMiddleware": 570,
+                # 580: set request.meta["proxy"] from CRAWL_HTTP(S)_PROXY
+                # before Scrapy's HttpProxyMiddleware (750) reads it.
+                "joybuy_crawler.middlewares.ProxyConfigMiddleware": 580,
             },
-            "ROBOTSTXT_OBEY": True,
+            # 翻页开关（2026-11-12，运营者拍板默认开）：Joybuy robots.txt 禁止
+            # /s?*&page=，开启翻页等同于运营者授权偏离这一条规则，此时关闭
+            # ROBOTSTXT_OBEY（/s?k= 与 /dp/ 本就 Allow，行为上只放开 page= 请求）。
+            # 关闭翻页的任务保持完全遵守 robots.txt。
+            "ROBOTSTXT_OBEY": not bool(getattr(job, "allow_pagination", True)),
+            "JOYBUY_MAX_LISTING_PAGES": int(os.getenv("CRAWL_MAX_LISTING_PAGES", "25")),
             # AccountCookieMiddleware owns cookies so accounts can rotate
             # without a shared jar merging their sessions together.
             "COOKIES_ENABLED": False,
@@ -87,7 +147,40 @@ def execute_run(run_public_id: str) -> None:
 
     from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
 
-    process = CrawlerProcess(_run_settings(run), install_root_handler=False)
+    settings = _run_settings(run)
+    if settings.get("CRAWL_PREFLIGHT_ENABLED", True):
+        proxy = _proxy_endpoint(settings)
+        timeout = float(
+            settings.get("CRAWL_PREFLIGHT_TIMEOUT") or DEFAULT_PREFLIGHT_TIMEOUT
+        )
+        if proxy is None:
+            target = f"{DEFAULT_SITE_HOST}:{DEFAULT_SITE_PORT}"
+            reachable, detail = check_connectivity(
+                DEFAULT_SITE_HOST, DEFAULT_SITE_PORT, timeout=timeout
+            )
+        else:
+            host, port = proxy
+            target = f"代理 {host}:{port}"
+            reachable, detail = check_connectivity(
+                host, port, timeout=timeout, use_tls=False
+            )
+        if not reachable:
+            reason = (
+                f"网络不可达：无法连接{target}（{detail[:300]}）。本轮未启动抓取；"
+                "请检查网络、VPN 或代理（可用 CRAWL_HTTP_PROXY / CRAWL_HTTPS_PROXY "
+                "显式指定代理），这不是风控或站点结构改版。"
+            )
+            record_run_event(
+                run,
+                level="ERROR",
+                code="CONNECTIVITY_PREFLIGHT_FAILED",
+                message=reason,
+                source_url="https://www.joybuy.co.uk/",
+            )
+            complete_run_failed(run, reason=reason)
+            return
+
+    process = CrawlerProcess(settings, install_root_handler=False)
     process.crawl(JoybuyRunSpider, run_public_id=run_public_id)
     try:
         process.start()

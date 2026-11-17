@@ -109,7 +109,46 @@
 - `dataset_index.jsonl` 只在内容指纹变化（或首次落盘）时追加一行，重复抓取同一商品不会把索引刷成重复行；
 - 任务结束时写 `DATASET_SUMMARY` 事件，汇报刷新了多少目录、其中多少条内容真正发生变化。
 
-### 5.2 完整刷新
+### 5.2 跳过已入库（2026-11-12，任务级开关）
+
+管理端【新建任务】复选框「跳过已入库商品」（`CrawlJob.skip_imported_products`，默认关闭）；
+开关随 `params_snapshot.skip_imported_products` 冻结进运行记录。
+
+- **判定**：列表页解析出商品卡片后，蜘蛛一次性按来源身份查
+  `spu_source_identity(source_system=job.source_catalog.source_system, source_id IN (...))`；
+  命中的商品**不再请求详情页**（PC 详情 + `/dg/` 图文页都省掉），也不占本任务的成功入库名额。
+- **范围**：命中即跳过，无论 SPU 当前状态（DRAFT/ACTIVE）——判定标准是"已入库"。
+- **代价**：跳过的商品不会刷新价格、库存、评分、评价数和 AI 摘要；需要刷新时关闭该开关重跑。
+- **日志**：每页写 `PRODUCTS_SKIPPED_IMPORTED`（INFO）事件，说明该页跳过了多少个已入库商品；
+  被跳过的 source_id 同时进入本轮 `seen_product_ids`，其它类目列表不会重复查库。
+- **未开启时行为不变**：仍按 `product_limit` 全量抓取，导入侧继续幂等更新。
+
+### 5.3 列表翻页（2026-11-12，任务级开关，默认开启）
+
+背景：Joybuy robots.txt `Disallow: /s?*&page=`（同时禁止 l1/l2/b1/b2/b3/sortType/
+filterByBrandIds 等参数），蜘蛛此前每个类目只抓第一屏（实测 20–40 张卡片），单类目
+无法到达 200+。运营者拍板：**任务级「翻页抓取」开关，默认开启**，开启即视为运营者
+授权偏离 `page=` 这一条规则。
+
+- **字段**：`CrawlJob.allow_pagination`（默认 True），随
+  `params_snapshot.allow_pagination` 冻结进运行记录；管理端新建表单复选框
+  「翻页抓取」默认勾选，任务详情抽屉显示 开启/关闭。
+- **行为**：`parse_listing` 处理完一页后，若开关开、目标未抓满、本页有新内容
+  （新入队，或因「跳过已入库」被跳过的新商品），继续请求
+  `<robots 安全化 URL>&page=N+1`（`dont_filter=True`），直到抓满 limit。
+- **结束条件**（满足其一）：抓满 limit；某页没有新内容（空页/全部跨类目重复）；
+  达到安全上限 `JOYBUY_MAX_LISTING_PAGES`（env `CRAWL_MAX_LISTING_PAGES`，默认 25 页）；
+  minihome 频道页没有翻页基准 URL，不翻页（写 LISTING_SHORTFALL）。
+- **robots 处理**：开启翻页的运行由 runner 设 `ROBOTSTXT_OBEY=False`
+  （`/s?k=` 与 `/dp/` 本就 Allow，实际只放开了 `page=` 请求）；关闭翻页的任务
+  保持完全遵守 robots.txt。
+- **事件**：翻页结束且仍有缺口 → `LISTING_SHORTFALL`（注明「翻页至第 N 页后没有
+  更多结果（安全上限 25 页）」）；翻页页没有卡片 → `PAGINATION_COMPLETE`（INFO，
+  属正常结束而非解析失败）。
+- **其它参数仍禁止**：l1/l2/sortType 等过滤排序参数依旧不发送，URL 仍是
+  robots 安全化的 `k=` 单参数形态 + `page=`。
+
+### 5.4 完整刷新
 
 - 重新遍历任务范围；
 - 更新现有数据并新增商品；
@@ -269,6 +308,86 @@ CRAWL_ACCOUNT_ROTATE_MAX_REQUESTS=60
 - 有效期仍是 `CRAWL_HTTPCACHE_EXPIRATION_SECS`（默认 6 小时）；
 - 排查提示：如果怀疑"改了 Cookie 却还是登录墙"，先看 `var/cache/scrapy/joybuy_run/` 里有没有 `meta` 写着 `'status': 307` 的条目——有就说明命中了旧缓存，删掉即可（缓存可随时重建）。
 
+### 8.2 代理（2026-11-09）
+
+Scrapy 自带的 `HttpProxyMiddleware` 会读进程环境变量（`http_proxy` / `https_proxy`）和
+**Windows 注册表里的系统代理**，所以"系统代理是否生效"不需要改代码。但它有两个坑：
+
+- `no_proxy` 会按 host 旁路（本项目 `.env` 里就有 `NO_PROXY=localhost...` 一类值），一旦命中
+  joybuy.co.uk 就静默直连，看起来像"代理没起作用"；
+- 环境变量是**进程级**的，无法只给爬虫执行进程指定代理，也不方便单次运行切换。
+
+因此新增显式 opt-in（留空 = 完全沿用 Scrapy 原有行为，**代码里没有任何硬编码代理**）：
+
+| 变量 | 作用 |
+| --- | --- |
+| `CRAWL_HTTP_PROXY` | 只作用于 `http://` 请求 |
+| `CRAWL_HTTPS_PROXY` | 只作用于 `https://` 请求（正式抓取几乎全是 https） |
+
+`middlewares.ProxyConfigMiddleware`（优先级 580，早于 Scrapy 的 750）按请求 scheme 写
+`request.meta["proxy"]`。设置 meta 后 `HttpProxyMiddleware` 不再做 `proxy_bypass` 判断，
+因此显式配置一定生效、且可逐次运行切换。支持 `http://user:pass@host:port`
+（Scrapy 转成 `Proxy-Authorization`）；日志与 `PROXY_CONFIGURED` 事件只用
+`redact_proxy_url()` 的脱敏形式（`http://host:port`），密码永不进日志。
+只支持 http/https 代理，`socks5://` 会被忽略。
+
+### 8.3 网络失败诊断与连接前置检查（2026-11-09）
+
+**为什么需要**：2026-11-09 的运行 `4d0b3954-2899-4dcb-9d95-b6f0ebb4f52e` 里，
+`robots.txt` 与 `/s?k=Phones` 各重试 4 次全部失败于
+`ResponseNeverReceived / ConnectionLost`（同机 `urllib` 复现
+`SSL: UNEXPECTED_EOF_WHILE_READING`，属 VPN/代理/站点侧的 TLS 断连），
+但旧逻辑把零商品运行统一报成「没有发现任何商品：列表页可能被风控拦截、需要登录，
+或站点结构已改版。」——完全误导。
+
+**判定规则**（`pipelines.zero_item_failure_reason()`，纯函数、有单测）：
+
+| 条件 | 结论文案 |
+| --- | --- |
+| `discovered_count == 0` 且列表页下载异常 > 0 | 网络/TLS：「全部/部分列表页请求失败：列表页请求失败 N 次（ConnectionLost 2 次、ResponseNeverReceived 6 次）。请检查网络、VPN 或代理；这是下载/TLS 层错误，不是风控、登录或站点结构改版。…」 |
+| `discovered_count == 0` 且列表页**拿到响应**但解析 0 商品 | 保留原文案：「没有发现任何商品：列表页可能被风控拦截、需要登录，或站点结构已改版。」 |
+| 有商品且导入成功 | `SUCCEEDED` |
+
+- 计数来源：spider 的 `listing_failed` errback 累计 `listing_fetch_errors` /
+  `listing_error_types` / `listing_successes`，并立即写 `LISTING_FETCH_FAILED`（ERROR，
+  带 URL、异常类型与文本、本轮第几次失败）。
+- 部分失败但仍有商品：写 `LISTING_FETCH_PARTIAL`（WARNING），运行仍可 SUCCEEDED，
+  但明确提示"结果可能不完整"。
+- `robots.txt` 也拿不到时，原因追加「robots.txt 同样无法获取。」；**只有 robots 失败、
+  列表页仍拿到响应时不判成网络问题**（那更像风控页/空页面）。
+
+**连接前置检查**：`runner.execute_run` 在启动 Scrapy 前做一次有超时的 TCP（配置了
+`CRAWL_HTTPS_PROXY` 时连代理端口）/ TLS（直连 `www.joybuy.co.uk:443`）连接检查，默认 8 秒
+（`CRAWL_PREFLIGHT_TIMEOUT`）。失败时立即写 `CONNECTIVITY_PREFLIGHT_FAILED` 并把运行置
+FAILED，不再等 40 秒重试；只建立连接、不发任何 HTTP 请求，因此**不绕过 robots.txt**。
+需要恢复旧行为（例如完全离线只跑缓存）时设 `CRAWL_PREFLIGHT_ENABLED=false`。
+
+### 8.4 媒体下载并发与导入复用（2026-11-10，提速）
+
+**问题**：正式任务约 2 分钟/商品，而调试脚本快得多。事件时间线（RUN 22，10 个商品，21 分 25 秒）
+拆解出的耗时：页面抓取 ~5s、dataset 落盘（串行下载主图/详情图/视频）平均 **54s**（最大 121s）、
+导入媒体库（**同一批图再下一次** + 6 个变体编码）平均 **66s**（最大 140s）。即 96% 的时间花在
+媒体 I/O，且全部发生在 Scrapy 的 item pipeline 里，`CONCURRENT_REQUESTS=1` 时会把唯一的抓取
+worker 卡住（事件里能看到下一个商品的 `/dg/` 请求排队 60–190s）。
+
+**改动**：
+
+| 位置 | 变更 |
+| --- | --- |
+| `crawler/joybuy_crawler/dataset.py` | 新增 `_download_many`：图片/视频按 `CRAWL_MEDIA_DOWNLOAD_WORKERS`（默认 6）并发下载，`ThreadPoolExecutor.map` 保证文件编号仍按源站顺序；单张失败只记账。实测同一商品 9 张图：串行 30.44s → 并发 7.72s。`save_product` 返回值新增 `local_media = {"gallery": {url: 绝对路径}, "videos": {url: 绝对路径}}`（只含本次成功落盘的文件，**不写进 `dataset_index.jsonl`**） |
+| `crawler/joybuy_crawler/pipelines.py` | 调 `import_staging_product(..., local_media=index_line.get("local_media"))`；`index_line` 预置 `{}`，dataset 写入失败时不会 NameError |
+| `backend/crawler_control/import_services.py` | `import_staging_product` 新增 `local_media` 参数；`_import_gallery_images` / `_import_spu_videos` 优先读 dataset 本地文件、缺失才下载；画廊图片仍并发取字节（`_fetch_media_many`），媒体写入/变体生成保持串行；`gallery_images` 汇总新增 `reused` 计数 |
+
+**未改**：页面请求的 `DOWNLOAD_DELAY=2s`（随机 1–3s）、`CONCURRENT_REQUESTS=1`、robots、
+账号轮换节奏都保持原样——这些是礼貌性约束，不是本次瓶颈。
+
+**验证**：新增 `DatasetIncrementalTests.test_local_media_maps_gallery_urls_to_files`、
+`ImportLocalMediaReuseTests`（本地命中时 `_fetch_image_bytes` 完全不被调用；文件缺失回退下载）、
+`StagingPipelineTests.test_process_item_passes_dataset_local_media_to_import`（pipeline 必须把
+`local_media` 传给导入）。`test_crawler_import + test_crawler_detail_extras + test_crawler_field_rules`
+60 tests OK；`test_crawler_rebuild.StagingPipelineTests + DatasetTests` 11 tests OK。
+基准脚本 `var/bench_media_download.py`：同一商品 9 张图，串行 30.44s vs 6 并发 7.72s。
+
 ## 9. 数据流水线
 
 ```mermaid
@@ -304,13 +423,60 @@ flowchart LR
 
 `parse_uk_listing` 先按卡片扫描，页面没有卡片时回退到锚点逻辑，两种都能解析；只按锚点解析会在新布局产出**空标题、无价格**的卡片（2026-11-05 实际发生过）。另外价格在卡片里被拆成多个文本节点（`£ 32 . 33`），`_price` 会先把小数间的空格合并再取值。
 
-### 9.2 类目层级口径（2026-11-05 需求）
+### 9.2 类目层级口径（2026-11-05 需求，2026-11-09 修订）
 
 - 商品详情页的面包屑层级不固定，深的时候能到五级以上（例如 `首页 / 母婴用品 / 健康护理 / 湿巾及配件 / 湿巾 / 商品名`）；
-- 入库只保留**去掉站点根后的前两级**：`母婴用品 / 健康护理`，之后的 `湿巾及配件 / 湿巾` 一律丢弃，不写入 payload；
-- 截断发生在解析阶段（`joybuy_uk.truncate_breadcrumbs`，`BREADCRUMB_DEPTH = 2`），因此 `joybuy.breadcrumbs`、`source_category_id`、dataset 索引和 staging 看到的是同一个两级口径，不会出现层数不一致；
+- 入库只保留**去掉站点根后的前两级**：`母婴用品 / 健康护理`，之后的 `湿巾及配件 / 湿巾` 一律丢弃；
 - 站点根标签按 `home / 首页 / 主页 / 首頁` 识别并丢弃（区分大小写不敏感）；
+- **2026-11-09 修订：面包屑来源改为 flight。** 优先读
+  `productBreadCrumbFloor.data["C-M#viewBreadCrumbItem&core"].categories`
+  （带 Joybuy 数字类目 ID，如 `厨具餐具(288) → 锅具(361) → 炒锅(372)`），
+  仍只保留前两级；DOM 面包屑只作为兜底。第三级及更深**不写入 payload**；
+- `joybuy.breadcrumbs` 仍是两级 `[{name,cid}]`；商品类目 ID 放入独立字段：
+  - `product_category_path`: `[{id,name,depth}]`，最多两级；
+  - `product_category_id`: 最深一级 ID（如 `361`）；
+  - `source_category_id` 继续表示**菜单来源类目**，不复用为商品类目 ID；
+- 导入时按 `product_category_path` upsert `product_category` 表（最多两级），
+  并把最深节点写到 `Spu.product_category`；第三级永不落库；
+- **活动商品例外**：菜单 `l2:1580 节庆装饰品` 不建本地类目；任务选中它、或商品类目
+  路径含 `节日与活动(4945)` 时，导入直接写 `Spu.is_activity=True` 且
+  `local_category=None`（详见 `docs/15` §2.1）；
 - 被丢弃的深层分类仍保存在原始响应归档里（§12），确需更细粒度时从归档回放，不需要重抓。
+
+### 9.4 商品详情增量字段：画廊 / 系列规格 / 图文详情 / 规格表格 / 视频（2026-11-09）
+
+正式爬虫已按下表补齐 `joybuy_uk.py`（调试脚本 `crawler/debug_crawl.py` 里验证过的行为，
+问题与实测见 `docs/14` §7）。payload 只增字段，导入端可忽略未消费的字段。
+
+| payload 字段 | 来源 | 说明 |
+| --- | --- | --- |
+| `image_urls` | flight `productMainImageFloor.mediaData[*].bigImageUrl` | 全部商品图，统一 s1248；按去掉尺寸/`!q70.webp` 后缀的路径去重；丢弃 `-000-com` 服务 icon、s32/s64/s96、非 `/product/` 静态资源。DOM 只作兜底并走同一套清洗。 |
+| `spec_options` | `productSeriesFloor.series` + `productSelectedFloor.colorSizePartList` | 系列在前、颜色/尺寸在后；值带 `image_url`（规格图 s96）与 `sku_ids`。 |
+| `skus[].specs` | 同上 | 按 `skuList` 映射；单 SKU 商品在没有匹配时只挂"只有一个可选值"的维度。 |
+| `content_sections` | /dg/ 页 `structuredFloors` + PC `MuiAccordion-root` | `[{title, blocks:[{type:"heading"|"paragraph",text}], text, images}]`；移动端区块优先，PC 补它没有的区块（如「重要信息」）。 |
+| `specifications` | /dg/ 页 mode 8（`extendPartList`/`specificationPartList` → `C-P#Attribute&attributeBasic`）、旧版 `graphDetailsModule` | `[{group,name,value}]`，行顺序按源站，**不按 `attributeSort` 重排**。 |
+| `specification_tables` | 由 `specifications` 生成 | `[{title, columns:["属性","值"], rows:[{name,value}]}]`；Joybuy 上就是两列表格，前端必须按表格渲染（`docs/14` §7.6）。 |
+| `videos` / `video_urls` | `mediaData` 里 `mediaType=2` / `video=true` | `[{url,duration,cover,video_id}]`。 |
+| `description` | 由 `content_sections` 生成 | 纯文本兜底，子标题加 `## ` 前缀；规格类区块（规格参数/材质与规格/技术规格）不进正文。 |
+| `detail_image_urls` | `content_sections[].images` | 图文详情图片（多为 `/da/...` 原图）。 |
+
+**两次请求的流程**（`joybuy_run.py::parse_detail`）：
+
+1. 解析 `/dp/<slug>/<id>`（机器人/登录墙/风控逻辑不变）；
+2. 再 `yield` 一个 `https://www.joybuy.co.uk/dg/<sku>` 请求（带同一 `meta`、独立 `errback`），
+   `parse_mobile_detail` 用 `merge_mobile_detail()` 合并后**只产出一条商品 item**；
+3. 移动端请求失败（超时 / 风控 / 将来 robots 收紧）时 `mobile_detail_failed` 按 PC 数据落盘，
+   运行事件 `MOBILE_DETAIL_FAILED`；合并成功写 `MOBILE_DETAIL_MERGED`（区块/规格/视频计数）。
+
+**robots 口径（2026-11-09 实测）**：`m.joybuy.co.uk/robots.txt` 明确 `Disallow: /dg/`，
+因此正式链路**不请求 m. 域名**；`www.joybuy.co.uk/dg/<sku>` 返回同一份 SSR 且 www 站
+robots.txt 未禁止 `/dg/`，故只用 www。开关 `CRAWL_MOBILE_DETAIL`（settings
+`JOYBUY_MOBILE_DETAIL_ENABLED`，默认开）；每个商品因此多 1 次请求。
+
+**数据集**：视频用浏览器 UA 下载（120s 超时、3 次退避重试）到
+`<商品目录>/videos/01.mp4`，写进 `dataset_index.jsonl` 的 `videos`（失败记 `video_errors`）。
+**视频不进 `var/media` 媒体库**：媒体库目前只有图片管线与图片用途（role），视频没有
+对应的 kind/role 与业务字段，本轮只在 dataset + payload 落库，是否进业务表另立任务。
 
 ## 10. 评价采集口径
 
@@ -318,14 +484,19 @@ flowchart LR
 
 只采集评分聚合与 AI 摘要，来源是详情页内嵌的 Next.js flight JSON：
 
+> 评分展示口径（2026-11-10 确认）：**只入库评价数量、平均分、1~5 星各自数量这三个聚合值，
+> 不需要也不导入任何单条评价内容**（reviews 表只保留站内演示数据）。聚合值写入
+> `SpuDetail.rating_count / rating_average / rating_distribution`（迁移 `catalog/0016`），
+> 购物端评价区用它显示评分与星级分布；本地有 ACTIVE 评价时以本地统计优先。
+
 | 字段（payload） | 来源字段 | 说明 |
 | --- | --- | --- |
 | `rating_distribution` | `ratingInfo.score1Count` … `score5Count` | 1~5 星各自数量，键为 `"1"`~`"5"` |
 | `rating_average` | 优先 `star` / `starShow`，回落 `ratingInfo.averageScore` | 0 条评价时页面把 `averageScore` 默认成 5，此时**不记录**平均分，避免编造 |
 | `rating_count` | `totalCommentCount`，回落 `ratingInfo.commentCount` | 总评价条数 |
-| `ai_summary` | `aiSummary` | 【内容由人工智能总结自用户评价】正文；**只有页面渲染了才写**，没有就是空字符串且 native 块里不出现 `aiReviewSummary` |
-| `ai_summary_title` | `aiTagTitle` | 摘要标题（通常就是"内容由人工智能总结自用户评价"） |
-| `ai_summary_tags` | `aiTagList` | 摘要标签 |
+| `ai_summary` | `aiSummary.summaryContent`（2026-11-09 起优先），回落扁平块里的 `aiSummary` 字符串 | 【内容由人工智能总结自用户评价】正文；**只有页面渲染了才写**，没有就是空字符串且 native 块里不出现 `aiReviewSummary` |
+| `ai_summary_title` | `aiSummary.summaryText`，回落 `aiTagTitle` | 摘要标题（通常就是"内容由人工智能总结自用户评价"） |
+| `ai_summary_tags` | `aiTagList[].tagName`，回落扁平块 `aiTagList` | 摘要标签 |
 | `rating_source` | — | `flight` / `dom` / 空，标明数据来自哪一层 |
 
 实现要点：
@@ -333,6 +504,9 @@ flowchart LR
 - `ratingInfo` 在 flight 流里通常是引用（`"ratingInfo":"$19c"`），必须按 `19c:{...}` 槽位解析；只看引用本身会拿到字符串而非对象。
 - 评价聚合对象锚定"包含 `ratingInfo` 的那个大括号对象"，不要用全局 `aiSummary` 关键字搜索——i18n 文案里也有同名字段，会取到错的值。
 - 页面 JSON 完全拿不到评分时，才回落到可见评分区（`rating_source=dom`）。**星分布不做 DOM 猜测**：宁可留空，也不根据进度条宽度推算数量。
+- 2026-11-09：`aiSummary` 也可能是**内联对象**（`{"summaryContent":..,"summaryText":..}`），
+  不是一个字符串；`extract_ai_summary()` 直接 `raw_decode` 冒号后的值（必要时跟 `$ref` 槽位），
+  标签从 `aiTagList[].tagName` 取。内联对象优先，扁平块作为兜底，都拿不到就留空不编造。
 - 星级各档之和与总条数应能对上（fixture 里有该断言），对不上说明读错了位置。
 - 后端 `reviews` 应用与 `joybuy_crawler/sampling.py`（WP-17 评价导入）仍在代码里，但爬虫已不再向它供数；是否整体下线评价模块属于另一个决策，未在本次变更范围内。
 
@@ -405,8 +579,13 @@ flowchart LR
 | `PRODUCT_PARSED` | 每个详情页解析完 | URL、HTTP 状态、响应大小、耗时、商品 ID 与标题、原价+币种、SKU 数、图片数、评分/条数、分类路径、AI 摘要字数 |
 | `DATASET_SAVED` | 每个商品落盘后 | `var/crawl_exports/{任务目录}/{类目}/{商品ID}`、`product.json`、主图/详情图张数、失败图片数、内容是否变化 |
 | `PRODUCT_IMPORTED` | 每个商品入库后 | SPU（新建/更新）、SKU 数、Offer 数、暂存记录 ID |
+| `IMPORT_SOURCE_CONFLICT` | 来源身份已绑定到别的 Offer/SKU 时 | 来源身份、现有/本次商家与 SKU 规格、市场/币种、不一致字段、卖家名/本地化提示；**不自动改绑**（详见 `docs/14` §10） |
+| `LISTING_FETCH_FAILED` | 列表页请求重试耗尽/传输层异常 | URL、异常类型与文本、本轮第几次失败；文案明确"属网络/TLS 层错误，不是风控或结构改版" |
+| `LISTING_FETCH_PARTIAL` | 结束时有列表页下载失败但仍有商品 | 失败次数与类型、已发现商品数、结果可能不完整 |
+| `CONNECTIVITY_PREFLIGHT_FAILED` | 启动前连接检查失败 | 目标 host:port、异常文本、排查建议与代理变量 |
+| `PROXY_CONFIGURED` | 按显式代理设置启动 | 脱敏后的代理地址（不含账号密码） |
 
-一个商品因此固定产出 3 条日志（解析 → 落盘 → 入库），排查时按商品 ID 串起来即可看到完整链路。失败路径保留原有事件（`*_FAILED` / `RECORD_REJECTED` / `IMPORT_REJECTED`），文案里同样带 URL 与原因。
+一个商品因此固定产出 3 条日志（解析 → 落盘 → 入库），排查时按商品 ID 串起来即可看到完整链路。失败路径保留原有事件（`*_FAILED` / `RECORD_REJECTED` / `IMPORT_REJECTED` / `IMPORT_SOURCE_CONFLICT`），文案里同样带 URL 与原因。
 
 任务详情的接口一次返回最近 **200** 条事件（原为 50），因为按上面的粒度，50 个商品就会产生约 150 条。
 

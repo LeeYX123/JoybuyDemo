@@ -375,6 +375,24 @@ class SearchTextTests(TransactionTestCase):
         by_brand = search_documents(market=self.market, query="soundcore")
         self.assertEqual(by_brand["total"], 2)
 
+    def test_short_numeric_token_does_not_kill_the_match(self):
+        """「iPhone 17」里的 17 短于 FULLTEXT 最小词长 3：不能让整条 MATCH 归零。"""
+        self.seed_product(
+            source_id="iphone-17",
+            title="Apple iPhone 17 256GB",
+            price="799.00",
+            category=self.phones,
+        )
+        result = search_documents(market=self.market, query="iPhone 17")
+        self.assertEqual([item["title"] for item in result["items"]], ["Apple iPhone 17 256GB"])
+
+        short_only = search_documents(market=self.market, query="17")
+        self.assertEqual(short_only["total"], 1)
+
+    def test_operator_only_query_returns_empty(self):
+        result = search_documents(market=self.market, query="++ --")
+        self.assertEqual(result["total"], 0)
+
     def test_no_match_returns_clean_empty_state(self):
         empty = search_documents(market=self.market, query="nothing-matches-this")
         self.assertEqual(empty["total"], 0)

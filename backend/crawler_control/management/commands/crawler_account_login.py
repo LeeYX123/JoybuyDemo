@@ -158,6 +158,13 @@ def _is_logged_in(page, visible_text_fn, initial_cookie_names=None) -> bool:
     if len(cookies) < 3:
         return False
 
+    # 真正的登录态标记是 ``pin`` Cookie（京东国际会话，人工登录的会话里
+    # 一定有；匿名访客只有统计 Cookie）。2026-11-13 修复：此前「≥3 条
+    # Cookie + 页面文字长」在 OAuth 回跳页（/facebook-auth-redirect）上会
+    # 误判成已登录，导致批量自动登录保存了 15 条纯统计 Cookie 的假会话。
+    if not any(cookie.get("name") == "pin" for cookie in cookies):
+        return False
+
     text = visible_text_fn(page.html or "")
     if len(text) < 2000:
         return False  # interception/error page, not the real homepage

@@ -22,5 +22,11 @@ export function useSearch(params) {
       : `/api/v1/search${query.value ? `?${query.value}` : ''}`,
   )
 
-  return useFetch(url, { key: `search-${JSON.stringify(params.value || {})}` })
+  // The cache key must be reactive: /s?category=a → /s?category=b keeps the
+  // same page component mounted, so a key frozen at setup time (the old
+  // `search-<initial params>`) kept serving the first category's results even
+  // though the URL, title and tile row had already changed.
+  const key = computed(() => `search-${query.value}`)
+
+  return useFetch(url, { key })
 }

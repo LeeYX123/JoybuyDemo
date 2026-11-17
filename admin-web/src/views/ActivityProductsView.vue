@@ -100,7 +100,7 @@ onMounted(() => load())
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
     <p v-if="state.notice" class="notice notice--ok">{{ state.notice }}</p>
 
-    <!-- 与【首页活动卡片】一致的独立 Tab 条（不与搜索同行）。 -->
+    <!-- 与【活动卡片】一致的独立 Tab 条（不与搜索同行）。 -->
     <div class="tabs">
       <button
         type="button"

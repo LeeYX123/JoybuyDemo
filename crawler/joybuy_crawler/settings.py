@@ -74,8 +74,43 @@ DEFAULT_REQUEST_HEADERS = {
     "Accept-Language": os.getenv("CRAWL_ACCEPT_LANGUAGE", "en-GB,en;q=0.8"),
 }
 
+# 图文详情/规格参数（2026-11-09）：PC 详情页这段是客户端渲染，只有
+# https://www.joybuy.co.uk/dg/<sku> 的 SSR 里有 structuredFloors。
+# 这里刻意选 www 域名——m.joybuy.co.uk/robots.txt 明确 Disallow: /dg/，
+# www 站 robots 没有这条限制（见 docs/14 §7.4）。每个商品多 1 次请求。
+JOYBUY_MOBILE_DETAIL_ENABLED = (
+    os.getenv("CRAWL_MOBILE_DETAIL", "true").strip().lower() == "true"
+)
+
+# 变体价格补抓（WP-45 阶段 1，2026-11-15）：详情页 JSON 只有当前浏览 sku 的
+# 价格，非主变体的价格要逐个请求它自己的 /dp/<sku> 页面（与 /dg/ 同理，www
+# 域名）。默认开，但每个商品最多补 CRAWL_VARIANT_PRICE_LIMIT 个变体，防变体
+# 数失控打爆请求预算；风控收紧时可设 CRAWL_VARIANT_PRICES=false 关掉，
+# 变体价格留空不阻断商品落盘。
+JOYBUY_VARIANT_PRICES_ENABLED = (
+    os.getenv("CRAWL_VARIANT_PRICES", "true").strip().lower() == "true"
+)
+JOYBUY_VARIANT_PRICE_LIMIT = int(os.getenv("CRAWL_VARIANT_PRICE_LIMIT", "10"))
+
+# 代理（2026-11-09）：Scrapy 自带的 HttpProxyMiddleware 会读取进程环境变量
+# 和 Windows 注册表代理，但 `no_proxy` 可能把它旁路掉，也不方便只给爬虫进程
+# 指定代理。这里提供显式 opt-in：留空 = 完全沿用 Scrapy 原有行为，绝不硬编码
+# 任何代理地址；`CRAWL_HTTPS_PROXY` 只作用于 https 请求。
+CRAWL_HTTP_PROXY = os.getenv("CRAWL_HTTP_PROXY", "").strip()
+CRAWL_HTTPS_PROXY = os.getenv("CRAWL_HTTPS_PROXY", "").strip()
+
+# 连接前置检查（2026-11-09）：正式运行在启动 Scrapy 前做一次有超时的
+# TCP（配置代理时）/ TLS（直连时）连接检查。网络不通就立即失败并写明原因，
+# 而不是重试 40 秒后把网络问题误报成"风控/改版"。只做连接，不发 HTTP 请求。
+CRAWL_PREFLIGHT_ENABLED = (
+    os.getenv("CRAWL_PREFLIGHT_ENABLED", "true").strip().lower() == "true"
+)
+CRAWL_PREFLIGHT_TIMEOUT = float(os.getenv("CRAWL_PREFLIGHT_TIMEOUT", "8"))
+
 DOWNLOADER_MIDDLEWARES = {
     "joybuy_crawler.middlewares.HeaderRedactionMiddleware": 560,
+    # 580 在 Scrapy 的 HttpProxyMiddleware（750）之前，只设置 request.meta。
+    "joybuy_crawler.middlewares.ProxyConfigMiddleware": 580,
 }
 
 ITEM_PIPELINES = {

@@ -1,5 +1,8 @@
 <script setup>
 import { useHead } from '#imports'
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
 
 import { useCart } from '~/composables/useCart'
 
@@ -20,15 +23,15 @@ useHead({ title: 'Cart' })
 <template>
   <AppContainer>
     <section class="cart" aria-labelledby="cart-title">
-      <h1 id="cart-title">Your cart</h1>
+      <h1 id="cart-title">{{ t('cart.title') }}</h1>
 
       <p v-if="items.length === 0" class="cart__empty" role="status">
-        Your cart is empty. <NuxtLink to="/">Browse products</NuxtLink>
+        {{ t('cart.empty') }} <NuxtLink to="/">{{ t('cart.browse') }}</NuxtLink>
       </p>
 
       <template v-else>
         <p v-if="needsAttention" class="cart__warning" role="alert">
-          Some items changed price or are no longer available. Review your cart before checkout.
+          {{ t('cart.priceChangedNotice') }}
         </p>
 
         <ul class="cart__list">
@@ -43,15 +46,20 @@ useHead({ title: 'Cart' })
                 {{ item.title }}
               </NuxtLink>
               <p class="cart__meta">
-                {{ formatMoney(item.price) }} each · {{ item.inventory_display }} in stock
+                {{ formatMoney(item.price) }} {{ t('product.each') }} · {{ item.inventory_display }}
+                {{ t('product.inStock') }}
               </p>
               <p v-if="item.issue" class="cart__issue" role="status">
-                {{ item.issue === 'SKU_NOT_AVAILABLE' ? 'No longer available' : 'Stock reduced' }}
+                {{
+                  item.issue === 'SKU_NOT_AVAILABLE'
+                    ? t('cart.noLongerAvailable')
+                    : t('cart.stockReduced')
+                }}
               </p>
             </div>
 
             <label class="cart__qty">
-              <span class="visually-hidden">Quantity</span>
+              <span class="visually-hidden">{{ t('cart.quantity') }}</span>
               <input
                 type="number"
                 min="1"
@@ -67,7 +75,7 @@ useHead({ title: 'Cart' })
                 {{ formatMoney(Number(item.price) * item.quantity) }}
               </span>
               <button type="button" class="cart__remove" @click="removeItem(item.public_id)">
-                Remove
+                {{ t('cart.remove') }}
               </button>
             </div>
           </li>
@@ -75,13 +83,13 @@ useHead({ title: 'Cart' })
 
         <div class="cart__summary">
           <p class="cart__subtotal">
-            Subtotal <strong>{{ formatMoney(subtotal) ?? '—' }}</strong>
+            {{ t('cart.subtotal') }} <strong>{{ formatMoney(subtotal) ?? '—' }}</strong>
           </p>
           <p class="cart__note">
-            Delivery is calculated at checkout. Payment is unavailable in this demo region.
+            {{ t('cart.deliveryNotice') }}
           </p>
           <NuxtLink to="/checkout">
-            <BaseButton variant="primary" size="lg">Go to checkout</BaseButton>
+            <BaseButton variant="primary" size="lg">{{ t('cart.goToCheckout') }}</BaseButton>
           </NuxtLink>
         </div>
       </template>

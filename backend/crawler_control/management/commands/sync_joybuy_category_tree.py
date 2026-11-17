@@ -144,11 +144,13 @@ class Command(BaseCommand):
                 "name": node.name,
                 "source_id": node.source_id,
                 "source_url": node.source_url,
+                "name_zh": node.name_zh,
                 "children": [
                     {
                         "name": child.name,
                         "source_id": child.source_id,
                         "source_url": child.source_url,
+                        "name_zh": child.name_zh,
                     }
                     for child in node.children
                 ],
@@ -157,16 +159,20 @@ class Command(BaseCommand):
         ]
 
     def _json_to_nodes(self, payload) -> list[MenuNode]:
+        # ``name_zh`` 是可选的：2026-11-11 起从 JSON 重建版本时保留中文名，
+        # 因为新节点在 SourceCategory 里还没有 name_zh 可回退。
         return [
             MenuNode(
                 name=entry["name"],
                 source_id=entry["source_id"],
                 source_url=entry.get("source_url", ""),
+                name_zh=entry.get("name_zh", ""),
                 children=[
                     MenuNode(
                         name=child["name"],
                         source_id=child["source_id"],
                         source_url=child.get("source_url", ""),
+                        name_zh=child.get("name_zh", ""),
                     )
                     for child in entry.get("children", [])
                 ],

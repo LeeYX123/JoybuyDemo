@@ -63,6 +63,19 @@ class ActivityApiTests(TestCase):
         self.assertTrue(removed["removed"])
         self.assertEqual(self.client.get(self.fav_url).json()["total"], 0)
 
+    def test_favourite_ids_only_returns_saved_product_ids(self):
+        for spu in (self.spu_a, self.spu_b):
+            self.client.post(
+                self.fav_url,
+                data=f'{{"spu_public_id": "{spu.public_id}"}}',
+                content_type="application/json",
+            )
+        payload = self.client.get(f"{self.fav_url}?ids_only=1").json()
+        self.assertEqual(
+            set(payload["spu_public_ids"]),
+            {str(self.spu_a.public_id), str(self.spu_b.public_id)},
+        )
+
     def test_recently_viewed_records_and_bumps_without_duplicates(self):
         self.client.get(reverse("product-detail", kwargs={"public_id": self.spu_a.public_id}))
         time.sleep(0.01)

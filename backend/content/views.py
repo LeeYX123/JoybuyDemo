@@ -1,6 +1,7 @@
 from django.http import JsonResponse
 
 from content.campaign_services import campaign_payload
+from content.channel_banner_services import ChannelBannerError, public_banners
 from content.services import get_published_page, serialize_page
 
 
@@ -49,3 +50,33 @@ def storefront_home(request):
         modules.sort(key=lambda m: m.get("position") or 0)
         data["modules"] = modules
     return JsonResponse(data)
+
+
+def channel_banners(request):
+    """频道页轮播图（no auth, read-only）：只返回该频道 enabled 的条目。
+
+    未配置（或频道不存在）时返回空 ``items``，购物端据此回退渐变占位；
+    缺少 ``channel_code`` 才报 400（调用方 bug，不是「没配置」）。
+    """
+
+    channel_code = str(request.GET.get("channel_code") or "").strip()
+    try:
+        rows = public_banners(channel_code)
+    except ChannelBannerError as exc:
+        return JsonResponse(
+            {
+                "error": {"code": exc.code, "message": exc.message},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=exc.status_code,
+        )
+    items = [
+        {
+            "id": str(row.public_id),
+            "image_url": row.image_url,
+            "href": row.href,
+            "sort_order": row.sort_order,
+        }
+        for row in rows
+    ]
+    return JsonResponse({"channel_code": channel_code, "items": items, "total": len(items)})

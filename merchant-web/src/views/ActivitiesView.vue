@@ -182,77 +182,83 @@ onMounted(async () => {
           客服确认后入钱包。未发放金额不计入可用余额。
         </p>
 
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>新人整月发货额</th>
-              <th>返佣比例</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(tier, index) in tiers" :key="index">
-              <td class="num">≥ ¥ {{ tier.min }}</td>
-              <td class="num">{{ tier.rate }}%</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>新人整月发货额</th>
+                <th>返佣比例</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(tier, index) in tiers" :key="index">
+                <td class="num">≥ ¥ {{ tier.min }}</td>
+                <td class="num">{{ tier.rate }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <h3 class="section-title">我推荐的新商家</h3>
-        <table v-if="state.referral?.referrals?.length" class="data-table">
-          <thead>
-            <tr>
-              <th>店铺名称</th>
-              <th>店铺 ID</th>
-              <th>推荐码</th>
-              <th>审核通过时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in state.referral.referrals" :key="row.merchant_id">
-              <td>{{ row.name }}</td>
-              <td class="mono">{{ row.merchant_id.slice(0, 8) }}</td>
-              <td class="mono">{{ row.code_used || '—' }}</td>
-              <td>{{ fmtDate(row.joined_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="state.referral?.referrals?.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>店铺名称</th>
+                <th>店铺 ID</th>
+                <th>推荐码</th>
+                <th>审核通过时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in state.referral.referrals" :key="row.merchant_id">
+                <td>{{ row.name }}</td>
+                <td class="mono">{{ row.merchant_id.slice(0, 8) }}</td>
+                <td class="mono">{{ row.code_used || '—' }}</td>
+                <td>{{ fmtDate(row.joined_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty-state">还没有推荐的新商家。</p>
 
         <h3 class="section-title">返佣明细</h3>
-        <table v-if="state.referral?.commissions?.length" class="data-table">
-          <thead>
-            <tr>
-              <th>核算月份</th>
-              <th>新人商家</th>
-              <th>月发货额</th>
-              <th>比例</th>
-              <th>返佣金额</th>
-              <th>状态</th>
-              <th>到账时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in state.referral.commissions" :key="row.id">
-              <td>{{ row.period }}</td>
-              <td>{{ row.referee }}</td>
-              <td class="num">¥ {{ row.shipped_amount }}</td>
-              <td class="num">{{ row.rate }}%</td>
-              <td class="num">¥ {{ row.amount }}</td>
-              <td>
-                <span
-                  class="tag"
-                  :class="{
-                    'tag--warn': row.state === 'PENDING_PAY',
-                    'tag--ok': row.state === 'PAID',
-                  }"
-                >
-                  {{ COMMISSION_STATES[row.state] || row.state }}
-                </span>
-              </td>
-              <td>{{ fmtDate(row.paid_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="state.referral?.commissions?.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>核算月份</th>
+                <th>新人商家</th>
+                <th>月发货额</th>
+                <th>比例</th>
+                <th>返佣金额</th>
+                <th>状态</th>
+                <th>到账时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in state.referral.commissions" :key="row.id">
+                <td>{{ row.period }}</td>
+                <td>{{ row.referee }}</td>
+                <td class="num">¥ {{ row.shipped_amount }}</td>
+                <td class="num">{{ row.rate }}%</td>
+                <td class="num">¥ {{ row.amount }}</td>
+                <td>
+                  <span
+                    class="tag"
+                    :class="{
+                      'tag--warn': row.state === 'PENDING_PAY',
+                      'tag--ok': row.state === 'PAID',
+                    }"
+                  >
+                    {{ COMMISSION_STATES[row.state] || row.state }}
+                  </span>
+                </td>
+                <td>{{ fmtDate(row.paid_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty-state">还没有返佣记录，把推荐码分享给新商家即可开始。</p>
       </div>
     </div>
@@ -386,9 +392,10 @@ onMounted(async () => {
   color: var(--red);
 }
 
+/* 已推荐商家等统计：靠左展示（原来是 margin-left:auto 导致靠右）。 */
 .referral-stats {
-  margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   gap: 28px;
 }
 

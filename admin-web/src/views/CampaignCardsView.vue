@@ -5,6 +5,7 @@ import AppModal from '@/components/AppModal.vue'
 import ImageUploader from '@/components/ImageUploader.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
+import ChannelBannersPanel from '@/views/ChannelBannersPanel.vue'
 
 const state = reactive({
   section: 'campaign',
@@ -16,11 +17,14 @@ const state = reactive({
   notice: '',
 })
 
-// 两个分区共用一张表与接口；discovery 无副标题，字段叫「名称」。
+// 前两个分区共用一张表与接口（HomeCampaignCard）；「频道页 banner」是独立
+// 模型与接口（ChannelBanner，按 channel_code 分组），渲染独立子面板。
 const SECTIONS = [
-  { key: 'campaign', label: '活动卡片（Offers for you）', itemWord: '标题' },
+  { key: 'campaign', label: '首页活动卡片', itemWord: '标题' },
   { key: 'discovery', label: '品类发现（Category discovery）', itemWord: '名称' },
 ]
+const CHANNEL_TAB = { key: 'channel', label: '频道页 banner' }
+const TABS = [...SECTIONS, CHANNEL_TAB]
 const sectionMeta = computed(() => SECTIONS.find((s) => s.key === state.section) || SECTIONS[0])
 
 const editorOpen = ref(false)
@@ -59,7 +63,8 @@ async function load() {
 function selectSection(key) {
   state.section = key
   state.notice = ''
-  load()
+  // 频道页 banner 是独立子面板，自己 onMounted 加载，不共用卡片接口。
+  if (key !== CHANNEL_TAB.key) load()
 }
 
 function openCreate() {
@@ -182,12 +187,13 @@ onMounted(load)
   <section>
     <div class="page-intro">
       <div>
-        <h1>首页活动卡片</h1>
+        <h1>活动卡片</h1>
         <p>
-          购物端首页搜索框下方的「Offers for you」10 宫格。改动保存后，购物端下次打开首页即生效。
+          首页搜索框下方的活动卡片/品类发现，以及频道页顶部的 banner
+          轮播。改动保存后，购物端下次打开对应页面即生效。
         </p>
       </div>
-      <div class="page-intro__actions">
+      <div v-if="state.section !== CHANNEL_TAB.key" class="page-intro__actions">
         <span class="tag">{{ state.total }} / {{ state.maxCards }}</span>
         <button
           type="button"
@@ -202,23 +208,32 @@ onMounted(load)
 
     <div class="tabs">
       <button
-        v-for="section in SECTIONS"
-        :key="section.key"
+        v-for="tab in TABS"
+        :key="tab.key"
         type="button"
-        :class="{ 'is-active': state.section === section.key }"
-        @click="selectSection(section.key)"
+        :class="{ 'is-active': state.section === tab.key }"
+        @click="selectSection(tab.key)"
       >
-        {{ section.label }}
+        {{ tab.label }}
       </button>
     </div>
 
-    <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
-    <p v-if="state.notice" class="notice notice--ok">{{ state.notice }}</p>
-    <p v-if="state.total >= state.maxCards" class="notice notice--info">
+    <ChannelBannersPanel v-if="state.section === CHANNEL_TAB.key" />
+
+    <p v-if="state.section !== CHANNEL_TAB.key && state.error" class="notice notice--error">
+      {{ state.error }}
+    </p>
+    <p v-if="state.section !== CHANNEL_TAB.key && state.notice" class="notice notice--ok">
+      {{ state.notice }}
+    </p>
+    <p
+      v-if="state.section !== CHANNEL_TAB.key && state.total >= state.maxCards"
+      class="notice notice--info"
+    >
       已达 {{ state.maxCards }} 张上限。要新增请先移除或停用一张。
     </p>
 
-    <div class="card">
+    <div v-if="state.section !== CHANNEL_TAB.key" class="card">
       <div class="card__body">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
         <table v-else-if="state.items.length" class="data-table">

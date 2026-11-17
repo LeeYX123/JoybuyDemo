@@ -3,10 +3,15 @@ import { computed, ref, watch } from 'vue'
 
 import { useLocale } from '../composables/useLocale'
 
+import CategoryTileGrid from './CategoryTileGrid.vue'
+
 // Categories dropdown (docs/12 §2): left column = 11 standard roots, right
 // column = children of the selected root only (strict parent/child linkage).
 // Rendered inside the header (no teleport) and anchored under the
 // Categories trigger, left-aligned; hover keeps it open via the parent.
+// Children render as Joybuy-style tile cards: one grey square per category
+// with both the image and the name inside the box (local manifest asset,
+// downloaded from the source site).
 const props = defineProps({
   open: {
     type: Boolean,
@@ -65,17 +70,12 @@ function select(index) {
           <p v-if="selectedRoot" class="category-panel__heading">
             {{ categoryName(selectedRoot) }}
           </p>
-          <ul v-if="selectedRoot?.children?.length" class="category-panel__children">
-            <li v-for="child in selectedRoot.children" :key="child.slug">
-              <NuxtLink
-                class="category-panel__child"
-                :to="`/c/${child.slug}`"
-                @click="emit('close')"
-              >
-                {{ categoryName(child) }}
-              </NuxtLink>
-            </li>
-          </ul>
+          <CategoryTileGrid
+            v-if="selectedRoot?.children?.length"
+            class="category-panel__children"
+            :items="selectedRoot.children"
+            @select="emit('close')"
+          />
         </div>
       </div>
     </div>
@@ -95,7 +95,9 @@ function select(index) {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(800px, calc(100vw - 4rem));
+  /* 896px keeps four tile columns visible (the source site fits 4 × 136px +
+   * 3 × 8px gaps in 568px of tile area). */
+  width: min(56rem, calc(100vw - 4rem));
   max-height: min(42rem, calc(100vh - 8rem));
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-lg);
@@ -180,28 +182,6 @@ function select(index) {
   margin: 0 0 var(--space-4);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
-}
-
-.category-panel__children {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: var(--space-2);
-}
-
-.category-panel__child {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.75rem;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  color: var(--colour-text-secondary);
-}
-
-.category-panel__child:hover {
-  background: var(--colour-hover);
-  color: var(--colour-accent);
 }
 
 @media (max-width: 48rem) {

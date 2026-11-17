@@ -314,34 +314,36 @@ onMounted(async () => {
       <div class="card">
         <div class="card__body">
           <p v-if="state.loading" class="inline-loading">加载中…</p>
-          <table v-else-if="state.entries.length" class="data-table">
-            <thead>
-              <tr>
-                <th>发生时间</th>
-                <th>业务类型</th>
-                <th>金额</th>
-                <th>变动后余额</th>
-                <th>关联订单</th>
-                <th>说明</th>
-                <th class="actions-col">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in state.entries" :key="row.id">
-                <td>{{ fmtDate(row.occurred_at) }}</td>
-                <td>{{ KIND_TABS.find((tab) => tab.key === row.kind)?.label || row.kind }}</td>
-                <td class="num" :class="amountClass(row.amount)">
-                  {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
-                </td>
-                <td class="num">¥ {{ row.balance_after }}</td>
-                <td class="mono">{{ row.order_id ? row.order_id.slice(0, 8) : '—' }}</td>
-                <td class="cell-sub">{{ row.note || '—' }}</td>
-                <td class="actions-col">
-                  <button type="button" class="btn btn--sm" @click="openEntry(row)">查看</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else-if="state.entries.length" class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>发生时间</th>
+                  <th>业务类型</th>
+                  <th>金额</th>
+                  <th>变动后余额</th>
+                  <th>关联订单</th>
+                  <th>说明</th>
+                  <th class="actions-col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in state.entries" :key="row.id">
+                  <td>{{ fmtDate(row.occurred_at) }}</td>
+                  <td>{{ KIND_TABS.find((tab) => tab.key === row.kind)?.label || row.kind }}</td>
+                  <td class="num" :class="amountClass(row.amount)">
+                    {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
+                  </td>
+                  <td class="num">¥ {{ row.balance_after }}</td>
+                  <td class="mono">{{ row.order_id ? row.order_id.slice(0, 8) : '—' }}</td>
+                  <td class="cell-sub">{{ row.note || '—' }}</td>
+                  <td class="actions-col">
+                    <button type="button" class="btn btn--sm" @click="openEntry(row)">查看</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p v-else class="empty-state">该类型下还没有资金流水。</p>
         </div>
       </div>
@@ -359,41 +361,43 @@ onMounted(async () => {
       <div class="card">
         <div class="card__body">
           <p v-if="state.loading" class="inline-loading">加载中…</p>
-          <table v-else-if="state.withdrawals.length" class="data-table">
-            <thead>
-              <tr>
-                <th>申请时间</th>
-                <th>方式</th>
-                <th>申请金额</th>
-                <th>状态</th>
-                <th class="actions-col">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in state.withdrawals" :key="row.id">
-                <td>{{ fmtDate(row.created_at) }}</td>
-                <td>{{ row.method === 'BANK' ? '银行卡' : '链上转账' }}</td>
-                <td class="num">¥ {{ row.amount }}</td>
-                <td>
-                  <span
-                    class="tag"
-                    :class="{
-                      'tag--warn': ['PENDING', 'APPROVED', 'TRANSFERRING'].includes(row.state),
-                      'tag--ok': row.state === 'PAID',
-                      'tag--danger': ['REJECTED', 'FAILED'].includes(row.state),
-                    }"
-                  >
-                    {{ WITHDRAW_STATES[row.state] || row.state }}
-                  </span>
-                </td>
-                <td class="actions-col">
-                  <button type="button" class="btn btn--sm" @click="openEntry(row)">
-                    处理详情
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else-if="state.withdrawals.length" class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>申请时间</th>
+                  <th>方式</th>
+                  <th>申请金额</th>
+                  <th>状态</th>
+                  <th class="actions-col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in state.withdrawals" :key="row.id">
+                  <td>{{ fmtDate(row.created_at) }}</td>
+                  <td>{{ row.method === 'BANK' ? '银行卡' : '链上转账' }}</td>
+                  <td class="num">¥ {{ row.amount }}</td>
+                  <td>
+                    <span
+                      class="tag"
+                      :class="{
+                        'tag--warn': ['PENDING', 'APPROVED', 'TRANSFERRING'].includes(row.state),
+                        'tag--ok': row.state === 'PAID',
+                        'tag--danger': ['REJECTED', 'FAILED'].includes(row.state),
+                      }"
+                    >
+                      {{ WITHDRAW_STATES[row.state] || row.state }}
+                    </span>
+                  </td>
+                  <td class="actions-col">
+                    <button type="button" class="btn btn--sm" @click="openEntry(row)">
+                      处理详情
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p v-else class="empty-state">还没有提现申请。</p>
         </div>
       </div>
@@ -710,13 +714,36 @@ onMounted(async () => {
   gap: 10px;
 }
 
+/* 手机档：余额卡操作按钮换行，避免 390px 视口横向溢出。 */
+@media (max-width: 768px) {
+  .wallet-hero {
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 16px;
+  }
+
+  .wallet-hero__actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+}
+
+/* 类型筛选：单行横向滚动（与商品上架中心同款做法）。 */
 .chip-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.chip-row::-webkit-scrollbar {
+  display: none;
 }
 
 .chip {
+  flex: none;
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 16px;
@@ -724,6 +751,7 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .chip.is-active {

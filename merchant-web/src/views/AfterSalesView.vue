@@ -182,47 +182,49 @@ onMounted(load)
     <div class="card">
       <div class="card__body">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
-        <table v-else-if="state.items.length" class="data-table">
-          <thead>
-            <tr>
-              <th>售后单号</th>
-              <th>关联订单</th>
-              <th>类型</th>
-              <th>问题</th>
-              <th>状态</th>
-              <th>处理进度</th>
-              <th>提交时间</th>
-              <th class="actions-col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in state.items" :key="row.id">
-              <td class="mono">{{ row.id.slice(0, 8) }}</td>
-              <td class="mono">{{ row.order_id.slice(0, 8) }}</td>
-              <td>{{ row.kind === 'RETURN' ? '退货订单' : '用户投诉' }}</td>
-              <td class="cell-sub">{{ row.issue }}</td>
-              <td>
-                <span
-                  class="tag"
-                  :class="{
-                    'tag--warn': ['PENDING', 'PROCESSING'].includes(row.state),
-                    'tag--danger': row.state === 'PLATFORM',
-                    'tag--ok': ['COMPLETED', 'REJECTED'].includes(row.state),
-                  }"
-                >
-                  {{ STATE_LABELS[row.state] || row.state }}
-                </span>
-              </td>
-              <td class="cell-sub">{{ row.progress || '—' }}</td>
-              <td>{{ fmtDate(row.created_at) }}</td>
-              <td class="actions-col">
-                <button type="button" class="btn btn--sm" @click="openDetail(row)">
-                  {{ row.readonly ? '查看详情' : '处理售后' }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else-if="state.items.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>售后单号</th>
+                <th>关联订单</th>
+                <th>类型</th>
+                <th>问题</th>
+                <th>状态</th>
+                <th>处理进度</th>
+                <th>提交时间</th>
+                <th class="actions-col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in state.items" :key="row.id">
+                <td class="mono">{{ row.id.slice(0, 8) }}</td>
+                <td class="mono">{{ row.order_id.slice(0, 8) }}</td>
+                <td>{{ row.kind === 'RETURN' ? '退货订单' : '用户投诉' }}</td>
+                <td class="cell-sub">{{ row.issue }}</td>
+                <td>
+                  <span
+                    class="tag"
+                    :class="{
+                      'tag--warn': ['PENDING', 'PROCESSING'].includes(row.state),
+                      'tag--danger': row.state === 'PLATFORM',
+                      'tag--ok': ['COMPLETED', 'REJECTED'].includes(row.state),
+                    }"
+                  >
+                    {{ STATE_LABELS[row.state] || row.state }}
+                  </span>
+                </td>
+                <td class="cell-sub">{{ row.progress || '—' }}</td>
+                <td>{{ fmtDate(row.created_at) }}</td>
+                <td class="actions-col">
+                  <button type="button" class="btn btn--sm" @click="openDetail(row)">
+                    {{ row.readonly ? '查看详情' : '处理售后' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty-state">该类型下没有售后单。</p>
       </div>
     </div>
@@ -383,6 +385,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 售后中心标题与切换 tab 间距偏大：页头 margin-bottom 20px + tab 上内边距 12px。
+   两端一起收紧到 8px（桌面同样偏大）。 */
+.page-intro {
+  margin-bottom: 8px;
+}
+
 .tab-count {
   margin-left: 6px;
   font-size: 11px;
@@ -397,6 +405,12 @@ onMounted(load)
 
 .filter-row input {
   flex: 1;
+}
+
+@media (max-width: 768px) {
+  .filter-row {
+    max-width: 100%;
+  }
 }
 
 .proof-row {

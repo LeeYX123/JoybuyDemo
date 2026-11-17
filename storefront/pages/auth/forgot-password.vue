@@ -1,18 +1,22 @@
 <script setup>
 // Password reset needs a backend endpoint that arrives with the
 // notifications work package; until then the page is an honest placeholder.
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
+
 useHead({ title: 'Forgot password' })
 </script>
 
 <template>
   <AppContainer narrow>
     <section class="forgot" aria-labelledby="forgot-title">
-      <h1 id="forgot-title">Password reset</h1>
+      <h1 id="forgot-title">{{ t('auth.passwordReset') }}</h1>
       <p>
         Password reset by email is not available in this demo build yet. If you cannot sign in,
         contact customer support for assistance.
       </p>
-      <NuxtLink to="/auth/login">Back to sign in</NuxtLink>
+      <NuxtLink to="/auth/login">{{ t('auth.backToSignIn') }}</NuxtLink>
     </section>
   </AppContainer>
 </template>

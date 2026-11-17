@@ -27,6 +27,16 @@ def _override_target_for(content_type_model, object_id):
     return content_type_model.objects.get(pk=object_id)
 
 
+def _as_bool(value) -> bool:
+    """JSON/表单布尔值解析：接受 True/1/"true"/"1"/"on"，其余为 False。"""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
+
+
 def _spawn_run_executor(run) -> None:
     """Launch the crawl executor for a run in a detached subprocess.
 
@@ -303,6 +313,26 @@ class AdminCrawlerAccountsView(StaffCsrfAPIView):
     def get(self, request):
         from crawler_control.models import CrawlerAccount
 
+        # 2026-11-14：账号列表分页 + 搜索（与 AdminCrawlJobsView 同一套信封）。
+        try:
+            page = max(1, int(request.query_params.get("page", "1")))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.query_params.get("page_size", "20"))))
+        except (TypeError, ValueError):
+            page_size = 20
+
+        accounts_all = CrawlerAccount.objects.filter(deleted_at__isnull=True)
+        search = str(request.query_params.get("search") or "").strip()
+        if search:
+            accounts_all = accounts_all.filter(
+                Q(label__icontains=search)
+                | Q(account_group__icontains=search)
+                | Q(note__icontains=search)
+            )
+        total = accounts_all.count()
+        offset = (page - 1) * page_size
         rows = [
             {
                 "public_id": str(account.public_id),
@@ -323,11 +353,17 @@ class AdminCrawlerAccountsView(StaffCsrfAPIView):
                 "note": account.note,
                 "updated_at": account.updated_at.isoformat(),
             }
-            for account in CrawlerAccount.objects.filter(deleted_at__isnull=True).order_by(
-                "-created_at"
-            )[:50]
+            for account in accounts_all.order_by("-created_at")[offset : offset + page_size]
         ]
-        return Response({"items": rows})
+        return Response(
+            {
+                "items": rows,
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "has_next": offset + page_size < total,
+            }
+        )
 
     def post(self, request):
         from crawler_control.services import create_crawler_account
@@ -644,11 +680,23 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
     def get(self, request):
         from crawler_control.models import CrawlJob
 
-        jobs = (
+        try:
+            page = max(1, int(request.query_params.get("page", "1")))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.query_params.get("page_size", "20"))))
+        except (TypeError, ValueError):
+            page_size = 20
+
+        jobs_all = (
             CrawlJob.objects.select_related("account")
             .prefetch_related("source_selections__source_category__snapshots")
-            .order_by("-created_at")[:50]
+            .order_by("-created_at")
         )
+        total = jobs_all.count()
+        offset = (page - 1) * page_size
+        jobs = jobs_all[offset : offset + page_size]
         rows = []
         for job in jobs:
             category_names = []
@@ -672,13 +720,23 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
                     "status": job.status,
                     "categories": "、".join(category_names) or "—",
                     "sync_mode": job.sync_mode,
+                    "skip_imported_products": job.skip_imported_products,
+                    "allow_pagination": job.allow_pagination,
                     "review_target": job.review_target,
                     "account_group": job.account_group,
                     "account_label": job.account.label if job.account else "",
                     "created_at": job.created_at.isoformat(),
                 }
             )
-        return Response({"items": rows})
+        return Response(
+            {
+                "items": rows,
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "has_next": offset + page_size < total,
+            }
+        )
 
     def post(self, request):
         from catalog.models import SourceCategory
@@ -794,6 +852,9 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
                 product_limit=int(product_limit),
                 listing_sort=request.data.get("listing_sort", CrawlJob.ListingSort.SOURCE_DEFAULT),
                 sync_mode=request.data.get("sync_mode", CrawlJob.SyncMode.INCREMENTAL),
+                # 布尔值严格解析：字符串 "false" 不能被 bool() 当成 True。
+                skip_imported_products=_as_bool(request.data.get("skip_imported_products", False)),
+                allow_pagination=_as_bool(request.data.get("allow_pagination", True)),
                 review_target=request.data.get("review_target", 50),
                 account_group=str(account_group),
                 account=account,
@@ -887,6 +948,8 @@ class AdminCrawlJobDetailView(StaffCsrfAPIView):
                 "status": job.status,
                 "product_limit": job.product_limit,
                 "sync_mode": job.sync_mode,
+                "skip_imported_products": job.skip_imported_products,
+                "allow_pagination": job.allow_pagination,
                 "review_target": job.review_target,
                 "listing_sort": job.listing_sort,
                 "category_mode": job.category_mode,

@@ -1,11 +1,23 @@
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from catalog.models import Spu
+from catalog.models import (
+    ProductCategory,
+    SourceCatalog,
+    Spu,
+    SpuDetail,
+    SpuDetailTranslation,
+)
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
 from catalog.search_services import rebuild_search_document
-from merchants.services import get_import_fallback_merchant
-from offers.models import Currency, Market, Offer
+from merchants.models import Merchant
+from merchants.services import (
+    IMPORT_FALLBACK_NAME,
+    IMPORT_FALLBACK_SLUG,
+    get_import_fallback_merchant,
+)
+from offers.models import Currency, Locale, Market, Offer
 from offers.services import import_offer_from_source
 from reviews.services import upsert_source_review
 
@@ -84,6 +96,87 @@ class ProductDetailApiTests(TestCase):
         self.assertIn(data["review_summary"]["average"], {"4.50", "4.5"})
         self.assertIn("href", data["review_summary"]) if False else None
 
+    def test_review_summary_falls_back_to_crawled_rating_snapshot(self):
+        """爬虫商品没有本地评价行：评分/评价数/分布用 SpuDetail 的源站快照。"""
+        from decimal import Decimal
+
+        from catalog.models import SpuDetail
+
+        self.make_sku("sku-black", "19.99")
+        SpuDetail.objects.create(
+            spu=self.spu,
+            rating_average=Decimal("4.50"),
+            rating_count=9,
+            rating_distribution={"5": 7, "4": 1, "1": 1},
+        )
+
+        response = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        )
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["review_summary"]
+        self.assertEqual(summary["source"], "crawler")
+        self.assertEqual(summary["count"], 9)
+        self.assertIn(summary["average"], {"4.50", "4.5"})
+        self.assertEqual(summary["distribution"], {"5": 7, "4": 1, "1": 1})
+
+    def test_local_reviews_win_over_crawled_rating_snapshot(self):
+        from decimal import Decimal
+
+        from catalog.models import SpuDetail
+
+        self.make_sku("sku-black", "19.99")
+        SpuDetail.objects.create(spu=self.spu, rating_average=Decimal("1.00"), rating_count=100)
+        upsert_source_review(
+            self.spu,
+            source_system="joybuy",
+            source_id="rev-local",
+            rating=5,
+            guest_display_name="Guest",
+        )
+
+        summary = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        ).json()["review_summary"]
+        self.assertEqual(summary["source"], "local")
+        self.assertEqual(summary["count"], 1)
+        self.assertEqual(summary["distribution"], {"5": 1})
+
+    def test_detail_returns_two_level_product_category_breadcrumb(self):
+        catalog, _ = SourceCatalog.objects.get_or_create(
+            source_system="joybuy",
+            defaults={"display_name": "Joybuy"},
+        )
+        root = ProductCategory.objects.create(
+            catalog=catalog,
+            source_id="288",
+            name="厨具餐具",
+            depth=0,
+            path="/288/",
+        )
+        leaf = ProductCategory.objects.create(
+            catalog=catalog,
+            source_id="361",
+            name="锅具",
+            depth=1,
+            path="/288/361/",
+            parent=root,
+        )
+        Spu.objects.filter(pk=self.spu.pk).update(product_category=leaf)
+
+        response = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["category_breadcrumb"],
+            [
+                {"id": "288", "name": "厨具餐具", "depth": 0},
+                {"id": "361", "name": "锅具", "depth": 1},
+            ],
+        )
+
     def test_inventory_display_thresholds_and_unpurchasable_states(self):
         _, offer_low = self.make_sku("sku-low", "10.00", inventory=500)
         self.make_sku("sku-out", "12.00", inventory=0, colour="White")
@@ -134,3 +227,228 @@ class ProductDetailApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         _ = rebuild_search_document  # imported for parity with search flows
+
+
+class DetailTranslationOverlayTests(TransactionTestCase):
+    """detail payload 译文覆盖（``spu_detail_translation`` 只读接入，2026-11-17）。
+
+    该表由 translation_agent（SQLAlchemy）创建，Django 侧 ``managed=False``
+    不建迁移；测试库同样没有这张表，这里用 ``SchemaEditor`` 按模型补建最小
+    结构（带存在性守卫，``--keepdb`` 重跑不会重复建）。
+    """
+
+    @staticmethod
+    def _ensure_translation_table():
+        from django.db import connection
+
+        table = SpuDetailTranslation._meta.db_table
+        if table in connection.introspection.table_names():
+            return
+        with connection.schema_editor() as editor:
+            editor.create_model(SpuDetailTranslation)
+
+    @staticmethod
+    def _ensure_market_seeds():
+        """TransactionTestCase 在用例间截断全表，迁移种子会被清掉；这里按
+        ``offers/migrations/0006_seed_european_markets.py`` 的字段自愈重建
+        本用例需要的 DE/de-DE/EUR 种子。"""
+        from offers.models import MarketLocale
+
+        currency, _ = Currency.objects.update_or_create(
+            code="EUR",
+            defaults={"name": "Euro", "symbol": "€", "exponent": 2, "is_active": True},
+        )
+        locale, _ = Locale.objects.update_or_create(
+            code="de-DE",
+            defaults={
+                "language_code": "de",
+                "region_code": "DE",
+                "name": "German (Germany)",
+                "native_name": "Deutsch",
+                "is_active": True,
+            },
+        )
+        market, _ = Market.objects.update_or_create(
+            code="DE",
+            defaults={
+                "name": "Germany",
+                "default_locale": "de-DE",
+                "time_zone": "Europe/Berlin",
+                "default_currency": currency,
+                "display_currency_symbol": "$",
+                "is_active": True,
+            },
+        )
+        MarketLocale.objects.update_or_create(
+            market=market,
+            locale=locale,
+            defaults={"is_default": True, "sort_order": 0},
+        )
+        return market, locale, currency
+
+    def setUp(self):
+        self._ensure_translation_table()
+        # TransactionTestCase 会在用例间截断全表，迁移种子（含自营导入商家）
+        # 可能被清掉，这里 get_or_create 兜底。
+        self.merchant, _ = Merchant.objects.get_or_create(
+            slug=IMPORT_FALLBACK_SLUG,
+            defaults={
+                "display_name": IMPORT_FALLBACK_NAME,
+                "merchant_type": Merchant.Type.IMPORT_FALLBACK,
+                "is_system": True,
+            },
+        )
+        self.market, self.locale, self.currency = self._ensure_market_seeds()
+        self.spu, _ = get_or_create_spu_from_source(
+            source_system="joybuy",
+            source_id="detail-i18n-spu",
+            title="Wireless Earbuds Pro",
+        )
+        Spu.objects.filter(pk=self.spu.pk).update(status=Spu.Status.ACTIVE)
+        self.spu.refresh_from_db()
+        self.sku, _ = get_or_create_sku_from_source(
+            spu=self.spu,
+            source_system="joybuy",
+            source_id="detail-i18n-sku",
+            specification={"Colour": "Black"},
+            skip_attribute_validation=True,
+        )
+        offer, _ = import_offer_from_source(
+            sku=self.sku,
+            merchant=self.merchant,
+            market=self.market,
+            currency=self.currency,
+            source_system="joybuy",
+            source_id="detail-i18n-offer",
+            current_price="19.99",
+        )
+        offer.status = Offer.Status.ACTIVE
+        offer.save(update_fields=["status", "updated_at"])
+        self.detail = SpuDetail.objects.create(
+            spu=self.spu,
+            content_sections=[
+                {
+                    "title": "Product Description",
+                    "blocks": [{"type": "paragraph", "text": "Great sound."}],
+                    "images": ["x.webp"],
+                }
+            ],
+            specification_tables=[
+                {
+                    "title": "Technical Specifications",
+                    "columns": ["Item", "Value"],
+                    "rows": [{"name": "Battery", "value": "30 hours"}],
+                }
+            ],
+            specifications=[{"group": "General", "name": "Battery", "value": "30 hours"}],
+            spec_options=[
+                {
+                    "name": "Colour",
+                    "values": [
+                        {
+                            "value": "Black",
+                            "image_url": "black.webp",
+                            "sku_ids": ["detail-i18n-sku"],
+                        }
+                    ],
+                }
+            ],
+            ai_summary="Reviews like the battery life.",
+            ai_summary_title="What buyers say",
+        )
+
+    def _get(self):
+        response = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id}),
+            {"market": "DE", "locale": "de-DE"},
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def _create_translation(self, **overrides):
+        row = {
+            "spu_id": self.spu.pk,
+            "language_code": "de",
+            "content_sections": [
+                {
+                    "title": "Produktbeschreibung",
+                    "blocks": [{"type": "paragraph", "text": "Toller Klang."}],
+                    "images": ["x.webp"],
+                }
+            ],
+            "ai_summary": "Käufer loben die Akkulaufzeit.",
+            "ai_summary_title": "Was Käufer sagen",
+            "source_locale": "en-GB",
+            "source_hash": "hash",
+            "origin": "MACHINE",
+            "specification_tables": [
+                {
+                    "title": "Technische Spezifikationen",
+                    "columns": ["Merkmal", "Wert"],
+                    "rows": [{"name": "Akku", "value": "30 Stunden"}],
+                }
+            ],
+            "specifications": [{"group": "Allgemein", "name": "Akku", "value": "30 Stunden"}],
+            "spec_options": [
+                {
+                    "name": "Farbe",
+                    "values": [
+                        {
+                            "value": "Schwarz",
+                            "image_url": "black.webp",
+                            "sku_ids": ["detail-i18n-sku"],
+                        }
+                    ],
+                }
+            ],
+            "created_at": timezone.now(),
+            "updated_at": timezone.now(),
+        }
+        row.update(overrides)
+        return SpuDetailTranslation.objects.create(**row)
+
+    def test_detail_payload_uses_translation_when_language_hits(self):
+        self._create_translation()
+        data = self._get()
+        self.assertTrue(data["detail_translated"])
+        self.assertEqual(data["detail_language"], "de")
+        self.assertEqual(data["content_sections"][0]["title"], "Produktbeschreibung")
+        self.assertEqual(data["content_sections"][0]["blocks"][0]["text"], "Toller Klang.")
+        table = data["specification_tables"][0]
+        self.assertEqual(table["title"], "Technische Spezifikationen")
+        self.assertEqual(table["rows"][0], {"name": "Akku", "value": "30 Stunden"})
+        self.assertEqual(data["specifications"][0]["name"], "Akku")
+        self.assertEqual(data["spec_options"][0]["name"], "Farbe")
+        # spec_options 译文的 sku_ids 仍映射到本地 SKU public_id。
+        self.assertEqual(data["spec_options"][0]["values"][0]["sku_ids"], [str(self.sku.public_id)])
+        self.assertEqual(data["ai_summary_title"], "Was Käufer sagen")
+        # SKU 规格文本走 SKU 译文，canonical 保持源语言。
+        self.assertEqual(data["skus"][0]["canonical_specification"], {"Colour": "Black"})
+
+    def test_detail_payload_falls_back_to_source_without_translation(self):
+        data = self._get()
+        self.assertFalse(data["detail_translated"])
+        self.assertIsNone(data["detail_language"])
+        self.assertEqual(data["content_sections"][0]["title"], "Product Description")
+        table = data["specification_tables"][0]
+        self.assertEqual(table["title"], "Technical Specifications")
+        self.assertEqual(table["rows"][0], {"name": "Battery", "value": "30 hours"})
+        self.assertEqual(data["spec_options"][0]["name"], "Colour")
+        self.assertEqual(data["ai_summary_title"], "What buyers say")
+
+    def test_partial_translation_keeps_source_for_empty_fields(self):
+        self._create_translation(
+            content_sections=[],
+            specification_tables=None,
+            specifications=None,
+            spec_options=None,
+            ai_summary="",
+            ai_summary_title="",
+        )
+        data = self._get()
+        # 命中译文行 → 标记为 true；空字段逐字段保留源数据，不丢内容。
+        self.assertTrue(data["detail_translated"])
+        self.assertEqual(data["content_sections"][0]["title"], "Product Description")
+        self.assertEqual(data["specification_tables"][0]["rows"][0]["name"], "Battery")
+        self.assertEqual(data["spec_options"][0]["name"], "Colour")
+        self.assertEqual(data["ai_summary_title"], "What buyers say")

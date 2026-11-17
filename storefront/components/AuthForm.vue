@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { navigateTo, useHead } from '#imports'
+import { useLocale } from '../composables/useLocale'
+
+const { t } = useLocale()
 
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 
@@ -81,11 +84,13 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
           <span class="social-btn__dot social-btn__dot--g">G</span> Google
         </button>
       </div>
-      <p class="social-divider"><span>or use email</span></p>
+      <p class="social-divider">
+        <span>{{ t('auth.orUseEmail') }}</span>
+      </p>
 
       <form class="auth-form" novalidate @submit.prevent="submit">
         <div class="auth-field">
-          <label for="auth-identifier">Email address</label>
+          <label for="auth-identifier">{{ t('auth.emailAddress') }}</label>
           <input
             id="auth-identifier"
             v-model="email"
@@ -97,7 +102,7 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
         </div>
 
         <div class="auth-field">
-          <label for="auth-password">Password</label>
+          <label for="auth-password">{{ t('auth.password') }}</label>
           <input
             id="auth-password"
             v-model="password"
@@ -120,14 +125,16 @@ useHead(() => ({ title: isRegister.value ? 'Create account' : 'Sign in' }))
       </form>
 
       <p v-if="isRegister" class="auth-switch">
-        Already have an account? <NuxtLink to="/auth/login">Sign in</NuxtLink>
+        {{ t('auth.alreadyHaveAccount') }}
+        <NuxtLink to="/auth/login">{{ t('header.signIn') }}</NuxtLink>
       </p>
       <p v-else class="auth-switch">
-        New to Joybuy? <NuxtLink to="/auth/register">Create an account</NuxtLink>
+        {{ t('auth.newToJoybuy') }}
+        <NuxtLink to="/auth/register">{{ t('auth.createAccount') }}</NuxtLink>
       </p>
 
       <p v-if="!isRegister" class="auth-switch">
-        <NuxtLink to="/auth/forgot-password">Forgot your password?</NuxtLink>
+        <NuxtLink to="/auth/forgot-password">{{ t('auth.forgotPassword') }}</NuxtLink>
       </p>
     </section>
   </AppContainer>

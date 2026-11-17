@@ -1,10 +1,36 @@
 from django.http import JsonResponse
 
-from catalog.models import LocalCategory, ProductSearchDocument
+from catalog.models import CategoryMapping, LocalCategory, ProductSearchDocument
 from catalog.search_services import SearchParamsInvalid, search_documents
 from offers.market_services import offer_market_chain, resolve_market_context
 
 PAGE_SIZE = 24
+
+
+def root_channel_codes() -> dict:
+    """depth=0 本地一级 → 频道 code（CategoryMapping 反查 ``minihome:<code>``）。
+
+    一级 ↔ 频道不是一一对应：家居生活同时挂着 Home-Living / Joymart /
+    World-Foods 三个频道，电子产品挂着 Electronics / TV。一个一级对多个
+    频道时取 source_id 排序（casefold）最小的频道——当前数据下正好是各
+    一级的主频道（Home-Living < Joymart < World-Foods、Beauty <
+    Everyday-Essentials、Electronics < TV）。没有 ``minihome:`` 映射的
+    一级（computers-accessories、outdoor-sports）不在返回值里，前端按
+    约定降级跳 ``/c/<slug>``。
+    """
+
+    grouped: dict[int, list[str]] = {}
+    mappings = CategoryMapping.objects.filter(
+        source_category__source_id__startswith="minihome:",
+        local_category__depth=0,
+    ).select_related("source_category")
+    for mapping in mappings:
+        code = mapping.source_category.source_id.removeprefix("minihome:")
+        grouped.setdefault(mapping.local_category_id, []).append(code)
+    return {
+        local_category_id: sorted(codes, key=str.casefold)[0]
+        for local_category_id, codes in grouped.items()
+    }
 
 
 def serialize_category(category: LocalCategory, locale=None) -> dict:
@@ -53,9 +79,12 @@ def category_tree(request):
     children_by_parent = {}
     for item in children:
         children_by_parent.setdefault(item.parent_id, []).append(item)
+    channel_codes = root_channel_codes()
     payload = []
     for root in roots:
         data = serialize_category(root, locale)
+        # 频道落地页（/minihome/<code>）入口：只有 depth=0 行带 code。
+        data["channel_code"] = channel_codes.get(root.pk)
         data["children"] = [
             serialize_category(child, locale) for child in children_by_parent.get(root.pk, [])
         ]

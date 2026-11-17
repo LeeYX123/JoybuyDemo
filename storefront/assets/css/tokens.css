@@ -77,7 +77,9 @@
   --shadow-overlay: 0 0.5rem 2rem rgb(23 32 42 / 16%);
 
   /* ---- Layout ---- */
-  --container-max: 90rem; /* 1440px */
+  /* 实测 joybuy.co.uk 商品详情：内容区 1512px（1600 视口标题 x=44、1920 视口
+     居中 left=204）；容器 = 1512 + 2×48 padding。 */
+  --container-max: 100.5rem; /* 1608px */
   --container-pad: var(--space-4);
   --header-height: 4rem;
   --nav-height: 2.75rem;
@@ -112,7 +114,8 @@
 
 @media (min-width: 80rem) {
   :root {
-    --container-pad: var(--space-8);
+    /* Joybuy 实测：≥1280 内容区两侧 48px（1440 视口标题 x=48）。 */
+    --container-pad: 3rem;
   }
 }
 

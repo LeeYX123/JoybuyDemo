@@ -45,7 +45,7 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
 </script>
 
 <template>
-  <section class="cms-link-grid" :aria-label="heading || 'Highlights'">
+  <section class="cms-link-grid" :aria-label="heading || t('cms.highlights')">
     <h2 v-if="heading" class="cms-link-grid__title">{{ heading }}</h2>
     <!-- Category discovery cards: name top-left, product image below. -->
     <ul
@@ -87,7 +87,7 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
       v-else-if="props.payload.variant === 'brand_logos'"
       class="brand-marquee"
       role="list"
-      :aria-label="heading || 'Featured brands'"
+      :aria-label="heading || t('cms.featuredBrands')"
     >
       <div class="brand-marquee__track">
         <ul class="brand-marquee__segment">

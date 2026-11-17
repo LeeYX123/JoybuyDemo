@@ -1,12 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from '#imports'
 
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 import { useCategoryTree } from '../composables/useCategoryTree'
 import { useLocale } from '../composables/useLocale'
 import { MARKET_OPTIONS, useMarketLocale } from '../composables/useMarketLocale'
+import { useMerchantEntry } from '../composables/useMerchantEntry'
+import { categoryHref } from '../utils/categoryLinks'
 
+import AddressDrawer from './AddressDrawer.vue'
 import AppCategoryPanel from './AppCategoryPanel.vue'
 
 const props = defineProps({
@@ -53,18 +56,30 @@ function showNotice(index) {
 
 onMounted(() => {
   noticeTimer = setInterval(() => showNotice(noticeIndex.value + 1), 6000)
+  document.addEventListener('pointerdown', handleDocumentPointerDown, true)
+  document.addEventListener('keydown', handleDocumentKeydown)
+  const storedSelection = readStoredDeliverySelection()
+  if (storedSelection) deliverySelection.value = storedSelection
+  if (isAuthenticated.value) {
+    loadDeliveryAddresses()
+    loadSellerApplicationStatus({ force: true })
+  }
 })
 
 onBeforeUnmount(() => {
   if (noticeTimer) clearInterval(noticeTimer)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
+  document.removeEventListener('keydown', handleDocumentKeydown)
 })
 
 // Category row: the 11 standard categories from the API (requirement 1-1),
-// spread edge to edge like the real header.
+// spread edge to edge like the real header. Roots with a channel code land on
+// the channel page (/minihome/<code>, joybuy minihome parity); the rest keep
+// the /c/<slug> results page.
 const items = computed(() =>
   categories.value.map((category) => ({
     label: categoryName(category),
-    to: `/c/${category.slug}`,
+    to: categoryHref(category),
   })),
 )
 
@@ -72,7 +87,55 @@ const formattedCartCount = computed(() => (props.cartCount > 99 ? '99+' : String
 
 const panelOpen = ref(false)
 const accountMenuOpen = ref(false)
+const accountMenuRef = ref(null)
+const accountTrigger = ref(null)
 let panelCloseTimer = null
+
+// Outside-click dismissal for the account dropdown. The listener is
+// registered on the document in the capture phase so a click on any element
+// that swallows bubbling (or a nested overlay) still closes the menu.
+// Root cause of the reported bug: the menu was only toggled by its trigger,
+// with no document listener and no Escape handler, so it stayed open forever.
+function handleDocumentPointerDown(event) {
+  if (!accountMenuOpen.value) return
+  const root = accountMenuRef.value
+  if (root && !root.contains(event.target)) accountMenuOpen.value = false
+}
+
+function handleDocumentKeydown(event) {
+  if (event.key !== 'Escape' || !accountMenuOpen.value) return
+  accountMenuOpen.value = false
+  accountTrigger.value?.focus?.()
+}
+
+function toggleAccountMenu() {
+  accountMenuOpen.value = !accountMenuOpen.value
+  // Re-read the seller status every time the menu opens: the apply-shop page
+  // can change it (submitted / re-applied) without remounting the header.
+  if (accountMenuOpen.value) loadSellerApplicationStatus({ force: true })
+}
+
+// ---------------------------------------------------------------------------
+// Seller entry in the avatar dropdown ("Sell on Joybuy" / 申请开店).
+// Shared with the account hub and sidebar: no application or REJECTED -> apply
+// link; PENDING -> "application under review" link; APPROVED -> "Merchant
+// Center" action that swaps the buyer session for the merchant staff session
+// (POST /api/v1/account/merchant-console-session) and jumps to merchant-web.
+// Any status failure degrades to the plain apply link so the dropdown never
+// breaks when the endpoint is unavailable.
+// ---------------------------------------------------------------------------
+const {
+  label: sellerMenuLabel,
+  isConsoleEntry: sellerIsConsole,
+  switching: sellerSwitching,
+  loadStatus: loadSellerApplicationStatus,
+  openMerchantConsole,
+} = useMerchantEntry()
+
+async function openSellerEntry() {
+  accountMenuOpen.value = false
+  await openMerchantConsole()
+}
 
 // The categories panel opens on hover over the trigger (real-site behaviour);
 // a short close delay lets the pointer travel to the panel without flicker.
@@ -105,6 +168,152 @@ async function signOut() {
 
 const accountLabel = computed(() => account.value?.email || account.value?.phone || '')
 
+// ---------------------------------------------------------------------------
+// Deliver-to drawer (real-site parity: right-hand drawer from the header pin).
+// The drawer edits a DRAFT selection; nothing changes in the header until the
+// user presses Apply. The committed selection is either a saved address or a
+// postcode (mutually exclusive) and is persisted in localStorage. There is no
+// "current delivery address" field in the buyer profile API, so the committed
+// choice is resolved against GET /api/v1/addresses and falls back to the
+// address flagged is_default.
+// ---------------------------------------------------------------------------
+const DELIVERY_ADDRESS_STORAGE_KEY = 'joybuy:delivery-address'
+const DEFAULT_DELIVERY_POSTCODE = 'SW1A 1AA'
+
+const deliveryDrawerOpen = ref(false)
+const deliveryAddresses = ref([])
+const deliveryAddressesLoading = ref(false)
+const deliveryAddressesError = ref(false)
+// { mode: '' | 'address' | 'postcode', addressId: string, postcode: string }
+const deliverySelection = ref({ mode: '', addressId: '', postcode: '' })
+
+const appliedAddress = computed(() =>
+  deliveryAddresses.value.find(
+    (address) => address.public_id === deliverySelection.value.addressId,
+  ),
+)
+
+const selectedAddressId = computed(() =>
+  deliverySelection.value.mode === 'address' ? deliverySelection.value.addressId : '',
+)
+
+const deliveryPostcode = computed(() => {
+  const selection = deliverySelection.value
+  if (selection.mode === 'postcode' && selection.postcode) return selection.postcode
+  if (selection.mode === 'address' && appliedAddress.value?.postcode) {
+    return appliedAddress.value.postcode
+  }
+  return (
+    deliveryAddresses.value.find((address) => address.is_default)?.postcode ||
+    deliveryAddresses.value[0]?.postcode ||
+    DEFAULT_DELIVERY_POSTCODE
+  )
+})
+
+function readStoredDeliverySelection() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(DELIVERY_ADDRESS_STORAGE_KEY)
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') {
+        const mode = parsed.mode === 'postcode' ? 'postcode' : 'address'
+        return {
+          mode,
+          addressId: mode === 'address' ? String(parsed.addressId || '') : '',
+          postcode: mode === 'postcode' ? String(parsed.postcode || '') : '',
+        }
+      }
+    } catch {
+      // Legacy value: the raw string was just the address public_id.
+    }
+    return { mode: 'address', addressId: raw, postcode: '' }
+  } catch {
+    return null
+  }
+}
+
+function persistDeliverySelection(selection) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      DELIVERY_ADDRESS_STORAGE_KEY,
+      JSON.stringify({ version: 1, ...selection }),
+    )
+  } catch {
+    // Private-mode storage can throw; the in-memory selection still works.
+  }
+}
+
+function adoptDefaultDeliveryAddress() {
+  if (deliverySelection.value.mode) return
+  const fallback =
+    deliveryAddresses.value.find((address) => address.is_default) || deliveryAddresses.value[0]
+  if (!fallback) return
+  deliverySelection.value = { mode: 'address', addressId: fallback.public_id, postcode: '' }
+  persistDeliverySelection(deliverySelection.value)
+}
+
+async function loadDeliveryAddresses() {
+  if (!isAuthenticated.value) {
+    deliveryAddresses.value = []
+    return
+  }
+  deliveryAddressesLoading.value = true
+  deliveryAddressesError.value = false
+  try {
+    const data = await $fetch('/api/v1/addresses', { credentials: 'include' })
+    deliveryAddresses.value = Array.isArray(data?.addresses) ? data.addresses : []
+    if (deliverySelection.value.mode === 'address') {
+      const selectionIsValid = deliveryAddresses.value.some(
+        (address) => address.public_id === deliverySelection.value.addressId,
+      )
+      if (!selectionIsValid) {
+        deliverySelection.value = { mode: '', addressId: '', postcode: '' }
+        adoptDefaultDeliveryAddress()
+      }
+    } else {
+      adoptDefaultDeliveryAddress()
+    }
+  } catch {
+    deliveryAddressesError.value = true
+  } finally {
+    deliveryAddressesLoading.value = false
+  }
+}
+
+function openDeliveryDrawer() {
+  accountMenuOpen.value = false
+  deliveryDrawerOpen.value = true
+  loadDeliveryAddresses()
+}
+
+// The drawer's Apply button is the commit action: persist the draft, update
+// the header and close. Clicking an address alone only mutates drawer state.
+function applyDeliverySelection(selection) {
+  const mode = selection?.mode === 'postcode' ? 'postcode' : 'address'
+  deliverySelection.value = {
+    mode,
+    addressId: mode === 'address' ? selection.addressId || '' : '',
+    postcode: mode === 'postcode' ? selection.postcode || '' : '',
+  }
+  persistDeliverySelection(deliverySelection.value)
+  deliveryDrawerOpen.value = false
+}
+
+// Refresh when the buyer signs in/out in another tab or after login.
+watch(isAuthenticated, (authenticated) => {
+  if (authenticated) {
+    loadDeliveryAddresses()
+    loadSellerApplicationStatus({ force: true })
+  } else {
+    deliveryAddresses.value = []
+    deliveryAddressesError.value = false
+    loadSellerApplicationStatus({ force: true })
+  }
+})
+
 // Logo asset lives in the Nuxt public dir (storefront/public/images).
 const brandLogoUrl = '/images/logo.png'
 </script>
@@ -114,8 +323,8 @@ const brandLogoUrl = '/images/logo.png'
     <!-- Black notice strip: rotating service promises + locale switch. -->
     <div class="top-strip">
       <div class="top-strip__inner">
-        <div class="top-strip__region" aria-label="Country and language">
-          <label class="visually-hidden" for="market-select">Country</label>
+        <div class="top-strip__region" :aria-label="t('header.countryLang')">
+          <label class="visually-hidden" for="market-select">{{ t('header.country') }}</label>
           <select
             id="market-select"
             :value="market"
@@ -127,7 +336,7 @@ const brandLogoUrl = '/images/logo.png'
             </option>
           </select>
           <span aria-hidden="true">|</span>
-          <label class="visually-hidden" for="locale-select">Language</label>
+          <label class="visually-hidden" for="locale-select">{{ t('header.language') }}</label>
           <select
             id="locale-select"
             :value="localeCode"
@@ -143,7 +352,7 @@ const brandLogoUrl = '/images/logo.png'
           <button
             class="top-strip__arrow"
             type="button"
-            aria-label="Previous notice"
+            :aria-label="t('header.prevNotice')"
             @click="showNotice(noticeIndex - 1)"
           >
             ‹
@@ -152,7 +361,7 @@ const brandLogoUrl = '/images/logo.png'
           <button
             class="top-strip__arrow"
             type="button"
-            aria-label="Next notice"
+            :aria-label="t('header.nextNotice')"
             @click="showNotice(noticeIndex + 1)"
           >
             ›
@@ -164,7 +373,7 @@ const brandLogoUrl = '/images/logo.png'
 
     <div class="site-header__inner">
       <div class="site-header__top">
-        <NuxtLink class="brand" to="/" aria-label="Joybuy home">
+        <NuxtLink class="brand" to="/" :aria-label="t('header.joybuyHome')">
           <!-- Real Joybuy wordmark asset, hosted locally (no CDN). Bound at
                runtime so the bundler does not turn it into a module import. -->
           <img class="brand__logo" :src="brandLogoUrl" alt="" width="110" height="30" />
@@ -205,7 +414,7 @@ const brandLogoUrl = '/images/logo.png'
             :placeholder="t('header.searchPlaceholder')"
             autocomplete="off"
           />
-          <button class="search__submit" type="submit" aria-label="Search">
+          <button class="search__submit" type="submit" :aria-label="t('header.search')">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
               <path
                 d="M10.5 3a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm4.8 9.3 5.7 5.7-1.4 1.4-5.7-5.7 1.4-1.4Z"
@@ -219,7 +428,14 @@ const brandLogoUrl = '/images/logo.png'
         </form>
 
         <nav class="account-nav" :aria-label="t('header.accountAndCart')">
-          <button class="account-nav__deliver" type="button">
+          <button
+            class="account-nav__deliver"
+            type="button"
+            aria-haspopup="dialog"
+            :aria-expanded="deliveryDrawerOpen"
+            :aria-label="`${t('header.deliverTo')} ${deliveryPostcode}`"
+            @click="openDeliveryDrawer"
+          >
             <svg
               class="account-nav__deliver-icon"
               viewBox="0 0 24 24"
@@ -232,16 +448,20 @@ const brandLogoUrl = '/images/logo.png'
                 fill="currentColor"
               />
             </svg>
-            <span class="account-nav__deliver-text">{{ t('header.deliverTo') }} SW1A 1AA</span>
+            <span class="account-nav__deliver-text"
+              >{{ t('header.deliverTo') }} {{ deliveryPostcode }}</span
+            >
           </button>
 
-          <div v-if="isAuthenticated" class="account-menu">
+          <div v-if="isAuthenticated" ref="accountMenuRef" class="account-menu">
             <button
+              ref="accountTrigger"
               class="icon-button"
               type="button"
+              aria-haspopup="true"
               :aria-label="t('header.myAccount')"
               :aria-expanded="accountMenuOpen"
-              @click="accountMenuOpen = !accountMenuOpen"
+              @click="toggleAccountMenu"
             >
               <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
                 <path
@@ -252,6 +472,25 @@ const brandLogoUrl = '/images/logo.png'
             </button>
             <div v-if="accountMenuOpen" class="account-menu__panel">
               <p class="account-menu__name">{{ accountLabel }}</p>
+              <NuxtLink
+                v-if="!sellerIsConsole"
+                class="account-menu__item"
+                to="/account/apply-shop"
+                :aria-label="sellerMenuLabel"
+                @click="accountMenuOpen = false"
+              >
+                {{ sellerMenuLabel }}
+              </NuxtLink>
+              <button
+                v-else
+                class="account-menu__item"
+                type="button"
+                :aria-label="sellerMenuLabel"
+                :disabled="sellerSwitching"
+                @click="openSellerEntry"
+              >
+                {{ sellerSwitching ? t('merchantEntry.opening') : sellerMenuLabel }}
+              </button>
               <NuxtLink
                 class="account-menu__item"
                 to="/account/orders"
@@ -318,6 +557,21 @@ const brandLogoUrl = '/images/logo.png'
         </ul>
       </nav>
     </div>
+
+    <AddressDrawer
+      :open="deliveryDrawerOpen"
+      :authenticated="isAuthenticated"
+      :addresses="deliveryAddresses"
+      :selected-id="selectedAddressId"
+      :applied-mode="deliverySelection.mode"
+      :applied-postcode="deliverySelection.mode === 'postcode' ? deliverySelection.postcode : ''"
+      :country="market"
+      :loading="deliveryAddressesLoading"
+      :error="deliveryAddressesError"
+      @close="deliveryDrawerOpen = false"
+      @apply="applyDeliverySelection"
+      @country-change="setMarket"
+    />
   </header>
 </template>
 

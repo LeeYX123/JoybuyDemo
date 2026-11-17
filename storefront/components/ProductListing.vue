@@ -17,12 +17,34 @@ const props = defineProps({
 import { useCategoryTree } from '../composables/useCategoryTree'
 import { useLocale } from '../composables/useLocale'
 
+import CategoryTileCarousel from './CategoryTileCarousel.vue'
+import { resolveCategoryContext } from '../utils/categoryContext'
+import { categoryHref } from '../utils/categoryLinks'
+
 const route = useRoute()
 const router = useRouter()
 
 // Sidebar facets come from the shared category tree (11 standard roots).
 const { categories } = useCategoryTree()
-const { categoryName } = useLocale()
+const { t, categoryName } = useLocale()
+
+// Category mode resolves the current L2 to its parent so the page can show a
+// trail (首页 / 一级 / 二级) plus the sibling tiles of that parent.
+const categoryContext = computed(() =>
+  props.mode === 'category'
+    ? resolveCategoryContext(categories.value, props.slug)
+    : { root: null, child: null },
+)
+const currentRoot = computed(() => categoryContext.value.root)
+// Only set in the L2 view; the L1 view keeps the sidebar collapsed and the
+// selection on the root itself.
+const currentChild = computed(() => categoryContext.value.child)
+
+// The filter list only ever contains the 11 roots: an L2 page highlights its
+// parent root (never expands the children in the sidebar).
+function isActiveRoot(category) {
+  return category.slug === props.slug || category.slug === currentRoot.value?.slug
+}
 
 // /s?k= is the spec'd discovery entry (docs/12 §4); /search?q= stays compatible.
 const searchText = computed(() => String(route.query.q || route.query.k || ''))
@@ -51,18 +73,21 @@ const totalPages = computed(() => data.value?.total_pages ?? 0)
 
 const heading = computed(() => {
   if (props.mode === 'category') {
-    return data.value?.items?.length ? `Category: ${props.slug}` : `Category: ${props.slug}`
+    // Localised category name (L2 when given, otherwise the L1); the slug is
+    // only a fallback for unknown ids.
+    const node = currentChild.value || currentRoot.value
+    return node ? categoryName(node) : props.slug
   }
   return searchText.value ? `Search: ${searchText.value}` : 'Browse all products'
 })
 
-const sortOptions = [
-  { value: 'relevance', label: 'Relevance' },
-  { value: 'price_desc', label: 'Price: High to low' },
-  { value: 'price_asc', label: 'Price: Low to high' },
-  { value: 'rating_desc', label: 'Top rated' },
-  { value: 'newest', label: 'Newest' },
-]
+const sortOptions = computed(() => [
+  { value: 'relevance', label: t('listing.relevance') },
+  { value: 'price_desc', label: t('listing.priceHighLow') },
+  { value: 'price_asc', label: t('listing.priceLowHigh') },
+  { value: 'rating_desc', label: t('listing.topRated') },
+  { value: 'newest', label: t('listing.newest') },
+])
 
 function updateQuery(patch) {
   router.push({ query: { ...route.query, page: undefined, ...patch } })
@@ -72,7 +97,9 @@ function updateQuery(patch) {
 const sortOpen = ref(false)
 const sortRoot = ref(null)
 const activeLabel = computed(
-  () => sortOptions.find((option) => option.value === activeSort.value)?.label || 'Relevance',
+  () =>
+    sortOptions.value.find((option) => option.value === activeSort.value)?.label ||
+    t('listing.relevance'),
 )
 
 function pickSort(value) {
@@ -113,23 +140,27 @@ useHead(() => ({ title: heading.value }))
       <div class="listing-layout">
         <!-- Left filter sidebar (joybuy /s?k= spec: 234px column). -->
         <aside class="listing-sidebar">
+          <p class="listing-sidebar__title">{{ t('listing.filters') }}</p>
           <section class="filter-card">
-            <h2 class="filter-card__title">Category</h2>
+            <h2 class="filter-card__title">{{ t('listing.category') }}</h2>
             <ul class="filter-card__list">
               <li v-for="category in categories" :key="category.slug">
                 <NuxtLink
                   class="filter-card__item"
-                  :class="{ 'filter-card__item--active': category.slug === props.slug }"
+                  :class="{ 'filter-card__item--active': isActiveRoot(category) }"
                   :to="`/s?category=${category.slug}`"
                 >
                   {{ categoryName(category) }}
                 </NuxtLink>
               </li>
             </ul>
+            <!-- The filter list stays flat: opening an L2 (from the header
+                 dropdown or the tile row) keeps the L1 selected instead of
+                 expanding the children here — the tile row is the L2 picker. -->
           </section>
 
           <section class="filter-card">
-            <h2 class="filter-card__title">Price</h2>
+            <h2 class="filter-card__title">{{ t('listing.price') }}</h2>
             <form class="filter-card__price" @submit="applyPriceFilter">
               <input
                 name="min_price"
@@ -137,7 +168,7 @@ useHead(() => ({ title: heading.value }))
                 min="0"
                 step="0.01"
                 :value="minPrice"
-                aria-label="Min price"
+                :aria-label="t('listing.price') + ' ↓'"
               />
               <span aria-hidden="true">–</span>
               <input
@@ -146,24 +177,48 @@ useHead(() => ({ title: heading.value }))
                 min="0"
                 step="0.01"
                 :value="maxPrice"
-                aria-label="Max price"
+                :aria-label="t('listing.price') + ' ↑'"
               />
-              <button type="submit">Go</button>
+              <button type="submit">{{ t('listing.apply') }}</button>
             </form>
           </section>
         </aside>
 
         <div class="listing-main">
+          <!-- Category mode: trail (首页 / 一级 / 二级) + one carousel row of
+               the sibling tiles of the same parent, current one highlighted. -->
+          <template v-if="props.mode === 'category' && currentRoot">
+            <nav class="listing-breadcrumb" :aria-label="t('categoryStrip.label')">
+              <NuxtLink class="listing-breadcrumb__link" to="/">
+                {{ t('breadcrumb.home') }}
+              </NuxtLink>
+              <span class="listing-breadcrumb__sep" aria-hidden="true">/</span>
+              <!-- 一级回频道落地页（有频道 code 时），无 code 降级 /c/<slug>。 -->
+              <NuxtLink class="listing-breadcrumb__link" :to="categoryHref(currentRoot)">
+                {{ categoryName(currentRoot) }}
+              </NuxtLink>
+              <template v-if="currentChild">
+                <span class="listing-breadcrumb__sep" aria-hidden="true">/</span>
+                <span class="listing-breadcrumb__current">{{ categoryName(currentChild) }}</span>
+              </template>
+            </nav>
+            <CategoryTileCarousel
+              v-if="currentRoot.children?.length"
+              class="listing-category-strip"
+              :items="currentRoot.children"
+              :active-slug="props.slug"
+            />
+          </template>
           <header class="listing-head">
             <h1>{{ heading }}</h1>
             <p class="listing-head__count" role="status">
-              {{ total }} product{{ total === 1 ? '' : 's' }}
+              {{ total }} {{ t('listing.productsSuffix') }}
             </p>
           </header>
 
           <div class="listing-toolbar">
             <div ref="sortRoot" class="sort-control">
-              <span class="sort-control__label">Sort by:</span>
+              <span class="sort-control__label">{{ t('listing.sortBy') }}</span>
               <!-- Custom dropdown (native select popups are OS-rendered blue):
                    white menu, grey hover, dark-border trigger. -->
               <button
@@ -195,7 +250,7 @@ useHead(() => ({ title: heading.value }))
           </div>
 
           <div v-if="error" class="listing-state" role="alert">
-            <p>Could not load products. Please try again shortly.</p>
+            <p>{{ t('listing.loadError') }}</p>
           </div>
 
           <ul v-else-if="items.length > 0" class="listing-grid">
@@ -206,13 +261,13 @@ useHead(() => ({ title: heading.value }))
 
           <div v-else-if="status !== 'pending'" class="listing-state" role="status">
             <p>
-              No products match your filters yet. Try clearing the price range or another search.
+              {{ t('listing.emptyResults') }}
             </p>
           </div>
 
-          <nav v-if="totalPages > 1" class="pagination" aria-label="Pagination">
+          <nav v-if="totalPages > 1" class="pagination" :aria-label="t('pagination.label')">
             <button type="button" :disabled="activePage <= 1" @click="goToPage(activePage - 1)">
-              Previous
+              {{ t('pagination.previous') }}
             </button>
             <span aria-current="page">Page {{ activePage }} of {{ totalPages }}</span>
             <button
@@ -220,7 +275,7 @@ useHead(() => ({ title: heading.value }))
               :disabled="activePage >= totalPages"
               @click="goToPage(activePage + 1)"
             >
-              Next
+              {{ t('pagination.next') }}
             </button>
           </nav>
         </div>
@@ -249,6 +304,42 @@ useHead(() => ({ title: heading.value }))
   margin-block: 0;
 }
 
+/* Category trail: 首页 / 一级 / 二级 (current one is plain text). */
+.listing-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 0 var(--space-3);
+  font-size: 0.875rem;
+  color: var(--colour-text-secondary);
+}
+
+.listing-breadcrumb__link {
+  color: var(--colour-text-secondary);
+  text-decoration: none;
+}
+
+.listing-breadcrumb__link:hover {
+  color: var(--colour-text);
+  text-decoration: underline;
+}
+
+.listing-breadcrumb__sep {
+  color: var(--colour-text-secondary);
+}
+
+.listing-breadcrumb__current {
+  color: var(--colour-text);
+  font-weight: 500;
+}
+
+/* Sibling category tiles of the current parent (same tile language as the
+ * header dropdown); the open category keeps the white + outline state. */
+.listing-category-strip {
+  padding-block: 0 var(--space-5);
+}
+
 .listing-sidebar {
   display: flex;
   flex-direction: column;
@@ -256,6 +347,16 @@ useHead(() => ({ title: heading.value }))
   align-self: start;
   position: sticky;
   top: calc(var(--header-height) + 40px + var(--space-4));
+  /* The carousel row sits in the right column, so the filter column starts at
+   * the top of the page like the source site. */
+  padding-block: var(--space-5) 0;
+}
+
+.listing-sidebar__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: var(--font-weight-bold);
+  color: var(--colour-text);
 }
 
 .filter-card {

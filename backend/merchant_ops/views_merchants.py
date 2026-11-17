@@ -321,8 +321,10 @@ class AdminMerchantDetailView(OpsAPIView):
                         reason="订单未处理超过设定天数，调整自动封店天数后立即封店",
                     )
 
-        # 折扣设置（WP-42 文档管理端 §1）：按商家统一设置，百分数（70 = 70%）。
-        # 文档拍板：不做区间校验、不做默认值兜底，设多少按多少算。
+        # 折扣设置（WP-42 文档管理端 §1）：按商家统一设置，百分数（减免百分比）。
+        # 2026-11-10 最终口径：成本价 = 零售价 × (1 - 折扣%)，向上取整到分；
+        # 未设置折扣视为减免 0%（成本价 = 零售价）。取代 2026-11-08 的
+        # 「平台成本价 × (1 - 折扣%)」口径。文档拍板：不做区间校验、不做默认值兜底。
         discount_changed = False
         for field in ("discount_rate", "activity_discount_rate"):
             if field not in payload:
@@ -338,13 +340,18 @@ class AdminMerchantDetailView(OpsAPIView):
 
                     raise StaffApiError(
                         business_code="DISCOUNT_INVALID",
-                        message=f"{field} 必须是数字（百分数，70 表示 70%）。",
+                        message=f"{field} 必须是数字（百分数，20 表示成本价减免 20%）。",
                         status_code=400,
                     ) from exc
                 setattr(merchant, field, rate)
             discount_changed = True
+        repriced_offers = 0
         if discount_changed:
             merchant.save(update_fields=["discount_rate", "activity_discount_rate", "updated_at"])
+            # 改折扣后，本店已上架商品的成本价要跟着重算（不能停在上架时的快照）。
+            from merchant_ops.services import reprice_listed_offers
+
+            repriced_offers = reprice_listed_offers(merchant=merchant)
 
         record_audit(
             request=request,
@@ -365,6 +372,7 @@ class AdminMerchantDetailView(OpsAPIView):
             },
         )
         payload_out = _merchant_payload(merchant)
+        payload_out["repriced_offers"] = repriced_offers
         if wallet_entry is not None:
             payload_out["wallet_entry"] = {
                 "id": str(wallet_entry.public_id),

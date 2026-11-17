@@ -165,7 +165,9 @@ onMounted(load)
         <p>订单状态只有待处理、已发货、已完成三种；物流节点是履约进度，不是第四种状态。</p>
       </div>
       <div class="page-intro__actions">
-        <button type="button" class="btn btn--sm" @click="exportCsv">导出当前范围</button>
+        <button type="button" class="btn btn--sm export-btn" @click="exportCsv">
+          导出当前范围
+        </button>
       </div>
     </div>
 
@@ -195,61 +197,67 @@ onMounted(load)
           止
           <input v-model="state.end" type="date" />
         </label>
-        <button type="submit" class="btn btn--primary">查询</button>
-        <button type="button" class="btn" @click="resetFilters">重置</button>
+        <div class="filter-actions">
+          <button type="submit" class="btn btn--primary">查询</button>
+          <button type="button" class="btn" @click="resetFilters">重置</button>
+        </div>
       </form>
     </div>
 
     <div class="card">
       <div class="card__body">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
-        <table v-else-if="state.items.length" class="data-table">
-          <thead>
-            <tr>
-              <th>订单号</th>
-              <th>商品</th>
-              <th>订单金额</th>
-              <th>发货成本</th>
-              <th>状态</th>
-              <th>下单时间</th>
-              <th class="actions-col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in state.items" :key="row.id">
-              <td class="mono">{{ row.id.slice(0, 8) }}</td>
-              <td>
-                <div class="cell-strong">{{ row.title || '—' }}</div>
-                <div class="cell-sub">× {{ row.quantity }}</div>
-              </td>
-              <td class="num">¥ {{ row.items_total }}</td>
-              <td class="num">¥ {{ row.cost_total }}</td>
-              <td>
-                <span
-                  class="tag"
-                  :class="{
-                    'tag--warn': row.status === 'PENDING',
-                    'tag--ok': row.status === 'COMPLETED',
-                  }"
-                >
-                  {{ STATUS_LABELS[row.status] || row.status }}
-                </span>
-              </td>
-              <td>{{ fmtDate(row.created_at) }}</td>
-              <td class="actions-col">
-                <button type="button" class="btn btn--sm" @click="openDetail(row)">查看详情</button>
-                <button
-                  v-if="row.can_ship"
-                  type="button"
-                  class="btn btn--sm btn--primary"
-                  @click="shipFromRow(row)"
-                >
-                  发货
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else-if="state.items.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>订单号</th>
+                <th>商品</th>
+                <th>订单金额</th>
+                <th>发货成本</th>
+                <th>状态</th>
+                <th>下单时间</th>
+                <th class="actions-col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in state.items" :key="row.id">
+                <td class="mono">{{ row.id.slice(0, 8) }}</td>
+                <td>
+                  <div class="cell-strong">{{ row.title || '—' }}</div>
+                  <div class="cell-sub">× {{ row.quantity }}</div>
+                </td>
+                <td class="num">¥ {{ row.items_total }}</td>
+                <td class="num">¥ {{ row.cost_total }}</td>
+                <td>
+                  <span
+                    class="tag"
+                    :class="{
+                      'tag--warn': row.status === 'PENDING',
+                      'tag--ok': row.status === 'COMPLETED',
+                    }"
+                  >
+                    {{ STATUS_LABELS[row.status] || row.status }}
+                  </span>
+                </td>
+                <td>{{ fmtDate(row.created_at) }}</td>
+                <td class="actions-col">
+                  <button type="button" class="btn btn--sm" @click="openDetail(row)">
+                    查看详情
+                  </button>
+                  <button
+                    v-if="row.can_ship"
+                    type="button"
+                    class="btn btn--sm btn--primary"
+                    @click="shipFromRow(row)"
+                  >
+                    发货
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty-state">该范围内没有订单。</p>
       </div>
     </div>
@@ -343,24 +351,26 @@ onMounted(load)
           <div class="card">
             <div class="card__head"><h2>商品与金额</h2></div>
             <div class="card__body">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>商品</th>
-                    <th>数量</th>
-                    <th>成交单价</th>
-                    <th>单位成本</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in detail.value.items" :key="item.title">
-                    <td>{{ item.title }}</td>
-                    <td class="num">{{ item.quantity }}</td>
-                    <td class="num">¥ {{ item.unit_price }}</td>
-                    <td class="num">¥ {{ item.unit_cost ?? '—' }}</td>
-                  </tr>
-                </tbody>
-              </table>
+              <div class="data-table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>商品</th>
+                      <th>数量</th>
+                      <th>成交单价</th>
+                      <th>单位成本</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in detail.value.items" :key="item.title">
+                      <td>{{ item.title }}</td>
+                      <td class="num">{{ item.quantity }}</td>
+                      <td class="num">¥ {{ item.unit_price }}</td>
+                      <td class="num">¥ {{ item.unit_cost ?? '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
               <p class="hint-text">金额与成本都是下单时的快照，商品后续改价不影响历史订单。</p>
             </div>
           </div>
@@ -420,11 +430,32 @@ onMounted(load)
   color: var(--muted);
 }
 
+/* 状态 tab 一行展示完：窄屏横向滚动，桌面本来就放得下（无感知）。 */
+.tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tabs button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .filter-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+/* display:contents 让桌面端按钮仍直接参与 filter-row 的 flex 布局。 */
+.filter-actions {
+  display: contents;
 }
 
 .field-inline {
@@ -433,6 +464,51 @@ onMounted(load)
   gap: 6px;
   font-size: 13px;
   color: var(--muted);
+}
+
+/* 导出按钮：≤960 抽屉档一并隐藏（手机屏幕小、导出属于桌面低频操作）。 */
+@media (max-width: 960px) {
+  .export-btn {
+    display: none;
+  }
+}
+
+/* ≤768 手机档：筛选区纵向重排——搜索框全宽、日期各占一行、查询/重置两列。 */
+@media (max-width: 768px) {
+  .filter-row {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2, 8px);
+  }
+
+  .filter-row input[type='search'] {
+    width: 100%;
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .field-inline {
+    width: 100%;
+    font-size: 12px;
+  }
+
+  .field-inline input {
+    flex: 1;
+    min-height: 40px;
+    min-width: 0;
+    font-size: 14px;
+  }
+
+  .filter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2, 8px);
+  }
+
+  .filter-actions .btn {
+    min-height: 40px;
+  }
 }
 
 .ship-hero {
@@ -459,6 +535,17 @@ onMounted(load)
 
 .ship-hero .btn {
   margin-left: auto;
+}
+
+@media (max-width: 768px) {
+  .ship-hero {
+    flex-wrap: wrap;
+    gap: 12px 20px;
+  }
+
+  .ship-hero .btn {
+    margin-left: 0;
+  }
 }
 
 .order-detail-grid {

@@ -30,11 +30,10 @@ const router = createRouter({
         {
           path: '',
           name: 'home',
-          redirect: () => {
-            const { can } = useMerchantSession()
-            const target = LANDING.find((item) => can(item.permission))
-            return target ? target.path : '/no-shop'
-          },
+          // 落点由全局 beforeEach 在会话/店铺加载完成后决定（见下方
+          // `to.name === 'home'` 分支）。这里不能用 redirect：redirect 在
+          // beforeEach 之前执行，冷启动会因权限未加载而误判成 /no-shop。
+          component: PlaceholderView,
         },
         {
           path: 'dashboard',
@@ -120,6 +119,11 @@ router.beforeEach(async (to) => {
   if (!loaded.value) await loadSession()
   if (!isAuthenticated.value) {
     return { name: 'login', query: { next: to.fullPath } }
+  }
+  // 冷启动落点：此时 loadSession 已完成，权限可读，再选第一个有权限的模块。
+  if (to.name === 'home') {
+    const target = LANDING.find((item) => can(item.permission))
+    return target ? target.path : { name: 'no-shop' }
   }
   // 菜单按权限隐藏，直连 URL 也要挡（接口仍会 403 兜底）。
   if (to.meta.permission && !can(to.meta.permission)) {

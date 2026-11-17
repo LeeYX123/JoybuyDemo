@@ -1,7 +1,8 @@
+from django.db import OperationalError, ProgrammingError
 from django.http import JsonResponse
 
 from catalog.localization_services import localized_specification, resolve_product_content
-from catalog.models import Sku, Spu
+from catalog.models import Sku, Spu, SpuDetailTranslation
 from offers.market_services import offer_market_chain, resolve_market_context
 from offers.models import Offer
 from reviews.models import Review
@@ -26,6 +27,122 @@ def _offer_payload(offer: Offer, *, requested_market, price_source_market) -> di
     }
 
 
+def _video_payload(spu) -> list[dict]:
+    """Playable local video list (media library URLs, never the source CDN)."""
+
+    from media.storage import media_url
+
+    videos = []
+    for row in spu.videos.all():
+        videos.append(
+            {
+                "url": media_url(row.video.relative_path),
+                "poster": (media_url(row.poster.relative_path) if row.poster_id else ""),
+                "duration_ms": row.duration_ms,
+                "duration": (
+                    round(row.duration_ms / 1000, 2) if row.duration_ms is not None else None
+                ),
+                "source_video_id": row.source_video_id,
+                "sort_order": row.sort_order,
+            }
+        )
+    return videos
+
+
+def _spec_options_payload(spu, options) -> list[dict]:
+    """Add local SKU public ids so the storefront can drive selection.
+
+    Crawler ``spec_options`` reference source SKU ids; the storefront only
+    knows ``Sku.public_id``. Unmapped ids are dropped (the UI still falls
+    back to matching ``sku.specification`` by name/value).
+    """
+
+    if not isinstance(options, list):
+        return []
+    from catalog.models import SkuSourceIdentity
+
+    source_to_public = {
+        str(source_id): str(public_id)
+        for source_id, public_id in SkuSourceIdentity.objects.filter(sku__spu=spu).values_list(
+            "source_id", "sku__public_id"
+        )
+    }
+    result = []
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        values = []
+        for value in option.get("values") or []:
+            if not isinstance(value, dict) or not value.get("value"):
+                continue
+            values.append(
+                {
+                    "value": str(value["value"]),
+                    "image_url": value.get("image_url") or "",
+                    "sku_ids": [
+                        source_to_public[source_id]
+                        for source_id in value.get("sku_ids") or []
+                        if source_id in source_to_public
+                    ],
+                }
+            )
+        if values:
+            result.append({"name": str(option.get("name") or ""), "values": values})
+    return result
+
+
+def _detail_translation(spu, locale) -> SpuDetailTranslation | None:
+    """Read the ``spu_detail_translation`` row for the locale's language.
+
+    The table is created and written by ``translation_agent`` (SQLAlchemy), so
+    it only exists where that tool ran (dev MySQL). Test databases and fresh
+    environments lack it: any operational/programming failure degrades to the
+    source-language detail payload instead of erroring the endpoint.
+    """
+
+    try:
+        return SpuDetailTranslation.objects.filter(
+            spu_id=spu.pk,
+            language_code=locale.language_code,
+        ).first()
+    except (OperationalError, ProgrammingError):
+        return None
+
+
+def _translated_detail_payload(detail, translation) -> dict:
+    """Overlay the translated detail fields on the source payload.
+
+    Empty / not-built translated values (``[]``, ``None``, ``""``) keep the
+    source data per field, so partial translations never blank out content
+    the crawler captured. ``spec_options`` keeps its ``sku_ids`` / ``image_url``
+    structure and still flows through ``_spec_options_payload`` for the local
+    ``public_id`` mapping.
+    """
+
+    payload = {
+        "content_sections": detail.content_sections if detail else [],
+        "specification_tables": detail.specification_tables if detail else [],
+        "specifications": detail.specifications if detail else [],
+        "ai_summary": detail.ai_summary if detail else "",
+        "ai_summary_title": detail.ai_summary_title if detail else "",
+    }
+    if detail is None:
+        return payload
+    if translation is None:
+        return payload
+    if translation.content_sections:
+        payload["content_sections"] = translation.content_sections
+    if translation.specification_tables:
+        payload["specification_tables"] = translation.specification_tables
+    if translation.specifications:
+        payload["specifications"] = translation.specifications
+    if translation.ai_summary:
+        payload["ai_summary"] = translation.ai_summary
+    if translation.ai_summary_title:
+        payload["ai_summary_title"] = translation.ai_summary_title
+    return payload
+
+
 def product_detail(request, public_id):
     """Localized storefront product detail for the requested market and locale."""
 
@@ -41,11 +158,19 @@ def product_detail(request, public_id):
 
     spu = (
         Spu.objects.filter(public_id=public_id, status=Spu.Status.ACTIVE)
-        .select_related("brand", "local_category")
+        .select_related(
+            "brand",
+            "local_category",
+            "product_category",
+            "product_category__parent",
+            "detail",
+        )
         .prefetch_related(
             "translations",
             "market_contents__locale",
             "market_contents__market",
+            "videos__video",
+            "videos__poster",
         )
         .first()
     )
@@ -112,6 +237,13 @@ def product_detail(request, public_id):
     review_stats = Review.objects.filter(spu=spu, status=Review.Status.ACTIVE).aggregate(
         average=Avg("rating"), count=Count("pk")
     )
+    review_distribution = {
+        str(row["rating"]): row["total"]
+        for row in Review.objects.filter(spu=spu, status=Review.Status.ACTIVE)
+        .values("rating")
+        .annotate(total=Count("pk"))
+        if row["rating"]
+    }
 
     gallery = []
     from django.contrib.contenttypes.models import ContentType
@@ -125,6 +257,53 @@ def product_detail(request, public_id):
         from media.views import asset_urls
 
         gallery.append(asset_urls(usage.asset))
+
+    category_breadcrumb = []
+    node = spu.product_category
+    while node is not None and len(category_breadcrumb) < 2:
+        category_breadcrumb.append({"id": node.source_id, "name": node.name, "depth": node.depth})
+        node = node.parent
+    category_breadcrumb.reverse()
+
+    detail = getattr(spu, "detail", None)
+    detail_translation = _detail_translation(spu, locale)
+
+    # 评分汇总：本地有 ACTIVE 评价时以本地统计为准；爬虫商品没有本地评价
+    # 行，回退到源站快照（SpuDetail.rating_*，2026-11-10）。
+    review_summary = {
+        "average": str(review_stats["average"]) if review_stats["average"] else None,
+        "count": review_stats["count"] or 0,
+        "distribution": review_distribution,
+        "source": "local",
+    }
+    if not review_summary["count"] and detail is not None and detail.rating_count:
+        review_summary = {
+            "average": (str(detail.rating_average) if detail.rating_average is not None else None),
+            "count": detail.rating_count,
+            "distribution": detail.rating_distribution or {},
+            "source": "crawler",
+        }
+
+    # 译文命中时按字段替换图文详情/规格参数表/spec_options/AI 摘要（2026-11-17）；
+    # 未命中（无译文行、表不存在）与旧行为逐字节一致。顶层加
+    # detail_translated / detail_language 让前端可知当前详情区语言。
+    translated_fields = _translated_detail_payload(detail, detail_translation)
+    translated_options = (
+        detail_translation.spec_options
+        if detail_translation is not None and detail_translation.spec_options
+        else (detail.spec_options if detail else [])
+    )
+    detail_payload = {
+        "content_sections": translated_fields["content_sections"],
+        "specification_tables": translated_fields["specification_tables"],
+        "specifications": translated_fields["specifications"],
+        "spec_options": _spec_options_payload(spu, translated_options),
+        "ai_summary": translated_fields["ai_summary"],
+        "ai_summary_title": translated_fields["ai_summary_title"],
+        "ai_summary_tags": detail.ai_summary_tags if detail else [],
+        "detail_translated": detail_translation is not None,
+        "detail_language": detail_translation.language_code if detail_translation else None,
+    }
 
     return JsonResponse(
         {
@@ -140,11 +319,11 @@ def product_detail(request, public_id):
             "description": content.description,
             "brand": spu.brand.name if spu.brand else None,
             "category_slug": spu.local_category.slug if spu.local_category else None,
+            "category_breadcrumb": category_breadcrumb,
             "gallery": gallery,
+            "videos": _video_payload(spu),
             "skus": skus,
-            "review_summary": {
-                "average": str(review_stats["average"]) if review_stats["average"] else None,
-                "count": review_stats["count"] or 0,
-            },
+            **detail_payload,
+            "review_summary": review_summary,
         }
     )

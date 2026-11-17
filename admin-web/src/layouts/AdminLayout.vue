@@ -54,7 +54,7 @@ const NAV = [
       { to: '/activities', label: '平台活动与返佣', icon: 'flag', module: 'activities' },
       { to: '/activity-products', label: '活动商品管理', icon: 'flag', module: 'catalog.pool' },
       { to: '/banners', label: '首页轮播图', icon: 'image', module: 'cms.banners' },
-      { to: '/campaign-cards', label: '首页活动卡片', icon: 'grid', module: 'cms.campaign' },
+      { to: '/campaign-cards', label: '活动卡片', icon: 'grid', module: 'cms.campaign' },
       { to: '/notifications', label: '平台通知推送', icon: 'bell', module: 'notifications' },
       { to: '/support', label: '客服中心', icon: 'chat', module: 'support' },
     ],

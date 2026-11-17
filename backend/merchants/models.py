@@ -63,8 +63,9 @@ class Merchant(models.Model):
     exposure_day = models.DateField(null=True, blank=True)
     last_online_at = models.DateTimeField(null=True, blank=True)
 
-    # --- 折扣（按商家统一设置，不做单商品差异化；百分数，70 = 70%） ---
-    # 成本价 = 向上取整(零售价 × 折扣)；活动商品优先用 activity_discount_rate。
+    # --- 折扣（按商家统一设置，不做单商品差异化；百分数，20 = 成本价减免 20%） ---
+    # 2026-11-10 最终口径：成本价 = ceil_to_cent(零售价 × (1 − 折扣%))；
+    # 未设置折扣 = 减免 0% → 成本价 = 零售价；活动商品优先用 activity_discount_rate。
     # 文档拍板：不做区间校验、不做默认值兜底，管理端设多少按多少算。
     discount_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     activity_discount_rate = models.DecimalField(
@@ -197,6 +198,76 @@ class MerchantMembership(models.Model):
                 fields=["staff", "status", "merchant"],
                 name="merchant_member_staff_idx",
             )
+        ]
+
+
+class MerchantApplication(models.Model):
+    """购物端「申请店铺」：买家账号提交的开店申请（一人一份）。
+
+    状态流转：PENDING →（管理端审核）APPROVED / REJECTED；
+    REJECTED 可修改信息后重新提交（原行重置为 PENDING，清空驳回原因、
+    刷新提交时间）；APPROVED 时回填 ``merchant`` 并打通商家端账号
+    （同 email+密码，见 merchant_ops.views_shop_application）。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    # 2026-11-17 申请表单 7 项：店铺logo、用户名字、店铺名、手机号码、
+    # 邀请码（选填）、个人证件（类型 + 照片）、个人居住地址。
+    # legal_name 为旧表单遗留字段（历史行仍有值），新表单不再收集。
+    class IdDocumentType(models.TextChoices):
+        ID_CARD = "ID_CARD", "Identity card"
+        PASSPORT = "PASSPORT", "Passport"
+        DRIVER_LICENSE = "DRIVER_LICENSE", "Driver license"
+
+    buyer = models.OneToOneField(
+        "accounts_buyers.BuyerAccount",
+        on_delete=models.CASCADE,
+        related_name="merchant_application",
+    )
+    user_name = models.CharField(max_length=60, blank=True, default="")
+    shop_name = models.CharField(max_length=60)
+    phone = models.CharField(max_length=32, blank=True, default="")
+    legal_name = models.CharField(max_length=200, blank=True, default="")
+    referrer_code = models.CharField(max_length=32, blank=True, default="")
+    id_document_type = models.CharField(
+        max_length=24,
+        choices=IdDocumentType.choices,
+        default=IdDocumentType.ID_CARD,
+    )
+    residential_address = models.CharField(max_length=255, blank=True, default="")
+    # 本地上传的 /media/ 路径（买家侧上传接口落盘 MediaAsset 后回传）。
+    # 证件照属敏感信息：仅本人提交、平台审核读取（dev 演示用途，不做额外加密）。
+    logo_image_url = models.CharField(max_length=500, blank=True, default="")
+    id_document_image_url = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    reject_reason = models.TextField(blank=True, default="")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        "accounts_staff.StaffAccount",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_merchant_applications",
+    )
+    merchant = models.ForeignKey(
+        Merchant,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="applications",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "merchant_application"
+        ordering = ["-submitted_at", "-pk"]
+        indexes = [
+            models.Index(fields=["status", "submitted_at"], name="merchant_apply_status_idx")
         ]
 
 

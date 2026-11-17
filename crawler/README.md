@@ -17,9 +17,12 @@ crawler/
     settings.py                 Scrapy 设置：robots 遵守、限速（固定间隔 + 0.5~1.5x 随机抖动）、
                                 退避重试、HTTP 缓存、脱敏中间件、原始响应归档流水线
     middlewares.py              HeaderRedactionMiddleware：日志中的 Cookie/Authorization 一律 [REDACTED]
+                                ProxyConfigMiddleware：按 CRAWL_HTTP(S)_PROXY 显式指定代理（留空不改任何行为）
     pipelines.py                RawArchivePipeline：每个响应 gzip 归档并写入 crawler_control.RawResponse（30 天保留）
                                 RecordRulePipeline：记录级字段规则 + 运行级价格分布告警
-                                StagingPipeline：dataset 落盘 → staging → 质量闸门 → 导入
+                                StagingPipeline：dataset 落盘 → staging → 质量闸门 → 导入；
+                                零商品时区分「列表页下载失败 → 网络/TLS」与「拿到页面但解析为空 → 风控/登录/改版」
+    runner.py                   运行执行器：启动前做有超时的 TCP/TLS 连接前置检查，网络不可达立即失败
     quality.py                  记录级字段规则（标题/价格/币种/SKU/URL/图片/价格倒挂）与价格分布守卫
     dataset.py                  本地数据集写入（product.json / meta.json / dataset_index.jsonl，按内容指纹增量）
     core/policies.py            指数退避 + 抖动 + Retry-After 策略（框架无关，HTTP/浏览器/Scrapy 共用）
@@ -41,6 +44,20 @@ crawler/
   不换代理、不伪造指纹。细节见 `docs/05` §7.5。
 
 解析器契约测试用 `fixtures/product_detail_reviews_v2.html`（按 2026-11-05 归档页结构构造）。
+
+## 网络失败与代理（2026-11-09）
+
+- 列表页请求由 `joybuy_run.py::listing_failed` errback 兜住：重试耗尽或传输层异常
+  （`ConnectionLost` / `ResponseNeverReceived` / SSL EOF）会写 `LISTING_FETCH_FAILED` 事件并累计计数。
+- 零商品运行时 `StagingPipeline.close_spider` 用 `zero_item_failure_reason()` 判定原因：
+  **有下载失败 → 网络/TLS（提示检查 VPN/代理）**；**列表页确实拿到响应但解析为空 → 保留
+  「可能被风控拦截、需要登录，或站点结构已改版」**。部分失败但仍有商品写 `LISTING_FETCH_PARTIAL`。
+- `runner.execute_run` 启动前做一次 8 秒 TCP/TLS 连接检查（`CRAWL_PREFLIGHT_ENABLED` /
+  `CRAWL_PREFLIGHT_TIMEOUT`），不通就立即失败并写 `CONNECTIVITY_PREFLIGHT_FAILED`；只建连接、
+  不发 HTTP 请求，不绕过 robots。
+- 代理：Scrapy 本身会读环境变量与 Windows 注册表代理；如果 `no_proxy` 旁路或需要只给爬虫进程指定，
+  可设 `CRAWL_HTTP_PROXY` / `CRAWL_HTTPS_PROXY`（留空不改行为，代码无硬编码代理）。
+  排查口径见 `docs/05` §8.2、§8.3。
 
 ## 数据可信度分层
 

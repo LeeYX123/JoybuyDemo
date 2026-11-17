@@ -711,7 +711,7 @@ flowchart LR
 
 - 需求来源：`功能需求迭代文档01.md` v2.2（十项拍板已全部回填）。
 - 交付：
-  - **折扣体系**：`Merchant.discount_rate / activity_discount_rate`（百分数、不做区间校验）；商家端上架成本价 = `向上取整(零售价 × 折扣)`（活动商品优先活动折扣，未设折扣回退商品池建议成本价）；管理端【商家管理】编辑弹窗设置；
+  - **折扣体系**：`Merchant.discount_rate / activity_discount_rate`（百分数、不做区间校验）；商家端上架成本价 = **零售价 × (1 − 折扣%)，向上取整到分**（2026-11-10 最终口径，取代 2026-11-08「平台成本价 × (1 − 折扣%)」：折扣是管理端设置的**减免百分比**，设 20% → 成本价 = 零售价 × 80%；未设折扣 = 减免 0% → 成本价 = 零售价；活动商品优先活动折扣；`Spu.cost_price` 不参与公式，零售价为空才不能上架；详见 `docs/14` §9.11）；管理端【商家管理】编辑弹窗设置，改折扣后本店已上架 ACTIVE Offer 的成本价立即重算（`merchant_ops.services.reprice_listed_offers`）；
   - **曝光日口径**：`Merchant.exposure_delta/exposure_day`（当日累计、跨日惰性清零）+ 新表 `merchant_daily_stat`（按天统计，供曝光度趋势图）；管理端 GrowthView 增「今日曝光度」列；
   - **自动封店**：`ban_after_days`（订单未处理自动封店天数，null=不自动封店）+ `auto_suspend_overdue_merchants()`，是唯一自动封店规则；信誉分扣减改按 0 钳制、扣完不联动封店；
   - **进度自动扭转**：区间表写死（4–8h/6–12h/3–6h/48–120h/10–18h/6–16h），发货时随机生成 `planned_node_times`，扫描到点推进；已签收 14 天自动确认收货；调度入口 `manage.py run_order_sweeps`（生产挂 cron），商家看板/管理端订单列表读路径惰性兜底；
@@ -740,6 +740,35 @@ flowchart LR
   - **三端时区展示**：时间存储统一 UTC 不变；新增 `ClientTimezoneMiddleware` 读取请求头 `X-Client-Timezone`（浏览器 `Intl.DateTimeFormat().resolvedOptions().timeZone`，三端 api 层/购物端订单页均携带），`iso()` 与购物端订单序列化按该时区转换——只影响展示、不改任何业务逻辑；一键下单触发判定按服务器时间不受影响。
 - 实施记录（2026-11-07）：迁移 `orders/0005_autoordertask`；`test_doc02_round3.py` 11 例（创建校验/已下架商品不展示/到点执行扣余额/规格失效/余额不足/无地址/取消/未到点不执行/时区转换）全过；回归 93 例通过；浏览器实测向导创建→到点执行→买家扣款 2.22→商家子单生成→列表状态已下单；管理端触发时间按 +08:00 显示。
 - 边界：真实三方 OAuth 需开发者凭据（占位）；一键下单无重试机制（失败原因可见，可重建任务）；时区转换仅覆盖 `iso()` 序列化与购物端订单接口，CSV 导出沿用同源 helper。
+
+## 12b. 多规格采集与导入（2026-11-15 拍板）
+
+### WP-45 爬虫多规格变体采集与导入（阶段 1：采集 + 文档，2026-11-15）
+
+- **背景（PDP 死按钮根因链）**：爬虫导入是 1 SPU = 1 SKU（`sku.specification={}`），而 `SpuDetail.spec_options` 保留了源站完整规格轴（值指向未导入的源站 SKU id）；后端 `_spec_options_payload` 过滤后 `sku_ids=[]`，购物端 PDP 渲染出规格按钮但 `selectVariant` 匹配不到候选 SKU → 死按钮（2026-11-15 PDP 修复只做了前端过滤，数据层缺失由本工作包彻底解决）。
+- **两阶段范围**：
+  - **阶段 1（本包，已完成）**：爬虫解析「变体列表」进 staging payload；立文档（本节 + docs/14 §10）；不动导入链路与数据库模型。
+  - **阶段 2（独立任务）**：导入链路按变体建多 SKU（真实规格名值对 + 每变体一条 `SkuSourceIdentity`）、为变体建 Offer、刷新搜索文档、重导入幂等、购物端 PDP 端到端验证。
+- **数据口径（2026-11-15 用 debug_crawl 实抓 iPhone 10404455 与炒锅 10003152 实测，抓包留档 `var/wp45_phase1/`）**：
+  - 单条详情请求可得的变体级数据：`productSeriesFloor.series[].skus` 与 `productSelectedFloor.colorSizePartList[].buttonPartList[].skuList`（每个规格值 → 源 sku id）；颜色/尺寸按钮带 s96 规格图（`imgUrl`）与原始 `stockState` 码；`productSelectedFloor.skuStatus` 是逐源 sku 的原始状态码。**`stockState`（33/34）与 `skuStatus`（"0"/"-2"）语义未解读，原样透传，不得臆测。**
+  - **价格不在单条详情 JSON 里**：`productPriceFloor` 只描述当前浏览的 sku。每个源 sku 都有自己的 `/dp/<sku>` 页（含自己的价格 floor），变体价格靠逐变体补抓（每变体 1 次请求；与 docs/14 §8 的 `/dg/` 第二请求先例同理，www 域名）。已实测 1TB=1499/512GB=1299/256GB=1099 GBP、炒锅 19.99/20.99 随变体不同。
+  - payload 新增 `variants` 数组（`joybuy` native 块同名键同步），每项：`source_sku_id` / `specification`（真实规格名值对 dict，轴序=系列在前颜色在后）/ `price` / `currency` / `image_url`（s96 规格图，可空）/ `stock_state` / `sku_status` / `is_primary`（当前浏览的源 sku）/ `price_source`（`detail_page`=主变体继承页面原价 / `variant_page`=补抓所得 / 空=未取到）。
+  - **向后兼容**：无规格轴商品 `variants=[]`；老 payload 没有 variants 时导入行为完全不变（质量规则与导入服务均按字段白名单读取，已加守门断言）。
+  - **成本开关**：变体价格补抓默认开、单商品上限 10 个变体（`JOYBUY_VARIANT_PRICES_ENABLED` / `JOYBUY_VARIANT_PRICE_LIMIT`，debug_crawl 对应 `--no-variant-prices`）；风控收紧时可整体关掉，变体 price 留空不阻断商品落盘。
+- **阶段 1 实施记录（2026-11-15）**：解析 `joybuy_uk.extract_variants` / `extract_variant_price` / `variant_page_url`；蜘蛛逐变体串行补抓（`joybuy_run.py` 链式回调，单变体失败只留空价格并写 `VARIANT_PRICES_MERGED` 事件）；debug_crawl 同步（`fetch_variant_prices`）；staging payload 整体入库自动携带 variants（无模型/迁移变更）。测试 `test_crawler_variants.py` 8 例（解析契约/空轴兼容/变体价格页/质量规则透传/蜘蛛链 4 例）+ 既有 `test_crawler_detail_extras` 16 例（蜘蛛流程断言已随链式行为更新）全过；导入/质量/重建/详情 API 回归 113 例全过；debug_crawl 实抓两个多规格商品 variants 完整（8 变体+2 变体，价格/规格值/主变体标记齐全），日志与 product.json 留档 `var/wp45_phase1/`。
+- **阶段 2 设计注意（不得再踩）**：
+  1. **身份冲突红线（memory 实录）**：`SkuSourceIdentity`/`OfferSourceIdentity` 与商家绑定冲突是「冲突不是重复」。已导入商品的旧单 SKU 身份（指向主变体源 id）应**原地升级**（补 specification 真实名值对），其余变体**新建** SKU + 身份，**不自动重绑**已有身份。
+  2. 变体价格信任 `price_source`：`variant_page`/`detail_page` 才可信；留空（开关关闭/补抓失败/超上限）的变体在阶段 2 可建 SKU 但不应建 Offer（或明确策略），不得用 SPU 价格冒充。
+  3. **系列轴的值可能指向源站兄弟商品**（如 iPhone 1TB 是另一个源商品页）：阶段 2 导入前需确认按「同源商品」口径建 SKU 还是过滤，必要时用变体页标题/类目校验。
+  4. 变体 `image_url` 是源站 CDN URL（与 `spec_options[].values[].image_url` 同源），导入需走既有本地化下载路径（下载失败丢弃，不得直连 CDN）。
+  5. 重导入幂等：按 `source_sku_id` upsert（阶段 1 变体列表是确定性排序，重复导入顺序稳定）；SpuDetail.spec_options 与 variants 并存不冲突。
+- 验收标准：爬虫侧——debug_crawl 实抓多规格商品产出完整 variants（≥2 个变体、真实 source_sku_id/price/规格值、主变体有标记）✅；导入侧（阶段 2）——重导入已上架商品不产生重复/冲突 SKU/身份/Offer，购物端 PDP 规格可选可购（浏览器实测）。
+- **阶段 2 完成记录（2026-11-15，✅ 已完成，未 commit）**：
+  - **实现**（仅 `backend/crawler_control/import_services.py`）：`_split_variants_by_same_source` 同源口径拆分 + 变体循环（`get_or_create_sku_from_source` 建 SKU/身份 → 带价变体 `import_offer_from_source` 建 Offer → 变体图 `_import_variant_image` 走既有 media 本地化挂 `role="variant"`）+ 导入尾调 `refresh_spu_search_documents`；`imported_refs.variants` 摘要如实记录 kept/skip/created 计数。
+  - **同源商品口径（决定）**：变体保留 = `is_primary` ∨ `source_sku_id` 等于顶层 `skus[].source_id` ∨ `sku_status` 非 null（等价于「被当前商品页 productSelectedFloor.skuStatus 声明」）。系列轴 1TB/512GB 的值指向源站兄弟商品页 → 跳过并记日志（5 个）；iPhone 10404455 实际只建 256GB 系列的颜色变体。**同一源 sku 已作为兄弟商品独立导入（身份绑到别的 SPU，如 10405110）→ 跳过该变体 + `skipped_identity_conflict` 计数，绝不改绑、不整单失败**；身份绑到同 SPU 另一规格（规格改版）才抛中文冲突整单回滚。
+  - **价格/Offer 策略**：`price_source ∈ {variant_page, detail_page}` 才建 Offer（宁缺毋假，无价变体 SKU 保留不可购）；`stock_state`/`sku_status` 只透传，source_availability 一律 UNKNOWN；「上架即可售」仅 variants 路径生效——本次导入新建 Offer 直接 ACTIVE + `listed_at`，重导入命中已有 Offer 不动归属/状态/价格；无 variants 老 payload 行为完全不变（DRAFT 默认）。
+  - **验证**：新增 `test_crawler_import_variants.py` 5 例（多变体建 N SKU+N 身份+N Offer、重导入幂等且不复活下架 Offer、无价不建 Offer、老式单 SKU 原地升级同身份补 spec、兄弟身份冲突跳过不改绑、变体图失败不阻断）+ 回归 139 例全过（import/variants/quality/field_rules/rebuild/detail_api/detail_extras，--keepdb 真实 MySQL）；ruff 全过。真实数据端到端：10404455 payload 走真导入 → SKU 2/身份 2/Offer 2（ACTIVE）/搜索文档 1，兄弟商品 5 跳过 + 身份冲突 1 跳过；SPU 置 ACTIVE 后搜索可命中（1099-1099）。购物端 PDP（:3000 实测）：系列/颜色按钮组渲染且全部可点、选中态双向切换、加购 enabled + 门控弹窗、console error 0，截图 `var/wp45_phase2/`。测试数据留库：SPU `5b7098bf-…`（ACTIVE，2 SKU/2 Offer），详见 HANDOFF §2 阶段 2 小节。
+  - **遗留**：价格差异化的切规格联动（1TB=1499/512GB=1299）在本商品无法演示——这些轴值按同源口径属于兄弟商品；若未来源站把大容量作为同一商品页的真变体（skuStatus 覆盖），导入侧无需改动即可自动建出多价 SKU。全量验证（全套件）按验证纪律留到功能收尾时统一执行。
 
 ## 13. 每次启动 Codex 的建议提示词
 

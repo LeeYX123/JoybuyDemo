@@ -1,5 +1,8 @@
 <script setup>
 import { computed } from 'vue'
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
 
 const props = defineProps({
   payload: {
@@ -18,7 +21,7 @@ const products = computed(() =>
     <div class="cms-pool__head">
       <h2 class="cms-pool__title">{{ props.payload.title }}</h2>
       <NuxtLink v-if="props.payload.href" class="cms-pool__more" :to="props.payload.href">
-        View all
+        {{ t('cms.viewAll') }}
       </NuxtLink>
     </div>
 

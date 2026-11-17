@@ -73,8 +73,8 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
 <template>
   <div class="bestseller">
     <section class="bestseller__hero">
-      <h1>Bestsellers</h1>
-      <p>Popular product lists are ranked by sales and views. Updated daily.</p>
+      <h1>{{ t('promo.bestsellers') }}</h1>
+      <p>{{ t('promo.subtitle') }}</p>
     </section>
 
     <AppContainer>
@@ -95,7 +95,7 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
           </nav>
 
           <form class="bestseller__price" @submit="applyPriceFilter">
-            <h2>Price</h2>
+            <h2>{{ t('promo.price') }}</h2>
             <div class="bestseller__price-inputs">
               <input
                 name="min_price"
@@ -103,7 +103,7 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
                 min="0"
                 step="0.01"
                 :value="minPrice"
-                aria-label="Min price"
+                :aria-label="t('promo.price') + ' ↓'"
               />
               <span aria-hidden="true">–</span>
               <input
@@ -112,10 +112,10 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
                 min="0"
                 step="0.01"
                 :value="maxPrice"
-                aria-label="Max price"
+                :aria-label="t('promo.price') + ' ↑'"
               />
             </div>
-            <button type="submit">Apply</button>
+            <button type="submit">{{ t('promo.apply') }}</button>
           </form>
         </aside>
 
@@ -133,7 +133,7 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
           </section>
 
           <div v-if="segments.length === 0" class="bestseller__empty" role="status">
-            No ranked products for this category yet.
+            {{ t('bestseller.noRanked') }}
           </div>
         </div>
       </div>

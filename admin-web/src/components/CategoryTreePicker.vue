@@ -4,6 +4,8 @@ import { computed, ref } from 'vue'
 // Joybuy source category tree picker (2 levels: channel → listing facet).
 // Selecting a node adds { source_id, name, name_zh, include_descendants } to
 // the job's frozen selection; the toggle flips include_descendants per node.
+// 勾选二级类目时其一级父类目以「半选」呈现（层级可见），但父类目不会进入
+// 选中集合——实际抓取范围仍然只是被勾选的子类目本身。
 // 中文名来自 Joybuy 站点切到中文后的类目菜单，按 source_id 与英文名一一对应；
 // 有中文名时同时展示「中文名 / English name」，没有时只显示英文名。
 const props = defineProps({
@@ -38,13 +40,39 @@ const filteredTree = computed(() => {
     .filter(Boolean)
 })
 
+const selectedSourceIds = computed(() => new Set(props.modelValue.map((item) => item.source_id)))
+
 function isSelected(sourceId) {
-  return props.modelValue.some((item) => item.source_id === sourceId)
+  return selectedSourceIds.value.has(sourceId)
 }
 
 function selectionFor(sourceId) {
   return props.modelValue.find((item) => item.source_id === sourceId)
 }
+
+// 父类目勾选态：own=自身被勾选；indeterminate=未勾选自身但存在已勾选子类目。
+// 仅是展示态，不改变 modelValue（抓取范围仍是子类目）。
+function parentCheckState(node) {
+  if (isSelected(node.source_id)) return 'checked'
+  const children = node.children || []
+  if (children.some((child) => selectedSourceIds.value.has(child.source_id))) {
+    return 'indeterminate'
+  }
+  return 'none'
+}
+
+function isIndeterminate(node) {
+  return parentCheckState(node) === 'indeterminate'
+}
+
+function selectedChildCount(node) {
+  return (node.children || []).filter((child) => selectedSourceIds.value.has(child.source_id))
+    .length
+}
+
+const partialParentCount = computed(
+  () => props.categories.filter((node) => isIndeterminate(node)).length,
+)
 
 function toggleNode(node) {
   if (isSelected(node.source_id)) {
@@ -98,17 +126,26 @@ const selectedCount = computed(() => props.modelValue.length)
       type="search"
       placeholder="搜索中文名 / 英文名 / 来源 ID…"
     />
-    <p class="tree-picker__hint">已选 {{ selectedCount }} 个类目</p>
+    <p class="tree-picker__hint">
+      已选 {{ selectedCount }} 个类目（实际抓取范围）
+      <span v-if="partialParentCount > 0" class="tree-picker__hint-partial">
+        · {{ partialParentCount }} 个一级类目半选（仅其子类目参与抓取）
+      </span>
+    </p>
     <ul class="tree-picker__list">
       <li v-for="node in filteredTree" :key="node.source_id" class="tree-picker__node">
         <div
           class="tree-picker__row"
-          :class="{ 'tree-picker__row--selected': isSelected(node.source_id) }"
+          :class="{
+            'tree-picker__row--selected': isSelected(node.source_id),
+            'tree-picker__row--partial': isIndeterminate(node),
+          }"
         >
           <label class="tree-picker__label">
             <input
               type="checkbox"
               :checked="isSelected(node.source_id)"
+              :indeterminate.prop="isIndeterminate(node)"
               @change="toggleNode(node)"
             />
             <span class="tree-picker__names">
@@ -116,6 +153,9 @@ const selectedCount = computed(() => props.modelValue.length)
               <span v-if="node.name_zh" class="tree-picker__name-en">{{ node.name }}</span>
             </span>
             <code class="tree-picker__id">{{ node.source_id }}</code>
+            <span v-if="isIndeterminate(node)" class="tree-picker__partial-note">
+              子类目已选 {{ selectedChildCount(node) }}
+            </span>
           </label>
           <button
             v-if="(node.children || []).length"
@@ -206,6 +246,21 @@ const selectedCount = computed(() => props.modelValue.length)
 
 .tree-picker__row--selected {
   background: var(--colour-surface-active, #f0f4ff);
+}
+
+/* 一级类目「半选」：有已勾选的子类目但自身未被勾选，仅层级提示。 */
+.tree-picker__row--partial {
+  background: var(--colour-surface-soft, #f7f9ff);
+}
+
+.tree-picker__hint-partial {
+  color: #92600a;
+}
+
+.tree-picker__partial-note {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: #92600a;
+  white-space: nowrap;
 }
 
 .tree-picker__row--child {

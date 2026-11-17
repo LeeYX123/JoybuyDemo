@@ -98,13 +98,20 @@ async function submit() {
 }
 
 .login-card {
-  width: 420px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 420px;
   padding: 34px 38px 28px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #ffffff;
   box-shadow: 0 20px 60px rgb(32 38 50 / 10%);
+}
+
+/* 窄屏（如 360px 手机）：卡片随视口收窄，内边距同步收紧，logo/表单/文案均可用。 */
+@media (max-width: 420px) {
+  .login-card {
+    padding: 28px 20px 24px;
+  }
 }
 
 .login-brand {

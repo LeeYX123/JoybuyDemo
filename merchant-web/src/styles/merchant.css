@@ -190,6 +190,42 @@
   max-width: 160px;
 }
 
+/* ---------- 移动端抽屉（≤960px 生效，桌面必须保持原样） ---------- */
+/* 汉堡按钮：桌面隐藏，仅 ≤960px 显示。 */
+.merchant-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.merchant-menu-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* 抽屉遮罩：桌面恒为透明且不可交互，仅 ≤960px 且菜单打开时生效。 */
+.merchant-side-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgb(16 24 40 / 42%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
 .merchant-content {
   flex: 1;
   padding: 26px 30px 40px;
@@ -526,6 +562,7 @@
 /* ---------- 表格 ---------- */
 .data-table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .data-table {
@@ -917,25 +954,32 @@
 }
 
 /* ---------- 响应式 ---------- */
+/* ≤960px：侧栏改为 off-canvas 抽屉，顶栏出现汉堡按钮；≥961px 保持原布局不变。 */
 @media (max-width: 960px) {
+  .merchant-menu-btn {
+    display: inline-flex;
+  }
+
   .merchant-side {
-    position: static;
-    width: 100%;
-    height: auto;
+    width: min(260px, 84vw);
+    z-index: 80;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
   }
 
-  .merchant-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+  .nav-open .merchant-side {
+    transform: translateX(0);
+    box-shadow: var(--shadow-pop);
   }
 
-  .merchant-nav a {
-    width: auto;
+  .merchant-side-mask.is-open {
+    opacity: 1;
+    pointer-events: auto;
   }
 
-  .merchant-side__foot {
-    display: none;
+  /* 抽屉打开时锁定 body 滚动（类由布局脚本挂到 body 上，仅本档生效）。 */
+  body.is-nav-locked {
+    overflow: hidden;
   }
 
   .merchant-main {
@@ -943,11 +987,94 @@
   }
 
   .merchant-topbar {
-    position: static;
+    padding: 0 16px;
   }
 
   .merchant-content {
     padding: 18px 16px 32px;
+  }
+}
+
+/* ≤768px：手机档，收紧留白、放宽行宽约束、保证触达面积。 */
+@media (max-width: 768px) {
+  .merchant-topbar {
+    height: auto;
+    min-height: var(--topbar-height);
+    flex-wrap: nowrap;
+    padding: 8px 12px;
+  }
+
+  .merchant-topbar__crumb {
+    display: none;
+  }
+
+  /* 手机档顶栏只留：汉堡 + 店铺切换 + 员工名 + 退出；模块标题从抽屉导航看。 */
+  .merchant-topbar h1 {
+    display: none;
+  }
+
+  .merchant-topbar__right {
+    flex: 1;
+    min-width: 0;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .merchant-shop-chip {
+    max-width: 48%;
+  }
+
+  .merchant-shop-chip select {
+    max-width: 120px;
+  }
+
+  .merchant-topbar__staff {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .merchant-topbar__right .btn--sm {
+    flex: none;
+    padding: 8px 12px;
+  }
+
+  .merchant-content {
+    padding: 16px 12px 32px;
+  }
+
+  .page-intro h1 {
+    font-size: 19px;
+  }
+
+  .welcome-strip {
+    flex-wrap: wrap;
+  }
+
+  /* 触达面积：按钮不小于 40px 高。 */
+  .btn {
+    min-height: 40px;
+  }
+
+  .btn--sm {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  /* 分页按钮组窄屏换行，不横向溢出。 */
+  .pager {
+    flex-wrap: wrap;
+  }
+
+  .tabs button {
+    padding: 12px 14px;
+  }
+
+  /* 近一月柱状图 30 根在窄屏放不下：容器内横滚，页面本身不溢出。 */
+  .bar-chart {
+    overflow-x: auto;
   }
 }
 

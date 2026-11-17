@@ -12,6 +12,8 @@ const props = defineProps({
   maxSizeMb: { type: Number, default: 1 },
   label: { type: String, default: '图片' },
   hint: { type: String, default: '' },
+  // 多图时是否提供「主图」置顶按钮；图文详情等纯列表场景传 false 隐藏。
+  reorderable: { type: Boolean, default: true },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -113,7 +115,7 @@ defineExpose({ pick })
         <span v-if="multiple && index === 0" class="uploader__main">主图</span>
         <div class="uploader__tools">
           <button
-            v-if="multiple && index > 0"
+            v-if="multiple && reorderable && index > 0"
             type="button"
             title="设为主图"
             @click="moveFirst(index)"

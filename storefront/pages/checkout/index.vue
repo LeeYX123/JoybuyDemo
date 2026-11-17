@@ -100,11 +100,11 @@ const paymentMethods = computed(() => [
     label: t('checkout.balancePay'),
     note: balanceDisplay.value ? `Balance: ${balanceDisplay.value}` : '',
   },
-  { value: 'card', label: 'Credit/Debit Card', note: '' },
+  { value: 'card', label: t('checkout.card'), note: '' },
   { value: 'google_pay', label: 'Google Pay', note: '' },
   { value: 'apple_pay', label: 'Apple Pay', note: '' },
   { value: 'wechat_pay', label: t('checkout.wechatPay'), note: '' },
-  { value: 'klarna', label: 'Klarna', note: '' },
+  { value: 'klarna', label: t('checkout.klarna'), note: '' },
 ])
 
 useHead({ title: 'Checkout' })
@@ -113,13 +113,13 @@ useHead({ title: 'Checkout' })
 <template>
   <AppContainer>
     <section class="checkout" aria-labelledby="checkout-title">
-      <h1 id="checkout-title" class="visually-hidden">Checkout</h1>
+      <h1 id="checkout-title" class="visually-hidden">{{ t('checkout.title') }}</h1>
 
       <div v-if="error" class="checkout__error" role="alert">{{ error }}</div>
 
       <!-- Step 1: delivery address (docs/12 §7, 3-field form). -->
       <section v-if="step === 'address'" class="checkout__step" aria-labelledby="address-heading">
-        <h2 id="address-heading">Delivery to</h2>
+        <h2 id="address-heading">{{ t('checkout.deliveryTo') }}</h2>
         <ul v-if="addressList.length > 0" class="address-list">
           <li v-for="address in addressList" :key="address.public_id">
             <label class="address-option">
@@ -133,7 +133,7 @@ useHead({ title: 'Checkout' })
                 {{ address.full_name }}, {{ address.line1 }}, {{ address.city }}
                 {{ address.postcode }}
                 <em v-if="!address.is_serviceable" class="address-unsupported">
-                  — not serviceable
+                  {{ t('checkout.notServiceable') }}
                 </em>
               </span>
             </label>
@@ -141,23 +141,35 @@ useHead({ title: 'Checkout' })
         </ul>
 
         <button type="button" class="checkout__secondary" @click="showNewForm = !showNewForm">
-          {{ showNewForm ? 'Cancel' : 'Add a new address' }}
+          {{ showNewForm ? t('checkout.cancel') : t('checkout.addAddress') }}
         </button>
 
         <form v-if="showNewForm" class="address-form" @submit.prevent="saveAddress">
           <label class="address-form__field">
-            <span>Full name*</span>
-            <input v-model="newAddress.full_name" placeholder="First name and surname" required />
+            <span>{{ t('checkout.fullName') }}</span>
+            <input
+              v-model="newAddress.full_name"
+              :placeholder="t('checkout.fullNamePlaceholder')"
+              required
+            />
           </label>
           <label class="address-form__field">
-            <span>Address</span>
-            <input v-model="newAddress.line1" placeholder="Address" required />
+            <span>{{ t('checkout.address') }}</span>
+            <input
+              v-model="newAddress.line1"
+              :placeholder="t('checkout.addressPlaceholder')"
+              required
+            />
           </label>
           <label class="address-form__field">
-            <span>Phone number*</span>
-            <input v-model="newAddress.phone" placeholder="Phone number" required />
+            <span>{{ t('checkout.phone') }}</span>
+            <input
+              v-model="newAddress.phone"
+              :placeholder="t('checkout.phonePlaceholder')"
+              required
+            />
           </label>
-          <button class="address-form__save" type="submit">Save</button>
+          <button class="address-form__save" type="submit">{{ t('checkout.save') }}</button>
         </form>
 
         <button
@@ -166,17 +178,17 @@ useHead({ title: 'Checkout' })
           type="button"
           @click="useSelectedAddress"
         >
-          Save
+          {{ t('checkout.save') }}
         </button>
       </section>
 
       <!-- Step 2: payment page (docs/12 §8). -->
       <section v-else class="checkout__payment" aria-labelledby="payment-heading">
-        <h2 id="payment-heading" class="visually-hidden">Payment</h2>
+        <h2 id="payment-heading" class="visually-hidden">{{ t('checkout.payment') }}</h2>
         <div class="checkout__columns">
           <div class="checkout__left">
             <div class="pay-card pay-card--address">
-              <h3>Delivery to</h3>
+              <h3>{{ t('checkout.deliveryTo') }}</h3>
               <p class="pay-card__name">{{ selectedAddress?.full_name }}</p>
               <p class="pay-card__text">
                 {{
@@ -189,7 +201,7 @@ useHead({ title: 'Checkout' })
             </div>
 
             <div class="pay-card">
-              <h3>Items</h3>
+              <h3>{{ t('checkout.items') }}</h3>
               <ul class="quote-items">
                 <li v-for="item in quote?.items || []" :key="item.offer_public_id">
                   <span>{{ item.title }} × {{ item.quantity }}</span>
@@ -199,7 +211,7 @@ useHead({ title: 'Checkout' })
             </div>
 
             <div class="pay-card">
-              <h3>Payment method</h3>
+              <h3>{{ t('checkout.paymentMethod') }}</h3>
               <ul class="pay-methods">
                 <li v-for="method in paymentMethods" :key="method.value">
                   <label class="pay-methods__option">
@@ -218,31 +230,32 @@ useHead({ title: 'Checkout' })
           </div>
 
           <aside class="checkout__summary">
-            <h3>Summary</h3>
+            <h3>{{ t('checkout.summary') }}</h3>
             <dl class="quote-totals">
               <div>
-                <dt>Subtotal</dt>
+                <dt>{{ t('checkout.subtotal') }}</dt>
                 <dd>{{ formatMoney(quote?.subtotal) }}</dd>
               </div>
               <div>
-                <dt>Delivery fee</dt>
+                <dt>{{ t('checkout.deliveryFee') }}</dt>
                 <dd>
                   {{
-                    quote?.shipping_method === 'FREE' ? 'Free' : formatMoney(quote?.shipping_cost)
+                    quote?.shipping_method === 'FREE'
+                      ? t('checkout.free')
+                      : formatMoney(quote?.shipping_cost)
                   }}
                 </dd>
               </div>
               <div class="quote-totals__total">
-                <dt>Order Total (VAT included)</dt>
+                <dt>{{ t('checkout.orderTotal') }}</dt>
                 <dd>{{ formatMoney(quote?.total) }}</dd>
               </div>
             </dl>
             <button class="pay-now" type="button" :disabled="submitting || !quote" @click="payNow">
-              {{ submitting ? 'Paying…' : 'Pay now' }}
+              {{ submitting ? t('checkout.paying') : t('checkout.payNow') }}
             </button>
             <p class="checkout__notice">
-              By placing your order you agree to Joybuy's terms. The balance method deducts the
-              wallet balance once the wallet backend is enabled.
+              {{ t('checkout.termsNotice') }}
             </p>
           </aside>
         </div>

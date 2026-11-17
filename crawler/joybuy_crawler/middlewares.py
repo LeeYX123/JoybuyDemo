@@ -12,11 +12,93 @@ walls; blocked pages are re-fetched through a real Chrome (with the
 currently active account's cookies) and the rendered HTML replaces the
 blocked response. Every response is archived through
 ``record_raw_response`` here, where the full response is available.
+``ProxyConfigMiddleware`` (2026-11-09) applies the opt-in
+``CRAWL_HTTP_PROXY`` / ``CRAWL_HTTPS_PROXY`` settings per request; empty
+settings leave Scrapy's own env/registry proxy handling untouched.
 """
+
+from urllib.parse import unquote, urlsplit
 
 from scrapy.http import HtmlResponse
 
 from joybuy_crawler.core.redaction import redact_headers
+
+
+def redact_proxy_url(url: str) -> str:
+    """``http://user:pass@host:8080`` -> ``http://host:8080`` for logs."""
+
+    parts = urlsplit(url)
+    netloc = parts.hostname or ""
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    return f"{parts.scheme}://{netloc}" if parts.scheme else netloc
+
+
+def normalize_proxy_url(raw: str | None) -> str:
+    """Return an http(s) proxy URL, or ``""`` when the value is unusable."""
+
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"http://{value}"
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return ""
+    return value
+
+
+class ProxyConfigMiddleware:
+    """Opt-in proxy from ``CRAWL_HTTP_PROXY`` / ``CRAWL_HTTPS_PROXY``.
+
+    Scrapy's ``HttpProxyMiddleware`` already honours process env vars and the
+    Windows registry, but ``no_proxy`` can silently bypass both and there is
+    no way to scope a proxy to crawl runs only. Setting ``request.meta["proxy"]``
+    here is deterministic: it overrides env/registry, is scheme-scoped, and is
+    never applied when the settings are empty (nothing is hard-coded).
+    """
+
+    def __init__(self, http_proxy: str = "", https_proxy: str = ""):
+        self.proxies = {
+            scheme: url
+            for scheme, url in (
+                ("http", normalize_proxy_url(http_proxy)),
+                ("https", normalize_proxy_url(https_proxy)),
+            )
+            if url
+        }
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        from scrapy import signals
+
+        instance = cls(
+            http_proxy=crawler.settings.get("CRAWL_HTTP_PROXY", "") or "",
+            https_proxy=crawler.settings.get("CRAWL_HTTPS_PROXY", "") or "",
+        )
+        crawler.signals.connect(instance.spider_opened, signal=signals.spider_opened)
+        return instance
+
+    def spider_opened(self, spider):
+        if not self.proxies:
+            return
+        description = "，".join(
+            f"{scheme}: {redact_proxy_url(url)}"
+            for scheme, url in sorted(self.proxies.items())
+        )
+        _run_event(
+            spider,
+            "PROXY_CONFIGURED",
+            f"本轮按 CRAWL_HTTP(S)_PROXY 使用显式代理（{description}）。",
+        )
+
+    def process_request(self, request, spider):
+        if not self.proxies or "proxy" in request.meta:
+            return
+        proxy = self.proxies.get(urlsplit(request.url).scheme.lower())
+        if proxy:
+            request.meta["proxy"] = proxy
+        return
 
 
 def _run_event(spider, code: str, message: str, *, level: str = "INFO") -> None:
@@ -276,6 +358,33 @@ class RiskControlRenderMiddleware:
         return self._account_cookies
 
     @staticmethod
+    def _persist_risk_cooldown(entry, *, url=""):
+        """Write the risk flag so the next run will not reuse this account.
+
+        ``AccountPool.mark_blocked`` only affects the current Scrapy process:
+        before this, the DB row stayed ACTIVE/VALID and the next run started
+        with the same burned identities (2026-11-16: the 03 group replayed
+        10 dead accounts after ``ACCOUNT_POOL_EXHAUSTED``). The backend
+        cool-down filter then keeps them out of new runs for
+        ``CRAWLER_RISK_COOLDOWN_HOURS`` (default 6).
+        """
+
+        public_id = getattr(entry, "public_id", "")
+        if not public_id:
+            return
+        # The wall URL is usually ``/user/risk/pic?returnUrl=<encoded page>``;
+        # decode it first so a detail/variant-price page is labelled as such.
+        where = "详情页" if "/dp/" in unquote(url or "") else "列表页"
+        try:
+            from crawler_control.services import mark_account_risk_cooldown
+
+            mark_account_risk_cooldown(
+                public_id, reason=f"{where}风控验证码，本 run 内被移出账号池"
+            )
+        except Exception:  # noqa: BLE001, S110 - flagging must not kill the crawl
+            pass
+
+    @staticmethod
     def _rotate_away_from_blocked_account(spider, *, url=""):
         """Eject the account that just hit a wall and move to the next one."""
 
@@ -284,6 +393,7 @@ class RiskControlRenderMiddleware:
         if entry is None or entry.blocked:
             return
         blocked = pool.mark_blocked(reason="风控页")
+        RiskControlRenderMiddleware._persist_risk_cooldown(blocked, url=url)
         nxt = pool.rotate()
         tail = (
             f"改用账号「{nxt.label}」继续。"
@@ -293,7 +403,8 @@ class RiskControlRenderMiddleware:
         _run_event(
             spider,
             "ACCOUNT_RISK_ROTATED",
-            f"账号「{blocked.label}」命中风控页，已从本轮账号池移除，{tail}",
+            f"账号「{blocked.label}」命中风控页，已从本轮账号池移除"
+            f"（已写入风控冷却标记），{tail}",
             level="WARNING",
         )
 

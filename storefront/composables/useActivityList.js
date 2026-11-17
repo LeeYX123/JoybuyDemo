@@ -15,7 +15,9 @@ export async function useActivityList(resource) {
   )
 
   const { data, refresh, error } = await useFetch(url, {
-    key: `activity-${resource}-${page.value}`,
+    // Reactive key: a key computed once at setup keeps serving page 1 after
+    // the pager moves on (same bug class as the search listing).
+    key: computed(() => `activity-${resource}-${page.value}`),
     headers: { cookie: useRequestHeaders(['cookie']).cookie || '' },
   })
 

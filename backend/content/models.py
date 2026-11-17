@@ -134,3 +134,37 @@ class HomeCampaignCard(models.Model):
 
     def __str__(self):
         return f"{self.title}@{self.sort_order}"
+
+
+class ChannelBanner(models.Model):
+    """频道落地页（``/minihome/<code>``）顶部轮播图，按频道维度配置。
+
+    与 ``HomeBanner`` 的区别：首页轮播图是「全站一张清单」，本表按
+    ``channel_code`` 分组——每个 Joybuy minihome 频道（如
+    ``UK-Mini-HP-Home-Living``）各有一组轮播图，购物端频道页只取本频道
+    enabled 的条目。与 ``HomeBanner`` / ``HomeCampaignCard`` 同理，这是
+    单条开关 + 排序 + 随时上下线的高频运营对象，**不进 CMS 版本快照**。
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # Joybuy minihome 代码（CategoryMapping 里 ``minihome:`` 前缀的来源类目）。
+    channel_code = models.CharField(max_length=64)
+    image_url = models.CharField(max_length=1000)
+    href = models.CharField(max_length=1000, blank=True, default="")
+    sort_order = models.PositiveIntegerField(default=0)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "channel_banner"
+        ordering = ["sort_order", "public_id"]
+        indexes = [
+            models.Index(
+                fields=["channel_code", "enabled", "sort_order"],
+                name="channel_banner_lookup_idx",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.channel_code}#{self.sort_order}"

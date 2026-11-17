@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import AdminTable from '@/components/AdminTable.vue'
+import AppPager from '@/components/AppPager.vue'
 import CategoryTreePicker from '@/components/CategoryTreePicker.vue'
 import { adminGet, adminWrite } from '@/composables/useAdminApi'
 import { actionLabel, eventCodeLabel, valueLabel } from '@/lib/locale'
@@ -12,6 +13,8 @@ const activeTab = ref('jobs')
 
 // ---- 任务 Tab ----
 const jobs = ref([])
+const jobsMeta = ref({ page: 1, page_size: 20, total: 0, has_next: false })
+const jobsPage = ref(1)
 const loadingJobs = ref(false)
 const message = ref('')
 const error = ref('')
@@ -24,6 +27,10 @@ const createForm = reactive({
   product_limit: 50,
   listing_sort: 'SOURCE_DEFAULT',
   sync_mode: 'INCREMENTAL',
+  // 跳过已入库：列表阶段先查来源身份，已入库商品不再请求详情页。
+  skip_imported_products: false,
+  // 翻页抓取（默认开）：允许 /s?k=…&page=N 翻页直到抓满数量上限。
+  allow_pagination: true,
   review_target: 50,
   // 爬虫账号：空字符串 = 按账号组自动选号（2026-11-05 起可指定）。
   account_public_id: '',
@@ -53,10 +60,17 @@ const accountColumns = [
 ]
 
 const accounts = ref([])
+// 账号列表分页 + 搜索（2026-11-14，与 jobs 同一套信封）。
+const accountsMeta = ref({ page: 1, page_size: 20, total: 0, has_next: false })
+const accountsPage = ref(1)
+const accountSearch = ref('')
+let accountSearchTimer = null
 const loadingAccounts = ref(false)
+// 建任务下拉需要全量 ACTIVE 账号，与分页表格分开拉（一次 page_size=100）。
+const pickerAccounts = ref([])
 // 只有 ACTIVE 账号可以被指定；停用/风控暂停的账号即使指定了后端也会拒绝。
 const selectableAccounts = computed(() =>
-  accounts.value.filter((account) => account.raw_status === 'ACTIVE'),
+  pickerAccounts.value.filter((account) => account.raw_status === 'ACTIVE'),
 )
 const showAccountCreate = ref(false)
 const accountForm = reactive({ label: '', account_group: '', note: '' })
@@ -80,10 +94,12 @@ async function loadTree() {
   }
 }
 
-async function loadJobs() {
+async function loadJobs(resetPage = false) {
+  if (resetPage) jobsPage.value = 1
   loadingJobs.value = true
   try {
-    const data = await adminGet('/crawlers/jobs')
+    const data = await adminGet(`/crawlers/jobs?page=${jobsPage.value}`)
+    jobsMeta.value = data
     jobs.value = (data.items || []).map((job) => ({
       ...job,
       raw_status: job.status,
@@ -96,37 +112,90 @@ async function loadJobs() {
   }
 }
 
-async function loadAccounts() {
+function goJobsPage(page) {
+  jobsPage.value = page
+  loadJobs()
+}
+
+function accountsUrl() {
+  let url = `/crawlers/accounts?page=${accountsPage.value}`
+  const search = accountSearch.value.trim()
+  if (search) url += `&search=${encodeURIComponent(search)}`
+  return url
+}
+
+function mapAccount(account) {
+  return {
+    ...account,
+    raw_status: account.status,
+    raw_session: account.session_status,
+    status: valueLabel(account.status),
+    session_status: valueLabel(account.session_status),
+    session_updated_at: account.session_updated_at
+      ? account.session_updated_at.slice(0, 19).replace('T', ' ')
+      : '—',
+    note: account.note || '—',
+    login_pending: loginPendingIds.value.has(account.public_id),
+  }
+}
+
+async function loadAccounts(resetPage = false) {
+  if (resetPage) accountsPage.value = 1
   loadingAccounts.value = true
   try {
-    const data = await adminGet('/crawlers/accounts')
-    accounts.value = (data.items || []).map((account) => ({
-      ...account,
-      raw_status: account.status,
-      raw_session: account.session_status,
-      status: valueLabel(account.status),
-      session_status: valueLabel(account.session_status),
-      session_updated_at: account.session_updated_at
-        ? account.session_updated_at.slice(0, 19).replace('T', ' ')
-        : '—',
-      note: account.note || '—',
-      login_pending: loginPendingIds.value.has(account.public_id),
-    }))
+    const data = await adminGet(accountsUrl())
+    accountsMeta.value = data
+    accounts.value = (data.items || []).map(mapAccount)
   } finally {
     loadingAccounts.value = false
   }
+}
+
+// 建任务下拉：一次拉 100 条（后端单页上限），覆盖全部可选账号。
+async function loadPickerAccounts() {
+  const data = await adminGet('/crawlers/accounts?page=1&page_size=100')
+  pickerAccounts.value = (data.items || []).map(mapAccount)
+}
+
+function goAccountsPage(page) {
+  accountsPage.value = page
+  loadAccounts()
+}
+
+// 账号增删改/动作后表格与建任务下拉一起刷新（账号集合可能变化）。
+async function refreshAccountsAll() {
+  await Promise.all([loadAccounts(), loadPickerAccounts()])
+}
+
+// 搜索：回车立即查，输入防抖 300ms；搜索条件变化时回到第 1 页。
+function onAccountSearchInput() {
+  if (accountSearchTimer) clearTimeout(accountSearchTimer)
+  accountSearchTimer = setTimeout(() => {
+    accountSearchTimer = null
+    loadAccounts(true)
+  }, 300)
+}
+
+function submitAccountSearch() {
+  if (accountSearchTimer) {
+    clearTimeout(accountSearchTimer)
+    accountSearchTimer = null
+  }
+  loadAccounts(true)
 }
 
 onMounted(() => {
   loadJobs()
   loadTree()
   loadAccounts()
+  loadPickerAccounts()
   loadAccountGroups()
 })
 
 onBeforeUnmount(() => {
   if (detailTimer) clearTimeout(detailTimer)
   if (accountTimer) clearTimeout(accountTimer)
+  if (accountSearchTimer) clearTimeout(accountSearchTimer)
 })
 
 async function submitCreate() {
@@ -141,6 +210,8 @@ async function submitCreate() {
     product_limit: Number(createForm.product_limit),
     listing_sort: createForm.listing_sort,
     sync_mode: createForm.sync_mode,
+    skip_imported_products: createForm.skip_imported_products,
+    allow_pagination: createForm.allow_pagination,
     review_target: Number(createForm.review_target),
     account_public_id: createForm.account_public_id || null,
     account_group: createForm.account_group || 'default',
@@ -296,7 +367,7 @@ async function submitAccountEdit() {
     )
     message.value = `账号「${editForm.label}」已保存。`
     cancelEditAccount()
-    await loadAccounts()
+    await refreshAccountsAll()
     await loadAccountGroups()
   } catch (caught) {
     error.value = caught.message
@@ -320,7 +391,7 @@ async function deleteAccount(account) {
     )
     message.value = `账号「${account.label}」已删除。`
     if (editingAccountId.value === account.public_id) cancelEditAccount()
-    await loadAccounts()
+    await refreshAccountsAll()
     await loadAccountGroups()
   } catch (caught) {
     error.value = caught.message
@@ -336,7 +407,7 @@ async function submitAccountCreate() {
     accountForm.label = ''
     accountForm.note = ''
     showAccountCreate.value = false
-    await loadAccounts()
+    await refreshAccountsAll()
     await loadAccountGroups()
   } catch (caught) {
     error.value = caught.message
@@ -364,7 +435,7 @@ async function accountAction(account, action) {
     } else {
       message.value = `账号「${account.label}」已${actionLabel(action)}。`
     }
-    await loadAccounts()
+    await refreshAccountsAll()
   } catch (caught) {
     error.value = caught.message
   }
@@ -373,7 +444,7 @@ async function accountAction(account, action) {
 function scheduleAccountPoll() {
   if (accountTimer) clearTimeout(accountTimer)
   accountTimer = setTimeout(async () => {
-    await loadAccounts()
+    await refreshAccountsAll()
     const stillPending = [...loginPendingIds.value].some((id) => {
       const found = accounts.value.find((account) => account.public_id === id)
       return found && found.raw_session === 'UNKNOWN'
@@ -451,6 +522,22 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
             <option value="INCREMENTAL">增量同步</option>
             <option value="FULL_REFRESH">全量刷新</option>
           </select>
+        </label>
+        <label class="crawler-form__check">
+          <input v-model="createForm.skip_imported_products" type="checkbox" />
+          跳过已入库商品
+          <span class="crawler-form__hint"
+            >开启后列表阶段先查数据库，已入库的商品不再请求详情页（价格、库存、评分也不会刷新）。</span
+          >
+        </label>
+        <label class="crawler-form__check">
+          <input v-model="createForm.allow_pagination" type="checkbox" />
+          翻页抓取
+          <span class="crawler-form__hint"
+            >开启后自动请求 /s?k=…&amp;page=2、3… 直到抓满数量上限（单类目可抓
+            200+）。关闭则每个类目只抓第一页（约 20–40 个商品）。该选项偏离 Joybuy robots.txt 的
+            page= 禁抓规则，默认开启即视为运营者授权。</span
+          >
         </label>
         <label>
           评价目标数（1–300）
@@ -540,98 +627,124 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
         </template>
       </AdminTable>
 
-      <!-- 任务详情抽屉 -->
-      <div v-if="detail" class="detail" role="dialog" aria-label="任务详情">
-        <div class="detail__head">
-          <h2>任务详情：{{ detail.name }}</h2>
-          <button type="button" @click="closeDetail">关闭</button>
-        </div>
-        <dl class="detail__meta">
-          <div>
-            <dt>状态</dt>
-            <dd>{{ valueLabel(detail.status) }}</dd>
-          </div>
-          <div>
-            <dt>类目选择</dt>
-            <dd>{{ detail.categoriesText || '—' }}</dd>
-          </div>
-          <div>
-            <dt>树版本</dt>
-            <dd>{{ detail.source_tree_version || '—' }}</dd>
-          </div>
-          <div>
-            <dt>商品上限</dt>
-            <dd>{{ detail.product_limit }}</dd>
-          </div>
-          <div>
-            <dt>同步模式</dt>
-            <dd>{{ valueLabel(detail.sync_mode) }}</dd>
-          </div>
-          <div>
-            <dt>爬虫账号</dt>
-            <dd>
-              {{
-                detail.account
-                  ? `${detail.account.label}（${detail.account.session_status_label}）`
-                  : '自动（账号组 ' + (detail.account_group || 'default') + '）'
-              }}
-            </dd>
-          </div>
-          <div>
-            <dt>评价目标数</dt>
-            <dd>{{ detail.review_target }}</dd>
-          </div>
-        </dl>
+      <AppPager
+        :page="jobsMeta.page || 1"
+        :page-size="jobsMeta.page_size || 20"
+        :total="jobsMeta.total || 0"
+        :has-next="jobsMeta.has_next"
+        @change="goJobsPage"
+      />
 
-        <h3>运行记录</h3>
-        <table class="detail__table">
-          <thead>
-            <tr>
-              <th>状态</th>
-              <th>账号</th>
-              <th>发现</th>
-              <th>下载</th>
-              <th>成功</th>
-              <th>失败</th>
-              <th>开始时间</th>
-              <th>结束时间</th>
-              <th>暂停原因</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="run in detail.runs" :key="run.public_id">
-              <td>{{ run.status_label }}</td>
-              <td>{{ run.account_label }}</td>
-              <td>{{ run.discovered_count }}</td>
-              <td>{{ run.downloaded_count }}</td>
-              <td>{{ run.succeeded_count }}</td>
-              <td>{{ run.failed_count }}</td>
-              <td>{{ run.started_at }}</td>
-              <td>{{ run.finished_at }}</td>
-              <td>{{ run.pause_reason === 'NONE' ? '—' : valueLabel(run.pause_reason) }}</td>
-            </tr>
-            <tr v-if="(detail.runs || []).length === 0">
-              <td colspan="9">尚未运行。</td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- 任务详情：浮层大卡片（不再挤在任务列表下方） -->
+      <div v-if="detail" class="detail-mask" role="presentation" @click.self="closeDetail">
+        <section class="detail-card" role="dialog" aria-modal="true" aria-label="任务详情">
+          <header class="detail-card__head">
+            <div>
+              <h2>任务详情</h2>
+              <p class="detail-card__name">{{ detail.name }}</p>
+            </div>
+            <button type="button" class="detail-card__close" @click="closeDetail">关闭</button>
+          </header>
+          <div class="detail-card__body">
+            <dl class="detail__meta">
+              <div>
+                <dt>状态</dt>
+                <dd>{{ valueLabel(detail.status) }}</dd>
+              </div>
+              <div>
+                <dt>类目选择</dt>
+                <dd>{{ detail.categoriesText || '—' }}</dd>
+              </div>
+              <div>
+                <dt>树版本</dt>
+                <dd>{{ detail.source_tree_version || '—' }}</dd>
+              </div>
+              <div>
+                <dt>商品上限</dt>
+                <dd>{{ detail.product_limit }}</dd>
+              </div>
+              <div>
+                <dt>同步模式</dt>
+                <dd>{{ valueLabel(detail.sync_mode) }}</dd>
+              </div>
+              <div>
+                <dt>跳过已入库</dt>
+                <dd>{{ detail.skip_imported_products ? '开启' : '关闭' }}</dd>
+              </div>
+              <div>
+                <dt>翻页抓取</dt>
+                <dd>{{ detail.allow_pagination ? '开启' : '关闭' }}</dd>
+              </div>
+              <div>
+                <dt>爬虫账号</dt>
+                <dd>
+                  {{
+                    detail.account
+                      ? `${detail.account.label}（${detail.account.session_status_label}）`
+                      : '自动（账号组 ' + (detail.account_group || 'default') + '）'
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>评价目标数</dt>
+                <dd>{{ detail.review_target }}</dd>
+              </div>
+            </dl>
 
-        <h3>运行日志（最近 200 条）</h3>
-        <ul class="detail__events">
-          <li v-for="event in detail.events" :key="event.created_at + event.code">
-            <span class="detail__event-time">{{ event.created_at }}</span>
-            <span
-              :class="['detail__event-level', `detail__event-level--${event.level.toLowerCase()}`]"
-            >
-              {{ valueLabel(event.level) }}
-            </span>
-            <strong v-if="event.code" :title="`事件码：${event.code}`">
-              {{ eventCodeLabel(event.code) }}
-            </strong>
-            <span>{{ event.message }}</span>
-          </li>
-          <li v-if="(detail.events || []).length === 0">暂无日志。</li>
-        </ul>
+            <h3>运行记录</h3>
+            <table class="detail__table">
+              <thead>
+                <tr>
+                  <th>状态</th>
+                  <th>账号</th>
+                  <th>发现</th>
+                  <th>下载</th>
+                  <th>成功</th>
+                  <th>失败</th>
+                  <th>开始时间</th>
+                  <th>结束时间</th>
+                  <th>暂停原因</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="run in detail.runs" :key="run.public_id">
+                  <td>{{ run.status_label }}</td>
+                  <td>{{ run.account_label }}</td>
+                  <td>{{ run.discovered_count }}</td>
+                  <td>{{ run.downloaded_count }}</td>
+                  <td>{{ run.succeeded_count }}</td>
+                  <td>{{ run.failed_count }}</td>
+                  <td>{{ run.started_at }}</td>
+                  <td>{{ run.finished_at }}</td>
+                  <td>{{ run.pause_reason === 'NONE' ? '—' : valueLabel(run.pause_reason) }}</td>
+                </tr>
+                <tr v-if="(detail.runs || []).length === 0">
+                  <td colspan="9">尚未运行。</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h3>运行日志（最近 200 条）</h3>
+            <ul class="detail__events">
+              <li v-for="event in detail.events" :key="event.created_at + event.code">
+                <span class="detail__event-time">{{ event.created_at }}</span>
+                <span
+                  :class="[
+                    'detail__event-level',
+                    `detail__event-level--${event.level.toLowerCase()}`,
+                  ]"
+                >
+                  {{ valueLabel(event.level) }}
+                </span>
+                <strong v-if="event.code" :title="`事件码：${event.code}`">
+                  {{ eventCodeLabel(event.code) }}
+                </strong>
+                <span>{{ event.message }}</span>
+              </li>
+              <li v-if="(detail.events || []).length === 0">暂无日志。</li>
+            </ul>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -649,7 +762,16 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
         <button type="button" @click="showAccountCreate = !showAccountCreate">
           {{ showAccountCreate ? '取消新增' : '新增账号' }}
         </button>
-        <button type="button" @click="loadAccounts">刷新</button>
+        <button type="button" @click="refreshAccountsAll">刷新</button>
+        <input
+          v-model="accountSearch"
+          class="toolbar__search"
+          type="search"
+          placeholder="搜索账号 / 分组 / 备注"
+          aria-label="搜索爬虫账号"
+          @input="onAccountSearchInput"
+          @keydown.enter.prevent="submitAccountSearch"
+        />
       </div>
 
       <form v-if="showAccountCreate" class="create-form" @submit.prevent="submitAccountCreate">
@@ -774,6 +896,14 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
           <span v-if="row.login_pending" class="account-pending">等待登录…</span>
         </template>
       </AdminTable>
+
+      <AppPager
+        :page="accountsMeta.page || 1"
+        :page-size="accountsMeta.page_size || 20"
+        :total="accountsMeta.total || 0"
+        :has-next="accountsMeta.has_next"
+        @change="goAccountsPage"
+      />
     </div>
   </section>
 </template>
@@ -809,6 +939,16 @@ h1 {
   display: flex;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
+}
+
+/* 账号搜索框：与 create-form 输入框同款视觉。 */
+.toolbar__search {
+  flex: 0 1 16rem;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--colour-border);
+  border-radius: var(--radius-md);
+  font: inherit;
 }
 
 .toolbar button,
@@ -876,28 +1016,90 @@ h1 {
   font: inherit;
 }
 
-.detail {
-  margin-top: var(--space-5);
-  padding: var(--space-4);
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
+/* 复选框行：勾选框与文案同行，说明文字独占一行。 */
+.create-form label.crawler-form__check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.detail__head {
+.create-form label.crawler-form__check input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin-top: 2px;
+  padding: 0;
+}
+
+.crawler-form__hint {
+  flex-basis: 100%;
+  padding-left: 26px;
+  color: var(--colour-muted);
+  font-size: var(--font-size-xs, 0.75rem);
+}
+
+/* 任务详情浮层：内容多、字段宽，用一张居中的大卡片承载。 */
+.detail-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #0c182b75;
+}
+
+.detail-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  width: min(1080px, 96vw);
+  max-height: 90vh;
+  border-radius: 8px;
+  background: var(--colour-surface);
+  box-shadow: 0 20px 48px #0c182b33;
+  overflow: hidden;
 }
 
-.detail__head button {
-  min-height: 44px;
+.detail-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--colour-border);
+}
+
+.detail-card__head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.detail-card__name {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--colour-text-soft, #666);
+  word-break: break-all;
+}
+
+.detail-card__close {
+  flex: 0 0 auto;
+  min-height: 36px;
   padding: 0 var(--space-4);
   border: 1px solid var(--colour-border-strong);
   border-radius: var(--radius-md);
   background: var(--colour-surface);
   cursor: pointer;
   font: inherit;
+}
+
+.detail-card__close:hover {
+  border-color: var(--colour-text-soft, #999);
+}
+
+.detail-card__body {
+  padding: 18px 22px 22px;
+  overflow-y: auto;
 }
 
 .detail__meta {

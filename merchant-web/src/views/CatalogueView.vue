@@ -184,9 +184,6 @@ onMounted(async () => {
         <h1>商品上架中心</h1>
         <p>从平台商品池挑选商品上架到你自己的店铺，成本与零售价分开显示。</p>
       </div>
-      <div class="page-intro__actions">
-        <span class="tag">已上架 {{ state.listingTotal || listedCount || 0 }} 件</span>
-      </div>
     </div>
 
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
@@ -207,6 +204,7 @@ onMounted(async () => {
       >
         本店已上架
       </button>
+      <span class="tabs__count tag">已上架 {{ state.listingTotal || listedCount || 0 }} 件</span>
     </div>
 
     <template v-if="state.tab === 'pool'">
@@ -318,45 +316,47 @@ onMounted(async () => {
 
       <div class="card">
         <div class="card__body">
-          <table v-if="state.listings.length" class="data-table">
-            <thead>
-              <tr>
-                <th>商品</th>
-                <th>品类</th>
-                <th>成本价</th>
-                <th>零售价</th>
-                <th>上架时间</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in state.listings" :key="row.offer_id">
-                <td>
-                  <div class="listing-cell">
-                    <img
-                      v-if="row.image"
-                      :src="row.image"
-                      :alt="row.name"
-                      class="listing-cell__img"
-                    />
-                    <span v-else class="listing-cell__img listing-cell__img--empty">无图</span>
-                    <div>
-                      <div class="cell-strong">{{ row.name }}</div>
-                      <div class="cell-sub mono">{{ row.product_id.slice(0, 8) }}…</div>
+          <div v-if="state.listings.length" class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>商品</th>
+                  <th>品类</th>
+                  <th>成本价</th>
+                  <th>零售价</th>
+                  <th>上架时间</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in state.listings" :key="row.offer_id">
+                  <td>
+                    <div class="listing-cell">
+                      <img
+                        v-if="row.image"
+                        :src="row.image"
+                        :alt="row.name"
+                        class="listing-cell__img"
+                      />
+                      <span v-else class="listing-cell__img listing-cell__img--empty">无图</span>
+                      <div>
+                        <div class="cell-strong">{{ row.name }}</div>
+                        <div class="cell-sub mono">{{ row.product_id.slice(0, 8) }}…</div>
+                      </div>
                     </div>
-                  </div>
-                </td>
-                <td>
-                  {{ row.merchant_category_label || row.category?.name_zh || '未分类' }}
-                  <span v-if="row.activity" class="tag tag--red">活动</span>
-                </td>
-                <td class="num">¥ {{ row.cost || '—' }}</td>
-                <td class="num">¥ {{ row.price }}</td>
-                <td>{{ row.listed_at ? row.listed_at.slice(0, 10) : '—' }}</td>
-                <td><span class="tag tag--ok">已上架</span></td>
-              </tr>
-            </tbody>
-          </table>
+                  </td>
+                  <td>
+                    {{ row.merchant_category_label || row.category?.name_zh || '未分类' }}
+                    <span v-if="row.activity" class="tag tag--red">活动</span>
+                  </td>
+                  <td class="num">¥ {{ row.cost || '—' }}</td>
+                  <td class="num">¥ {{ row.price }}</td>
+                  <td>{{ row.listed_at ? row.listed_at.slice(0, 10) : '—' }}</td>
+                  <td><span class="tag tag--ok">已上架</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p v-else class="empty-state">还没有上架任何商品，去「平台商品池」挑一件吧。</p>
           <p class="hint-text" style="margin-top: 8px">
             如需下架商品，请联系平台客服，由管理端代为操作。
@@ -452,13 +452,29 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* 统计标签：放在 tab 行最右侧（两端一致）。 */
+.tabs__count {
+  margin-left: auto;
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* 品类筛选：只占一行，超出的横向滚动（桌面本就一行，行为无感知差异）。 */
 .chip-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.chip-row::-webkit-scrollbar {
+  display: none;
 }
 
 .chip {
+  flex: none;
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 16px;
@@ -466,6 +482,7 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .chip.is-active {
@@ -481,6 +498,13 @@ onMounted(async () => {
   /* 与品类条、下方商品卡片都留出空隙；水平对齐工具条的 20px 内边距。 */
   margin: 12px 20px 16px;
   max-width: 460px;
+}
+
+@media (max-width: 768px) {
+  .search-row {
+    max-width: 100%;
+    margin: 12px 16px 16px;
+  }
 }
 
 .search-row input {
@@ -614,5 +638,43 @@ onMounted(async () => {
   padding-left: 18px;
   font-size: 13px;
   color: var(--ink);
+}
+
+/* 手机档商品卡：一行两个，图片、字号、内边距同步收紧；桌面布局不变。 */
+@media (max-width: 768px) {
+  .product-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .product-card__media {
+    height: 110px;
+  }
+
+  .product-card__body {
+    padding: 10px;
+    gap: 6px;
+  }
+
+  .product-card__body h3 {
+    font-size: 13px;
+    height: 37px;
+  }
+
+  .product-card__meta {
+    font-size: 11px;
+  }
+
+  .product-card__prices {
+    gap: 10px;
+  }
+
+  .product-card__label {
+    font-size: 10px;
+  }
+
+  .product-card__prices b {
+    font-size: 13px;
+  }
 }
 </style>

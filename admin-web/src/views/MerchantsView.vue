@@ -104,7 +104,7 @@ function openModal(kind, merchant) {
   form.wallet_balance = merchant?.wallet_balance || '0.00'
   form.points = ''
   form.reason = ''
-  // 折扣按百分数展示（70 = 70%），留空表示未设置。
+  // 折扣按百分数展示，数值是「减免百分比」（20 = 成本价减免 20%，即按 80% 计），留空表示未设置。
   form.discount_rate = merchant?.discount_rate ?? ''
   form.activity_discount_rate = merchant?.activity_discount_rate ?? ''
 }
@@ -258,7 +258,132 @@ function closeDetail() {
   detailLoading.value = false
 }
 
-onMounted(load)
+// ---------- 入驻申请（购物端「申请店铺」提交的开店申请） ----------
+const APP_TABS = [
+  { key: '', label: '全部申请' },
+  { key: 'PENDING', label: '待审核' },
+  { key: 'APPROVED', label: '已通过' },
+  { key: 'REJECTED', label: '已驳回' },
+]
+
+const appStatusLabels = {
+  PENDING: '待审核',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
+}
+
+// 2026-11-17 申请表单 7 项：证件类型三选一的展示文案。
+const appDocTypeLabels = {
+  ID_CARD: '身份证',
+  PASSPORT: '护照',
+  DRIVER_LICENSE: '驾照',
+}
+
+// 审核弹窗里点击 logo / 证件照后的放大预览（空串 = 关闭）。
+const appPreview = ref('')
+
+const applications = reactive({
+  tab: 'PENDING',
+  page: 1,
+  items: [],
+  meta: { total: 0, page_size: 20, has_next: false },
+  pendingCount: 0,
+  notice: '',
+  loading: false,
+  error: '',
+})
+
+async function loadApplications(resetPage = false) {
+  if (resetPage) applications.page = 1
+  applications.loading = true
+  applications.error = ''
+  try {
+    const params = new URLSearchParams({ page: String(applications.page) })
+    if (applications.tab) params.set('status', applications.tab)
+    const payload = await apiRequest(`/merchant-applications?${params}`)
+    applications.items = payload.items
+    applications.meta = payload
+    applications.pendingCount = payload.pending_count || 0
+  } catch (error) {
+    applications.error = error.message
+  } finally {
+    applications.loading = false
+  }
+}
+
+const appModal = reactive({ open: false, application: null, busy: false, error: '' })
+const appForm = reactive({
+  approved: true,
+  require_deposit: true,
+  deposit_amount: '500.00',
+  ban_after_days: 4,
+  reason: '',
+})
+
+function openAppModal(application) {
+  appModal.open = true
+  appModal.application = application
+  appModal.busy = false
+  appModal.error = ''
+  appPreview.value = ''
+  appForm.approved = true
+  appForm.require_deposit = true
+  appForm.deposit_amount = '500.00'
+  appForm.ban_after_days = 4
+  appForm.reason = ''
+}
+
+async function submitAppModal() {
+  if (!appModal.application) return
+  if (!appForm.approved && !appForm.reason.trim()) {
+    appModal.error = '请填写驳回原因。'
+    return
+  }
+  appModal.busy = true
+  appModal.error = ''
+  try {
+    const payload = appForm.approved
+      ? {
+          application_id: appModal.application.id,
+          action: 'approve',
+          require_deposit: appForm.require_deposit,
+          deposit_amount: appForm.require_deposit ? appForm.deposit_amount : undefined,
+          ban_after_days: Number(appForm.ban_after_days),
+        }
+      : {
+          application_id: appModal.application.id,
+          action: 'reject',
+          reason: appForm.reason.trim(),
+        }
+    const response = await adminWrite('/merchant-applications/actions', payload)
+    appModal.open = false
+    if (appForm.approved && response.staff_account_created === false) {
+      applications.notice = '该邮箱已存在员工账号，已直接关联（密码保持不变）。'
+    } else {
+      applications.notice = ''
+    }
+    await loadApplications()
+  } catch (error) {
+    appModal.error = error.message
+  } finally {
+    appModal.busy = false
+  }
+}
+
+function selectAppTab(key) {
+  applications.tab = key
+  loadApplications(true)
+}
+
+function goAppPage(page) {
+  applications.page = page
+  loadApplications()
+}
+
+onMounted(() => {
+  load()
+  loadApplications()
+})
 </script>
 
 <template>
@@ -394,6 +519,85 @@ onMounted(load)
       />
     </div>
 
+    <!-- 入驻申请（购物端「申请店铺」提交的开店申请） -->
+    <h2 class="section-title app-section-title">
+      入驻申请
+      <span class="app-pending-count">待审核 {{ applications.pendingCount }} 条</span>
+    </h2>
+    <div class="panel">
+      <div class="tabs">
+        <button
+          v-for="tab in APP_TABS"
+          :key="tab.key"
+          type="button"
+          :class="{ 'is-active': applications.tab === tab.key }"
+          @click="selectAppTab(tab.key)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+
+      <div class="panel__body">
+        <p v-if="applications.notice" class="notice notice--warn">{{ applications.notice }}</p>
+        <p v-if="applications.error" class="notice notice--error">{{ applications.error }}</p>
+      </div>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>买家账号</th>
+              <th>用户名字</th>
+              <th>店铺名称</th>
+              <th>手机号码</th>
+              <th>邀请码</th>
+              <th>状态</th>
+              <th>申请时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in applications.items" :key="row.id">
+              <td>{{ row.buyer_email || '—' }}</td>
+              <td>{{ row.user_name || '—' }}</td>
+              <td>
+                <span class="cell-strong">{{ row.shop_name }}</span>
+              </td>
+              <td>{{ row.phone || '—' }}</td>
+              <td>{{ row.referrer_code || '—' }}</td>
+              <td><StatusTag :value="row.status" :labels="appStatusLabels" /></td>
+              <td>{{ formatTime(row.submitted_at) }}</td>
+              <td>
+                <button
+                  v-if="row.status === 'PENDING'"
+                  type="button"
+                  class="btn btn--sm btn--primary"
+                  @click="openAppModal(row)"
+                >
+                  审核
+                </button>
+                <span v-else>—</span>
+              </td>
+            </tr>
+            <tr v-if="!applications.loading && applications.items.length === 0">
+              <td colspan="8" class="data-table__empty">当前筛选条件下没有入驻申请。</td>
+            </tr>
+            <tr v-if="applications.loading">
+              <td colspan="8" class="data-table__empty">加载中…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <AppPager
+        :page="applications.meta.page || 1"
+        :page-size="applications.meta.page_size || 20"
+        :total="applications.meta.total || 0"
+        :has-next="applications.meta.has_next"
+        @change="goAppPage"
+      />
+    </div>
+
     <AppDrawer
       v-if="detail || detailLoading"
       :title="detail ? `商家详情 · ${detail.name}` : '商家详情'"
@@ -432,11 +636,11 @@ onMounted(load)
             <dd>{{ detail.ban_after_days ?? '不自动封店' }}</dd>
           </div>
           <div>
-            <dt>商家折扣</dt>
+            <dt>商家折扣（成本价减免）</dt>
             <dd>{{ detail.discount_rate ? `${detail.discount_rate}%` : '未设置' }}</dd>
           </div>
           <div>
-            <dt>活动商品折扣</dt>
+            <dt>活动商品折扣（成本价减免）</dt>
             <dd>
               {{ detail.activity_discount_rate ? `${detail.activity_discount_rate}%` : '未设置' }}
             </dd>
@@ -564,7 +768,7 @@ onMounted(load)
           >
         </div>
         <div class="field">
-          <label for="merchant-discount">折扣设置（%）</label>
+          <label for="merchant-discount">折扣设置（%，成本价减免）</label>
           <input
             id="merchant-discount"
             v-model="form.discount_rate"
@@ -572,10 +776,13 @@ onMounted(load)
             step="0.01"
             min="0"
           />
-          <span class="field__hint">成本价 = 向上取整(零售价 × 折扣)。留空表示未设置。</span>
+          <span class="field__hint"
+            >平台给商家的进货折扣：成本价 = 零售价 × (1 − 折扣%)，顾客价（零售价）不变。<br />
+            例：零售 3599、折扣 20% → 3599 × 80% = 2879.20；留空 = 减免 0% → 成本价 = 零售价。</span
+          >
         </div>
         <div class="field">
-          <label for="merchant-activity-discount">活动商品折扣（%）</label>
+          <label for="merchant-activity-discount">活动商品折扣（%，成本价减免）</label>
           <input
             id="merchant-activity-discount"
             v-model="form.activity_discount_rate"
@@ -584,7 +791,7 @@ onMounted(load)
             min="0"
           />
           <span class="field__hint"
-            >仅对活动商品生效，优先于普通折扣；不做区间校验，设多少按多少算。</span
+            >仅对活动商品生效，优先于普通折扣，同样以零售价为基数减免；不做区间校验，设多少按多少算。</span
           >
         </div>
       </div>
@@ -647,6 +854,127 @@ onMounted(load)
     </AppModal>
 
     <AppModal
+      v-if="appModal.open"
+      title="入驻申请审核"
+      :busy="appModal.busy"
+      @cancel="appModal.open = false"
+      @confirm="submitAppModal"
+    >
+      <div class="form-grid">
+        <!-- 2026-11-17 申请 7 项字段全量展示：字段表格 + logo 缩略图 + 证件照（点击放大） -->
+        <table class="app-detail-table">
+          <tbody>
+            <tr>
+              <th>买家账号</th>
+              <td>{{ appModal.application?.buyer_email || '—' }}</td>
+            </tr>
+            <tr>
+              <th>用户名字</th>
+              <td>{{ appModal.application?.user_name || '—' }}</td>
+            </tr>
+            <tr>
+              <th>店铺名称</th>
+              <td>{{ appModal.application?.shop_name || '—' }}</td>
+            </tr>
+            <tr>
+              <th>手机号码</th>
+              <td>{{ appModal.application?.phone || '—' }}</td>
+            </tr>
+            <tr>
+              <th>邀请码</th>
+              <td>{{ appModal.application?.referrer_code || '—（选填，未填）' }}</td>
+            </tr>
+            <tr>
+              <th>证件类型</th>
+              <td>
+                {{ appDocTypeLabels[appModal.application?.id_document_type] || '—' }}
+              </td>
+            </tr>
+            <tr>
+              <th>居住地址</th>
+              <td>{{ appModal.application?.residential_address || '—' }}</td>
+            </tr>
+            <tr>
+              <th>店铺logo</th>
+              <td>
+                <img
+                  v-if="appModal.application?.logo_image_url"
+                  :src="appModal.application.logo_image_url"
+                  alt="店铺logo"
+                  class="app-image-thumb"
+                  @click="appPreview = appModal.application.logo_image_url"
+                />
+                <span v-else>—</span>
+              </td>
+            </tr>
+            <tr>
+              <th>证件照片</th>
+              <td>
+                <img
+                  v-if="appModal.application?.id_document_image_url"
+                  :src="appModal.application.id_document_image_url"
+                  alt="证件照片（点击放大）"
+                  class="app-image-thumb app-image-thumb--doc"
+                  @click="appPreview = appModal.application.id_document_image_url"
+                />
+                <span v-else>—</span>
+                <span class="app-image-hint">（敏感信息，仅供入驻审核使用）</span>
+              </td>
+            </tr>
+            <tr>
+              <th>申请时间</th>
+              <td>{{ formatTime(appModal.application?.submitted_at) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="appModal.error" class="notice notice--error">{{ appModal.error }}</p>
+
+        <div class="field">
+          <span class="field__label">审核结果</span>
+          <label class="checkline">
+            <input v-model="appForm.approved" type="radio" :value="true" /> 通过
+          </label>
+          <label class="checkline">
+            <input v-model="appForm.approved" type="radio" :value="false" /> 驳回
+          </label>
+        </div>
+        <div v-if="appForm.approved" class="field">
+          <label class="checkline">
+            <input v-model="appForm.require_deposit" type="checkbox" /> 需要保证金
+          </label>
+          <span class="field__hint">审核通过后该选择永久锁定，不可再改。</span>
+        </div>
+        <div v-if="appForm.approved && appForm.require_deposit" class="field">
+          <label for="app-deposit-required">应缴保证金</label>
+          <input
+            id="app-deposit-required"
+            v-model="appForm.deposit_amount"
+            type="number"
+            min="0.01"
+            step="0.01"
+          />
+        </div>
+        <div v-if="appForm.approved" class="field">
+          <label for="app-ban-days">未发货封店天数</label>
+          <input
+            id="app-ban-days"
+            v-model="appForm.ban_after_days"
+            type="number"
+            min="1"
+            step="1"
+          />
+        </div>
+        <div v-if="!appForm.approved" class="field">
+          <label for="app-reject-reason">驳回原因（必填）</label>
+          <input id="app-reject-reason" v-model="appForm.reason" type="text" maxlength="255" />
+        </div>
+        <p v-if="appForm.approved" class="field__hint">
+          通过后将自动开店：买家邮箱即为商家端账号（密码同买家账号）；需保证金时店铺进入「待缴保证金」。
+        </p>
+      </div>
+    </AppModal>
+
+    <AppModal
       v-if="banConfirm.pending.value"
       title="确认修改自动封店天数"
       confirm-text="确认修改并封店"
@@ -659,5 +987,90 @@ onMounted(load)
       </p>
       <p>确认修改后店铺将立即置为【已封店】；超时订单发完后由客服在管理端手动解封。</p>
     </AppModal>
+
+    <!-- 入驻审核：点击 logo / 证件照后的放大预览（点击遮罩关闭） -->
+    <div v-if="appPreview" class="app-image-lightbox" @click="appPreview = ''">
+      <img :src="appPreview" alt="申请图片放大预览" />
+    </div>
   </section>
 </template>
+
+<style scoped>
+.app-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-pending-count {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #fff4e5;
+  color: #a05a00;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 入驻申请审核：字段表格 + 图片 */
+.app-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.app-detail-table th {
+  width: 88px;
+  padding: 6px 10px 6px 0;
+  text-align: left;
+  vertical-align: top;
+  color: #5a6673;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.app-detail-table td {
+  padding: 6px 0;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.app-image-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+
+.app-image-thumb--doc {
+  width: 84px;
+}
+
+.app-image-hint {
+  display: block;
+  margin-top: 4px;
+  color: #98a2ad;
+  font-size: 12px;
+}
+
+.app-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(15, 23, 32, 0.72);
+  cursor: zoom-out;
+}
+
+.app-image-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  background: #fff;
+}
+</style>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" role="img" aria-label="category placeholder">
+  <!-- Local fallback tile for categories without a Joybuy card image
+       (tokens.css: surface-soft / border / border-strong). -->
+  <rect width="360" height="360" fill="#f5f6f7"/>
+  <rect x="0.5" y="0.5" width="359" height="359" fill="none" stroke="#d9dee5"/>
+  <g fill="none" stroke="#b9c1cb" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="90" y="90" width="180" height="180" rx="16"/>
+    <circle cx="150" cy="150" r="18"/>
+    <path d="M102 246 L162 186 L198 222 L232 188 L258 214"/>
+  </g>
+</svg>

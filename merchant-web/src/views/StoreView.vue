@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 
 import ImageUploader from '@/components/ImageUploader.vue'
 import { apiRequest, merchantWrite } from '@/lib/api'
@@ -57,6 +57,20 @@ const STATUS_LABELS = {
   SUSPENDED: '已封店',
 }
 
+// 角色中文映射：接口返回的是角色名（Merchant owner）或角色码（merchant_owner）。
+const ROLE_LABELS = {
+  merchant_owner: '店主',
+  'Merchant owner': '店主',
+  merchant_catalog_manager: '商品管理员',
+  'Merchant catalog manager': '商品管理员',
+  merchant_viewer: '查看员',
+  'Merchant viewer': '查看员',
+}
+
+const roleLabel = computed(
+  () => ROLE_LABELS[state.merchant?.role] || state.merchant?.role || '—',
+)
+
 function fmtDate(value) {
   if (!value) return '暂无记录'
   return value.slice(0, 16).replace('T', ' ')
@@ -99,9 +113,12 @@ onMounted(load)
             </span>
             <div>
               <strong>{{ state.merchant.name }}</strong>
-              <div class="cell-sub">
-                当前状态：{{ STATUS_LABELS[state.merchant.status] || state.merchant.status }} ｜
-                角色：{{ state.merchant.role || '—' }}
+              <div class="cell-sub store-meta">
+                <span class="store-meta__status">
+                  当前状态：{{ STATUS_LABELS[state.merchant.status] || state.merchant.status }}
+                </span>
+                <span class="store-meta__sep" aria-hidden="true">｜</span>
+                <span class="store-meta__role">角色：{{ roleLabel }}</span>
               </div>
             </div>
             <span class="tag" :class="{ 'tag--ok': state.merchant.can_operate }">
@@ -179,9 +196,6 @@ onMounted(load)
               <dd>{{ fmtDate(state.merchant.joined) }}</dd>
             </div>
           </dl>
-          <p class="hint-text">
-            店铺状态、保证金启用与封店天数在平台首次审核通过后锁定，商家端不可修改。
-          </p>
         </div>
       </div>
     </template>
@@ -196,9 +210,12 @@ onMounted(load)
   margin-bottom: 18px;
 }
 
+/* flex:none 防止容器被压缩导致 logo 变形；contain 保证任何比例图都不拉伸。 */
 .store-avatar {
+  flex: none;
   width: 56px;
   height: 56px;
+  aspect-ratio: 1 / 1;
   border-radius: 10px;
   background: var(--red-soft);
   color: var(--red);
@@ -213,10 +230,42 @@ onMounted(load)
 .store-avatar img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .store-head .tag {
   margin-left: auto;
+}
+
+/* 状态/角色分割：桌面同行「｜」分隔；手机端去掉分隔符、各自一行。 */
+.store-meta__sep {
+  margin: 0 4px;
+}
+
+@media (max-width: 768px) {
+  .store-meta__sep {
+    display: none;
+  }
+
+  .store-meta__status,
+  .store-meta__role {
+    display: block;
+  }
+
+  /* 手机端：状态 chip（可正常经营）与「复制店铺 ID」按钮上下各占一行。 */
+  .store-head {
+    flex-wrap: wrap;
+    gap: var(--space-3, 12px);
+  }
+
+  .store-head .tag {
+    margin-left: 0;
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .store-head .btn {
+    flex: 1 1 100%;
+  }
 }
 </style>

@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime, time
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 from django.db import transaction
 from django.db.models import Sum
@@ -25,6 +25,69 @@ from orders.models import MerchantOrder
 
 MONEY = Decimal("0.0001")
 CENT = Decimal("0.01")
+
+
+def compute_listing_cost(merchant, spu):
+    """按商家折扣计算上架成本价（2026-11-10 最终口径，取代旧口径）。
+
+    成本价 = 零售价 × (1 - 折扣%)，向上取整到分（ROUND_CEILING）。
+    管理端设置的折扣是「减免百分比」：折扣 20% → 成本价 = 零售价 × 80%
+    （零售 200、折扣 20% → 160.00；零售 25.99、折扣 20% → ceil(20.792) = 20.80）。
+    商家未设置折扣视为减免 0%，即成本价 = 零售价。
+
+    口径沿革（现行只有一个口径，旧口径全部作废，勿再回退）：
+    - 2026-11-10 定稿：基数 = ``Spu.retail_price``（爬虫抓取价已入库为零售价），
+      取代 2026-11-08 的「平台成本价 × (1 - 折扣%)」——只是基数换了，减免语义不变；
+    - 2026-11-08：成本价 = 平台成本价 × (1 - 折扣%)——已作废；
+    - 2026-11-08 之前：向上取整(零售价 × 折扣)——已作废。
+    ``Spu.cost_price`` 不参与本公式：爬虫商品成本价为 NULL 也能算出成本并上架；
+    ``retail_price`` 为 NULL 时返回 None（商家端 can_list=False 行为保持不变）。
+
+    取折扣顺序（文档拍板）：活动商品优先用活动折扣（同为减免百分比），
+    否则用普通折扣。顾客看到的价格仍是零售价，不随折扣变化。
+    """
+
+    if spu.retail_price is None:
+        return None
+    rate = Decimal("0")
+    if spu.is_activity and merchant.activity_discount_rate is not None:
+        rate = Decimal(str(merchant.activity_discount_rate))
+    elif merchant.discount_rate is not None:
+        rate = Decimal(str(merchant.discount_rate))
+    factor = Decimal("1") - rate / Decimal("100")
+    value = spu.retail_price * factor
+    if value < 0:
+        # 折扣超过 100% 时钳到 0，不允许出现负成本。
+        value = Decimal("0")
+    return value.quantize(CENT, rounding=ROUND_CEILING)
+
+
+def reprice_listed_offers(*, merchant=None, spu=None) -> int:
+    """按当前折扣与零售价重算已上架 ACTIVE Offer 的成本价。
+
+    折扣、活动折扣、零售价或活动标记变化后必须调用，否则已上架商品的成本价
+    还停在上架时的快照（商家端显示的成本与预估盈利都会错）。
+    返回实际被更新的 Offer 行数。
+    """
+
+    from offers.models import Offer
+
+    queryset = Offer.objects.filter(status=Offer.Status.ACTIVE).select_related(
+        "merchant", "sku__spu"
+    )
+    if merchant is not None:
+        queryset = queryset.filter(merchant=merchant)
+    if spu is not None:
+        queryset = queryset.filter(sku__spu=spu)
+    updated = 0
+    for offer in queryset:
+        cost = compute_listing_cost(offer.merchant, offer.sku.spu)
+        # 成本价缺失时保留原快照，避免把已上架商品变成「算不出成本」。
+        if cost is None or money(offer.cost_price) == money(cost):
+            continue
+        Offer.objects.filter(pk=offer.pk).update(cost_price=cost, updated_at=timezone.now())
+        updated += 1
+    return updated
 
 
 class MerchantOpsError(Exception):

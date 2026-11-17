@@ -62,20 +62,23 @@ SOURCE_SYSTEM = "joybuy_uk"
 
 # UK bestseller tab -> our standard child-category slug (requirement 5-1:
 # the storefront tabs use the 11 standard categories; these subtrees surface
-# the UK products under the matching standard tab).
+# the UK products under the matching standard tab). 2026-11-11 one-to-one
+# taxonomy: the groceries-food bucket was split into Joybuy-aligned children,
+# so each tab now maps to its closest one-to-one child (var/split_categories_20261111
+# records the same mapping used for the存量 remap).
 TAB_CATEGORY_MAP = {
     "Kitchen Roll, Toilet Roll & Tissues": "cleaning-supplies",
-    "Food Cupboard": "groceries-food",
-    "Frozen Food": "groceries-food",
-    "Beverages": "groceries-food",
+    "Food Cupboard": "rice-pasta-pulses",
+    "Frozen Food": "chinese",
+    "Beverages": "water",
     "Small Kitchen Appliances": "kitchen-appliances",
-    "Softdrinks": "groceries-food",
-    "Rice, Pasta & Pulses": "groceries-food",
-    "Table Sauces, Condiments & Dressings": "groceries-food",
-    "Instant Noodle": "groceries-food",
-    "Cooking Ingredients": "groceries-food",
+    "Softdrinks": "fizzy-drinks",
+    "Rice, Pasta & Pulses": "rice-pasta-pulses",
+    "Table Sauces, Condiments & Dressings": "table-sauces-condiments-dressings",
+    "Instant Noodle": "rice-pasta-pulses",
+    "Cooking Ingredients": "cooking-ingredients",
 }
-FALLBACK_CATEGORY_SLUG = "groceries-food"
+FALLBACK_CATEGORY_SLUG = "rice-pasta-pulses"
 
 
 class Command(BaseCommand):

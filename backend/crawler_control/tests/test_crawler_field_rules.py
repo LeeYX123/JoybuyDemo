@@ -365,6 +365,18 @@ class DatasetIncrementalTests(TestCase):
             self.assertFalse(meta["changed"])
             self.assertTrue(meta["first_captured_at"])
 
+    def test_local_media_maps_gallery_urls_to_files(self):
+        """dataset 返回 URL→本地文件映射，供导入阶段复用，避免二次下载。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = good_payload()
+            index = self.save(root, payload)
+            gallery = index["local_media"]["gallery"]
+            self.assertEqual(set(gallery), set(payload["image_urls"]))
+            for path in gallery.values():
+                self.assertTrue(Path(path).is_file())
+            self.assertEqual(index["local_media"]["videos"], {})
+
     def test_changed_price_appends_a_new_index_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

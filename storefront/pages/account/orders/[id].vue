@@ -68,41 +68,51 @@ async function confirmReceipt() {
   }
 }
 
-const STATUS_LABELS = {
-  PAID: '已支付 / Paid',
-  PENDING_PAYMENT: '待支付 / Pending payment',
-  CANCELED: '已取消 / Canceled',
+const STATUS_KEYS = {
+  PAID: 'orders.statusPaid',
+  PENDING_PAYMENT: 'orders.statusPendingPayment',
+  CANCELED: 'orders.statusCanceled',
+}
+
+function statusLabel(status) {
+  return t(STATUS_KEYS[status] || 'orders.statusProcessing')
 }
 
 useHead(() => ({
-  title: order.value ? `Order #${order.value.public_id.slice(0, 8)}` : 'Order',
+  title: order.value
+    ? `${t('orders.orderNumber')} #${order.value.public_id.slice(0, 8)}`
+    : t('orders.orderNumber'),
 }))
 </script>
 
 <template>
   <AppContainer narrow>
     <section class="order-detail" aria-labelledby="order-title">
-      <NuxtLink to="/account/orders" class="order-detail__back">← Your orders</NuxtLink>
+      <NuxtLink to="/account/orders" class="order-detail__back">{{
+        t('orders.backToOrders')
+      }}</NuxtLink>
 
-      <p v-if="status === 'pending'" class="order-detail__hint">Loading…</p>
+      <p v-if="status === 'pending'" class="order-detail__hint">{{ t('common.loading') }}</p>
       <template v-else-if="order">
-        <h1 id="order-title">Order #{{ order.public_id.slice(0, 8) }}</h1>
+        <h1 id="order-title">
+          {{ t('orders.orderNumber') }} #{{ order.public_id.slice(0, 8).toUpperCase() }}
+        </h1>
 
         <dl class="order-detail__meta">
           <div>
-            <dt>Status</dt>
-            <dd>{{ STATUS_LABELS[order.status] || order.status }}</dd>
+            <dt>{{ t('orders.status') }}</dt>
+            <dd>{{ statusLabel(order.status) }}</dd>
           </div>
           <div>
-            <dt>Placed at</dt>
+            <dt>{{ t('orders.placedAt') }}</dt>
             <dd>{{ order.created_at?.slice(0, 16).replace('T', ' ') }}</dd>
           </div>
           <div v-if="order.payment_method">
-            <dt>Payment</dt>
+            <dt>{{ t('orders.payment') }}</dt>
             <dd>{{ order.payment_method }}</dd>
           </div>
           <div>
-            <dt>Total</dt>
+            <dt>{{ t('orders.total') }}</dt>
             <dd>{{ formatDisplayPrice(order.total) }}</dd>
           </div>
         </dl>

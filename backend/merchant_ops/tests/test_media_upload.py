@@ -125,15 +125,31 @@ class AdminUploadTests(UploadTestBase):
 
     def test_rejects_oversized_file(self):
         with self.temp_root():
-            # 噪声图必然超过 1MB
+            # 评价图上限仍是 1MB，用噪声图（压缩率极低）必定超过
             import os
 
             big = Image.frombytes("RGB", (900, 900), os.urandom(900 * 900 * 3))
             buffer = io.BytesIO()
             big.save(buffer, format="PNG")
-            response = self.upload(buffer.getvalue(), name="big.png")
+            response = self.upload(buffer.getvalue(), purpose="review", name="big.png")
             self.assertEqual(response.status_code, 413)
             self.assertEqual(response.json()["error"]["code"], "FILE_TOO_LARGE")
+
+    def test_product_image_limit_is_ten_megabytes(self):
+        """商品图上限按运营要求放宽到 10MB：2MB 的高清实拍必须能上传。"""
+        from media.uploads import PRODUCT_MAX_BYTES
+
+        self.assertEqual(PRODUCT_MAX_BYTES, 10 * 1024 * 1024)
+        with self.temp_root():
+            import os
+
+            big = Image.frombytes("RGB", (900, 900), os.urandom(900 * 900 * 3))
+            buffer = io.BytesIO()
+            big.save(buffer, format="PNG")
+            data = buffer.getvalue()
+            self.assertGreater(len(data), 1024 * 1024)
+            response = self.upload(data, purpose="product", name="big.png")
+            self.assertEqual(response.status_code, 201, response.content)
 
     def test_rejects_too_many_pixels(self):
         with self.temp_root():

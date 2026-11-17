@@ -165,6 +165,17 @@ class CrawlJob(models.Model):
         choices=SyncMode.choices,
         default=SyncMode.INCREMENTAL,
     )
+    #: 跳过已入库商品（2026-11-12）：开启后列表阶段先查
+    #: ``SpuSourceIdentity``，已入库的商品不再请求详情页（因此也不会刷新
+    #: 价格/库存/评分）；关闭时行为与以前一致（每轮全量抓取，导入幂等更新）。
+    skip_imported_products = models.BooleanField(default=False)
+    #: 列表翻页（2026-11-12，运营者拍板默认开启）：开启后允许请求
+    #: ``/s?k=…&page=N`` 继续往后翻页直到抓满 ``product_limit``；Joybuy
+    #: robots.txt 禁止 ``/s?*&page=``，因此开启该开关的运行会关闭
+    #: ROBOTSTXT_OBEY —— 等同于运营者确认已获授权、自愿偏离该条规则。
+    #: 关闭时每个类目只抓第一屏（实测 20–40 张卡片），不足部分记
+    #: ``LISTING_SHORTFALL``。
+    allow_pagination = models.BooleanField(default=True)
     review_target = models.PositiveSmallIntegerField(default=50)
     download_product_media = models.BooleanField(default=True)
     download_review_media = models.BooleanField(default=True)

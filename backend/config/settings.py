@@ -220,6 +220,12 @@ STAFF_TOTP_ALLOWED_DRIFT_STEPS = int(os.getenv("STAFF_TOTP_ALLOWED_DRIFT_STEPS",
 STAFF_LOGIN_FAILURE_LIMIT = int(os.getenv("STAFF_LOGIN_FAILURE_LIMIT", "5"))
 STAFF_LOGIN_FAILURE_WINDOW_SECONDS = int(os.getenv("STAFF_LOGIN_FAILURE_WINDOW_SECONDS", "900"))
 
+# 购物端「进入商家中心」的跳转地址（merchant-web 独立应用）。
+# 空 = 用当前请求的 Origin 主机 + MERCHANT_WEB_PORT（开发默认 5174），
+# 生产必须显式配置，避免把 localhost 地址带回给浏览器。
+MERCHANT_WEB_URL = os.getenv("MERCHANT_WEB_URL", "").strip().rstrip("/")
+MERCHANT_WEB_PORT = int(os.getenv("MERCHANT_WEB_PORT", "5174"))
+
 if APP_ENV not in {"development", "test"}:
     if VERIFICATION_CODE_TEST_MODE:
         raise ImproperlyConfigured("VERIFICATION_CODE_TEST_MODE cannot be enabled outside dev/test")

@@ -123,7 +123,7 @@ const router = createRouter({
           path: 'campaign-cards',
           name: 'campaign-cards',
           component: () => import('@/views/CampaignCardsView.vue'),
-          meta: { title: '首页活动卡片', module: 'cms.campaign' },
+          meta: { title: '活动卡片', module: 'cms.campaign' },
         },
         {
           path: 'banners',

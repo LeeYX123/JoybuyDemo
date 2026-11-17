@@ -50,12 +50,11 @@ screenshots/
 # Local runtime data and generated media
 var/*
 !var/README.md
-backend/media/
 backend/raw/
-media/
-raw/
-exports/
-tmp/
+/media/
+/raw/
+/exports/
+/tmp/
 
 # Database dumps, archives, and backups
 *.sql
@@ -91,5 +90,18 @@ backend/*-pipeline-job/
 backend/*-3-v4/
 backend/*-v4/
 
+# 爬虫独立调试脚本输出（crawler/debug_crawl.py 默认输出目录，运行时产物，不入库）
+crawler_debug_output/
+
+# 爬虫独立调试脚本的登录态（真实 Cookie / header dict，禁止入库）
+crawler/debug_session.py
+
 # 需求原型与开发文档（本地留存，不入库）
 商家端及平台管理端文档/
+
+# 本地离线商品翻译 Agent（Hy-MT2-7B GGUF）：代码/配置/模型一律本地留存，不入库
+translation_agent/
+
+# 本地临时预览页与需求文档备份副本
+_preview.html
+*.bak-*

@@ -21,8 +21,8 @@ describe('design tokens', () => {
     }
   })
 
-  it('keeps the container capped at the 1440 design width', () => {
-    expect(tokensCss).toContain('--container-max: 90rem')
+  it('keeps the container capped at the 1512 Joybuy content width (+2×48 padding)', () => {
+    expect(tokensCss).toContain('--container-max: 100.5rem')
   })
 
   it('defines a local system font stack with no remote source', () => {

@@ -8,6 +8,7 @@ from merchant_ops import (
     views_buyers,
     views_campaign,
     views_catalog,
+    views_channel_banners,
     views_finance,
     views_growth,
     views_media,
@@ -21,11 +22,40 @@ from merchant_ops import (
     views_notifications,
     views_orders,
     views_service,
+    views_shop_application,
     views_support,
 )
 
 urlpatterns = [
     # A02 商家管理
+    # 购物端「申请店铺」：买家会话接口（不能挂 /api/v1/merchant/*，
+    # 那会触发员工会话 + 店铺上下文）。
+    path(
+        "api/v1/account/merchant-application",
+        views_shop_application.BuyerMerchantApplicationView.as_view(),
+        name="buyer-merchant-application",
+    ),
+    # 买家侧开店申请图片上传（店铺 logo / 个人证件照，purpose=shop_application）。
+    path(
+        "api/v1/account/merchant-application/media",
+        views_shop_application.BuyerMerchantApplicationMediaView.as_view(),
+        name="buyer-merchant-application-media",
+    ),
+    path(
+        "api/v1/account/merchant-console-session",
+        views_shop_application.BuyerMerchantConsoleSessionView.as_view(),
+        name="buyer-merchant-console-session",
+    ),
+    path(
+        "api/v1/admin/merchant-applications",
+        views_shop_application.AdminMerchantApplicationsView.as_view(),
+        name="admin-merchant-applications",
+    ),
+    path(
+        "api/v1/admin/merchant-applications/actions",
+        views_shop_application.AdminMerchantApplicationActionsView.as_view(),
+        name="admin-merchant-application-actions",
+    ),
     path(
         "api/v1/admin/merchants",
         views_merchants.AdminMerchantsView.as_view(),
@@ -561,5 +591,27 @@ urlpatterns = [
         "api/v1/admin/campaign-cards/<uuid:public_id>/actions",
         views_campaign.AdminCampaignCardActionsView.as_view(),
         name="admin-campaign-card-actions",
+    ),
+
+    # 频道页 banner（/minihome/<code> 顶部轮播图，按频道分组）
+    path(
+        "api/v1/admin/channel-banners",
+        views_channel_banners.AdminChannelBannersView.as_view(),
+        name="admin-channel-banners",
+    ),
+    path(
+        "api/v1/admin/channel-banners/channels",
+        views_channel_banners.AdminChannelBannerChannelsView.as_view(),
+        name="admin-channel-banner-channels",
+    ),
+    path(
+        "api/v1/admin/channel-banners/<uuid:public_id>",
+        views_channel_banners.AdminChannelBannerDetailView.as_view(),
+        name="admin-channel-banner-detail",
+    ),
+    path(
+        "api/v1/admin/channel-banners/<uuid:public_id>/actions",
+        views_channel_banners.AdminChannelBannerActionsView.as_view(),
+        name="admin-channel-banner-actions",
     ),
 ]

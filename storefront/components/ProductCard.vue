@@ -1,5 +1,9 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useLocale } from '../composables/useLocale'
+import { useWishlist } from '../composables/useWishlist'
+
+const { t } = useLocale()
 
 import { formatDisplayPrice, isDeliveryLabel } from '../utils/display'
 
@@ -48,16 +52,40 @@ const badge = computed(() => {
   // delivery-estimate labels are suppressed by the display rule too.
   return props.product.badge && !isDeliveryLabel(props.product.badge) ? props.product.badge : ''
 })
+
+// Wishlist heart: session-backed, optimistic, and shared across every card.
+const spuPublicId = computed(() =>
+  String(props.product.spu_public_id || props.product.public_id || ''),
+)
+const { isFavourite, isPending, ensureLoaded, toggle } = useWishlist()
+const wishlisted = computed(() => isFavourite(spuPublicId.value))
+const wishPending = computed(() => isPending(spuPublicId.value))
+
+onMounted(() => {
+  ensureLoaded()
+})
+
+function toggleWishlist() {
+  return toggle(spuPublicId.value)
+}
 </script>
 
 <template>
   <article class="product-card">
     <span v-if="props.rank > 0" class="product-card__rank">{{ props.rank }}</span>
-    <button class="product-card__wish" type="button" aria-label="Add to wishlist">
+    <button
+      class="product-card__wish"
+      :class="{ 'product-card__wish--active': wishlisted }"
+      type="button"
+      :aria-label="wishlisted ? t('product.removeFromWishlist') : t('product.addToWishlist')"
+      :aria-pressed="wishlisted"
+      :disabled="wishPending"
+      @click.stop.prevent="toggleWishlist"
+    >
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
         <path
           d="M12 20.3 4.8 13a4.9 4.9 0 0 1 0-7 4.9 4.9 0 0 1 7 0l.2.2.2-.2a4.9 4.9 0 0 1 7 0 4.9 4.9 0 0 1 0 7L12 20.3Z"
-          fill="none"
+          :fill="wishlisted ? 'currentColor' : 'none'"
           stroke="currentColor"
           stroke-width="1.6"
         />
@@ -82,7 +110,7 @@ const badge = computed(() => {
       <div class="product-card__footer">
         <p v-if="price" class="product-card__price">{{ price }}</p>
         <span v-if="badge" class="product-card__badge">{{ badge }}</span>
-        <NuxtLink class="product-card__add" :to="href" aria-label="Add to cart">
+        <NuxtLink class="product-card__add" :to="href" :aria-label="t('detail.addToCart')">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
           </svg>
@@ -141,6 +169,15 @@ const badge = computed(() => {
 
 .product-card__wish:hover {
   background: var(--colour-hover);
+}
+
+.product-card__wish--active {
+  color: var(--colour-accent);
+}
+
+.product-card__wish:disabled {
+  cursor: progress;
+  opacity: 0.65;
 }
 
 .product-card__media {

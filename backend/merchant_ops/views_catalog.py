@@ -7,6 +7,8 @@
 
 import uuid
 
+from django.conf import settings
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.response import Response
@@ -14,7 +16,15 @@ from rest_framework.response import Response
 from accounts_staff.api_exceptions import StaffApiError
 from accounts_staff.permissions import StaffRbacPermission
 from audit.services import record_audit
-from catalog.models import LocalCategory, Spu, SpuTranslation
+from catalog.detail_views import _spec_options_payload, _video_payload
+from catalog.models import (
+    LOCAL_PARENT_MERCHANT_CATEGORY,
+    LocalCategory,
+    Spu,
+    SpuDetail,
+    SpuTranslation,
+    SpuVideo,
+)
 from media.models import MediaUsage
 from media.storage import media_url
 from merchant_ops.api_utils import (
@@ -70,8 +80,37 @@ def _title_for(spu: Spu) -> str:
     return translations[0].title if translations else f"SPU {str(spu.public_id)[:8]}"
 
 
-def _spu_payload(spu: Spu, *, images=None, stores=0) -> dict:
+AI_SUMMARY_PREVIEW_LEN = 80
+
+
+def _detail_summary(detail, *, video_count=0) -> dict:
+    """商品池列表用的爬虫详情摘要（不携带完整 JSON 块，保持列表轻量）。"""
+
+    if detail is None:
+        return {
+            "has_detail": False,
+            "video_count": video_count,
+            "section_count": 0,
+            "spec_table_count": 0,
+            "ai_summary": "",
+            "source_updated_at": None,
+        }
+    ai_summary = (detail.ai_summary or "").strip()
+    if len(ai_summary) > AI_SUMMARY_PREVIEW_LEN:
+        ai_summary = ai_summary[:AI_SUMMARY_PREVIEW_LEN] + "…"
+    return {
+        "has_detail": True,
+        "video_count": video_count,
+        "section_count": len(detail.content_sections or []),
+        "spec_table_count": len(detail.specification_tables or []),
+        "ai_summary": ai_summary,
+        "source_updated_at": iso(detail.source_observed_at or detail.updated_at),
+    }
+
+
+def _spu_payload(spu: Spu, *, images=None, stores=0, detail_summary=None) -> dict:
     images = images or []
+    summary = detail_summary or _detail_summary(None)
     return {
         "id": str(spu.public_id),
         "name": _title_for(spu),
@@ -88,7 +127,44 @@ def _spu_payload(spu: Spu, *, images=None, stores=0) -> dict:
         "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
         "sku_count": getattr(spu, "sku_total", None),
         "created_at": iso(spu.created_at),
+        # 爬虫详情摘要（增量字段，旧消费方可忽略）。
+        "has_detail": summary["has_detail"],
+        "video_count": summary["video_count"],
+        "section_count": summary["section_count"],
+        "spec_table_count": summary["spec_table_count"],
+        "ai_summary": summary["ai_summary"],
+        "source_updated_at": summary["source_updated_at"],
     }
+
+
+def _product_category_breadcrumb(spu: Spu) -> list[dict]:
+    """爬到的商品类目（最多两级），与购物端 category_breadcrumb 同构。"""
+
+    breadcrumb = []
+    node = spu.product_category
+    while node is not None and len(breadcrumb) < 2:
+        breadcrumb.append({"id": node.source_id, "name": node.name, "depth": node.depth})
+        node = node.parent
+    breadcrumb.reverse()
+    return breadcrumb
+
+
+def _gallery_urls(spu: Spu) -> list[str]:
+    """商品全部图片：媒体库画廊（爬虫导入）在前，手工 image_urls 去重补后。"""
+
+    from django.contrib.contenttypes.models import ContentType
+
+    content_type = ContentType.objects.get_for_model(Spu)
+    urls = [
+        media_url(usage.asset.relative_path)
+        for usage in MediaUsage.objects.select_related("asset")
+        .filter(content_type=content_type, object_id=spu.pk, role="gallery")
+        .order_by("sort_order", "pk")
+    ]
+    for url in spu.image_urls or []:
+        if url and url not in urls:
+            urls.append(url)
+    return urls
 
 
 class AdminProductPoolView(OpsAPIView):
@@ -97,7 +173,11 @@ class AdminProductPoolView(OpsAPIView):
     view_permissions = ["catalog.pool.view"]
 
     def _queryset(self, request):
-        queryset = Spu.objects.select_related("local_category").prefetch_related("translations")
+        # select_related("detail")：OneToOne 左连接不产生重复行，列表摘要
+        # （区块数/规格表数/AI 预览）直接取自该行，避免每页再发一次查询。
+        queryset = Spu.objects.select_related("local_category", "detail").prefetch_related(
+            "translations"
+        )
         query = (request.query_params.get("q") or "").strip()
         if query:
             condition = Q(translations__title__icontains=query)
@@ -108,10 +188,17 @@ class AdminProductPoolView(OpsAPIView):
             queryset = queryset.filter(condition)
         category = (request.query_params.get("category") or "").strip()
         if category:
-            queryset = (
-                queryset.filter(local_category__public_id=category)
+            # 按整棵子树匹配：管理端筛选只展示父类目，而商品大量挂在二级类目上，
+            # 只按父类目精确匹配会漏掉子类目商品。
+            node = (
+                LocalCategory.objects.filter(public_id=category).only("path").first()
                 if _is_uuid(category)
-                else queryset.filter(local_category__slug=category)
+                else LocalCategory.objects.filter(slug=category).only("path").first()
+            )
+            queryset = (
+                queryset.filter(local_category__path__startswith=node.path)
+                if node is not None
+                else queryset.none()
             )
         status = (request.query_params.get("status") or "").strip().upper()
         if status and status != "ALL":
@@ -133,6 +220,12 @@ class AdminProductPoolView(OpsAPIView):
         sku_counts = dict(
             Spu.objects.filter(pk__in=ids).annotate(total=Count("skus")).values_list("pk", "total")
         )
+        video_counts = dict(
+            SpuVideo.objects.filter(spu_id__in=ids)
+            .values("spu_id")
+            .annotate(total=Count("pk"))
+            .values_list("spu_id", "total")
+        )
         for spu in rows:
             spu.sku_total = sku_counts.get(spu.pk, 0)
         return Response(
@@ -142,6 +235,10 @@ class AdminProductPoolView(OpsAPIView):
                         spu,
                         images=[images[spu.pk]] if spu.pk in images else [],
                         stores=store_counts.get(spu.pk, 0),
+                        detail_summary=_detail_summary(
+                            getattr(spu, "detail", None),
+                            video_count=video_counts.get(spu.pk, 0),
+                        ),
                     )
                     for spu in rows
                 ],
@@ -156,13 +253,23 @@ class AdminProductPoolView(OpsAPIView):
             raise StaffApiError(
                 business_code="NAME_TOO_LONG", message="商品名称不能超过 80 个字。", status_code=400
             )
-        cost = parse_amount(payload.get("cost"), field="成本价")
-        price = parse_amount(payload.get("price"), field="零售价")
-        if cost <= 0 or price <= 0:
+        # 成本价可选（2026-11-10）：爬虫商品没有成本价，留空 = NULL；
+        # 填了则必须大于 0。零售价仍必填。
+        cost = (
+            parse_amount(payload["cost"], field="成本价")
+            if payload.get("cost") not in (None, "")
+            else None
+        )
+        if cost is not None and cost <= 0:
             raise StaffApiError(
-                business_code="PRICE_INVALID", message="成本价与零售价必须大于 0。", status_code=400
+                business_code="PRICE_INVALID", message="成本价必须大于 0。", status_code=400
             )
-        if price < cost:
+        price = parse_amount(payload.get("price"), field="零售价")
+        if price <= 0:
+            raise StaffApiError(
+                business_code="PRICE_INVALID", message="零售价必须大于 0。", status_code=400
+            )
+        if cost is not None and price < cost:
             raise StaffApiError(
                 business_code="PRICE_BELOW_COST",
                 message="零售价不得低于成本价。",
@@ -170,9 +277,11 @@ class AdminProductPoolView(OpsAPIView):
             )
         images, specs = _validated_media_payload(payload)
         category = _resolve_category(payload.get("category"))
+        merchant_category = _validated_merchant_category(payload.get("merchant_category"))
 
         spu = Spu.objects.create(
             local_category=category,
+            merchant_category=merchant_category,
             status=payload.get("status")
             if payload.get("status") in dict(Spu.Status.choices)
             else Spu.Status.ACTIVE,
@@ -197,8 +306,13 @@ class AdminProductPoolView(OpsAPIView):
             target_id=str(spu.public_id),
             reason="",
             before_state={},
-            after_state={"name": name, "cost": str(cost), "price": str(price)},
+            after_state={
+                "name": name,
+                "cost": str(cost) if cost is not None else "",
+                "price": str(price),
+            },
         )
+        _refresh_search_documents(spu)
         return Response({"product": _spu_payload(spu, images=images)}, status=201)
 
 
@@ -209,8 +323,8 @@ class AdminProductPoolDetailView(OpsAPIView):
 
     def _get(self, public_id):
         spu = (
-            Spu.objects.select_related("local_category")
-            .prefetch_related("translations")
+            Spu.objects.select_related("local_category", "detail", "product_category__parent")
+            .prefetch_related("translations", "videos__video", "videos__poster")
             .filter(public_id=public_id)
             .first()
         )
@@ -230,8 +344,13 @@ class AdminProductPoolDetailView(OpsAPIView):
             .distinct()
             .count()
         )
+        detail = getattr(spu, "detail", None)
+        videos = list(spu.videos.all())
         payload = _spu_payload(
-            spu, images=[images[spu.pk]] if spu.pk in images else [], stores=stores
+            spu,
+            images=[images[spu.pk]] if spu.pk in images else [],
+            stores=stores,
+            detail_summary=_detail_summary(detail, video_count=len(videos)),
         )
         payload["skus"] = [
             {
@@ -242,6 +361,22 @@ class AdminProductPoolDetailView(OpsAPIView):
             }
             for sku in spu.skus.all()[:50]
         ]
+        # --- 爬虫详情增量字段（只读展示，旧字段全部保留）---
+        payload["gallery"] = _gallery_urls(spu)
+        payload["content_sections"] = detail.content_sections if detail else []
+        # content_sections 的来源（crawler/manual）：manual 表示管理端人工编辑过，
+        # 爬虫重导入不会覆盖图文区块。
+        payload["content_source"] = detail.content_source if detail else None
+        payload["specification_tables"] = detail.specification_tables if detail else []
+        payload["specifications"] = detail.specifications if detail else []
+        # spec_options 的 sku_ids 与购物端一样映射为 Sku.public_id。
+        payload["spec_options"] = _spec_options_payload(spu, detail.spec_options if detail else [])
+        payload["ai_summary"] = detail.ai_summary if detail else ""
+        payload["ai_summary_title"] = detail.ai_summary_title if detail else ""
+        payload["ai_summary_tags"] = detail.ai_summary_tags if detail else []
+        payload["videos"] = _video_payload(spu)
+        # 爬到的商品类目（最多两级），只读参考。
+        payload["product_category"] = _product_category_breadcrumb(spu)
         return Response({"product": payload})
 
     def patch(self, request, public_id):
@@ -270,11 +405,19 @@ class AdminProductPoolDetailView(OpsAPIView):
                 translation.title = name
                 translation.save(update_fields=["title", "updated_at"])
 
-        cost = (
-            parse_amount(payload["cost"], field="成本价")
-            if payload.get("cost") not in (None, "")
-            else spu.cost_price
-        )
+        # 成本价可选（2026-11-10）：不带 cost 键 = 保持不变；带键且为空 = 清空
+        # （爬虫商品本来就没有成本价）；带键且有值 = 必须是大于 0 的数字。
+        if "cost" in payload:
+            if payload.get("cost") in (None, ""):
+                cost = None
+            else:
+                cost = parse_amount(payload["cost"], field="成本价")
+                if cost <= 0:
+                    raise StaffApiError(
+                        business_code="PRICE_INVALID", message="成本价必须大于 0。", status_code=400
+                    )
+        else:
+            cost = spu.cost_price
         price = (
             parse_amount(payload["price"], field="零售价")
             if payload.get("price") not in (None, "")
@@ -293,14 +436,7 @@ class AdminProductPoolDetailView(OpsAPIView):
         if "category" in payload:
             spu.local_category = _resolve_category(payload.get("category"))
         if "merchant_category" in payload:
-            raw = (payload.get("merchant_category") or "").strip().upper()
-            if raw and raw not in Spu.MerchantCategory.values:
-                raise StaffApiError(
-                    business_code="MERCHANT_CATEGORY_INVALID",
-                    message="无效的商家端品类。",
-                    status_code=400,
-                )
-            spu.merchant_category = raw
+            spu.merchant_category = _validated_merchant_category(payload.get("merchant_category"))
         if "description" in payload:
             spu.description = (payload.get("description") or "").strip()
         if "activity" in payload:
@@ -312,6 +448,41 @@ class AdminProductPoolDetailView(OpsAPIView):
             spu.image_urls = images
             spu.specs = specs
         spu.save()
+        # 品类/名称/价格/状态变化都要同步搜索文档，否则购物端类目页与搜索还是旧数据。
+        _refresh_search_documents(spu)
+        if "cost" in payload or "price" in payload:
+            # 已上架商品的成本价按零售价×折扣实时折算（2026-11-10 口径），
+            # 零售价变化会改变成本价；商品池 cost_price 虽不参与公式，
+            # 带着也重算一次无副作用（幂等）。
+            from merchant_ops.services import reprice_listed_offers
+
+            reprice_listed_offers(spu=spu)
+
+        # 图文详情（content_sections）人工编辑：保存进 SpuDetail 并标记
+        # content_source=manual，此后爬虫重导入不再覆盖图文区块（docs/14 §9.9）。
+        saved_sections = None
+        if "content_sections" in payload:
+            sections = _validated_content_sections(payload.get("content_sections"))
+            existing_detail = SpuDetail.objects.filter(spu=spu).first()
+            sections_before = len(existing_detail.content_sections or []) if existing_detail else 0
+            detail, _created = SpuDetail.objects.get_or_create(spu=spu)
+            detail.content_sections = sections
+            detail.content_source = SpuDetail.ContentSource.MANUAL
+            detail.save(update_fields=["content_sections", "content_source", "updated_at"])
+            saved_sections = sections
+            record_audit(
+                request=request,
+                actor=request.staff_account,
+                action="PRODUCT_DETAIL_UPDATED",
+                target_type="spu",
+                target_id=str(spu.public_id),
+                reason="",
+                before_state={"section_count": sections_before},
+                after_state={
+                    "section_count": len(sections),
+                    "content_source": SpuDetail.ContentSource.MANUAL,
+                },
+            )
 
         record_audit(
             request=request,
@@ -329,7 +500,73 @@ class AdminProductPoolDetailView(OpsAPIView):
                 "activity": spu.is_activity,
             },
         )
-        return Response({"product": _spu_payload(spu, images=list(spu.image_urls or []))})
+        response_payload = _spu_payload(spu, images=list(spu.image_urls or []))
+        if saved_sections is not None:
+            # 本次请求改过图文详情：回包带上保存后的区块，前端据此刷新抽屉。
+            response_payload["content_sections"] = saved_sections
+            response_payload["content_source"] = SpuDetail.ContentSource.MANUAL
+        return Response({"product": response_payload})
+
+
+def _activate_offers_on_publish(spu) -> int:
+    """管理端上架即可售：把该商品的商家报价一并开售（2026-11-10 口径）。
+
+    - `DRAFT`：导入/建池后从未上架的报价，平台上架时一并开售；
+    - `INACTIVE` 且 `removed_by_platform=True`：恢复平台下架前的报价；
+    - `INACTIVE` 且 `removed_by_platform=False`（商家自己下架）：不动，尊重商家意愿；
+    - 只处理接单中（`onboarding_status=ACTIVE`）的商家，封店/关店商家的报价不复活；
+      爬虫导入的商家可能还没走完入驻审核（`admission_approved=False`），平台主动
+      上架不受此限制（否则这批商品永远无法出现在购物端）。
+
+    成本价按当前零售价 × (1 − 商家折扣%) 重算，成交价同步为零售价。
+    商品既没有可激活的报价、也没有已上架报价时抛 400（否则「上架」后
+    购物端永远搜不到）；需要激活且有零售价缺失时同样抛 400。
+    返回激活的 Offer 行数。
+    """
+
+    from merchant_ops.services import compute_listing_cost
+    from merchants.models import Merchant
+
+    has_active = Offer.objects.filter(sku__spu=spu, status=Offer.Status.ACTIVE).exists()
+    candidates = [
+        offer
+        for offer in Offer.objects.filter(sku__spu=spu)
+        .exclude(status=Offer.Status.ACTIVE)
+        .select_related("merchant")
+        if offer.status == Offer.Status.DRAFT or offer.removed_by_platform
+    ]
+    candidates = [
+        offer
+        for offer in candidates
+        if offer.merchant.onboarding_status == Merchant.OnboardingStatus.ACTIVE
+    ]
+    if not candidates:
+        if has_active:
+            return 0
+        raise StaffApiError(
+            business_code="PRODUCT_OFFER_MISSING",
+            message="该商品没有可上架的商家报价（报价未激活或商家已停止接单），无法在购物端上架。",
+            status_code=400,
+        )
+    if spu.retail_price is None:
+        raise StaffApiError(
+            business_code="PRODUCT_PRICE_MISSING",
+            message="商品缺少零售价，不能上架到购物端。",
+            status_code=400,
+        )
+
+    now = timezone.now()
+    for offer in candidates:
+        Offer.objects.filter(pk=offer.pk).update(
+            status=Offer.Status.ACTIVE,
+            current_price=spu.retail_price,
+            cost_price=compute_listing_cost(offer.merchant, spu),
+            listed_at=now,
+            removed_at=None,
+            removed_by_platform=False,
+            updated_at=now,
+        )
+    return len(candidates)
 
 
 class AdminProductPoolActionsView(OpsAPIView):
@@ -345,31 +582,33 @@ class AdminProductPoolActionsView(OpsAPIView):
             )
         action = ((request.data or {}).get("action") or "").strip().lower()
         before = {"status": spu.status, "activity": spu.is_activity}
-        if action == "publish":
-            spu.status = Spu.Status.ACTIVE
-        elif action == "unpublish":
-            spu.status = Spu.Status.INACTIVE
-        elif action in {"mark_activity", "unmark_activity"}:
-            # 活动商品管理（WP-42）：只打/去标记，不改变原品类。
-            spu.is_activity = action == "mark_activity"
-        else:
-            raise StaffApiError(
-                business_code="ACTION_UNSUPPORTED", message="不支持的操作。", status_code=400
+        activated_offers = 0
+        with transaction.atomic():
+            if action == "publish":
+                # 上架即可售：先激活报价（失败则整笔回滚，状态不变），再改状态。
+                activated_offers = _activate_offers_on_publish(spu)
+                spu.status = Spu.Status.ACTIVE
+            elif action == "unpublish":
+                spu.status = Spu.Status.INACTIVE
+            elif action in {"mark_activity", "unmark_activity"}:
+                # 活动商品管理（WP-42）：只打/去标记，不改变原品类。
+                spu.is_activity = action == "mark_activity"
+            else:
+                raise StaffApiError(
+                    business_code="ACTION_UNSUPPORTED", message="不支持的操作。", status_code=400
+                )
+            spu.save(
+                update_fields=(
+                    ["status", "updated_at"]
+                    if action in {"publish", "unpublish"}
+                    else ["is_activity", "updated_at"]
+                )
             )
-        spu.save(
-            update_fields=(
-                ["status", "updated_at"]
-                if action in {"publish", "unpublish"}
-                else ["is_activity", "updated_at"]
-            )
-        )
         # 迭代02：平台下架 → 商家端和购物端统一下掉——把该商品所有商家 ACTIVE
         # Offer 一并下架（removed_by_platform 留痕，历史行保留），并即时刷新搜索文档。
         cascade_offers = 0
         if action == "unpublish":
-            cascade_offers = Offer.objects.filter(
-                sku__spu=spu, status=Offer.Status.ACTIVE
-            ).update(
+            cascade_offers = Offer.objects.filter(sku__spu=spu, status=Offer.Status.ACTIVE).update(
                 status=Offer.Status.INACTIVE,
                 removed_by_platform=True,
                 removed_at=timezone.now(),
@@ -381,6 +620,11 @@ class AdminProductPoolActionsView(OpsAPIView):
             removed_docs = refresh_spu_search_documents(spu)
         else:
             removed_docs = 0
+        if action in {"mark_activity", "unmark_activity"}:
+            # 活动商品用活动折扣，标记变化后已上架商品的成本价要按新折扣重算。
+            from merchant_ops.services import reprice_listed_offers
+
+            reprice_listed_offers(spu=spu)
         record_audit(
             request=request,
             actor=request.staff_account,
@@ -394,11 +638,14 @@ class AdminProductPoolActionsView(OpsAPIView):
             after_state={
                 "status": spu.status,
                 "activity": spu.is_activity,
+                "activated_offers": activated_offers,
                 "cascade_removed_offers": cascade_offers,
                 "removed_search_documents": removed_docs,
             },
         )
         payload = _spu_payload(spu, images=list(spu.image_urls or []))
+        if action == "publish":
+            payload["activated_offers"] = activated_offers
         if action == "unpublish":
             payload["cascade_removed_offers"] = cascade_offers
         return Response({"product": payload})
@@ -548,6 +795,145 @@ def _resolve_category(value) -> LocalCategory | None:
     return queryset.filter(slug=str(value)).first()
 
 
+def _validated_merchant_category(value) -> str:
+    raw = (value or "").strip().upper()
+    if raw and raw not in Spu.MerchantCategory.values:
+        raise StaffApiError(
+            business_code="MERCHANT_CATEGORY_INVALID",
+            message="无效的商家端品类。",
+            status_code=400,
+        )
+    return raw
+
+
+def _refresh_search_documents(spu) -> None:
+    """商品池改动后同步购物端搜索/类目文档（失败不影响商品本身保存）。"""
+
+    from catalog.search_services import refresh_spu_search_documents
+
+    try:
+        refresh_spu_search_documents(spu)
+    except ValueError:
+        # 市场默认语言缺失等历史数据问题不应阻断后台保存。
+        return
+
+
+# --- 图文详情（content_sections）人工编辑的校验上限（2026-11-10）---
+MAX_CONTENT_SECTIONS = 50
+MAX_CONTENT_BLOCKS = 100
+MAX_SECTION_IMAGES = 20
+MAX_SECTION_TITLE_LEN = 120
+MAX_HEADING_LEN = 200
+MAX_PARAGRAPH_LEN = 5000
+CONTENT_BLOCK_TYPES = ("heading", "paragraph")
+
+
+def _validated_content_sections(value) -> list:
+    """校验管理端提交的图文详情，结构与爬虫 payload 一致（docs/14 §7.7）。
+
+    ``[{title, blocks: [{type: "heading"|"paragraph", text}], images: [...]}]``；
+    图片必须是本地上传返回的 ``/media/...`` URL（不允许第三方 CDN），
+    空文本块被静默丢弃，其余不合结构/超长/非法 URL 一律 400。
+    """
+
+    if not isinstance(value, list):
+        raise StaffApiError(
+            business_code="CONTENT_SECTIONS_INVALID",
+            message="图文详情必须是数组。",
+            status_code=400,
+        )
+    if len(value) > MAX_CONTENT_SECTIONS:
+        raise StaffApiError(
+            business_code="CONTENT_SECTIONS_TOO_MANY",
+            message=f"图文详情最多 {MAX_CONTENT_SECTIONS} 个区块。",
+            status_code=400,
+        )
+    media_prefix = settings.MEDIA_URL
+    sections = []
+    for raw_section in value:
+        if not isinstance(raw_section, dict):
+            raise StaffApiError(
+                business_code="CONTENT_SECTIONS_INVALID",
+                message="图文详情区块格式不正确。",
+                status_code=400,
+            )
+        title = str(raw_section.get("title") or "").strip()
+        if len(title) > MAX_SECTION_TITLE_LEN:
+            raise StaffApiError(
+                business_code="CONTENT_TEXT_TOO_LONG",
+                message=f"区块标题最多 {MAX_SECTION_TITLE_LEN} 字。",
+                status_code=400,
+            )
+        raw_blocks = raw_section.get("blocks")
+        if not isinstance(raw_blocks, list):
+            raise StaffApiError(
+                business_code="CONTENT_SECTIONS_INVALID",
+                message="图文详情缺少内容块列表。",
+                status_code=400,
+            )
+        if len(raw_blocks) > MAX_CONTENT_BLOCKS:
+            raise StaffApiError(
+                business_code="CONTENT_SECTIONS_TOO_MANY",
+                message=f"单个区块最多 {MAX_CONTENT_BLOCKS} 个内容块。",
+                status_code=400,
+            )
+        blocks = []
+        for raw_block in raw_blocks:
+            if not isinstance(raw_block, dict):
+                raise StaffApiError(
+                    business_code="CONTENT_SECTIONS_INVALID",
+                    message="内容块格式不正确。",
+                    status_code=400,
+                )
+            block_type = str(raw_block.get("type") or "").strip()
+            if block_type not in CONTENT_BLOCK_TYPES:
+                raise StaffApiError(
+                    business_code="CONTENT_BLOCK_TYPE_INVALID",
+                    message="内容块类型只支持子标题（heading）与段落（paragraph）。",
+                    status_code=400,
+                )
+            text = str(raw_block.get("text") or "").strip()
+            cap = MAX_HEADING_LEN if block_type == "heading" else MAX_PARAGRAPH_LEN
+            if len(text) > cap:
+                raise StaffApiError(
+                    business_code="CONTENT_TEXT_TOO_LONG",
+                    message=f"子标题最多 {MAX_HEADING_LEN} 字，段落最多 {MAX_PARAGRAPH_LEN} 字。",
+                    status_code=400,
+                )
+            if text:
+                blocks.append({"type": block_type, "text": text})
+        raw_images = raw_section.get("images")
+        if raw_images is None:
+            raw_images = []
+        if not isinstance(raw_images, list):
+            raise StaffApiError(
+                business_code="CONTENT_SECTIONS_INVALID",
+                message="区块图片必须是数组。",
+                status_code=400,
+            )
+        if len(raw_images) > MAX_SECTION_IMAGES:
+            raise StaffApiError(
+                business_code="CONTENT_SECTIONS_TOO_MANY",
+                message=f"单个区块最多 {MAX_SECTION_IMAGES} 张图片。",
+                status_code=400,
+            )
+        images = []
+        for image in raw_images:
+            url = str(image or "").strip()
+            if not url:
+                continue
+            # 只接受本地上传接口返回的 /media/ URL，运行时不允许请求第三方 CDN。
+            if not url.startswith(media_prefix) or ".." in url:
+                raise StaffApiError(
+                    business_code="CONTENT_IMAGE_INVALID",
+                    message="区块图片必须是本地上传的图片（/media/…），不接受外部链接。",
+                    status_code=400,
+                )
+            images.append(url)
+        sections.append({"title": title, "blocks": blocks, "images": images})
+    return sections
+
+
 def _validated_media_payload(payload) -> tuple[list, list]:
     images = payload.get("images")
     if images is not None:
@@ -607,16 +993,23 @@ def _validated_media_payload(payload) -> tuple[list, list]:
 
 
 class AdminCategoriesView(OpsAPIView):
-    """商品池表单与筛选用的本地类目选项（扁平列表，带中英名）。"""
+    """商品池表单与筛选用的本地类目选项（扁平列表，带中英名）。
+
+    编辑表单先选「商家端品类（父品类）」，再选它下面的二级类目（子品类），
+    所以这里额外返回 ``parent_id`` 与一级类目的 ``merchant_category`` 映射，
+    前端据此做联动；筛选下拉只用 ``depth=0`` 的父类目。
+    """
 
     permission_classes = [StaffRbacPermission]
     required_permissions = ["catalog.pool.manage"]
     view_permissions = ["catalog.pool.view"]
 
     def get(self, request):
-        rows = LocalCategory.objects.filter(status=LocalCategory.Status.ACTIVE).order_by(
-            "path", "sort_order"
-        )[:500]
+        rows = (
+            LocalCategory.objects.filter(status=LocalCategory.Status.ACTIVE)
+            .select_related("parent")
+            .order_by("path", "sort_order")[:500]
+        )
         return Response(
             {
                 "items": [
@@ -627,6 +1020,13 @@ class AdminCategoriesView(OpsAPIView):
                         "name_en": category.name_en,
                         "path": category.path,
                         "depth": category.depth,
+                        "sort_order": category.sort_order,
+                        "parent_id": str(category.parent.public_id) if category.parent_id else None,
+                        "merchant_category": (
+                            LOCAL_PARENT_MERCHANT_CATEGORY.get(category.slug, "")
+                            if category.depth == 0
+                            else ""
+                        ),
                     }
                     for category in rows
                 ]

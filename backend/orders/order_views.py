@@ -1,4 +1,5 @@
 import json
+from uuid import UUID
 
 from django.http import JsonResponse
 
@@ -41,6 +42,80 @@ def _error(request, exc_or_code, message=None, status=400):
     )
 
 
+def _order_gallery_images(spu_public_ids):
+    """First local gallery image per SPU, one query for a whole order page."""
+
+    valid_ids = set()
+    for value in spu_public_ids:
+        try:
+            valid_ids.add(UUID(str(value)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if not valid_ids:
+        return {}
+
+    from django.contrib.contenttypes.models import ContentType
+
+    from catalog.models import Spu
+    from media.models import MediaUsage
+    from media.storage import media_url
+
+    spus = {str(spu.public_id): spu.pk for spu in Spu.objects.filter(public_id__in=valid_ids)}
+    if not spus:
+        return {}
+    spu_type = ContentType.objects.get_for_model(Spu)
+    usages = (
+        MediaUsage.objects.filter(
+            content_type=spu_type,
+            object_id__in=set(spus.values()),
+            role="gallery",
+        )
+        .select_related("asset")
+        .order_by("object_id", "sort_order", "pk")
+    )
+    first_image = {}
+    for usage in usages:
+        first_image.setdefault(usage.object_id, media_url(usage.asset.relative_path))
+    return {public_id: first_image.get(pk, "") for public_id, pk in spus.items()}
+
+
+def _order_state(order) -> str:
+    """Buyer-facing state for the Joybuy order tabs.
+
+    Joybuy's UK order page groups orders as All / Pending payment / To receive
+    / Completed / Canceled. A paid order that has not shipped yet belongs to
+    "All" only, which is why PROCESSING is a separate internal state.
+    """
+
+    if order.status == Order.Status.CANCELED:
+        return "CANCELED"
+    if order.status == Order.Status.PENDING_PAYMENT:
+        return "PENDING_PAYMENT"
+    suborders = list(order.merchant_orders.all())
+    if suborders:
+        if all(
+            suborder.status == "COMPLETED" or suborder.progress >= 7 for suborder in suborders
+        ):
+            return "COMPLETED"
+        if any(suborder.status == "SHIPPED" or suborder.progress >= 1 for suborder in suborders):
+            return "SHIPPED"
+    return "PROCESSING"
+
+
+def _order_items_payload(order, images):
+    return [
+        {
+            "title": item.title,
+            "quantity": item.quantity,
+            "unit_price": str(item.unit_price),
+            "currency": item.currency,
+            "spu_public_id": item.spu_public_id,
+            "image_path": images.get(str(item.spu_public_id), ""),
+        }
+        for item in order.items.all()
+    ]
+
+
 def order_list_create(request):
     account = getattr(request, "buyer_account", None)
     if account is None:
@@ -75,20 +150,39 @@ def order_list_create(request):
             status=201,
         )
 
-    # GET: buyer's pending and canceled orders (phase 1 states only).
-    orders = [
+    # GET: buyer's orders, newest first (up to 50). The storefront renders the
+    # Joybuy card layout (thumbnails, state tabs, totals) from this payload.
+    orders = list(
+        Order.objects.filter(account=account)
+        .prefetch_related("items", "merchant_orders")
+        .order_by("-created_at")[:50]
+    )
+    images = _order_gallery_images(
+        item.spu_public_id for order in orders for item in order.items.all()
+    )
+    return JsonResponse(
         {
-            "public_id": str(order.public_id),
-            "status": order.status,
-            "total": str(order.total),
-            "currency": order.currency.code,
-            "created_at": _local_iso(order.created_at),
-            "payment_expires_at": _local_iso(order.payment_expires_at),
-            "item_count": order.items.count(),
+            "orders": [
+                {
+                    "public_id": str(order.public_id),
+                    "status": order.status,
+                    "state": _order_state(order),
+                    "total": str(order.total),
+                    "currency": order.currency.code,
+                    "created_at": _local_iso(order.created_at),
+                    "payment_expires_at": _local_iso(order.payment_expires_at),
+                    "payment_method": order.payment_method,
+                    "item_count": order.items.count(),
+                    "items": _order_items_payload(order, images),
+                    "merchant_orders": [
+                        {"status": suborder.status, "progress": suborder.progress}
+                        for suborder in order.merchant_orders.all()
+                    ],
+                }
+                for order in orders
+            ]
         }
-        for order in Order.objects.filter(account=account).order_by("-created_at")[:50]
-    ]
-    return JsonResponse({"orders": orders})
+    )
 
 
 def order_detail(request, public_id):

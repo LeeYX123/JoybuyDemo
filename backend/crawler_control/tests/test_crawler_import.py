@@ -17,6 +17,7 @@ from catalog.override_services import (  # noqa: E402
     resolve_effective_value,
     review_local_override,
 )
+from crawler_control.domain import ImportSourceConflict  # noqa: E402
 from crawler_control.import_services import (  # noqa: E402
     StagingImportRejected,
     import_staging_product,
@@ -255,7 +256,174 @@ class ProductImportTests(CrawlerControlTestBase):
             parser_version="product-1",
             structure_version=1,
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(ImportSourceConflict) as ctx:
             self.import_staging(staging)
+        message = str(ctx.exception)
+        self.assertIn("来源 SKU", message)
+        self.assertIn("已绑定到同一商品下的另一个规格", message)
+        self.assertIn("系统不会自动改绑", message)
         staging.refresh_from_db()
         self.assertEqual(staging.status, StagingProduct.Status.PENDING)
+
+    def test_seller_name_drift_conflict_is_chinese_and_never_rebinds(self):
+        """Same source offer identity + different merchant = conflict, not duplicate.
+
+        100859032 的真实场景：旧 Offer 属于 Samsung，新抓取把卖家名解析成
+        「三星 查看店铺」→ 新商家。不能静默改绑，且提示必须是中文可执行的。
+        """
+
+        first = self.import_staging()
+        first_offer = first.offers[0]
+        identity = first_offer.source_identities.get()
+
+        drifted = parse_fixture("product_detail_v1.html").to_payload()
+        drifted["source_seller_id"] = "seller-88-cn"
+        drifted["source_seller_name"] = "卖家八十八 查看店铺"
+        staging = self.ingest(
+            self.run,
+            drifted,
+            source_system="joybuy",
+            source_url="https://fixture.test/p/1001.html",
+            parser_version="product-1",
+            structure_version=1,
+        )
+
+        with self.assertRaises(ImportSourceConflict) as ctx:
+            self.import_staging(staging)
+
+        message = str(ctx.exception)
+        self.assertIn(f"来源 Offer「joybuy:{identity.source_id}」", message)
+        self.assertIn("已绑定到另一个 Offer", message)
+        self.assertIn(
+            f"现有商家 {first_offer.merchant.display_name}/{first_offer.merchant_id}",
+            message,
+        )
+        self.assertIn("本次商家 卖家八十八 查看店铺/", message)
+        self.assertIn("不一致：商家", message)
+        self.assertIn("卖家名称/本地化", message)
+        self.assertIn("系统不会自动改绑", message)
+        self.assertNotIn("The source offer identity", message)
+
+        # No silent rebind: the identity still points at the original offer,
+        # and the outer transaction rolled the new merchant back.
+        self.assertEqual(first_offer.source_identities.get().pk, identity.pk)
+        self.assertEqual(Offer.objects.count(), 3)
+        self.assertEqual(Merchant.objects.count(), 2)
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy (parsel) is not installed")
+class SellerNameNormalizationTests(unittest.TestCase):
+    def test_store_ui_suffixes_are_stripped_in_both_locales(self):
+        from joybuy_crawler.parsers.joybuy_uk import normalize_seller_name
+
+        cases = {
+            "三星 查看店铺": "三星",
+            "查看店铺 三星 查看店铺": "三星",
+            "Samsung View store": "Samsung",
+            "View store Samsung Visit store": "Samsung",
+            "  Samsung   官方店  ": "Samsung 官方店",
+            "Pure Store": "Pure Store",
+            "": "",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(normalize_seller_name(raw), expected, raw)
+
+    def test_detail_parser_strips_the_store_link_label_from_seller_name(self):
+        from joybuy_crawler.parsers.joybuy_uk import parse_uk_product_detail
+
+        html = (
+            "<html><body><h1>Galaxy S24</h1>"
+            '<span class="crossOffPrice">£699.00</span>'
+            '<div class="seller-card"><a href="/store/88">查看店铺</a>'
+            " 三星 查看店铺</div>"
+            "</body></html>"
+        )
+        product = parse_uk_product_detail(
+            html, source_url="https://www.joybuy.co.uk/dp/galaxy-s24/100859032"
+        )
+        self.assertEqual(product.source_id, "100859032")
+        self.assertEqual(product.seller_name, "三星")
+        self.assertEqual(product.seller_url, "https://www.joybuy.co.uk/store/88")
+        self.assertEqual(product.to_payload()["source_seller_id"], "三星")
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy (parsel) is not installed")
+class ImportLocalMediaReuseTests(CrawlerControlTestBase):
+    """导入媒体库时复用 dataset 已下载的文件（2026-11-10 爬取提速）。
+
+    同一张图在 dataset 落盘时下载过一次，导入时不能再下载第二次；
+    只有本地文件缺失时才回退到网络。
+    """
+
+    def make_spu(self):
+        from decimal import Decimal as DecimalValue
+
+        return Spu.objects.create(
+            status=Spu.Status.ACTIVE,
+            cost_price=None,
+            retail_price=DecimalValue("19.99"),
+        )
+
+    def make_webp(self, directory: Path) -> Path:
+        import io
+
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (4, 4), (200, 30, 30)).save(buffer, "WEBP")
+        path = Path(directory) / "gallery-01.webp"
+        path.write_bytes(buffer.getvalue())
+        return path
+
+    def test_gallery_uses_local_file_without_network(self):
+        import tempfile
+        from unittest import mock
+
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from crawler_control.import_services import _import_gallery_images
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.make_webp(tmp)
+            spu = self.make_spu()
+            url = "https://cdn.joy-sourcing.com/product/a.webp"
+            with override_settings(MEDIA_ROOT=Path(tmp) / "media"):
+                with mock.patch(
+                    "crawler_control.import_services._fetch_image_bytes",
+                    side_effect=AssertionError("local file should be reused"),
+                ):
+                    summary = _import_gallery_images(
+                        spu,
+                        {"image_urls": [url]},
+                        observed_at=timezone.now(),
+                        local_files={url: str(path)},
+                    )
+            self.assertEqual(summary, {"downloaded": 1, "failed": 0, "reused": 1})
+
+    def test_missing_local_file_falls_back_to_download(self):
+        import tempfile
+        from unittest import mock
+
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from crawler_control.import_services import _import_gallery_images
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.make_webp(tmp)
+            spu = self.make_spu()
+            url = "https://cdn.joy-sourcing.com/product/a.webp"
+            with override_settings(MEDIA_ROOT=Path(tmp) / "media"):
+                with mock.patch(
+                    "crawler_control.import_services._fetch_image_bytes",
+                    return_value=path.read_bytes(),
+                ) as fetch:
+                    summary = _import_gallery_images(
+                        spu,
+                        {"image_urls": [url]},
+                        observed_at=timezone.now(),
+                        local_files={url: str(Path(tmp) / "gone.webp")},
+                    )
+            fetch.assert_called_once_with(url)
+            self.assertEqual(summary, {"downloaded": 1, "failed": 0, "reused": 0})

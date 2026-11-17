@@ -147,9 +147,6 @@ onMounted(load)
         <h1>平台通知中心</h1>
         <p>普通通知与商品好评统一列表；平台新回复会让通知重新变为未读。</p>
       </div>
-      <div class="page-intro__actions">
-        <button type="button" class="btn btn--sm" @click="markAllRead">全部标记已读</button>
-      </div>
     </div>
 
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
@@ -166,6 +163,7 @@ onMounted(load)
         {{ tab.label }}
         <span class="tab-count">{{ state.counts[tab.key] ?? 0 }}</span>
       </button>
+      <button type="button" class="tabs__mark-all" @click="markAllRead">全部标记已读</button>
     </div>
 
     <div class="toolbar">
@@ -181,9 +179,12 @@ onMounted(load)
         <ul v-else-if="state.items.length" class="notice-list">
           <li v-for="row in state.items" :key="row.id" :class="{ 'is-unread': !row.read }">
             <div class="notice-list__main">
-              <div class="notice-list__head">
+              <!-- 上中下三段：标题 / 类型标签+时间 / 内容摘要（两端一致）。 -->
+              <div class="notice-list__title">
                 <span v-if="!row.read" class="notice-dot" aria-label="未读"></span>
                 <b>{{ row.title }}</b>
+              </div>
+              <div class="notice-list__meta">
                 <span v-if="row.kind === 'REVIEW'" class="tag tag--red">商品好评</span>
                 <span class="cell-sub">{{ fmtDate(row.created_at) }}</span>
               </div>
@@ -314,6 +315,37 @@ onMounted(load)
   color: var(--muted);
 }
 
+/* tab 行 + 全部标记已读：一行放下，不换行；窄屏可横滚。 */
+.tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  align-items: center;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tabs__mark-all {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #ffffff;
+  color: #505765;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tabs__mark-all:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .filter-row {
   display: flex;
   gap: 8px;
@@ -322,6 +354,12 @@ onMounted(load)
 
 .filter-row input {
   flex: 1;
+}
+
+@media (max-width: 768px) {
+  .filter-row {
+    max-width: 100%;
+  }
 }
 
 .notice-list {
@@ -347,19 +385,23 @@ onMounted(load)
   min-width: 0;
 }
 
-.notice-list__head {
+.notice-list__title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
 }
 
-.notice-list__head .cell-sub {
-  margin-left: auto;
+/* 中段：类型标签与时间同一行，左对齐。 */
+.notice-list__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
 }
 
 .notice-list__summary {
-  margin: 4px 0 0;
+  margin: 5px 0 0;
   font-size: 13px;
   color: var(--muted);
 }

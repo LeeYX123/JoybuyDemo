@@ -12,7 +12,7 @@ import { useLocale } from '../../composables/useLocale'
 // Ranking data comes from the storefront search API (admin ranking config is
 // the phase-2 backend work).
 const { categories } = useCategoryTree()
-const { categoryName, locale } = useLocale()
+const { t, categoryName, locale } = useLocale()
 const config = useRuntimeConfig()
 
 const activeSlug = ref(categories.value[0]?.slug || 'home-living')
@@ -51,10 +51,12 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
   <section class="home-bestsellers" aria-labelledby="home-bestsellers-title">
     <header class="home-bestsellers__head">
       <h2 id="home-bestsellers-title" class="home-bestsellers__title">{{ floorTitle }}</h2>
-      <NuxtLink class="home-bestsellers__view-all" :to="viewAllTarget">View all</NuxtLink>
+      <NuxtLink class="home-bestsellers__view-all" :to="viewAllTarget">{{
+        t('cms.viewAll')
+      }}</NuxtLink>
     </header>
 
-    <nav class="home-bestsellers__tabs" aria-label="Bestseller categories">
+    <nav class="home-bestsellers__tabs" :aria-label="t('bestseller.categoriesAria')">
       <button
         v-for="category in categories"
         :key="category.slug"
@@ -73,7 +75,7 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
       </li>
     </ul>
     <p v-else class="home-bestsellers__empty" role="status">
-      No ranked products for this category yet.
+      {{ t('bestseller.noRanked') }}
     </p>
   </section>
 </template>

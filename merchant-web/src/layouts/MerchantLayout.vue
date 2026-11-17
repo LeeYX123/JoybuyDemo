@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useMerchantSession } from '@/composables/useMerchantSession'
@@ -94,6 +94,29 @@ const visibleGroups = computed(() =>
 
 const currentTitle = computed(() => route.meta.title || '商家中心')
 
+// ≤960px 时侧栏是 off-canvas 抽屉：仅表现层状态，桌面档无任何影响。
+const navOpen = ref(false)
+
+function toggleNav() {
+  navOpen.value = !navOpen.value
+}
+
+function closeNav() {
+  navOpen.value = false
+}
+
+watch(navOpen, (open) => {
+  document.body.classList.toggle('is-nav-locked', open)
+})
+
+// 路由跳转后自动收起抽屉（移动端点导航的常规路径）。
+watch(
+  () => route.fullPath,
+  () => {
+    navOpen.value = false
+  },
+)
+
 function onSwitchShop(event) {
   switchShop(event.target.value)
   router.go(0)
@@ -106,7 +129,13 @@ async function signOut() {
 </script>
 
 <template>
-  <div class="merchant-shell">
+  <div class="merchant-shell" :class="{ 'nav-open': navOpen }">
+    <div
+      class="merchant-side-mask"
+      :class="{ 'is-open': navOpen }"
+      aria-hidden="true"
+      @click="closeNav"
+    />
     <aside class="merchant-side">
       <div class="merchant-brand">
         <span class="merchant-brand__logo" aria-hidden="true">J</span>
@@ -134,6 +163,15 @@ async function signOut() {
 
     <div class="merchant-main">
       <header class="merchant-topbar">
+        <button
+          type="button"
+          class="merchant-menu-btn"
+          :aria-label="navOpen ? '关闭菜单' : '打开菜单'"
+          :aria-expanded="navOpen ? 'true' : 'false'"
+          @click="toggleNav"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
         <span class="merchant-topbar__crumb">商家中心 /</span>
         <h1>{{ currentTitle }}</h1>
         <div class="merchant-topbar__right">
@@ -146,7 +184,7 @@ async function signOut() {
             </select>
           </label>
           <span v-else-if="activeShop" class="merchant-shop-chip">{{ activeShop.name }}</span>
-          <span>{{ staff?.display_name }}</span>
+          <span class="merchant-topbar__staff">{{ staff?.display_name }}</span>
           <button type="button" class="btn btn--sm" @click="signOut">退出</button>
         </div>
       </header>

@@ -15,7 +15,10 @@ from catalog.models import LocalCategory
 from catalog.services import create_local_category
 
 # Demo-inventory keyword rules: (child slug, title keywords, lowercase).
-# Anything unmatched falls back to groceries (the demo inventory is mostly food).
+# Anything unmatched falls back to rice/pasta/noodles (the demo inventory is
+# mostly ambient food). 2026-11-11 one-to-one taxonomy: the old
+# groceries-food bucket was split into 24 Joybuy-aligned children, so the
+# fallback now targets rice-pasta-pulses.
 DEMO_KEYWORD_RULES = [
     (
         "kitchen-appliances",
@@ -34,20 +37,24 @@ DEMO_KEYWORD_RULES = [
     ("electronics", ("earbuds", "smart watch", "usb-c", "cable", "charger")),
     ("cleaning-supplies", ("toilet", "tissue", "wet wipes", "wipe")),
 ]
-DEMO_FALLBACK_SLUG = "groceries-food"
+DEMO_FALLBACK_SLUG = "rice-pasta-pulses"
 
 # (slug, name_en, name_zh, [(child slug, child en, child zh), ...])
+# 2026-11-11 one-to-one taxonomy: children are the legacy base nodes whose
+# slugs/names are aligned with the Joybuy menu (sync_local_categories_from_joybuy
+# owns the full Joybuy set and Joybuy sort orders; children sort_order is only
+# set on creation so re-running seed never fights the sync ordering).
 STANDARD_CATEGORIES = [
     (
         "home-living",
         "Home & Living",
         "家居生活",
         [
-            ("kitchen-essentials", "Kitchen Essentials", "厨房用品"),
-            ("home-storage", "Home Storage", "家居收纳"),
-            ("bedding-textiles", "Bedding & Textiles", "床品家纺"),
-            ("cleaning-supplies", "Cleaning Supplies", "清洁用品"),
-            ("groceries-food", "Groceries & Food", "食品杂货"),
+            ("kitchen-essentials", "Kitchen & Dining", "厨房与餐厅用品"),
+            ("home-storage", "Storage & Organisation", "整理收纳"),
+            ("bedding-textiles", "Bedding", "床上用品"),
+            ("cleaning-supplies", "Cleaning", "清洁用品"),
+            ("rice-pasta-pulses", "Rice, Pasta & Pulses", "米面杂粮"),
         ],
     ),
     (
@@ -55,9 +62,10 @@ STANDARD_CATEGORIES = [
         "Electronics",
         "电子产品",
         [
-            ("tv-audio", "TV & Audio", "电视与影音"),
-            ("phones-tablets", "Phones & Tablets", "手机与平板"),
-            ("cameras-photo", "Cameras & Photo", "影像拍摄"),
+            ("mobile-phones", "Phones", "手机"),
+            ("tablets", "Tablets", "平板电脑"),
+            ("soundbars-home-cinema", "Soundbars & Home Cinema", "音响 & 家庭影院"),
+            ("cameras-photo", "Camera & Photo", "摄影摄像"),
             ("smart-home", "Smart Home", "智能家居"),
         ],
     ),
@@ -66,9 +74,9 @@ STANDARD_CATEGORIES = [
         "Beauty & Personal Care",
         "美妆个人护理",
         [
-            ("skincare", "Skincare", "护肤"),
+            ("skincare", "Face Care", "面部护肤"),
             ("makeup", "Makeup", "彩妆"),
-            ("body-hair-care", "Body & Hair Care", "个护洗护"),
+            ("body-hair-care", "Body", "身体护理"),
             ("fragrance", "Fragrance", "香水"),
         ],
     ),
@@ -77,9 +85,8 @@ STANDARD_CATEGORIES = [
         "Small Home Appliances",
         "小家电",
         [
-            ("kitchen-appliances", "Kitchen Appliances", "厨房小电"),
-            ("personal-care-appliances", "Personal Care Appliances", "个护小电"),
-            ("cleaning-appliances", "Cleaning Appliances", "清洁小电"),
+            ("kitchen-appliances", "Oven & Hobs", "厨房电器"),
+            ("cleaning-appliances", "Floorcare", "地板清洁电器"),
         ],
     ),
     (
@@ -87,9 +94,9 @@ STANDARD_CATEGORIES = [
         "Health & Wellness",
         "健康与保健",
         [
-            ("nutrition-supplements", "Nutrition & Supplements", "保健营养"),
-            ("health-monitors", "Health Monitors", "健康监测"),
-            ("massage-relaxation", "Massage & Relaxation", "按摩放松"),
+            ("nutrition-supplements", "Vitamins & Supplements", "维生素 & 补充剂"),
+            ("health-monitors", "Healthcare devices", "电子健康检测"),
+            ("massage-relaxation", "Massage & Relaxation", "按摩与舒缓"),
         ],
     ),
     (
@@ -97,10 +104,9 @@ STANDARD_CATEGORIES = [
         "Computers & Accessories",
         "计算机与配件",
         [
-            ("laptops-desktops", "Laptops & Desktops", "笔记本与台式机"),
-            ("pc-components", "PC Components", "电脑配件"),
-            ("peripherals", "Peripherals", "电脑外设"),
-            ("networking", "Networking", "网络设备"),
+            ("laptops", "Laptops", "笔记本电脑"),
+            ("desktop-pcs", "Desktop PCs", "台式电脑"),
+            ("peripherals", "Mouse, Keyboard & Accessories", "键盘、鼠标及输入设备"),
         ],
     ),
     (
@@ -108,12 +114,12 @@ STANDARD_CATEGORIES = [
         "Clothing & Accessories",
         "服装与配饰",
         [
-            ("womens-clothing", "Women's Clothing", "女装"),
-            ("mens-clothing", "Men's Clothing", "男装"),
-            ("jewellery", "Jewellery", "珠宝首饰"),
+            ("womens-clothing", "Women's Clothing & Accessories", "女装 & 配饰"),
+            ("mens-clothing", "Men's Clothing & Accessories", "男装 & 配饰"),
+            ("jewellery", "Jewellery", "珠宝"),
             ("watches", "Watches", "手表"),
-            ("bags-luggage", "Bags & Luggage", "箱包"),
-            ("shoes-boots", "Shoes & Boots", "鞋靴"),
+            ("bags-luggage", "Bags & Luggage", "箱包手袋"),
+            ("shoes-boots", "Footwear", "时尚鞋靴"),
         ],
     ),
     (
@@ -121,10 +127,8 @@ STANDARD_CATEGORIES = [
         "Outdoor & Sports",
         "户外运动",
         [
-            ("fitness-training", "Fitness & Training", "运动健身"),
-            ("outdoor-gear", "Outdoor Gear", "户外装备"),
-            ("cycling", "Cycling", "骑行"),
-            ("water-sports", "Water Sports", "水上运动"),
+            ("fitness-training", "Sports & Leisure", "体育与休闲"),
+            ("outdoor-gear", "Outdoors", "户外"),
         ],
     ),
     (
@@ -132,9 +136,10 @@ STANDARD_CATEGORIES = [
         "Pet Supplies",
         "宠物用品",
         [
-            ("pet-food", "Pet Food", "宠物食品"),
-            ("pet-toys", "Pet Toys", "宠物玩具"),
-            ("pet-grooming", "Pet Grooming", "宠物护理"),
+            ("dog-food", "Dog Food", "狗粮"),
+            ("cat-food", "Cat Food", "猫粮"),
+            ("cat-toys", "Cat Toys", "猫玩具"),
+            ("pet-grooming", "Pet Grooming", "宠物美容护理"),
         ],
     ),
     (
@@ -142,9 +147,9 @@ STANDARD_CATEGORIES = [
         "Baby & Toddler",
         "婴幼儿用品",
         [
-            ("baby-feeding", "Baby Feeding", "婴儿喂养"),
-            ("diapers-wipes", "Diapers & Wipes", "纸尿裤湿巾"),
-            ("toys-early-learning", "Toys & Early Learning", "玩具早教"),
+            ("baby-feeding", "Nursing & Feeding", "婴儿哺育喂养"),
+            ("diapers-wipes", "Nappies & Pants", "婴幼儿纸尿裤"),
+            ("infant-pre-school-toys", "Infant & Pre-school Toys", "婴幼儿学前玩具"),
         ],
     ),
     (
@@ -152,9 +157,7 @@ STANDARD_CATEGORIES = [
         "Games & Accessories",
         "游戏及配件",
         [
-            ("consoles", "Consoles", "游戏主机"),
-            ("gaming-accessories", "Gaming Accessories", "游戏配件"),
-            ("board-card-games", "Board & Card Games", "桌游棋牌"),
+            ("consoles", "Consoles", "游戏机"),
         ],
     ),
 ]
@@ -189,6 +192,7 @@ class Command(BaseCommand):
                         name_zh=child_zh,
                         sort_order=child_index,
                         parent=root,
+                        update_sort=False,
                     )
                     if child_created:
                         created_children += 1
@@ -238,7 +242,7 @@ class Command(BaseCommand):
             rebuild_search_document(spu, market=market)
         return assigned
 
-    def _upsert(self, *, slug, name_en, name_zh, sort_order, parent=None):
+    def _upsert(self, *, slug, name_en, name_zh, sort_order, parent=None, update_sort=True):
         category = LocalCategory.objects.filter(slug=slug).first()
         created = category is None
         if created:
@@ -248,9 +252,13 @@ class Command(BaseCommand):
         category.name_en = name_en
         category.name_zh = name_zh
         category.name = name_en
-        category.sort_order = sort_order
+        # Children keep their existing sort_order: the Joybuy sync owns the
+        # Joybuy menu ordering; overwriting it here would fight that sync.
+        if update_sort or created:
+            category.sort_order = sort_order
         category.status = LocalCategory.Status.ACTIVE
-        category.save(
-            update_fields=["name", "name_en", "name_zh", "sort_order", "status", "updated_at"]
-        )
+        fields = ["name", "name_en", "name_zh", "status", "updated_at"]
+        if update_sort or created:
+            fields.append("sort_order")
+        category.save(update_fields=fields)
         return category, created

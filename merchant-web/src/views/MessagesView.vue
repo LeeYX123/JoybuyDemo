@@ -17,6 +17,14 @@ const state = reactive({
 
 const listEl = ref(null)
 
+// 移动端（≤768px）单列态：'list' 显示会话列表，'chat' 显示聊天面板；桌面档不受影响。
+const mobilePane = ref('list')
+
+function openConversation(id) {
+  mobilePane.value = 'chat'
+  selectConversation(id)
+}
+
 async function loadConversations() {
   state.loading = true
   state.error = ''
@@ -112,7 +120,7 @@ onMounted(loadConversations)
 
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
 
-    <div class="chat-shell">
+    <div class="chat-shell" :class="{ 'is-chat-pane': mobilePane === 'chat' }">
       <aside class="chat-list">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
         <button
@@ -121,7 +129,7 @@ onMounted(loadConversations)
           type="button"
           class="chat-list__item"
           :class="{ 'is-active': row.id === state.activeId }"
-          @click="selectConversation(row.id)"
+          @click="openConversation(row.id)"
         >
           <span
             class="chat-list__avatar"
@@ -144,7 +152,15 @@ onMounted(loadConversations)
       <section class="chat-panel">
         <template v-if="state.active">
           <header class="chat-panel__head">
-            <div>
+            <div class="chat-panel__head-left">
+              <button
+                type="button"
+                class="chat-back"
+                aria-label="返回会话列表"
+                @click="mobilePane = 'list'"
+              >
+                ← 返回
+              </button>
               <strong>{{ state.active.peer_name }}</strong>
               <span v-if="state.active.state" class="tag">{{ state.active.state }}</span>
             </div>
@@ -312,12 +328,42 @@ onMounted(loadConversations)
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
 }
 
-.chat-panel__head strong {
-  margin-right: 8px;
+.chat-panel__head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-panel__head-left strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 移动端返回按钮：桌面（>768px）恒隐藏，桌面行为不变。 */
+.chat-back {
+  display: none;
+  flex: none;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #505765;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-back:hover {
+  border-color: var(--red);
+  color: var(--red);
 }
 
 .chat-product {
@@ -407,5 +453,51 @@ onMounted(loadConversations)
   align-items: center;
   justify-content: space-between;
   margin-top: 8px;
+}
+
+/* ≤960px：双栏收窄但不溢出（列表 240px，聊天面板弹性收窄）。 */
+@media (max-width: 960px) {
+  .chat-shell {
+    grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .chat-list,
+  .chat-panel {
+    min-width: 0;
+  }
+}
+
+/* ≤768px：单列 + 组件内切换（默认会话列表，点会话进聊天，返回按钮回列表）。 */
+@media (max-width: 768px) {
+  .chat-shell {
+    grid-template-columns: 1fr;
+    height: calc(100vh - 190px);
+    min-height: 420px;
+  }
+
+  .chat-back {
+    display: inline-flex;
+  }
+
+  .chat-panel {
+    display: none;
+  }
+
+  .chat-shell.is-chat-pane .chat-list {
+    display: none;
+  }
+
+  .chat-shell.is-chat-pane .chat-panel {
+    display: flex;
+  }
+
+  .chat-bubble {
+    max-width: 86%;
+  }
+
+  .chat-compose__actions {
+    gap: 8px;
+  }
 }
 </style>

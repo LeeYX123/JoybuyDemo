@@ -63,6 +63,15 @@ def favourites(request):
         return denied
 
     if request.method == "GET":
+        # The wishlist heart on every product card needs one cheap read of the
+        # buyer's saved product ids; the paged card payload stays unchanged.
+        if request.GET.get("ids_only") in {"1", "true", "yes"}:
+            ids = list(
+                Favourite.objects.filter(account=account)
+                .order_by("-created_at", "pk")
+                .values_list("spu__public_id", flat=True)
+            )
+            return JsonResponse({"spu_public_ids": [str(value) for value in ids]})
         try:
             page = max(1, min(int(request.GET.get("page", "1")), MAX_PAGE))
         except ValueError:

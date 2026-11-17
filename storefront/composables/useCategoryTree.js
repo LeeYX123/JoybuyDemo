@@ -20,5 +20,8 @@ export function useCategoryTree() {
   })
 
   const categories = computed(() => data.value?.categories || [])
-  return { categories }
+  // Pages that need the tree before firing dependent requests (the channel
+  // landing page resolves /minihome/<code> against it) can `await` this;
+  // plain consumers (header/panel) just read `categories` reactively.
+  return { categories, treeData: data }
 }

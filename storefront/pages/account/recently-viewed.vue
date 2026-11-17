@@ -1,5 +1,8 @@
 <script setup>
 import { useHead } from '#imports'
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
 
 import { useActivityList } from '~/composables/useActivityList'
 import { formatDisplayPrice } from '../../utils/display'
@@ -18,10 +21,10 @@ useHead({ title: 'Recently viewed' })
 <template>
   <AppContainer narrow>
     <section class="activity" aria-labelledby="activity-title">
-      <h1 id="activity-title">Recently viewed</h1>
+      <h1 id="activity-title">{{ t('account.recentlyViewed') }}</h1>
 
       <p v-if="total === 0" class="activity__empty" role="status">
-        Nothing here yet. Products you open while signed in will appear automatically.
+        {{ t('account.emptyRecentlyViewed') }}
       </p>
 
       <template v-else>
@@ -36,16 +39,18 @@ useHead({ title: 'Recently viewed' })
               </span>
             </div>
             <button type="button" class="activity__remove" @click="removeItem(item.spu_public_id)">
-              Remove
+              {{ t('cart.remove') }}
             </button>
           </li>
         </ul>
 
-        <nav v-if="totalPages > 1" class="activity__pagination" aria-label="Pagination">
-          <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">Previous</button>
+        <nav v-if="totalPages > 1" class="activity__pagination" :aria-label="t('pagination.label')">
+          <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">
+            {{ t('pagination.previous') }}
+          </button>
           <span>Page {{ page }} of {{ totalPages }}</span>
           <button type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">
-            Next
+            {{ t('pagination.next') }}
           </button>
         </nav>
       </template>

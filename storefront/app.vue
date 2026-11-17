@@ -6,5 +6,6 @@
       <NuxtPage />
     </main>
     <AppFooter />
+    <UiToast />
   </div>
 </template>

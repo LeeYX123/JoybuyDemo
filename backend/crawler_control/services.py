@@ -38,6 +38,14 @@ REVIEW_TARGET_MIN = 1
 REVIEW_TARGET_MAX = 300
 REVIEW_TARGET_DEFAULT = 50
 
+# 2026-11-16: an account ejected from the in-run account pool by
+# ``ACCOUNT_RISK_ROTATED`` used to keep status ACTIVE/VALID, so the next run
+# picked the same burned identity and the pool was exhausted again within
+# minutes. The flag is now persisted (``risk_flagged_at``/``risk_reason``) and
+# new runs skip flagged accounts for this many hours.
+RISK_COOLDOWN_HOURS_ENV = "CRAWLER_RISK_COOLDOWN_HOURS"
+DEFAULT_RISK_COOLDOWN_HOURS = 6.0
+
 
 # ---------------------------------------------------------------------------
 # Account sessions
@@ -276,6 +284,76 @@ def reactivate_account(account: CrawlerAccount, *, note: str = "", observed_at=N
     return account
 
 
+def mark_account_risk_cooldown(account_or_public_id, *, reason: str, observed_at=None):
+    """Persist a mid-run risk hit so later runs will not reuse the account.
+
+    ``flag_account_risk_control`` is the human-facing escalation: it pauses
+    the account *and* its running crawl. An account rotated away by
+    ``ACCOUNT_RISK_ROTATED`` cannot use it because the crawl is still going
+    with the remaining accounts. This writes only ``risk_flagged_at`` and
+    ``risk_reason``; the cool-down filter in ``usable_accounts_for_run`` does
+    the rest, while the operator-visible status stays untouched.
+
+    Returns the updated account, or ``None`` when the public id is unknown
+    (the crawler must never crash because a stale label was rotated away).
+    """
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise CrawlAccountStateInvalid("A risk-control reason is required.")
+    observed_at = observed_at or timezone.now()
+    public_id = getattr(account_or_public_id, "public_id", account_or_public_id)
+    account = CrawlerAccount.objects.filter(public_id=public_id, deleted_at__isnull=True).first()
+    if account is None:
+        return None
+    account.risk_flagged_at = observed_at
+    account.risk_reason = reason[:500]
+    account.save(update_fields=["risk_flagged_at", "risk_reason", "updated_at"])
+    return account
+
+
+def risk_cooldown_hours() -> float:
+    """Hours a risk-flagged account stays out of new runs (env, default 6)."""
+
+    raw = str(os.getenv(RISK_COOLDOWN_HOURS_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_RISK_COOLDOWN_HOURS
+    try:
+        hours = float(raw)
+    except ValueError:
+        return DEFAULT_RISK_COOLDOWN_HOURS
+    return max(0.0, hours)
+
+
+def _risk_cooldown_cutoff(now=None):
+    now = now or timezone.now()
+    return now - timedelta(hours=risk_cooldown_hours())
+
+
+def _account_in_risk_cooldown(account, *, now=None) -> bool:
+    """True while the account is still inside the cool-down window."""
+
+    flagged_at = getattr(account, "risk_flagged_at", None)
+    if flagged_at is None or risk_cooldown_hours() <= 0:
+        return False
+    return flagged_at > _risk_cooldown_cutoff(now)
+
+
+def _risk_cooldown_until(account, *, now=None):
+    flagged_at = getattr(account, "risk_flagged_at", None)
+    if flagged_at is None or risk_cooldown_hours() <= 0:
+        return None
+    return flagged_at + timedelta(hours=risk_cooldown_hours())
+
+
+def _exclude_risk_cooled(queryset, *, now=None):
+    """Drop accounts still inside the cool-down window from a candidate query."""
+
+    if risk_cooldown_hours() <= 0:
+        return queryset
+    return queryset.exclude(risk_flagged_at__gt=_risk_cooldown_cutoff(now))
+
+
 def _session_has_cookies(account) -> bool:
     """True when the stored session actually contains replayable cookies.
 
@@ -305,6 +383,10 @@ def _account_unusable_reason(account) -> str:
         return "没有可用账号"
     if account.status != CrawlerAccount.Status.ACTIVE:
         return f"账号状态为 {account.status}"
+    if _account_in_risk_cooldown(account):
+        until = _risk_cooldown_until(account)
+        stamp = timezone.localtime(until).strftime("%m-%d %H:%M") if until else "稍后"
+        return f"处于风控冷却期（{account.risk_reason or '命中风控页'}，{stamp} 后可再用）"
     if account.session_status != CrawlerAccount.SessionStatus.VALID:
         return f"会话状态为 {account.session_status}"
     if not account.session_cipher:
@@ -359,16 +441,14 @@ def usable_accounts_for_run(job: CrawlJob) -> list[CrawlerAccount]:
     if job.account_id and _account_is_usable(job.account):
         pooled.append(job.account)
         seen.add(job.account_id)
-    candidates = (
+    candidates = _exclude_risk_cooled(
         CrawlerAccount.objects.filter(
             account_group=job.account_group,
             status=CrawlerAccount.Status.ACTIVE,
             session_status=CrawlerAccount.SessionStatus.VALID,
             deleted_at__isnull=True,
-        )
-        .exclude(pk=job.account_id)
-        .order_by("last_used_at", "pk")[:50]
-    )
+        ).exclude(pk=job.account_id)
+    ).order_by("last_used_at", "pk")[:50]
     for account in candidates:
         if account.pk in seen or not _account_is_usable(account):
             continue
@@ -386,11 +466,13 @@ def _select_account_for_run(account_group: str) -> CrawlerAccount | None:
     demands a login (requirement: try logged-out first).
     """
 
-    candidates = CrawlerAccount.objects.filter(
-        account_group=account_group,
-        status=CrawlerAccount.Status.ACTIVE,
-        session_status=CrawlerAccount.SessionStatus.VALID,
-        deleted_at__isnull=True,
+    candidates = _exclude_risk_cooled(
+        CrawlerAccount.objects.filter(
+            account_group=account_group,
+            status=CrawlerAccount.Status.ACTIVE,
+            session_status=CrawlerAccount.SessionStatus.VALID,
+            deleted_at__isnull=True,
+        )
     ).order_by("last_used_at", "pk")[:20]
     for account in candidates:
         # A "VALID" session with no cookies is not usable — picking it would
@@ -398,6 +480,42 @@ def _select_account_for_run(account_group: str) -> CrawlerAccount | None:
         if _account_is_usable(account):
             return account
     return None
+
+
+def _guard_group_risk_cooldown(job: CrawlJob) -> list[CrawlerAccount]:
+    """Refuse a start whose only selectable accounts are cooling down.
+
+    A group with no valid session still starts unauthenticated (2026-11-05
+    decision). The case this guard covers is different: the group *has*
+    active accounts with valid sessions and every one of them is inside the
+    risk cool-down, so the run would only replay identities the source just
+    blocked (2026-11-16: 03 group re-used 10 burned accounts after
+    ``ACCOUNT_POOL_EXHAUSTED``). Failing here is explicit and immediate; the
+    job stays READY so it can be started after the cool-down.
+
+    Returns the cooled accounts when only *some* were skipped, so the caller
+    can write ``ACCOUNTS_RISK_COOLDOWN_SKIPPED`` into the run log.
+    """
+
+    accounts = list(
+        CrawlerAccount.objects.filter(
+            account_group=job.account_group,
+            status=CrawlerAccount.Status.ACTIVE,
+            session_status=CrawlerAccount.SessionStatus.VALID,
+            deleted_at__isnull=True,
+        ).order_by("last_used_at", "pk")
+    )
+    cooled = [account for account in accounts if _account_in_risk_cooldown(account)]
+    if not cooled:
+        return []
+    if len(cooled) == len(accounts):
+        hours = risk_cooldown_hours()
+        raise CrawlAccountStateInvalid(
+            f"{job.account_group} 组账号全部处于风控冷却期"
+            f"（{len(cooled)} 个账号，冷却 {hours:g} 小时），本轮不启动；"
+            "请等待冷却结束或补充账号。"
+        )
+    return cooled
 
 
 def set_account_status(account: CrawlerAccount, *, status: str) -> CrawlerAccount:
@@ -494,6 +612,8 @@ def create_crawl_job(
     include_subcategories=None,
     listing_sort: str = CrawlJob.ListingSort.SOURCE_DEFAULT,
     sync_mode: str = CrawlJob.SyncMode.INCREMENTAL,
+    skip_imported_products: bool = False,
+    allow_pagination: bool = True,
     review_target: int = REVIEW_TARGET_DEFAULT,
     locale: str = "en-GB",
     currency=None,
@@ -623,6 +743,8 @@ def create_crawl_job(
             listing_sort=listing_sort,
             random_seed=random_seed,
             sync_mode=sync_mode,
+            skip_imported_products=bool(skip_imported_products),
+            allow_pagination=bool(allow_pagination),
             review_target=review_target,
             download_product_media=download_product_media,
             download_review_media=download_review_media,
@@ -713,6 +835,8 @@ def _job_params_snapshot(job: CrawlJob) -> dict:
         "listing_sort": job.listing_sort,
         "random_seed": job.random_seed,
         "sync_mode": job.sync_mode,
+        "skip_imported_products": job.skip_imported_products,
+        "allow_pagination": job.allow_pagination,
         "review_target": job.review_target,
         "download_product_media": job.download_product_media,
         "download_review_media": job.download_review_media,
@@ -742,6 +866,7 @@ def start_run(job: CrawlJob, *, started_at=None) -> CrawlRun:
             CrawlJob.Status.FAILED,
         }:
             raise CrawlJobStateInvalid(f"Job in status {job.status} cannot start a run.")
+        cooled_accounts = _guard_group_risk_cooldown(job)
         _transition_job(job, CrawlJob.Status.RUNNING)
         account, account_note = _resolve_account_for_run(job)
         if account is not None:
@@ -754,6 +879,16 @@ def start_run(job: CrawlJob, *, started_at=None) -> CrawlRun:
             params_snapshot=_job_params_snapshot(job),
             started_at=started_at,
         )
+        if cooled_accounts:
+            hours = risk_cooldown_hours()
+            labels = "、".join(account.label for account in cooled_accounts[:8])
+            record_run_event(
+                run,
+                level=CrawlRunEvent.Level.INFO,
+                code="ACCOUNTS_RISK_COOLDOWN_SKIPPED",
+                message=f"选号跳过了 {len(cooled_accounts)} 个处于风控冷却期"
+                f"（{hours:g} 小时）的账号：{labels}；这些账号本轮不会被复用。",
+            )
         if account_note:
             record_run_event(
                 run,

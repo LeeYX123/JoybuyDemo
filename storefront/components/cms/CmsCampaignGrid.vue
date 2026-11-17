@@ -17,7 +17,7 @@ const props = defineProps({
   },
 })
 
-const { locale } = useLocale()
+const { t, locale } = useLocale()
 
 const tiles = computed(() =>
   (Array.isArray(props.payload.items) ? props.payload.items : []).filter(
@@ -40,7 +40,7 @@ function tileSubtitle(tile) {
 </script>
 
 <template>
-  <section class="cms-campaign" :style="backgroundStyle" aria-label="Offers for you">
+  <section class="cms-campaign" :style="backgroundStyle" :aria-label="t('cms.offersForYou')">
     <ul class="cms-campaign__grid">
       <li v-for="tile in tiles" :key="tile.title">
         <NuxtLink v-if="tile.href" class="cms-campaign__tile" :to="tile.href">

@@ -339,8 +339,8 @@ CHOICE 类属性的可选值。
 | source_availability | varchar(24) | 来源可售状态：`UNKNOWN`/`IN_STOCK`/`OUT_OF_STOCK`/`UNAVAILABLE` |
 | suspected_stale_since | datetime(6) 可空 | 完整刷新未见到该 offer 的起始时间（疑似失效） |
 | stale_confirmations | smallint unsigned | 连续确认失效次数 |
-| status | varchar(16) | `DRAFT` / `ACTIVE` / `INACTIVE`；店铺商品关系里 `ACTIVE` = 已上架、`INACTIVE` = 已下架 |
-| cost_price | decimal(18,4) 可空 | 商家上架时从商品池快照的成本价（发货扣款与利润依据） |
+| status | varchar(16) | `DRAFT` / `ACTIVE` / `INACTIVE`；店铺商品关系里 `ACTIVE` = 已上架、`INACTIVE` = 已下架；管理端【商品池】上架会激活该商品的 `DRAFT` 报价与平台下架过的报价（商家自己下架的不动，见 docs/14 §9.12） |
+| cost_price | decimal(18,4) 可空 | 上架时按「零售价 × (1 − 商家折扣%)」快照的成本价（发货扣款与利润依据，docs/14 §9.11） |
 | listed_at / removed_at | datetime(6) 可空 | 上架 / 下架时间 |
 | removed_by_platform | tinyint(1) | 是否由平台下架（A04） |
 
@@ -483,6 +483,8 @@ CHOICE 类属性的可选值。
 | listing_sort | varchar(24) | `SOURCE_DEFAULT`/`BEST_SELLING`/`TOP_RATED`/`NEWEST`/`RANDOM` |
 | random_seed | bigint 可空 | RANDOM 排序的持久化种子（可复现） |
 | sync_mode | varchar(16) | `INCREMENTAL` / `FULL_REFRESH` |
+| skip_imported_products | tinyint(1) | 「跳过已入库」开关（2026-11-12，默认 0）：开启后列表阶段先查 `spu_source_identity`，已入库商品不再请求详情页，因此价格/库存/评分不会刷新 |
+| allow_pagination | tinyint(1) | 「翻页抓取」开关（2026-11-12，默认 1）：允许 `/s?k=…&page=N` 翻页直到抓满 product_limit（运行关闭 ROBOTSTXT_OBEY）；关闭时每个类目只抓第一屏（约 20–40 个商品） |
 | review_target | smallint unsigned | 抽检比例目标（默认 50） |
 | download_product_media / download_review_media / download_detail_media | tinyint(1) | 三类媒体下载开关 |
 | scheduled_at | datetime(6) 可空 | 计划启动时间 |
@@ -734,7 +736,7 @@ WP-42 后：白名单账户选择任一支付方式点【下单】即置 `PAID`�
 | **ban_after_days** | smallint 可空 | 订单未处理自动封店天数（天）；null = 不自动封店。判定：存在待处理子单且下单时间超该天数 → 自动封店（唯一自动封店规则） |
 | **followers / follow_delta / follow_day** | int / int / date 可空 | 总关注、当天高亮增量、增量业务日（跨日归零） |
 | **exposure / exposure_delta / exposure_day** | int / int / date 可空 | 总曝光度（累加不清零）、今日曝光度（当日累计新增）、增量业务日（每天自动清零） |
-| **discount_rate / activity_discount_rate** | decimal(5,2) 可空 | 商家折扣 / 活动商品折扣（百分数，70 = 70%）；不做区间校验；成本价 = 向上取整(零售价 × 折扣)，活动商品优先活动折扣 |
+| **discount_rate / activity_discount_rate** | decimal(5,2) 可空 | 商家折扣 / 活动商品折扣（百分数，20 = 成本价减免 20%）；不做区间校验；成本价 = **零售价 × (1 − 折扣%)，向上取整到分**（2026-11-10 最终口径；未设折扣 = 减免 0% → 成本价 = 零售价；`Spu.cost_price` 不参与公式），活动商品优先活动折扣；改折扣后已上架 Offer 成本价立即重算 |
 | **last_online_at** | datetime 可空 | 商家最近操作时间 |
 | **referral_code** | varchar(32) 唯一可空 | 推荐码（= 开店邀请码），下单/入驻时绑定推荐关系 |
 

@@ -1,13 +1,20 @@
 <script setup>
 import { useHead } from '#imports'
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
 
 import { useActivityList } from '~/composables/useActivityList'
+import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice } from '../../utils/display'
 
 // Buyer favourites: list, remove, empty state and pagination.
 const { items, total, totalPages, page, goToPage, clientDelete } = useActivityList('favourites')
+const { removeLocal } = useWishlist()
 
 function removeItem(publicId) {
+  // Keep the heart state in sync with the list once the row is removed.
+  removeLocal(publicId)
   clientDelete(publicId)
 }
 
@@ -17,10 +24,10 @@ useHead({ title: 'Favourites' })
 <template>
   <AppContainer narrow>
     <section class="activity" aria-labelledby="activity-title">
-      <h1 id="activity-title">Favourites</h1>
+      <h1 id="activity-title">{{ t('account.favourites') }}</h1>
 
       <p v-if="total === 0" class="activity__empty" role="status">
-        Nothing saved yet. Use the heart on any product to keep it here.
+        {{ t('account.emptyWishlist') }}
       </p>
 
       <template v-else>
@@ -35,16 +42,18 @@ useHead({ title: 'Favourites' })
               </span>
             </div>
             <button type="button" class="activity__remove" @click="removeItem(item.spu_public_id)">
-              Remove
+              {{ t('cart.remove') }}
             </button>
           </li>
         </ul>
 
-        <nav v-if="totalPages > 1" class="activity__pagination" aria-label="Pagination">
-          <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">Previous</button>
+        <nav v-if="totalPages > 1" class="activity__pagination" :aria-label="t('pagination.label')">
+          <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">
+            {{ t('pagination.previous') }}
+          </button>
           <span>Page {{ page }} of {{ totalPages }}</span>
           <button type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">
-            Next
+            {{ t('pagination.next') }}
           </button>
         </nav>
       </template>
