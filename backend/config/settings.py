@@ -186,10 +186,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 SESSION_COOKIE_NAME = "joybuy_django_session"
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = APP_ENV not in {"development", "test"}
+# Secure 标志默认跟随环境（production/test 之外强制 Secure）。当前生产暂走纯 http
+# （无 TLS），浏览器会拒存带 Secure 的 cookie 导致登录/CSRF 全部失效，允许用 env
+# 显式关闭作临时降级；配置 TLS 当天删除 .env 里的覆盖行即回滚到默认强制。
+SESSION_COOKIE_SECURE = env_bool(
+    "DJANGO_SESSION_COOKIE_SECURE", APP_ENV not in {"development", "test"}
+)
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_HTTPONLY = True
-CSRF_COOKIE_SECURE = APP_ENV not in {"development", "test"}
+CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", APP_ENV not in {"development", "test"})
 CSRF_COOKIE_SAMESITE = "Lax"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
