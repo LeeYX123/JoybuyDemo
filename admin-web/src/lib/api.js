@@ -1,3 +1,5 @@
+import { uuidv4 } from './uuid.js'
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1/admin'
 
 // 迭代02：三端时间展示按"看的人所在时区"——请求头携带浏览器 IANA 时区，
@@ -56,7 +58,7 @@ export class ApiError extends Error {
 }
 
 export async function apiRequest(path, options = {}) {
-  const requestId = crypto.randomUUID()
+  const requestId = uuidv4()
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     credentials: 'include',

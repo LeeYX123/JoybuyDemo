@@ -1,3 +1,5 @@
+import { uuidv4 } from './uuid.js'
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 const MESSAGES = {
@@ -33,7 +35,7 @@ export function getCurrentShop() {
 }
 
 export async function apiRequest(path, options = {}) {
-  const requestId = crypto.randomUUID()
+  const requestId = uuidv4()
   const headers = {
     Accept: 'application/json',
     'X-Request-ID': requestId,
