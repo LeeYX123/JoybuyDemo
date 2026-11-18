@@ -26,7 +26,7 @@
   * **验证（真实浏览器登录成功）**：① 服务器 curl `/api/v1/admin/auth/session` 与 `/api/v1/auth/buyer/session` 的 Set-Cookie（csrftoken）**均无 Secure 标志**（0 处）；② Playwright 完整登录：/login → 填邮箱密码 → 提交 → **登录成功落地 `/merchants` 已登录态**（右上 `ops@joybuy.local`+退出登录、侧栏完整管理菜单、身份 `Joybuy Platform Admin / platform_admin`、商家管理真实数据），**console error 0**，截图 `var/uuid_fix_20261119/after2_2_after_submit.png`。探针 JSON 里 `loginOk:false` 是**断言过窄的假阴性**（脚本等"仪表盘"标题，而 platform_admin 登录后被路由到商家管理页）——已登录事实以 URL/页面特征/console 为准；③ 买家侧：buyer token cookie 只在真实登录时下发（无凭据无法 curl 验证该 cookie 本身），但它与 staff cookie 读同一 `settings.SESSION_COOKIE_SECURE`（代码已核），且其端点 csrftoken 已实测无 Secure——机制同一。
   * **回滚条件（必须执行）**：配置 TLS/域名当天，删除 `/srv/joybuy/.env` 第 25-26 两行（DJANGO_SESSION_COOKIE_SECURE / DJANGO_CSRF_COOKIE_SECURE）+ `sudo systemctl restart joybuy-api`，settings 默认即恢复 production 强制 Secure，无需改代码。
   * **登录尝试计数**：本轮浏览器 1 次（成功）、服务器脚本化 0 次。
-  * **push 状态**：dde07ae 服务器已部署；GitHub 同步状态见下一轮记录（本节书写时 push 仍在后台重试）。
+  * **push 状态**：dde07ae 与本节 HANDOFF（d24a184）均已于本轮收尾时成功 push（本机到 GitHub 时通时断，失败就 bundle→scp→服务器 ff-merge 或稍后重试）。
 
 ## 0i. 本次会话记录（2026-11-19，媒体存储切换 S3 后端：爬虫导入/上传直写桶 `joybuy-media-fra`，不再落本地盘，✅ 全部完成并已部署 joybuy2）
 
