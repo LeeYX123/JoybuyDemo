@@ -2,7 +2,177 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0. 最新会话记录（2026-11-17，申请开店表单改 7 项字段 + 买家侧图片上传 + 审核页展示 + approve 联动，✅ 完成，已 commit & push）
+## 0i. 本次会话记录（2026-11-19，媒体存储切换 S3 后端：爬虫导入/上传直写桶 `joybuy-media-fra`，不再落本地盘，✅ 全部完成并已部署 joybuy2）
+
+- **任务**：媒体存储从「本地磁盘 var/media」改为「S3 桶」——爬虫导入的图片/视频、管理端/商家端上传直接 `put_object` 进 S3，不再写本地盘。**商品数据（DB 行）仍写本地 dev 库不改导入目标库**（用户已拍板）。commit `0d06cbd`（含 10 文件 +440/-30），已 push origin main 并部署 joybuy2。
+- **改了什么（代码）**：
+  * `backend/config/settings.py`：新增 `MEDIA_BACKEND`（local|s3，默认 local）、`MEDIA_S3_BUCKET=joybuy-media-fra`、`MEDIA_S3_PREFIX=media/`、`MEDIA_S3_REGION=eu-central-1`（全部 getenv 可覆盖，非法值启动即报 ImproperlyConfigured）。
+  * `backend/media/storage.py`（核心）：`s3_enabled()` / `get_s3_client()`（boto3 懒加载单例，region 来自 settings，凭据走 boto3 默认链 `~/.aws/credentials` 或 AWS_* env，**代码零硬编码密钥**）/ `reset_s3_client()` / `s3_key()`（`media/<relative_path>`）/ `s3_public_url()`（匿名桶 URL）；新增 `store_file_bytes(relative_path, data, content_type)`（s3=put_object；local=原 tmp+os.replace 原子写）、`read_stored_bytes()`（s3=get_object 读回；local=读文件）、`stored_file_exists()`（s3=head_object 404→False；local=is_file）；`store_bytes` 改走 `store_file_bytes`，**维度检测改为从内存 bytes（`Image.open(io.BytesIO(data))`）不再打开本地文件**；DB sha256 去重逻辑完全不变（命中即跳过一切写入、不 put_object）；`delete_asset_file` s3 模式下 delete_object。`_detect_image_dimensions` 签名从 Path 改为 bytes（这是简报预判的坑，已落地）。
+  * `backend/media/variants.py`：源图改为 `read_stored_bytes` + BytesIO 解码（两种模式同一条代码路径）；6 个 derived 变体改走 `store_file_bytes` 上传（webp/avif 各自 ContentType）；新增 `FORMAT_MIME_TYPES`。
+  * `backend/media/pipeline.py`：`generate_video_cover` 在 s3 模式把视频字节暂存进 tempfile 工作目录再喂 FFmpeg（FFmpeg 必须吃真文件），封面 jpg 改走 `store_file_bytes`；本地模式行为不变。视频原片（kind=VIDEO）经 `store_bytes` 同一入口进 S3，已验证。
+  * `backend/media/views.py::serve_media_file`：仅当 `DEBUG 且 MEDIA_BACKEND=s3 且本地文件缺失` → 302 到 `s3_public_url(path)`（桶对 media/* 匿名可读）；路径穿越→404 不重定向；local 模式行为完全不变（404）。**生产语义未动：运行时回退仍只在 DEBUG+s3 生效**。
+  * `backend/crawler_control/import_services.py::_import_spu_videos`：视频复用判断从 `resolve_media_path(...).is_file()` 改为 `stored_file_exists(...)`（s3 模式 head_object）——**不改的话 s3 模式下每次重导入都会误判视频缺失而重新下载**。
+  * `backend/manage.py`：`test` 命令强制 `MEDIA_BACKEND=local`（见坑①）。
+  * `backend/requirements/base.txt`：加 `boto3==1.44.5`（当前最新稳定；依赖 botocore==1.44.5/s3transfer==0.19.3，本机与服务器 `pip check` 均 No broken requirements found）。
+  * 新测试 `backend/media/tests/test_media_storage_s3.py`（218 行，FakeS3Client 记录 put/get/head/delete 调用）+ `test_media_pipeline.py` 增 S3 模式视频封面用例。
+- **S3 模式开关与配置（现状）**：仓库根 `.env`（gitignored，已确认 `.gitignore:2` 覆盖）新增 `MEDIA_BACKEND=s3` + bucket/prefix/region 三行，**不含任何密钥**（走 `~/.aws/credentials` IAM 用户 joybuy-up-down）。`MEDIA_BACKEND=local`（不设或显式设）时全部行为与切换前逐字节一致。
+- **验证命令与真实结果（按验证纪律仅做针对性验证，未跑全量）**：
+  * `./.venv/Scripts/python.exe backend/manage.py test media.tests crawler_control.tests.test_crawler_import merchant_ops.tests.test_media_upload --keepdb --noinput --parallel 1` → **Ran 58 tests, OK**（含 12 个新 S3 用例：put_object 的 Bucket/Key/ContentType 断言、去重不触发上传、derived 变体 6 个对象上传、S3 视频封面（本机有 ffmpeg，未 skip）、views 302/404/穿越 404；既有用例零红零 skip）。ruff check + ruff format --check 改动文件 → **All checks passed / 9 files already formatted**。
+  * 本机真模型冒烟（`var/s3_storage_smoke_20261119/smoke.py` store/cleanup 两阶段）：1x1 PNG kind=CMS → media_asset 行数 **101850→101851→101850**，`relative_path=cms/original/68/76/68764b0b...a790.png`，匿名 GET 桶 URL **200**（69 bytes image/png），`local_disk_copy=False`；cleanup 后 boto3 `delete_object` + 删 DB 行，HeadObject **404**、匿名 GET 变 **403**（S3 无 ListBucket 对缺失对象的标准语义），行数复原。**现场已清理干净**。
+- **服务器部署（joybuy2，18.184.216.138，已重启验证）**：
+  * 顺序坑：先 `git push origin main` 再 `ssh joybuy2 'cd /srv/joybuy && git pull --ff-only'`（第一次 pull 显示 Already up to date 是因为还没 push）。服务器 HEAD 720aa90 → **0d06cbd**。
+  * `/srv/joybuy/.env` 只追加 4 行 MEDIA_*（本地 printf 生成 LF 片段 → scp → 服务器 `sed -i "s/\r$//"` 兜底去 CRLF → `cat >>`，重设 chmod 600，未动任何既有密钥行，追加前 grep 确认无重复键）。
+  * `/srv/joybuy/venv/bin/pip install boto3==1.44.5` → Successfully installed（pip 顺带把服务器 python-dateutil 4.0.0 降到 2.9.0.post0 以满足 botocore 约束，pip check 干净）；`sudo systemctl restart joybuy-api`（代码更新后**又重启了一次**——第一次重启发生在 pull 之前，跑的还是旧代码，别再犯）。
+  * 服务器验证全绿：`systemctl is-active` = active；`/api/v1/categories` 直连 :8000 与经 nginx 均 200（真实类目 JSON）；journalctl 近 10 分钟无 error/traceback。
+  * **服务器侧真模型冒烟**（`var/s3_storage_smoke_20261119/server_smoke.py`，跑在 /srv/joybuy/backend，用服务器自身代码+ubuntu 的 ~/.aws/credentials）：1x1 PNG（颜色 18,11,18，与本机冒烟字节不同）→ 行数 **101850→101851→101850**，`relative_path=cms/original/c8/fc/c8fcaab8...ead2.png`，`exists_in_s3=True`；**经 nginx /media/ 反代 GET = 200（X-Cache-Status MISS→HIT，proxy_cache 生效）**，外部直连桶 URL 200；cleanup 后 HeadObject 404、行数复原，/tmp 临时脚本已删。**现场已清理干净**。
+- **爬虫从此不再写本地 var/media**：本机爬虫导入（`crawler_control.import_services`）与 `manage.py load_*_demo`、管理端/商家端上传全部经 `store_bytes` 直写 S3。本地 var/media 现存 706,445 文件**一个没动**，保留作 dev 兜底+历史数据；serve_media_file 在 s3 模式下优先本地文件（老资产仍可本地服务）、缺失才 302 桶。以后新资产只存在于 S3 + dev DB 行（derived 图依旧无 DB 行）。
+- **坑（必须记住）**：
+  ① **Django test runner 会改 DEBUG、且 root .env 的 s3 配置会被测试继承**——若测试环境跑在 MEDIA_BACKEND=s3 下，普通单测会直连真桶上传垃圾对象/或断言本地文件失败。已在 `manage.py` 的 `test` 分支强制 `os.environ["MEDIA_BACKEND"]="local"`（显式赋值不受 export 覆盖影响）；S3 用例用 `override_settings(MEDIA_BACKEND="s3")` + monkeypatch `media.storage.get_s3_client` 显式选择后端。**新增测试一律不要依赖环境里的 MEDIA_BACKEND**。
+  ② 单测直调视图时 `Http404` 是异常不是 404 响应（要用 assertRaises）；FileResponse 不 close 会让 Windows 锁住临时 MEDIA_ROOT 导致 TemporaryDirectory 清理 PermissionError。
+  ③ MediaAsset.Kind 枚举值是大写（`CMS`/`PRODUCT`...），KIND_PATH_PREFIX 映射到小写目录（`cms/`...）；断言 kind 用枚举别写字面量小写。
+  ④ `head_object`/匿名 GET 对「不存在对象」分别是 404/403（无 ListBucket 权限语义），判断删除成功别只认 404。
+  ⑤ 冒烟用的 1x1 PNG 字节是确定性的（同字节同 sha256）——本机冒烟对象删掉后如再跑会「dedup 命中旧 DB 行」（行还在就 created=False）；换个颜色即新 sha。
+  ⑥ nginx 反代已验证对新对象即时可见（无需预热），proxy_cache 对 200 缓 7 天——**冒烟/测试对象务必当场 delete_object**，否则会缓存一周。
+  ⑦ FFmpeg 必须吃真实文件路径，s3 模式下先 `read_stored_bytes` 落临时目录再抽帧（已在 pipeline 内处理，勿改成管道喂 mp4）。
+- **遗留/后续**：EC2 安全组开 80 端口（0h 的用户侧卡点，仍未开）；验收新站后退役旧 Lightsail；`/srv/data`（120G 数据盘）规划未动；爬虫本机下次导入起即可验证「零新增本地文件」（`ls var/media | wc` 对照），本次未跑爬虫实测导入。
+
+## 0h. 本次会话记录（2026-11-18，服务器迁移到新 EC2 joybuy2 + 媒体改 Nginx 反代 S3，✅ 12 步全部完成，仅剩用户开 EC2 安全组 80 端口）
+
+- **任务**：把 Joybuy 从旧 Lightsail（`ssh joybuy`，18.159.51.52）迁到新 EC2（`ssh joybuy2`，18.184.216.138，Ubuntu 24.04.5，4C/15G/33G），媒体改为 Nginx 反代 S3 桶 joybuy-media-fra（媒体不落新机盘）。旧机全程未动（只读导 dump）。详细结果以 `var/prod_deploy_20261117/migrate-report.md` 为准。
+- **已完成**：新机装齐 docker 29.1.3 / compose 2.40.3（包名 docker-compose-v2）/ nginx 1.24.0 / node 22.23.5 / pnpm 11.28.12；bundle clone 到 /srv/joybuy@720aa90（git status 干净，只建 var/staticfiles 不建 var/media）；.env 从本地 remote/ 复刻（md5 与旧机逐字节一致后才传，密钥原样保留，仅改 ALLOWED_HOSTS/CSRF 两行追加 18.184.216.138，chmod 600）；三容器 healthy（MySQL 8.4.7 绑 127.0.0.1）；**新 dump 从旧机只读导出**（120MB gz，md5 三端一致）经本机中转导入，行数对账**完全一致**：spu 12939 / sku 18455 / offer 16352 / media_asset 101850 / product_search_document 7900（表名是 `spu`/`sku`/`offer`，没有 catalog_ 前缀）；venv + migrate（No migrations to apply）+ collectstatic 154 文件，未跑 bootstrap_platform_admin；三前端构建全 exit 0（storefront .output、admin-web `vite build --base=/admin/`、merchant-web）；systemd joybuy-api/joybuy-storefront enabled+active；nginx 80 入口含 **S3 反代 /media/**（conf.d/joybuy-media-cache.conf 缓存 + sites-available/joybuy，resolver 169.254.169.253，proxy_cache media_cache 200 缓 7d / 404 缓 1m，X-Cache-Status 头）。
+- **验证**：新机本机 curl `/` 200、`/api/v1/categories` 200 真实 JSON、`/admin/` 200；S3 对象经本地 presign 确认存在（200）；新机 localhost 走 nginx 反代 `/media/cms/original/03/b0/03b08f...e44.webp` = **200 真实图片字节**，MISS→HIT 缓存生效。**重要事实：S3 桶公共读已放开**（匿名直连桶 URL 也 200），简报里"BPA 全开→403"的假设已过时，反代现在即可出图；不存在的 key 返回 403（S3 无 ListBucket 权限时对缺失对象的标准语义），nginx 会把它缓存 1 分钟。
+- **卡点（唯一遗留，需用户操作）**：**外网访问 18.184.216.138 全部超时**（含新机自连公网 IP 也超时、iptables INPUT 是 ACCEPT、nginx 监听 0.0.0.0:80）→ 根因是 EC2 安全组 **launch-wizard-1 没开 80 端口**。用户需在 EC2 控制台：Instances → joybuy2 → Security → launch-wizard-1 → Edit inbound rules → 加 HTTP/TCP 80/0.0.0.0/0。开完即整站可用，无需其他操作。未绕过。
+- **新坑（必须记住）**：① **旧机 prod MySQL 密码不是 joybuy_dev_only**（那是 dev 库密码），是 infra/prod/.env 里的 MYSQL_PASSWORD，用 joybuy_dev_only 导 dump 会 Access denied；② 新库表名无 `catalog_` 前缀（`spu`/`sku`/`offer`/`media_asset`/`product_search_document`），对账 SQL 别写错；③ 导 dump 走 `gunzip | docker compose exec -T mysql` stdin 管道即可，不用 cp 进容器；④ presign 验证桶对象用 `/c/Program Files/Amazon/AWSCLIV2/aws.exe`，不要动本机 aws 配置和后台 56GB 上传任务（它们与本任务无关且未受影响）；⑤ nginx 配置里 `expires 7d` + `add_header Cache-Control "public, immutable"` 会产生两个 Cache-Control 头，无害，如要清理删 `expires 7d`。
+- **旧机遗留杂物**：/tmp/joybuy_dump.sql.gz（120MB dump）留在旧机 /tmp，可日后清理；旧机服务/配置零改动。
+
+## 0g. 本次会话记录（2026-11-17 深夜，生产部署到 Lightsail 服务器执行完成，✅ 全部 12 步成功、站点已上线 HTTP 80）
+
+- **任务**：把 Joybuy 部署到 Lightsail（`ssh joybuy`，18.159.51.52）并启动全部服务；媒体 56GB 明确不传（留待后续）。详细结果以 `var/prod_deploy_20261117/deploy-report.md` 为准（含全部配置文件内容与打码密钥模板），此处只记结论与新坑。
+- **已完成**：git bundle（main@720aa90）+ dev 库 dump（120.5MB）上传；`/srv/joybuy` 落位；docker 29.1.3 / compose 2.40.3 / nginx 1.24.0 / node 22.23.5 / pnpm 11.25.0 装好；prod MySQL 8.4.7 + Redis 7.4.6 + Mailpit 容器 healthy（端口全绑 127.0.0.1）；dump 导入成功（spu 12939 / sku 18455 / offer 16352 / media_asset 101850 / search_document 7900，与本地 dev 当前实测一致）；后端 venv + migrate（No migrations to apply）+ collectstatic（154 文件）+ bootstrap_platform_admin；三前端构建全 exit 0（admin-web 用 `vite build --base=/admin/`）；systemd `joybuy-api`（gunicorn 4w :8000）/ `joybuy-storefront`（node :3000）enabled+running；nginx 80 入口（/media/ alias、/api/ 反代 :8000、/admin/ alias admin-web/dist、/ 反代 :3000）。
+- **验证**：服务器本机与外部 curl 全 200（/、/api/v1/categories 返回真实类目 JSON、/admin/）；/media/ 404 预期；`git -C /srv/joybuy status` 干净。外部 80 已放行，无需用户动 Lightsail 控制台。
+- **管理端账号**：http://18.159.51.52/admin/ ，ops@joybuy.local / 41204f1d94b0f446f52d7267Aa1! ，TOTP secret `P3SWHTGXAWZLFLCY4KUHASQAL6TJIST5`（登录要二步验证）。
+- **密钥**：服务器 `/srv/joybuy/.env` 与 `/srv/joybuy/infra/prod/.env`（均 chmod 600）含新生成的 SECRET_KEY、MYSQL_PASSWORD/ROOT_PASSWORD 及 6 个独立 HMAC 密钥；明文只存在于 `var/prod_deploy_20261117/remote/app.env`、`compose.env`（本地 var/ 目录，gitignore 覆盖）。
+- **新坑（必须记住）**：① Ubuntu 24.04 没有 `docker-compose-plugin` 包，用 `docker-compose-v2`（否则整条 apt 一起失败）；② bundle clone 后要 `git checkout main`（bundle HEAD 指 master 不存在）；③ 服务器 ubuntu 用户要 `sudo usermod -aG docker ubuntu` 才能用 compose（新 ssh 会话生效）；④ **production 下 settings.py 强制要求 6 个独立 HMAC 密钥**（BUYER_SESSION/VERIFICATION_CODE/STAFF_SESSION/STAFF_TOTP_ENCRYPTION/SOURCE_FINGERPRINT/CRAWL_SESSION，等于 SECRET_KEY 即拒启），部署 .env 必须带上；⑤ scp 上去的 Windows 文件先 `sed -i 's/\r$//'` 去 CRLF（.env/unit 文件带 \r 会污染密钥值）；⑥ 简报中 media_asset ~698926 行参考值过时，dev 库现在实测 101850；⑦ admin-web 的 vite.config.js 没有 base，生产构建必须 `--base=/admin/`（vue-router createWebHistory() 会自动跟随 BASE_URL）。
+- **遗留**：媒体 56GB 未传（/media/ 全 404）；无 TLS/域名；merchant-web 构建成功但未挂 nginx 路径；catalog 有未 makemigrations 的模型改动警告（dev 侧同状，待 dev 正常出迁移）；按验证纪律仅做部署针对性冒烟验证，未跑全量测试。
+- **自启守护（2026-11-18 追加，用户要求所有服务重启后自动拉起）**：已逐项实测 `systemctl is-enabled`——`joybuy-api` / `joybuy-storefront` / `nginx` / `docker` / `containerd` 全部 **enabled**；三个容器（prod-mysql/redis/mailpit）`RestartPolicy=unless-stopped`（compose.prod.yml 自带，别改掉）。**真实重启演练已做（2026-11-18 用户批准）：sudo reboot → SSH 约 50s 恢复 → uptime 0min 证实重启发生；systemd 五项全 active、三容器 36s 内 healthy、本机与外部 curl（/ 与 /admin/ 200、/api/v1/categories 真实 JSON）全部自动恢复，零人工干预**。演练结论：Lightsail 实例重启后整站自动恢复，无需任何手工操作。
+
+## 0f. 本次会话记录（2026-11-17 深夜，「本地商品图片等数据 → 法兰克福服务器」上传方案定稿，✅ 咨询完成，未执行、未改任何代码）
+
+- **任务**：用户问「当前要把本地商品的图片等数据上传到法兰克福服务器应该怎么做」。只做方案定稿与事实核对，未执行传输、未改业务代码、未 commit。
+- **核对到的关键事实**：
+  * 媒体真实位置是 `var/media/`（`backend/config/settings.py:173` `MEDIA_ROOT = REPOSITORY_ROOT/var/media`）——服务器端只要 repo 落在如 `/srv/joybuy`，**无需改 settings**，媒体直接同步进 repo 内的 `var/media/`。实测 56.02 GB / 698,926 文件（商品原图 ~50.5 GB + 视频 855 个 5.49 GB）。
+  * `backend/media/` 只是 Django app 代码包（226K），已随 git 入库——**不要把媒体误当成 `backend/media/`**。
+  * 数据库名 `joybuy`（容器 `joybuy-dev-mysql-1`，用户/密码 joybuy/joybuy_dev_only）；逻辑数据 768 MB + 索引 293 MB，gzip 后 dump 预计数百 MB。**搜索文档、翻译表都在 DB 里，一次 dump 全带走，无需重建。**
+  * **本机未安装 AWS CLI**（`aws --version` 找不到）——走 S3 中转前必须先装（`winget install Amazon.AWSCLI`）。
+- **定稿方案（推荐主路径 = S3 中转两段式，沿用 §0 §6.1 结论）**：
+  1. 前提：Lightsail 16GB（eu-central-1，320 GB 盘）已创建；未创建先创建（8GB 160 GB 盘装不下 222 GB，不可选）。
+  2. 本地 `aws s3 sync var/media/ s3://<bucket>/media/`——断点安全：中断后重跑同一命令即跳过已传文件；PUT ~$3.70；瓶颈是家庭上行，56 GB 约 2–8 h。
+  3. 服务器 `aws s3 sync s3://<bucket>/media/ /srv/joybuy/var/media/`（同区入向免费）。
+  4. DB：`docker exec joybuy-dev-mysql-1 sh -c "mysqldump -ujoybuy -pjoybuy_dev_only --single-transaction --routines --triggers --set-gtid-purged=OFF joybuy" | gzip > var/db_export/joybuy_<date>.sql.gz` → scp → 导入 → 代码同版本跑一次 `migrate` 确认 schema 对齐。
+  5. 顺序：先传 DB（分钟级）再跑媒体 sync（小时级）；两者都到齐才验证/上线。
+  6. 校验：① `SELECT COUNT(*) FROM media_asset` vs 服务器 `find var/media -type f | wc -l`；② 抽 10 个 `relative_path` 的 `/media/` URL 须 200；③ 前台搜一商品看图/视频。
+  7. 备选（不装 CLI 才用）：`tar -C var -cf - media | ssh <host> "tar -xf - -C /srv/joybuy/var"`——**无断点，中断从头来**，本机 VPN 有多次断线史，不推荐；**rsync 直传不要用**（69.9 万小文件 × RTT 估 ~20 h，且 Git Bash 无 rsync）。
+  8. 增量（上线后爬虫仍在本地录入）：DB 差集 `SELECT relative_path FROM media_asset WHERE created_at >= <上次同步>` → `aws s3 sync --files-from=<list> var/media/ s3://…` → 服务器拉取；每晚 0.5–2 GB。不要全盘 `find`、不要全量 `sync --delete`。
+- **IAM 授权组权限定稿（本节追加）**：两个组——`joybuy-media-upload`（本地）：bucket 级 `s3:ListBucket`+`s3:GetBucketLocation`（Resource=bucket ARN 不带 /*），对象级 `s3:PutObject`+`s3:AbortMultipartUpload`（Resource=`<bucket>/media/*`）；**故意不给 `s3:DeleteObject`**（误跑 `sync --delete` 只会 AccessDenied 而非清空）。`joybuy-media-readonly`（服务器）：同 ListBucket/GetBucketLocation + 对象级 `s3:GetObject`。两个用户只建 Access Key 不开控制台登录；**Lightsail 不能给实例挂 IAM 角色（EC2 才行）**，服务器只能放只读用户 key（`~/.aws/credentials` chmod 600）。Bucket 设置：region=eu-central-1、Block Public Access 四项全开、默认 SSE-S3、**不开版本控制**（56GB×多版本=双倍费）、Lifecycle 7 天中止未完成 multipart。
+- **服务器访问方式（本节追加，用户问 MCP vs skill）**：**两者都不用——直接用本地 Git Bash 自带 ssh（Bash 工具）**。前提是密钥认证（`ssh-copy-id` 或 Lightsail 控制台贴公钥到 `~ubuntu/.ssh/authorized_keys`），因为本会话 shell 非交互、密码提示无法应答；`~/.ssh/config` 建 `Host joybuy` 别名（HostName=<IP>, User=ubuntu, IdentityFile=~/.ssh/id_ed25519）。首次连接带 `-o StrictHostKeyChecking=accept-new`。不引入第三方 SSH MCP（无必要），也无 SSH skill 可用。Lightsail Ubuntu 默认用户 `ubuntu`，自带免密 sudo。
+- **服务器已接入（本节追加）**：用户交付 Lightsail 实例，IP `18.159.51.52`。私钥 `C:\Users\lyx\Downloads\sshkey.pem` 已复制为 `~/.ssh/joybuy_fra.pem`（chmod 600），`~/.ssh/config` 已建 `Host joybuy`（User=ubuntu, IdentityFile, IdentitiesOnly yes）。**实测连通**：Ubuntu 24.04.5 LTS，x86_64，**8 vCPU / 30Gi 内存 / 619GB 盘（已用 2.1G）——这是 32GB 套餐（$160.91/月），不是 16GB 推荐档**；主机名 `ip-172-26-5-182`（内网 172.26.x → VPC 已就绪）；免密 sudo OK；预装仅 python3，**无 aws CLI / nginx / docker**。IP 段 18.159.x 属 eu-central-1。后续运维一律 `ssh joybuy '<命令>'`。
+- **上传耗时实测（2026-11-18，回答「压缩后再解压」问题）**：本机 → 法兰克福实测吞吐：单流 scp 120.5MB/56s = **2.14 MB/s（17 Mbps）**；3-4 路并行 = **4.0–4.4 MB/s（32–36 Mbps）**——并行有效翻倍（单流被跨洋 RTT 限制，未到宽带上限）。**压缩无用**：媒体是 JPEG/MP4 已压缩格式，gzip 只省 1-3%，白付本地打包 15-20min + 服务器解压 15-20min。**实测 4 次连接中断**（本机 VPN 抖动）→ 断点续传是刚需，tar 分卷整卷重传不可接受。PUT 费一次性 ~$3.7。测试残留：服务器 /tmp/pt_*.tmp 与 /tmp/speedtest_dump.tmp 已清理。
+- **夜间流水线最终结果（2026-11-19 晨，自动执行完毕，关机前最后一次 HANDOFF 更新）**：① **媒体上传完成**：`aws s3 sync` exit 0、零错误，总耗时约 14h（706,445 文件；远端对象时间戳 2026-11-17 17:32 起的是 cms 目录首批，实际主力上传在 17:20 启动的进程内完成）。② **对账三重通过**：本地清点 706,445 文件 / 60,809,680,717 字节 == 上传日志 706,445 条 == S3 桶对象 706,445 / 60,809,680,717 字节（在新服务器用 `aws s3 ls --recursive --summarize` 复核，**一个字节不差**）。注意本地文件数 706,445 > 旧基线 698,926（基线统计后 var/media 有新增，如 cms 图），以实测为准。③ 新服务器反代链路验证 200（nginx proxy_cache MISS→HIT，migration 抽查+主代理复核均过）。④ 公共读已开放且匿名 GET 实测 200。⑤ **按授权已执行 `shutdown /s` 关闭本机**（用户就寝前明确授权「完成之后帮我关机」）。⑥ 服务器侧已装 AWS CLI v2.41（`/usr/local/bin/aws`，`~/.aws/credentials`=同 IAM key，chmod 600）——后续增量上传/桶管理可直接在服务器做，不依赖本机 VPN。⑦ VPN 晨间抖动（000↔200 反复横跳），不影响 AWS 内网操作。**遗留给用户**：EC2 安全组 `launch-wizard-1` 加 HTTP 80 入站（唯一卡点，加了外网即可访问 http://18.184.216.138）；验收新站后删旧 Lightsail 18.159.51.52（安全清单见上）。**待办**：/srv/data（120G 盘）规划 MySQL 数据/备份/nginx 缓存迁移；nginx 双 Cache-Control 头小清理（删 expires 7d）；media_asset DB 行数（101,850）< 文件数（706,445）是既有已知口径（derived 图落盘无 DB 行），非本次问题。
+- **桶公共读已开放（2026-11-18 18:3x）**：用户补充 IAM 权限（Get/PutBucketPolicy、GetBucketPublicAccessBlock）后，已应用：BPA 改为 BlockPublicAcls/IgnorePublicAcls=true（保持）+ BlockPublicPolicy/RestrictPublicBuckets=false；桶策略 `PublicReadMedia` 允许匿名 `s3:GetObject` 仅限 `arn:.../media/*`（文件 `var/prod_deploy_20261117/bucket-policy.json`、`pab2.json`）。实测匿名 GET 已传对象 200（3,684 bytes）。**新服务器是两块盘**：nvme0n1 35GB 系统盘 + nvme1n1 120GB 数据盘（裸盘）——已格式化 ext4 挂载 `/srv/data`（fstab nofail，UUID 77b649d9-e343-4c94-8891-01f1ac259288），规划用途：MySQL 数据/备份/nginx media 缓存（迁移完成后再挪，避免与迁移中的容器冲突）。
+- **方案转向（2026-11-18 18:0x 用户宣布，覆盖 0f 的部分决策）**：① **媒体永久存 S3 桶 `joybuy-media-fra`，不再落服务器盘**——正在跑的本地→S3 上传不变且成为最终存储；**取消**原第二段「服务器拉取」与「传完删桶」；② **换服务器**：用户已买好新服务器（IP 待提供，入口方式待定），服务器只放代码 + MySQL（~10GB）。已问询后用户选定：**媒体前端访问 = Nginx 反代 S3**（URL 保持 /media/... 不变、Django/前端零改动、resolver+proxy_pass 到 `joybuy-media-fra.s3.eu-central-1.amazonaws.com`、加 proxy_cache 省 S3 GET 费；媒体出网走 Lightsail 7TB 配额，月 2.1TB 远够）。**迁移计划**：新机装 docker/mysql/redis/nginx/node/pnpm + systemd 自启（同 0g 配方）→ 代码 bundle 或 git clone → **MySQL 从旧服务器 mysqldump 直灌新机（同区 AWS 内网）** → nginx /media/ 反代 S3 → 全站验证 → 旧 32GB 服务器退役。旧授权的「传完关机」仍执行（第二段已取消，关机改为「上传完成+对账通过后」）。
+- **夜间自动流程授权（2026-11-18 17:2x 用户就寝前明确指示；已按方案转向修订）**：上传完成后代理自动执行：① 若 sync 失败则重跑续传（最多 5 次）；② 上传成功后做 S3 对账（本地 698,926 文件 vs 桶对象数/字节）；③ 对账通过后 `shutdown /s` 关闭本机（用户明确授权）；④ 若 5 次重试仍失败：如实记录 HANDOFF、正常关机，续传留到次日。原「服务器拉取→删桶」步骤已随方案转向**取消**。
+- **第一段上传已启动（2026-11-18 ~17:20，后台任务进行中）**：AWS CLI 2.40.2 已装（`/c/Program Files/Amazon/AWSCLIV2/aws.exe`，region=eu-central-1，`max_concurrent_requests 15`、`multipart_chunksize 32MB`、threshold 64MB 已进 `~/.aws/config`）；密钥入 `~/.aws/credentials`（chmod 600，IAM 用户 `joybuy-up-down`，账号 289233836348）。**桶 `joybuy-media-fra`（eu-central-1）已由本机用 IAM 权限创建**：BPA 四项全开、SSE-AES256、Lifecycle 7 天中止 multipart（JSON 参数文件在 `var/prod_deploy_20261117/{pab,encryption,lifecycle}.json`）；注意 IAM 策略没有 `GetBucketPublicAccessBlock` 等读回权限（put 能成功、get 报 AccessDenied，正常，别当故障）。**上传：`aws s3 sync var/media/ s3://joybuy-media-fra/media/ --no-progress` 后台挂起，日志 `var/prod_deploy_20261117/media_sync.log`（每文件一行，行数=已完成文件数）**。实测前 2 分钟 ~20 文件/秒；媒体构成 = ~64 万小文件(~6GB) + ~5.7 万原图(~50GB)，小文件区受逐文件 PUT RTT 限制，**修正 ETA 8-12 小时（预计次日 3-5 点）**。断点续传：中断后重跑同一命令自动续。**上传期间禁止让本机睡眠/关机**。第二段（服务器拉取）待第一段完成后执行：服务器装 AWS CLI → `aws s3 sync s3://joybuy-media-fra/media/ /srv/joybuy/var/media/` → 校验 media_asset 对账 + 抽 URL 200 → 清空并删除桶（IAM 已含 DeleteObject/DeleteBucket）。
+- **上传与爬虫共存（2026-11-18 追加）**：① 两者同走一条 VPN 隧道——4 路并行上传占 32-36 Mbps 会抬高延迟/丢包，爬虫带宽饿不死（只需 ~1 MB/s）但 ConnectionLost 概率上升；**推荐错峰（白天爬虫、夜里上传 nohup）；必须同时跑则 `max_concurrent_requests` 降到 8 并盯 `var/logs/crawl_runs/*.log`**。② 上传读 / 爬虫写同一个 `var/media/`，文件级无冲突，但 sync 可能抓到写入中的半截文件（sync 按 size+mtime 自愈，下轮增量自动重传）；干净做法是只传 mtime 早于爬虫本轮开始时间的文件。③ 本机 CPU/IO 互不影响。
+- **安全边界**：服务器安全组只开 22/80/443；本地爬虫连生产库只走 SSH 隧道 `-L 3307:127.0.0.1:3306`；爬虫/翻译 Agent 不部署上云（用户约束）。
+- **坑（新增/重申）**：① 本机 `du -sh var`（70 万文件）>2 min 超时，容量核对一律用 `var/capacity_20261117/scan_media.py`；② 传媒体不走 git；③ AWS CLI 未装，任何 `s3 sync` 前先装。
+- **没做/待办**：① Lightsail 16GB 是否已创建待用户确认；② AWS CLI 未装、S3 bucket 未建；③ 传输未执行；④ 生产部署本身（gunicorn/Nginx/关 DEBUG/derived-card/gzip）按 §0 §7 上线前必修清单，属另一个任务。
+
+## 0. 上一会话记录（2026-11-17 晚，法兰克福 + 1 万日访问 + 200 并发 + 媒体上界 200GB 的最终配置与月成本，✅ 完成）
+
+- **任务**：按用户**最终确定的约束**重算上线配置与月成本并落文档。只做计算与文档，**未改任何业务代码**，未 commit。
+- **用户最终约束（优先于此前所有口径）**：① 区域 **`eu-central-1`（Frankfurt）**，不再用迪拜/伦敦做主口径；② 日访问量 **约 1 万次访问/日**；③ **爬虫与翻译 Agent 一律不部署到上线服务器**（留本地/离线）；④ 仍要求**至少支撑 200 并发**（能力上限要求，不等于日常流量）；⑤ **媒体最终最大占用约 200 GB**（不是实测的 56.02 GB；商品还在继续录，这是预估上限）。
+- **产出**：`var/capacity_20261117/frankfurt-10k-plan.md`（中文，9 节：约束与假设 → 流量反推 → 三套成本表 → 推荐与升级触发 → **磁盘与增长（媒体上界 200 GB → 400 GB 卷，含「媒体量不影响出网」与「备份按 222 GB 重算」两节）** → 爬虫/翻译离线方案 → 上线前必修清单 → **按实际流量选型（Lightsail，不承诺 200 并发）** → 一句话结论）。复算脚本 `var/capacity_20261117/frankfurt_10k.py`（只读，产出控制台表 + `frankfurt_10k.json`），运行：`./.venv/Scripts/python.exe -I var/capacity_20261117/frankfurt_10k.py`（控制台是 GBK，PowerShell/Git Bash 下建议加 `PYTHONIOENCODING=utf-8`，否则中文箭头会 `UnicodeEncodeError`）。
+- **流量反推结论（主口径 = 1 万访问/日 × 6 页 = 6 万 PV/日）**：
+  * 6 万 PV/日 → 月 180 万 PV；日均 0.69 页/s；峰值小时（占全天 10%）6,000 PV/h = **1.67 页/s**；峰值同时在线 **≈28 人**（按容量报告 15–25 s/页导航的 16.7 s 常数）；极端敏感度：峰值小时占 20% → 56 人，每页停留 60 s → 100 人。
+  * 月出网 **2,102 GB（2.1 TB）**，系数 **1.17 MB/PV 来自既有报告 S1 场景反算**（1,024 GB ÷ 877,000 PV = 1.1676）；峰值带宽仅 **16 Mbps**。
+  * **离 200 并发有多远**：页浏览 7.2×、同时在线 7.1×、API RPS 7.1×、出网 7.0×、日 PV **17.3×**（200 并发打满全天 = 104 万 PV/日）。**日常只用到 200 并发上限的 14%。**
+  * 次口径 1 万 PV/日（= 1,667 访问/日）：峰值在线约 5 人、月出网 **350 GB**。
+- **三套配置月成本（Frankfurt，730 h/月，USD，On-Demand / 1 年 RI，均不含税与 Support，媒体按 200 GB 上界 + 400 GB gp3）**：
+
+  | 形态 | 6 万 PV/日（主口径） | 1 万 PV/日（次口径） |
+  |---|---|---|
+  | **S** 单机 `m7g.xlarge` 4C/16G + **400 GB gp3** + 同机 MySQL/Redis + EBS 直出 + EIP + 200 GB 快照 | **$375.40 / $327.07** | $217.77 / $169.44 |
+  | **M** 单机 `m7g.2xlarge` 8C/32G + 同上 | **$518.11 / $421.53** | $360.49 / $263.91 |
+  | **L** 应用 `m7g.xlarge` + RDS `db.m7g.large` 单 AZ + **S3 200 GB** + CloudFront | **$507.58 / $425.82** | $336.02 / $254.26 |
+
+  * **媒体从 56 GB 涨到 200 GB 使 S/M 各涨 $24.44**（EBS 200→400 GB +$19.04，快照 100→200 GB +$5.40），**L 只涨 $3.46**（S3 200 GB = $4.80）。旧口径（56 GB / 200 GB 盘）为 S $350.96 / M $493.67 / L $504.12。
+  * **方向反转**：旧口径 L 比 M 贵 $10.45，**新口径 L 比 M 便宜 $10.54**——因为 M 必须为 222 GB 数据买 400 GB gp3 + 200 GB 快照（$48.88），L 把同样 200 GB 放 S3 只要 $4.80。所以"M vs L"不再是价格问题，而是**8 专用核 vs 托管 RDS + CDN** 的能力取舍。
+  * 出网占 S 形态的 **48%**（$180.15）；**反直觉发现**：法兰克福 EC2 出网 $0.090/GB vs CloudFront $0.085/GB 只差 $0.005；CF 赢在"1 TB 出网 + 1,000 万请求免费"。解方程得**破局点 ≈ 2.11 M 页/月 ≈ 7.0 万 PV/日**：低于它 CF 略便宜（6 万 PV/日 只省 $5.50），高于它 EC2 直出更便宜（24 图/页 → 44 请求/页，请求费按页线性涨）。**CDN 要按延迟/抗突发立项，不要按省钱立项。**
+- **推荐 = M（单机 `m7g.2xlarge` 8C/32G + 400 GB gp3 + 同机 MySQL/Redis + EBS 直出）**，6 万 PV/日 **$518.11 OD / $421.53 RI**；理由：对齐容量报告的单机下限 8C/16G 且内存翻倍，200 并发设计点 CPU 35%、内存 25%；S 的 4C 在 200 并发要跑 71%（边际）；L 虽便宜 $10.54 但应用侧只有 4 核，恰好把 200 并发能力让出去了（团队更看重托管 DB 就选 L，两者都成立）。
+- **升级触发条件**：① **vCPU 7 日均值 >60% 或峰值并发稳定 >150（持续 5 min）或 P95 TTFB >800 ms** → S 升 `m7g.2xlarge`（+$142.72 OD）；② MySQL `Threads_running` 峰值 >8 / buffer pool 命中率 <99% / 出现 `1205` → M 拆 **RDS `db.m7g.large`**（**−$10.54 OD，反而更便宜**；RI +$4.29）；③ 需要 PITR/免单点 → RDS 多 AZ（+$174）；④ 应用 CPU >70% 或要双机 → 第二台 + ALB（+$174）；⑤ 出网 >10 TB/月（≈28.5 万 PV/日）→ 上 CF；⑥ **磁盘占用 >340 GB（400 GB 卷 85%）→ 扩 500 GB（+$9.52）或 1 TB（+$47.60）**；⑦ 媒体实际 >250 GB → 扩 1 TB 或迁 S3；⑧ 媒体 >300 万文件 → 目录分片。
+- **磁盘结论（媒体上界 200 GB）**：总占用 = 媒体 200 + MySQL 7（3 万 SPU 估 6–8）+ 系统/发布/日志 15 = **≈222 GB（区间 220–225）**。**原来的 200 GB 卷占用 111%，已不可用**；**推荐 400 GB gp3**（占用 55.5%，余 178 GB，$38.08/月）；300 GB 是最小可用（74%，到 85% 阈值只剩 33 GB），500 GB 多付 $9.52 买暂时用不上的空间。三条增长线（实测密度外推 173 GB / 用户上界 222 GB / 保守密度外推 237 GB）都落在 400 GB 卷的 40–60% 区间。
+- **媒体 56 → 200 GB 不影响出网**（必须分开看）：页面只加载 `derived/card` 33 KB，出网仍是 1.17 MB/PV × 180 万 PV = **2,102 GB/月、峰值 15.6 Mbps**；出网费 $180.15（DTO）/ $174.65（CF 含请求）不变。涨的只是磁盘存了多少张图、备份时长、S3 PUT 请求费（200 GB/250 万文件 ≈ **$13.52 一次性**）、以及目录项数（250 万文件必须分片）。
+- **爬虫/翻译不上线服务器的落地方式**：① **入向流量免费**（AWS 不收外部→EC2、同区 S3→EC2 的入向字节；Lightsail JSON 里 `data transfer in` 也是 $0.00）；② 首次全量：本地 `aws s3 sync var/media/ s3://…` → 服务器 `aws s3 sync s3://… /srv/media/`（同区免费）——**56 GB/69.9 万文件 = $3.70 PUT、2–4 h；到 200 GB/250 万文件 = $13.52、6–10 h**；或 `tar -cf - . | ssh ec2 'tar -xf -'` 单流（rsync 会被 250 万文件 × 30 ms RTT 拖到约 20 h）；③ 增量：DB 差集 `SELECT relative_path FROM media_asset WHERE created_at>=CURDATE()` → `rsync -az --files-from=`，每晚 0.5–2 GB；**不要 `find` 全盘或全量 `rsync --delete`**（250 万文件扫一次十几分钟）；④ 爬虫连库只走 **SSH 隧道 `-L 3307:127.0.0.1:3306`**，安全组只开 22/80/443，独立账号只授 staging/import 表，批量导入分批避免 `1205`；⑤ 翻译 Agent 本地跑 Ollama（零 GPU 机型需求），隧道读源字段 + 只写 `spu_translation`/`sku_specification_translation`/`spu_detail_translation`/`translation_term`，3 万 SPU 全量约 240 MB 往返、出向 <$0.03。服务器侧成本 **$0**。
+- **上线前必修三项仍全部适用**（关 DEBUG + gunicorn/Nginx；图走 `derived/card` + Nginx 直出；gzip + Redis），量化后果：**商品图原图直出把 6 万 PV/日 的出网从 2,102 GB 抬到 12,179 GB，DTO $180.15 → $1,077.39（6.0×）**；在 200 并发设计点（1,037 万 PV/月）则是 **11,300 GB vs 82,000 GB，$1,002.70 vs $6,550.20（6.5×，即既有报告的 11.3TB/82TB）**。此外 Django 直出 5.5 ms/张 × 43.2M 张/月 = 66 核·小时/日 ≈ 2.75 核常驻。gzip 省 386 GB ≈ $34.73/月（设计点省 2.1 TB ≈ $190）；类目树 40 ms × 18 req/s = 0.72 核白烧。
+- **追加口径（用户本次任务中途追加，已写入同一份报告 §8）**：**不承诺 200 并发，只按 1 万访问/日 + 200 GB 媒体 选型**。
+  * Lightsail Frankfurt 官方价（`json/lightsail_eu-central-1.json`，publicationDate 2026-11-13，gzip；已实读复核）：4GB 2C/4G/**80GB**/4TB **$23.54**、8GB 2C/8G/**160GB**/5TB **$43.16**、16GB 4C/16G/**320GB**/6TB **$82.42**、32GB 8C/32G/**640GB**/7TB **$160.91**；超额 $0.09/GB、快照 $0.05/GB-月、附加盘 $0.10/GB-月、**入向 $0.00**、静态 IP 绑定免费、LB $17.66/月、**无 RI 折扣**。
+  * **222 GB 数据把两个小套餐筛掉**：4GB（80 GB）占 277.5%、**8GB（160 GB）占 138.8%，缺 62 GB → 直接出局**（流量配额 5 TB 其实够用 2.4 倍，卡的是盘）；**16GB（320 GB）占 69.4%、余 98 GB → 最低可用**；32GB（640 GB）占 34.7%，盘更宽裕但不必要。
+  * **最低可用 = Lightsail 16GB $82.42/月**（含 6 TB 出网 + 320 GB SSD + 静态 IP）；两档流量都未打满配额，超额 $0、两档同价。**8GB $43.16 不可选**——只便宜 $39.26，却连 200 GB 媒体都放不下，且"先跑再扩"救不了（盘随套餐固定、不能缩容）。
+  * **便宜多少**：同场景 EC2 6 万 PV/日 为 $304.07（`m7g.large`+400GB）/ $375.40（`m7g.xlarge`+400GB）/ $540.96（`m7g.2xlarge`+640GB）→ Lightsail 16GB **省 $292.98（78%）**（对比 4C/16G）或 $221.65（73%）（对比能装下数据的最低 EC2）；32GB 省 $380.05（70%）。其中 **63% 的便宜额来自出网 + 静态 IP 打包**。
+  * **备份按 222 GB 重算**：整机快照 **$11.10/份**（222 × $0.05）；**每周 1 份留 4 份 = $44.40/月**（留 2 份 $22.20）；**每天全量 = $333/月，明确不要**；DB 逻辑备份每日 1 GB 进 S3 = **$0.17/月**。**推荐组合 = 每周整机快照 ×4 + 每日 DB dump = $44.57/月**，16GB 全包 **$126.99/月**。理由：56 GB→200 GB 媒体的原始数据集在本地，**媒体可重建**，整机快照只需覆盖"OS+配置+DB"；`backup.sh` 现在每晚 tar 整个 media（56 GB × 14 = 780 GB，200 GB 后变 **2.8 TB**）必须改掉。
+  * **保留接近 200 并发的加价阶梯**（起点 $82.42）：+$78.49 → LS 32GB $160.91（规格=8C/32G，共享 CPU 不能写 SLA）；+$435.69 → EC2 M $518.11（唯一可承诺）。EC2 相对最低可用方案的溢价约 **6.3 倍**。
+- **验证（按验证纪律仅做针对性验证）**：本任务不涉及业务代码，**未跑任何后端/前端测试、未 build、未启停服务**。只做了：① `lightsail_eu-central-1.json`（gzip）只读解析复核 4 档套餐价与超额单价；② `frankfurt_10k.py` 复算，输出与报告表格逐项一致（三形态 × 两档流量 × OD/RI、磁盘增长、Lightsail 对比）；③ 与 `calc.py` / `cost_model.json` 的既有 Frankfurt 数值交叉核对（RI 单价、EBS/S3/CF 单价一致）。
+- **坑（不得再踩）**：
+  1. **视频会被算两次**：56.02 GB 媒体**已含**视频 5.49 GB；按 "GB/SPU × SPU" 外推时若再单独加视频列，12 个月会虚高 12.8 GB（本次第一版就把 173 GB 算成 186 GB）。正确做法：拆成"非视频 4.03 MB/SPU + 视频 0.43 MB/SPU"。
+  2. **1.17 MB/PV 必须从 S1 反算**（1,024 GB ÷ 877,000 PV），不能从 S3 反算（那里是 1.09，差 7%）；两种口径混用会让三张表互相对不上。
+  3. 脚本控制台输出在 Windows 是 **GBK**，`↔`/`→`/`≈`/`×` 会 `UnicodeEncodeError`；要么 `PYTHONIOENCODING=utf-8`，要么只用 ASCII 箭头。
+  4. 分层计价循环里 `take = min(gb - prev, upper - prev)`——写 `min(gb, upper - prev)` 会把上一档重复计（AWS 报告已记过同一坑，本次复用 `tiered()` 未复发）。
+  5. **CloudFront 在法兰克福不是省钱工具**：$0.085 vs $0.090 只差 0.005，赢利全靠 1 TB + 1,000 万请求免费；24 图/页的请求费按页线性增长，破局点 7.0 万 PV/日。别把"上 CDN"写成降本项。
+  6. **Lightsail 实例是 x86_64**，导出快照到 EC2 只能生成 x86 AMI；迁 `m7g`/`c7g`（Graviton/arm64）**不能搬快照**，必须重建镜像（Django/Pillow/mysqlclient/Node 的 arm64 wheel）。要留迁移路径就写机型无关的部署脚本。
+  7. Lightsail **不能挂 RDS、不能挂 EC2 到它的 LB、无多 AZ、无 RI**；自动快照 $0.05/GB-月 按份全量计（**222 GB → $11.10/份**；每周 4 份 $44.40/月，每天 30 份 $333/月——所以**不能每天全量**），恢复是整机还原、不能单表回滚，所以 mysqldump → S3 仍要自己做。
+  8. HANDOFF 原有的 `## 0.` 标题**重复了两个**（AWS 选型 与 申请开店 都叫 `## 0.`），且已有 `## 0a.`/`## 0b.`/`## 0c.`。本次按"编号不重复"处理：新节 `## 0.`，AWS 选型 → `## 0a.`，申请开店 → `## 0d.`，PDP 翻译（原 `## 0a.`）→ `## 0e.`，`## 0b./## 0c.` 不动。**以后加节请先 `grep -n "^## 0" HANDOFF.md` 查重。**
+  9. **媒体容量与出网是两个独立变量，绝对不能混算**：媒体 56→200 GB 涨的是"磁盘上存多少张图"，不是"每页发给浏览器多少字节"。出网只由 `PV 数 × 1.17 MB/PV` 决定（页面用 `derived/card` 33 KB）。本次差一点把 200 GB 当成"流量也涨 3.6 倍"去改出网行，那会把 $180 虚算成 $650。
+  10. **Lightsail 8GB 不能靠"先跑再扩"救**：盘随套餐固定、不能缩容，222 GB 装进 160 GB 盘属于"从第一天就满"，表现为 MySQL 写失败（`Disk full`）+ 图片 404 + 日志写不进。**它不是"最低可用"，是"不可用"**；最低可用是 16GB（320 GB，占 69.4%）。
+  11. **Lightsail 附加盘 $0.10/GB-月 比 S3 贵 4 倍、比 EBS gp3 还贵**（$0.0952）：盘快满时"挂附加盘"不是默认答案，**迁 S3（$0.024/GB-月）通常更省**；JSON 里另有一个 `Storage:*-StorageOverage-Bytes` = $0.0245/GB-月 的"存储超额"口径，两个口径含义不同（附加盘 vs 超套餐 SSD），别混用。
+  12. **改一处容量约束要全表回算**：媒体上界从 56 改 200 GB 会同时影响 §3 三张明细表、§3.1/§3.5 汇总、§4.1/§4.2 推荐与阈值、§5 全章、§6.1 同步量、§8.3/§8.4/§8.6/§8.8/§8.9、§9 结论。本次靠 `frankfurt_10k.py` 里加一组 `shape_*2()`（400 GB 盘 / 200 GB 快照 / S3 200 GB）一次性重算，**不要手改表格数字**。
+- **没做/待办**：① 报告金额是"官方单价 × 用量假设"，不是 AWS 账单实测，若需精确请用 Cost Explorer/Calculator 复核；② 未计入 Route 53 / WAF / CloudWatch / AWS Support（通常合计 $50–150/月）；③ 未评估 Lightsail Database（$15 起）作为"半托管 DB"的可行性；④ 未做 GBP/CNY 换算；⑤ **媒体 200 GB 是用户预估上界，不是实测**（现实测 56.02 GB）；上线后应每月用 `du`/`media_asset.byte_size` 复核，若实测曲线早于预估达到 200 GB，先扩盘再谈别的；⑥ 报告 §8 的 Lightsail 结论依赖"日常只有 28 人并发"这一前提，若上线后实测并发显著高于此，应先回到 §4 的 EC2 M 口径；⑦ Lightsail 的"存储超额"与"附加块存储"两个 $/GB 口径尚未做账单级验证（都按保守的 $0.10 计）。
+
+## 0a. 上一会话记录（2026-11-17 晚，AWS 选型与官方价格调研：me-central-1 为主 + London/Frankfurt 对照，✅ 只读调研完成，未改任何代码）
+
+- **任务**：为 Joybuy 上线（Nuxt 3 SSR 购物端 + Django + MySQL + 本地媒体）做 AWS 机型短名单与官方价格测算。口径经三次变更，**最终以 `me-central-1`（UAE/Dubai）为主报价区**，`eu-west-2`（London）与 `eu-central-1`（Frankfurt）作对照；按 200 并发、730 h/月、On-Demand 与 1 年期 RI 两套口径计算。
+- **产出**：`var/capacity_20261117/aws-options.md`（10 章：数据来源与版本、机型可用性、三区价格表、存储/流量单价、成本假设、A/B/C 三形态 × 4 流量场景 × OD/RI、Lightsail/Spot、推荐方案、注意事项、附录）。
+- **取数方式（可复用）**：
+  * EC2 机型单价用 `b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-ondemand-without-sec-sel/<Region>/Linux/index.json`（**返回体是 gzip**，需 `gzip.decompress`），区域名 `Middle East (UAE)` / `EU (London)` / `EU (Frankfurt)`。
+  * RDS / EBS / S3 / CloudFront / DTO / ALB / VPC / Lightsail 用 AWS Price List API：`https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/<Service>/<version>/<region>/index.json`。**注意服务代码**：ELB 是 `AWSELB`（`AmazonELB` 404）、数据传输是 `AWSDataTransfer`、弹性 IP 在 `AmazonVPC`。
+  * 脚本：`var/capacity_20261117/extract.py`（ec2/rds 单价）、`ec2_extra.py`（EBS/EIP/NAT）、`calc.py`（A/B/C 成本模型，产出 `cost_model.json`）；原始 JSON 在 `var/capacity_20261117/json/`。
+- **关键结论（写进报告，供后续引用）**：
+  * me-central-1 **不提供 c7g 全系**、**不提供 Lightsail**、RDS **没有 db.r7g/db.m7i**（只有 m7g/m6g/r6g/t4g）；替代为 c7i / m7g / r7g / db.r6g。
+  * 迪拜相对伦敦：EC2/DB/RDS 只贵 1–6%，**出网贵 22%（$0.11 vs $0.09/GB）**；DTO 官方 JSON 的 `pricePerUnit` 是 0.110，但同条 description 写 0.117（差 6.4%，已在报告标注）。
+  * 200 并发：A 单机 `m7g.2xlarge`+200GB gp3 **$1,529/月（OD）/ $1,430（RI）**；B 应用 `m7g.xlarge`+RDS `db.m7g.xlarge` 单 AZ+S3/CF **$1,953 / $1,834**（省钱变体 B− `db.m7g.large`+200GB = **$1,756 / $1,672**）；C 高可用 **$2,505 / $2,269**。起步 1TB/月时 A=$422、B=$573。
+  * 修图（`derived/card` 33KB）把出网从 82TB/月降到 11.3TB/月，A 形态月成本 $7,293→$1,529，是全场最大成本杠杆。
+  * 延迟：AWS 区域间实测 eu-west-2↔me-central-1 **120.04 ms**（第三方基准），英国用户 100–140 ms；SSR TTFB 从伦敦 ~80ms 变 ~400–600ms（CloudFront 只救静态图，救不了 SSR HTML）。
+- **验证（按验证纪律）**：本任务不涉及业务代码，**未跑任何后端/前端测试、未 build**；只做了 curl 取官方 JSON + Python 只读解析 + 成本模型重算（`python -I calc.py`，输出与报告表格一致）。
+- **坑（不得再踩）**：
+  1. `b0.p.awsstatic.com` 的 EC2 机型 JSON 是 **gzip 编码**，直接 `json.load` 会 `UnicodeDecodeError: 0x8b`，必须先 `gzip.decompress`。
+  2. `b0.p.awsstatic.com` 只有 EC2 机型这套路径可用；S3/EBS/CloudFront/ELB/Lightsail 的 meteredUnitMaps 路径都 404，必须走 `pricing.us-east-1.amazonaws.com` 的 Price List API。
+  3. `AmazonEC2` 单区域 offer 文件很大（me-central-1 126MB、eu-west-2 318MB、eu-central-1 434MB），不要整份读进上下文；用脚本一次解析后只打印目标行。
+  4. 本机 PATH 里没有 `jq`，`/usr/bin/curl` 不存在；curl 在 `/d/Anaconda/Library/bin/curl`，python 在 `/d/Anaconda/python`（`-I` 时 cwd 不在 sys.path，需 `sys.path.insert(0,'.')`）。
+  5. 分层计价写循环时 `take = min(gb, upper-prev)` 会把上一档重复计入（本次第一版就把 11.3TB 算成 $2,078 而非 $1,208），必须用 `min(gb-prev, upper-prev)`。
+  6. CloudFront 出网价按**访问者边缘**计价，不按源站区域；英国访客走欧洲边缘。（迪拜/富查伊拉边缘是中东价 $0.11/GB。）
+- **没做/待办**：① 报告里的用量是"假设 + 容量报告实测字节"推导，不是 AWS 账单实测；若后续要精确，需用 Cost Explorer 或 Calculator 复核。② 未评估 RDS Proxy、ElastiCache、WAF、Shield、Route53 的细项（报告 §9 只列为"未计入项"）。③ 未按 GBP 换算（用户若需要英镑口径需另加汇率）。
+
+## 0c. 上一会话记录（2026-11-17，上线容量评估：200 并发最低服务器配置，✅ 只读分析完成，未改业务代码）
+
+- **任务**：为「购物端 + 商家端 + 管理端 + Django + MySQL + 本地媒体存储」整体上线测算最低服务器配置（硬要求 ≥200 并发）。只读，未改 `backend/`、`storefront/` 等业务代码。
+- **产出**：`var/capacity_20261117/capacity-report.md`（含负载假设三档、各组件资源估算、单机/双机/三机方案、磁盘与带宽测算、17 条短板清单）。
+- **结论**：单机最低 **8 vCPU / 16 GB / 200 GB NVMe / 200 Mbps**（100 Mbps 为硬下限）；双机 = 应用节点 4C8G + 数据节点 4C16G/500GB；三机再加媒体/静态节点 2C4G/1TB。
+- **实测事实（可直接引用）**：MySQL 8.4.7 逻辑数据 768.4 MB + 索引 292.6 MB（117 表），磁盘 3.63 GB，`innodb_buffer_pool_size` 仍为 dev 默认 128 MB；SPU 12,841（ACTIVE 7,899）、SKU 18,315、Offer 16,219（ACTIVE 13,314）、`product_search_document` 7,900、Order 45；媒体 **56.02 GB / 698,926 文件**（商品 50.52 GB、视频 855 个 5.49 GB，原图 jpg 平均 921 KB）；API 单请求 CPU 搜索 40.2 ms / 详情 46.9 ms / 类目树 40.2 ms（DEBUG=True 的 runserver，含 dev 开销）；Nuxt dev SSR CPU 首页 64 ms / 品类页 128 ms / 详情 50 ms；页面体积 home 83 KB、`/c/<slug>` 110 KB、`/search` 105 KB、PDP 84 KB；**商品卡引用原图，一页 24 张 = 7.6–7.8 MB**。
+- **两个关键瓶颈**：① 出带宽——`ProductCard.vue` 用 `image_path`（`/media/products/original/*.jpg`）而不是库里已有的 `derived/card`（33 KB），典型 12 页/秒需 325 Mbps，改用派生图后 48 Mbps；② 单进程——生产无 gunicorn/systemd，当前是 runserver（10 并发搜索 0.74 s）。
+- **必须补的短板（P0）**：关 DEBUG（根目录无 `.env`，默认 development）、上 gunicorn+Nginx、媒体改用派生图、媒体由 Nginx 直出（Django 直出 330 KB 图 = 5.5 ms CPU）、配 HTTPS/真实域名。P1：gzip（实测关闭，类目 JSON 41 KB→11 KB、品类页 108 KB→29 KB）、Redis 缓存（`DBSIZE=0`，只有登录限流在用）、MySQL buffer pool、备份改增量（现 `backup.sh` 每晚 tar 56 GB 媒体 × 14 天 = 780 GB）、Session 迁 Redis、进程守护。
+- **验证方式（按验证纪律仅做针对性验证）**：只做了只读采集与 curl 探针，未跑任何测试套件、未 build 前端、未启停服务。数据来源与命令见报告附录「本轮实测数据索引」。
+- **坑（不得再踩）**：① Windows 下 `du -sh var/media` 对 70 万文件会超时（>5 min），改用 `os.walk` 的 `scan_media.py`；② 媒体体积以 `media_asset.byte_size` 聚合最快，但会漏掉"派生图落盘但 DB 行缺失"的差异（DB 20.0 GB vs 磁盘派生 14.5 GB）；③ `/api/v1/search` 返回的 `image_path` 是原图路径，但页面渲染出的 24 张与 API 单页求和（15.4 MB）不一致——以**渲染 HTML 里实际引用的 URL 求和**（7.6 MB）为准，浏览器只拉这些。
+
+## 0d. 上一会话记录（2026-11-17，申请开店表单改 7 项字段 + 买家侧图片上传 + 审核页展示 + approve 联动，✅ 完成，已 commit & push）
 
 - **任务**：用户要求「申请开店」表单改为 7 项——店铺logo、用户名字、店铺名、手机号码、邀请码（选填）、个人证件（身份证/护照/驾照 三选一 + 证件照片）、个人居住地址。全链路（买家表单→上传→提交校验→管理端审核展示→approve 开店联动→商家端进入）实测通过，双语各一轮，console error 0（唯一 console 错误来自故意的 400 负例分支页）。**只测不提交 git（本轮之后已由用户指示统一提交推送）。**
 - **模型与迁移**：`merchants/models.py::MerchantApplication` 新增 `user_name`(60)/`phone`(32)/`id_document_type`(TextChoices: ID_CARD/PASSPORT/DRIVER_LICENSE，默认 ID_CARD)/`residential_address`(255)/`logo_image_url`(500)/`id_document_image_url`(500)；`legal_name` 为旧表单遗留字段保留（新表单不再收集、不覆盖旧值）。迁移 **`0008_merchantapplication_shop_fields`** 已 apply 到 dev MySQL。旧字段 `referrer_code` 语义不变（选填）。
@@ -29,7 +199,7 @@
 - **Git 同步（2026-11-17，用户指示「提交到 github」之后）**：本轮把工作区积压的全部改动（此前多个会话的功能，含本次 7 字段申请表单）一次性提交：`4d3f077 Sync accumulated storefront, admin, merchant and crawler work`（407 个文件，+35712/−1501），`git push origin main` 成功（远程 `633c481..4d3f077`）。提交前把 `_preview.html`、`*.bak-*` 加入 `.gitignore` 排除；`var/`、`translation_agent/`、`crawler/debug_session.py`、`backend/raw/` 等仍被忽略，未泄露 cookie/密钥。`backend/media/` 是 Django app 代码（34 个文件，226K），已入库。提交后工作区干净。
 - **下一步建议**：①`shopApply.legalName*` 键与 `legal_name` 字段已成遗留，可另开清理任务；②商家端「店铺资料」页可顺带展示 avatar_url（本次只回填字段未改商家端展示）；③HANDOFF.md 已膨胀到 ~750KB，后续可压缩已失效的历史会话记录（AGENTS.md 允许压缩已失效细节，但不得删掉仍影响决策的约束和踩坑）。
 
-## 0a. 上一会话记录（2026-11-17，PDP 商品详情未完整翻译修复 + 详情接口接译文表，✅ 完成，未 commit）
+## 0e. 上一会话记录（2026-11-17，PDP 商品详情未完整翻译修复 + 详情接口接译文表，✅ 完成，未 commit）
 
 - **任务**：修三个用户可见问题——①规格参数/图文详情没翻译；②SPU 2335（`0647049c-523b-49c6-9040-f1a14201e67f`）GB+中文（简体）显示别国语言（德语）；③下方详情数据没翻译。根因与修法按任务书执行完毕，全部实测通过。完整报告与截图：`var/pdp_full_translate_20261117/report.md`（含修复前后 API/DOM 原文摘录、7 张截图、API JSON 存档）。
 - **改动文件（全部未 commit）**：
@@ -68,6 +238,8 @@
 - **下一步（承接上一会话）**：①上面 5 处同类冻结 key 是否要修、②后端 `spu_detail_translation` 让规格参数表/图文出译文 —— 均待用户拍板；本次 PASS 后可放量跑 50 个商品译文任务。
 
 ## 1. 我们在做什么
+
+- **夜间抓取已自动完成（2026-11-18 凌晨，关机前自动生成）**：同一 VPN 节点第二晚。白天 15:4x 本地（07:4x UTC）试水 job 86 通过后放量，20 个 READY 任务（01 组剩余 11 个全取、02=3、03=2、05=2、06=2；04 组无 VALID 排除、default 排除）跑完并已自动关机。总账 succeeded=13 failed=2 skipped=5，20 任务成功 13 个，熔断=False。近 12h 风控标记账号 19 个（结论看晨报明细）。剩余 READY 94（按组 {'default': 2, '数据抓取04': 32, '数据抓取03': 14, '数据抓取05': 14, '数据抓取06': 14, '数据抓取02': 13, '数据抓取01': 5}）。晨报 `var/night_crawl_20261118/MORNING_REPORT.md`，原始汇总 `final_summary.json`、实时进度 `progress.json`。详见晨报。
 
 - **夜间抓取 2026-11-18 进行中（第二晚 20 任务 + 自动关机，用户已睡，关机是明确要求；15:40 本地启动的会话，队列已脱离会话运行）**：不改业务代码、不 commit、不碰 9334/FB、不用 `_kill_stale_crawler_browsers`、超时只杀自己启动的 run 进程树、不打印 Cookie、不自动上架。
   - **阶段 0（✅ 15:40-15:45 本地）**：DB 实查——READY=109（01=11、02=16、03=16、05=16、06=16、04=32、default=2）；会话池 VALID：01=9、02=6（历史烧损）、03=10、05=8、06=8、04=0 排除、default 排除；**所有组风控冷却 0 人**（昨晚 13 个标记账号 6h 冷却已全部过期）；后端 ：8000 存活（PID 7956，未重启）。选 20 个：**01 组 11 个全取**（pk 86/98/110/122/128/140/152/158/170/194/200）+ 02=3（57/63/75）+ 03=2（58/64）+ 05=2（54/60）+ 06=2（67/73），固化 `var/night_crawl_20261118/task_list.json`（total_budget=20，已核 20 条）。
@@ -194,7 +366,18 @@
   - **坑（不得再踩）**：①`messages.js` 只能精确 Read→Edit 字符串替换，另一 Agent 同时在改，整文件 Write 会覆盖对方改动；②`request.newContext({ baseURL: '.../api/v1' })` 再用 `/auth/...` 前导斜杠会丢掉 `/api/v1` 前缀、请求落到 SPA 返回 HTML（本轮踩过，改为 baseURL 不带路径 + 全路径）；③临时买家的 `MerchantApplication` 由 `buyer` OneToOne CASCADE，删买家即删申请，无需单独清理；④状态请求必须 catch 降级，否则后端 403/网络失败会让整个下拉菜单渲染卡住。
   - **未做/下一步**：①APPROVED 态只在单测覆盖，浏览器未实测（需管理端审核通过，属另一 Agent 的端到端范围）；②中文买家账号名过长时仍按原 ellipsis 处理；③**git 未提交**。
 
-- **当前任务（2026-11-17，放量灰度：真模型批量翻译 50 商品 × de/fr/nl + PDP 语言切换验证通过，✅ 完成，数据**留在库里**未 purge）**：用户先要求「验证切换语言后商品详情的语言情况，通过后再批量跑 50 个」。
+- **当前任务（2026-11-17，AI 术语表全链路（零人工）+ 三轮重翻对照 + 搜索文档实验，✅ 术语表可用、55 商品重翻 PASS，⚠️ 搜索文档实验已回退，未 commit）**：用户指令「术语表要我们自己建立，全程都要 AI 来，不需要人工干预，参照电商平台规则」。
+  - **术语表（AI 生成→AI 审查→自投票，无人工）**：规则落地 `translation_agent/glossary/rules.md`（颜色/材质/尺码/容量/质保/合规/品类/功能形容词/永不收录 10 类）；工具 `translation_agent/tools/build_glossary.py`（子命令 `scan/gen/review/vote/apply`，curator=`qwen3.8:27b`，`think:False` 防思考吃掉 num_predict，24–36 词/批、`format=json`）。**覆盖 7488/10090 条可译词（74%）**；审查统计 `ok 5704 / fix 1783 / unchanged 1819 / suspicious 270 / 低置信度 1 / 德语名词大写自动修正 37`；写回 `translation_term` **7536 行/语言**，全表备份 `translation_agent/glossary/backup_20261117.json`，产出 `glossary/glossary_v1.json`，余 **2602 条 pending**。
+  - **管线接线**：正文/图文 prompt 早已注入 `db.glossary_hits()`（命中的 done 词按官方 `Reference the following translations:` 段，上限 20 条）+ `DEFAULT_GLOSSARY` 种子；本轮补的是**品类策略**——`GLOSSARY_NON_INJECTABLE`（prompt 注入）= **空**（形容词必须注入，否则 `Sparkling Sour` 会错），`GLOSSARY_NON_INJECTABLE_SPEC`（规格单元格取值）= `{adjective_selling}`（避免 `Ambidextr` 这类非词，宁可保留源文）；术语 `category` 由 `var/glossary_apply_20261117/backfill_categories.py` 回填进 `quality_flags`（apply 原本没写，导致过滤失效——已修）。
+  - **三轮 A/B 教训（重要）**：②全部注入 → 223 `Sprudelnd Sauer` ✅ 但 177 `47cm Weit … hochwertige` ❌（坏词 `Wide→Weit`）；③过滤形容词 → 177 修好但 223 回归 `Sprudelnder Sauerstoffgetränk` ❌；④**AI 重校尺寸形容词小闭合集**（27 条：`Wide→breit`、`Height→hoch`、`Length→lang`…，德语标题内形容词小写）+ 恢复全量注入 → 223 `Kirin Freeze Ananas Sprudelnd Sauer 350ml` ✅、177 `47cm breit 144cm hoch Freistehend Kühl-Gefrier-Kombination` ✅（fr 仍略显生硬）。结论：**问题在个别词条而非品类，按品类一刀切会按下葫芦浮起瓢**。
+  - **单位保护**：264 条把单位改掉的术语（`6.6W→6,6B`、`1.96 Inch→1,96 Zoll`、`8.66inch→8,66 Zoll`）按规则 4「数值+单位不动」**回退源文**（`var/glossary_apply_20261117/fix_unit_terms.py --apply`，报告 `unit_guard_revert.json`）；verify 增数值等价比较（`9.9%≈9,9%`、`5kg≈5 kg`、`70-79 inch`）不再误报。
+  - **重翻与验证**：55 个 SPU 两轮重翻（round3 2290s、round4 308+22 units，全部 `units_failed=0`）→ `build-specs --overwrite-specs` → **`verify --all --langs de,fr,nl` 11 项全 PASS、exit 0**（`spec tokens 0`、`sku coverage 424/424`、`terms de/fr/nl 7536 done 0 failed`）。库存现值：`translation_unit=330 done`、`spu_translation` 非 en-GB=**460**、`spu_detail_translation=165`、`sku_specification_translation≈1847`、`translation_term=7536/lang`。
+  - **搜索文档实验：已回退（勿重蹈）**：worker 为让 DE 列表显示德语，在 **GB 市场**额外写了 5 组本地化行（GB/de-DE 等 275 行）+ 5 个市场行（275 行，`is_searchable=0`）。后果：`storefront_search` 的回退链「请求市场 → GB+请求 locale → GB 默认」使 DE **优先命中只有 55 行的 GB/de-DE**，**DE 搜 `fridge` 从 32 条变 0 条、DE 列表从 7899 变 55**（GB 不受影响）。已删除这 550 行、恢复 7900 行 GB/en-GB，DE 搜索回到 32 条英文结果。**结论：本地化搜索必须等全量译文（或先做后端合并检索），不能用少量本地化行覆盖回退链**。
+  - **环境事故（必须记住）**：一轮翻译中途 `Docker Desktop` 引擎挂了（`//./pipe/dockerDesktopLinuxEngine` 不存在 → MySQL `WinError 10061 拒绝连接` → python 进程 `3221225794/DLL init failed`）。恢复：`"D:/Docker/Docker Desktop.exe"` 拉起 → 轮询 `/d/Docker/resources/bin/docker.exe ps` 等 `joybuy-dev-mysql-1` 出现 → 等 MySQL 可连 → `translate.py recover-stale --minutes 5`（回收 2 条僵尸）→ 同一 `run` 命令续跑（attempt_count=0 的 pending 会接着做）。**docker CLI 在 `/d/Docker/resources/bin/`，Git Bash `docker` 偶发指向坏路径**。
+  - **仍未解决的质量问题**：法语语序/性数（`47cm Large 144cm Haute Réfrigérateur…`）、`221` 德语从 `Alkoholgehalt` 变 `ABV`（术语表选词，可接受但不如前者）、荷兰语偶发生造词；短语级错误无法靠术语表覆盖，需要**标题级 AI 校对 pass**（27B thinking，2–4s/条起，只能用于短字段）。
+  - **下一步**：①全量放量（~11.8k SPU 现库，按 20 min/50 ≈ **80 小时**，建议夜间分批 + `--concurrency 2`）；②先做标题 AI 校对 pass 再放量（更稳但要额外 8–12h/8k×3）；③剩余 2602 条术语增量生成；④全量译完后再重建本地化搜索文档（届时覆盖足够，无需改后端）；⑤`refresh_spu_search_documents()` 只重建 GB/en-GB，本地化行将来需要接入刷新逻辑。
+
+- **上一任务（2026-11-17，放量灰度：真模型批量翻译 50 商品 × de/fr/nl + PDP 语言切换验证通过，✅ 完成，数据**留在库里**未 purge）**：用户先要求「验证切换语言后商品详情的语言情况，通过后再批量跑 50 个」。
   - **切换语言验证（VERDICT: PASS，报告 `var/pdp_locale_switch_20261117/verification.md` + 9 截图）**：根因修复（`pages/p/[id].vue:35` useFetch key 改 computed）后，177/7964 各 12 步切换矩阵（GB→BE→DE→FR→NL→LU 全组合）每步都发出带新 `market/locale` 的请求、标题/SKU 规格命中库内译文、BE 默认 nl-BE、冷加载 6 例 SSR 首屏即目标语言、未翻译商品回退英文、console 0 错误。**两个不阻塞的边界**：①lb-LU 回退标题取库内第一行（德语）而非英文（`resolve_product_content` FALLBACK 分支无排序，建议单开任务明确 en-GB 优先）；②切市场瞬间发 2 个产品请求（中间态 `market=新&locale=旧` + 终态），良性。
   - **批量 50（真模型，报告 `var/hymt2_real_run_20261116/batch50.md`）**：按 9 个一级类目配额抽 50（全带非空 SKU 规格，排除前 5 个试跑 SPU；候选池 7764）。`enqueue` 300 units + 972 新术语 → `run --all --concurrency 2`：**300/300 done、0 failed、0 retry、1189s（约 20 分钟，比预算快）**，terms 873 done/93s，全程 0 ERROR → `build-specs`：detail 50×3、sku_rows de147/fr147/nl98、`missing_terms=0` → `verify --all` **11 项全 PASS exit 0**（identical_titles=24 只是 3 个纯品牌名标题，无可译内容）→ `status` orphan=0/zombie=0。
   - **库存留数（基线→后，主会话独立复核一致）**：`spu_translation` 非 en-GB 60→**460**、`spu_detail_translation` 15→**165**、`sku_specification_translation` 1455→**1847**、`translation_term` 360→**1332**、`spec_write_log` 24→**416**、`translation_unit` 30→**330**。id 列表 `batch50_spu_ids.txt`；**回滚命令（未执行）**：报告第 7 节的 `purge --all --langs de,fr,nl --spu-ids <50 ids>`。
@@ -1392,6 +1575,8 @@
   - **踩坑（勿再踩）**：开机后第一次调用 shell 时 Bash 工具直接返回 **exit 3221225794（0xC0000142，STATUS_DLL_INIT_FAILED）**，连 `echo ok` 都失败，并伴随上一日三/四个 dev server 后台任务同时以 exit 4 失败——这是系统关机/重启导致的进程初始化失败，**不是仓库或命令问题**；隔几秒重试同一条命令即恢复正常，不要因此去改 PATH 或排查依赖。
 - **2026-11-16 11:53 每日开机启动（专用启动会话，无代码改动）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 15s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 看护循环 + nuxt + 两个 vite。验证：四端口各一行 LISTENING（8000=15228、3000=30368、5173=30388、5174=30376）；counts：runserverPy=2、keepaliveBash=2、nuxt=1、vite=2；health ok；三端首页 200。
 - **2026-11-17 11:35 每日开机启动（专用启动会话，无代码改动）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 15s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 看护循环 + nuxt + 两个 vite。验证：四端口各一行 LISTENING（8000=5944、3000=30076、5173=30340、5174=27032）；counts：runserverPy=2、keepaliveBash=2、nuxt=1、vite=2；health ok；三端首页 200。
+- **2026-11-17 21:44 补启动三个前端（专用启动会话，无代码改动）**：本次开机后 Docker 三容器与后端已在跑（8000=12864 由看护循环托管，应是其他会话所起），3000/5173/5174 空 → 只补 `npx nuxt dev` + 两个 `npx vite`。验证：health ok；三端首页 200。**新发现（勿再踩）：本次 storefront 出现两个 nuxt 进程（34148 与 8808）且 3000 端口同时有 `127.0.0.1:3000` 和 `[::1]:3000` 两行 LISTENING**——新起 nuxt 在 IPv4 上也监听（之前只绑 ::1），两个进程各绑一个协议栈。处理：杀掉其中一个（`taskkill //F //PID <pid>`），只留一个。若再遇 3000 双 LISTENING，先 `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where CommandLine -like '*nuxt.mjs*'` 数进程再清理。
+- **2026-11-18 09:54 每日开机启动（专用启动会话，无代码改动）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 15s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 看护循环 + nuxt + 两个 vite。验证：四端口各一行 LISTENING（8000=23644、3000=9288、5173=9432、5174=5624）；counts：runserverPy=2、keepaliveBash=2、nuxt=1、vite=2；health ok；三端首页 200。**注意：本次 `migrate` 提示 catalog app 有模型改动尚未生成迁移（`makemigrations` 提示）**——应是其他会话正在开发中，启动会话不擅自 makemigrations，留待开发会话处理。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
