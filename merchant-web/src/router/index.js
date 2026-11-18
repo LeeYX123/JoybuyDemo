@@ -15,7 +15,9 @@ const LANDING = [
 const PlaceholderView = () => import('@/views/PlaceholderView.vue')
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 必须显式传 BASE_URL：createWebHistory() 不会自动跟随 vite --base，
+  // 否则生产以非根 base 构建时路由会生成裸路径，刷新/守卫重定向会 404。
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',

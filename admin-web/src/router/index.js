@@ -32,7 +32,10 @@ const LANDING_CANDIDATES = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 必须显式传 BASE_URL：createWebHistory() 不会自动跟随 vite --base。
+  // 生产以 --base=/admin/ 构建时若漏传，路由会生成裸 /login 等路径，
+  // 整页刷新/守卫重定向会落到 nginx 的 Nuxt 店面（404）。
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
