@@ -692,7 +692,7 @@ def _import_spu_videos(spu, payload: dict, *, observed_at, local_files: dict | N
 
     from catalog.models import SpuVideo
     from media.models import MediaAsset
-    from media.storage import resolve_media_path, store_bytes
+    from media.storage import store_bytes, stored_file_exists
 
     raw_videos = payload.get("videos")
     if not isinstance(raw_videos, list) or not raw_videos:
@@ -726,9 +726,10 @@ def _import_spu_videos(spu, payload: dict, *, observed_at, local_files: dict | N
 
         video_asset = None
         if matched is not None:
-            # Reuse the stored file when its path is still readable.
+            # Reuse the stored object when it still exists (local file or S3
+            # object); a missing object falls through to re-download.
             try:
-                if resolve_media_path(matched.video.relative_path).is_file():
+                if stored_file_exists(matched.video.relative_path):
                     video_asset = matched.video
             except Exception:  # noqa: BLE001 - fall through to re-download
                 video_asset = None

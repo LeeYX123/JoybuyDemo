@@ -1,16 +1,29 @@
 from django.conf import settings
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponseRedirect
 from django.views.static import serve as static_serve
 
+from media.domain import MediaPathInvalid
 from media.models import MediaAsset, MediaVariant
-from media.storage import media_url, resolve_media_path
+from media.storage import media_url, resolve_media_path, s3_enabled, s3_public_url
 
 
 def serve_media_file(request, path):
-    """Development-only file server; production Nginx serves ``/media/``."""
+    """Development-only file server; production Nginx serves ``/media/``.
+
+    In S3 mode new assets have no local copy, so missing files redirect to the
+    anonymous bucket URL (the bucket allows public reads under the media
+    prefix). Local mode keeps returning 404 exactly as before.
+    """
 
     if not settings.DEBUG:
         raise Http404()
+    if s3_enabled():
+        try:
+            exists = resolve_media_path(path).is_file()
+        except MediaPathInvalid:
+            raise Http404() from None
+        if not exists:
+            return HttpResponseRedirect(s3_public_url(path))
     return static_serve(request, path, document_root=str(settings.MEDIA_ROOT))
 
 

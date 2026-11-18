@@ -7,7 +7,7 @@ from PIL import Image
 
 from media.domain import MediaContentInvalid
 from media.models import MediaAsset, MediaUsage, MediaVariant
-from media.storage import KIND_PATH_PREFIX, resolve_media_path
+from media.storage import KIND_PATH_PREFIX, read_stored_bytes, store_file_bytes
 
 IMAGE_VARIANT_PRESETS = {
     "thumb": 320,
@@ -23,6 +23,11 @@ IMAGE_VARIANT_FORMATS = (
 FORMAT_EXTENSIONS = {
     MediaVariant.Format.WEBP: ".webp",
     MediaVariant.Format.AVIF: ".avif",
+}
+
+FORMAT_MIME_TYPES = {
+    MediaVariant.Format.WEBP: "image/webp",
+    MediaVariant.Format.AVIF: "image/avif",
 }
 
 
@@ -49,10 +54,12 @@ def ensure_image_variants(asset: MediaAsset) -> list[MediaVariant]:
 
     if not asset.mime_type.startswith("image/"):
         raise MediaContentInvalid("Image variants require an image mime type.")
-    full_path = resolve_media_path(asset.relative_path)
+    # Decode from the stored bytes (local file or S3 object), not from a path,
+    # so variant generation works in both storage backends.
+    payload = read_stored_bytes(asset.relative_path)
 
     try:
-        with Image.open(full_path) as source:
+        with Image.open(io.BytesIO(payload)) as source:
             source.load()
             decoded = source.convert("RGBA") if source.mode in {"RGBA", "LA", "P"} else source
     except Exception as exc:
@@ -78,11 +85,7 @@ def ensure_image_variants(asset: MediaAsset) -> list[MediaVariant]:
             relative_path = (
                 f"{prefix}/derived/{preset}/{digest[:2]}/{digest[2:4]}/{digest}{extension}"
             )
-            variant_path = resolve_media_path(relative_path)
-            variant_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = variant_path.with_name(f"{variant_path.name}.tmp")
-            tmp_path.write_bytes(payload)
-            tmp_path.replace(variant_path)
+            store_file_bytes(relative_path, payload, content_type=FORMAT_MIME_TYPES[format_enum])
             results.append(
                 {
                     "preset": preset,

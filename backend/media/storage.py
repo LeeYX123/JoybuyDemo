@@ -1,4 +1,5 @@
 import hashlib
+import io
 import os
 import posixpath
 from pathlib import Path
@@ -37,6 +38,107 @@ MIME_EXTENSIONS = {
     "application/octet-stream": ".bin",
 }
 
+_s3_client = None
+
+
+def s3_enabled() -> bool:
+    """True when media bytes live in S3 instead of the local ``MEDIA_ROOT``."""
+
+    return settings.MEDIA_BACKEND == "s3"
+
+
+def get_s3_client():
+    """Lazy boto3 S3 client singleton; credentials come from the default chain.
+
+    Kept as a module-level function so tests can monkeypatch it with a fake
+    client. No credentials are ever hardcoded; the bucket must allow anonymous
+    reads for ``MEDIA_S3_PREFIX*`` (public access is managed in AWS, not here).
+    """
+
+    global _s3_client
+    if _s3_client is None:
+        import boto3
+
+        _s3_client = boto3.client("s3", region_name=settings.MEDIA_S3_REGION)
+    return _s3_client
+
+
+def reset_s3_client() -> None:
+    """Drop the cached client (used after tests monkeypatch it)."""
+
+    global _s3_client
+    _s3_client = None
+
+
+def s3_key(relative_path: str) -> str:
+    """Object key for a media-relative path inside the bucket."""
+
+    clean = posixpath.normpath(str(relative_path).replace("\\", "/"))
+    return f"{settings.MEDIA_S3_PREFIX}{clean}"
+
+
+def s3_public_url(relative_path: str) -> str:
+    """Anonymous bucket URL for a media-relative path (nginx proxies this too)."""
+
+    return (
+        f"https://{settings.MEDIA_S3_BUCKET}.s3.{settings.MEDIA_S3_REGION}"
+        f".amazonaws.com/{s3_key(relative_path)}"
+    )
+
+
+def store_file_bytes(relative_path: str, data: bytes, *, content_type: str = "") -> None:
+    """Persist raw bytes at ``relative_path`` in the active backend.
+
+    S3 mode uploads one object and keeps no local copy; local mode writes via a
+    temp file + atomic replace exactly as before.
+    """
+
+    if s3_enabled():
+        get_s3_client().put_object(
+            Bucket=settings.MEDIA_S3_BUCKET,
+            Key=s3_key(relative_path),
+            Body=data,
+            ContentType=content_type or "application/octet-stream",
+        )
+        return
+    full_path = resolve_media_path(relative_path)
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = full_path.with_name(f"{full_path.name}.tmp-{os.getpid()}")
+    tmp_path.write_bytes(data)
+    os.replace(tmp_path, full_path)
+
+
+def read_stored_bytes(relative_path: str) -> bytes:
+    """Read back stored bytes (variant generation, covers, dimension checks).
+
+    Works in both backends so assets stored before a backend switch stay
+    processable: S3 mode always fetches from the bucket, local mode from disk.
+    """
+
+    if s3_enabled():
+        response = get_s3_client().get_object(
+            Bucket=settings.MEDIA_S3_BUCKET, Key=s3_key(relative_path)
+        )
+        return response["Body"].read()
+    return resolve_media_path(relative_path).read_bytes()
+
+
+def stored_file_exists(relative_path: str) -> bool:
+    """Backend-aware existence check for a stored media object."""
+
+    if s3_enabled():
+        from botocore.exceptions import ClientError
+
+        try:
+            get_s3_client().head_object(Bucket=settings.MEDIA_S3_BUCKET, Key=s3_key(relative_path))
+        except ClientError:
+            return False
+        return True
+    try:
+        return resolve_media_path(relative_path).is_file()
+    except MediaPathInvalid:
+        return False
+
 
 def media_url(relative_path: str) -> str:
     """Build the public URL for a stored file; Nginx serves ``/media/``."""
@@ -60,11 +162,11 @@ def resolve_media_path(relative_path: str) -> Path:
     return full
 
 
-def _detect_image_dimensions(full_path: Path) -> tuple[int | None, int | None]:
+def _detect_image_dimensions(data: bytes) -> tuple[int | None, int | None]:
     try:
         from PIL import Image
 
-        with Image.open(full_path) as image:
+        with Image.open(io.BytesIO(data)) as image:
             return image.width, image.height
     except ImportError:
         return None, None
@@ -83,7 +185,10 @@ def store_bytes(
     """Content-addressed storage: identical bytes are stored exactly once.
 
     Returns ``(asset, created)``. Only relative paths are persisted; the
-    physical location is ``<MEDIA_ROOT>/<kind prefix>/original/<aa>/<bb>/<sha256>.<ext>``.
+    physical location is ``<MEDIA_ROOT>/<kind prefix>/original/<aa>/<bb>/<sha256>.<ext>``
+    on the local backend, or the same relative path as an object key under
+    ``MEDIA_S3_PREFIX`` in the S3 bucket. A sha256 hit in the database skips
+    all writes (no object upload) and only refreshes ``last_seen_at``.
     """
 
     if kind not in KIND_PATH_PREFIX:
@@ -107,18 +212,15 @@ def store_bytes(
     prefix = KIND_PATH_PREFIX[kind]
     extension = MIME_EXTENSIONS.get(normalized_mime, "")
     relative_path = f"{prefix}/original/{digest[:2]}/{digest[2:4]}/{digest}{extension}"
-    full_path = resolve_media_path(relative_path)
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = full_path.with_name(f"{full_path.name}.tmp-{os.getpid()}")
-    tmp_path.write_bytes(data)
-    os.replace(tmp_path, full_path)
+    store_file_bytes(relative_path, data, content_type=normalized_mime)
 
     width = height = None
     if normalized_mime.startswith(IMAGE_MIME_PREFIX):
         # Metadata extraction is best-effort: undecodable bytes stay stored so
         # the WP-18 pipeline can retry or flag them instead of losing content.
+        # Runs from the in-memory payload, so it works without a local file.
         try:
-            width, height = _detect_image_dimensions(full_path)
+            width, height = _detect_image_dimensions(data)
         except MediaContentInvalid:
             width, height = None, None
 
@@ -148,8 +250,18 @@ def store_bytes(
 
 
 def delete_asset_file(asset: MediaAsset) -> None:
-    """Remove the physical file behind an asset; metadata rows are kept."""
+    """Remove the stored object behind an asset; metadata rows are kept."""
 
+    if s3_enabled():
+        from botocore.exceptions import ClientError
+
+        try:
+            get_s3_client().delete_object(
+                Bucket=settings.MEDIA_S3_BUCKET, Key=s3_key(asset.relative_path)
+            )
+        except ClientError:
+            return
+        return
     full_path = resolve_media_path(asset.relative_path)
     if full_path.exists():
         full_path.unlink()

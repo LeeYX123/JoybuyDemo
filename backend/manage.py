@@ -7,6 +7,11 @@ from pathlib import Path
 def main() -> None:
     os.chdir(Path(__file__).resolve().parent)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    if "test" in sys.argv:
+        # Tests must be hermetic: a developer/prod .env may set MEDIA_BACKEND=s3,
+        # and unit tests must never upload objects to the real bucket. S3-mode
+        # tests opt back in via override_settings(MEDIA_BACKEND="s3").
+        os.environ["MEDIA_BACKEND"] = "local"
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

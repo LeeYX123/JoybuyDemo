@@ -24,7 +24,14 @@ from PIL import Image
 
 from media.domain import MediaContentInvalid
 from media.models import MediaAsset, MediaVariant
-from media.storage import KIND_PATH_PREFIX, resolve_media_path, store_bytes
+from media.storage import (
+    KIND_PATH_PREFIX,
+    read_stored_bytes,
+    resolve_media_path,
+    s3_enabled,
+    store_bytes,
+    store_file_bytes,
+)
 from media.variants import ensure_image_variants, link_asset_to_object
 
 EXIF_STRIP_MIMES = ("image/jpeg", "image/tiff")
@@ -57,7 +64,9 @@ def generate_video_cover(asset: MediaAsset, *, timeout_seconds: int = FFMPEG_TIM
     """Extract a cover frame from a stored video asset using FFmpeg.
 
     Returns the cover ``MediaVariant`` or ``None`` when FFmpeg is not
-    installed; the caller decides whether that is acceptable.
+    installed; the caller decides whether that is acceptable. FFmpeg needs a
+    real input file, so in S3 mode the object bytes are staged into the
+    working directory first; the cover is written through the storage backend.
     """
 
     if asset.mime_type != "video/mp4":
@@ -65,8 +74,12 @@ def generate_video_cover(asset: MediaAsset, *, timeout_seconds: int = FFMPEG_TIM
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         return None
-    source_path = resolve_media_path(asset.relative_path)
     with tempfile.TemporaryDirectory(prefix="joybuy-cover-") as tmp_dir:
+        if s3_enabled():
+            source_path = Path(tmp_dir) / "source.mp4"
+            source_path.write_bytes(read_stored_bytes(asset.relative_path))
+        else:
+            source_path = resolve_media_path(asset.relative_path)
         output_path = Path(tmp_dir) / "cover.jpg"
         completed = subprocess.run(
             [
@@ -94,9 +107,7 @@ def generate_video_cover(asset: MediaAsset, *, timeout_seconds: int = FFMPEG_TIM
     digest = hashlib.sha256(payload).hexdigest()
     prefix = KIND_PATH_PREFIX[asset.kind]
     relative_path = f"{prefix}/derived/cover/{digest[:2]}/{digest[2:4]}/{digest}.jpg"
-    cover_path = resolve_media_path(relative_path)
-    cover_path.parent.mkdir(parents=True, exist_ok=True)
-    cover_path.write_bytes(payload)
+    store_file_bytes(relative_path, payload, content_type="image/jpeg")
     variant, _ = MediaVariant.objects.update_or_create(
         asset=asset,
         preset="cover",

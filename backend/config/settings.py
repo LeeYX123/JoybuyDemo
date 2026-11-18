@@ -172,6 +172,16 @@ STATIC_ROOT = REPOSITORY_ROOT / "var" / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = REPOSITORY_ROOT / "var" / "media"
 
+# Media storage backend: "local" writes under MEDIA_ROOT (historical default),
+# "s3" uploads media objects to MEDIA_S3_BUCKET under MEDIA_S3_PREFIX and keeps
+# no local copy (crawler imports and uploads go straight to the bucket).
+MEDIA_BACKEND = os.getenv("MEDIA_BACKEND", "local").strip().lower()
+MEDIA_S3_BUCKET = os.getenv("MEDIA_S3_BUCKET", "joybuy-media-fra")
+MEDIA_S3_PREFIX = os.getenv("MEDIA_S3_PREFIX", "media/")
+MEDIA_S3_REGION = os.getenv("MEDIA_S3_REGION", "eu-central-1")
+if MEDIA_BACKEND not in {"local", "s3"}:
+    raise ImproperlyConfigured("MEDIA_BACKEND must be local or s3")
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 SESSION_COOKIE_NAME = "joybuy_django_session"

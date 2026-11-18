@@ -195,6 +195,42 @@ class MediaPipelineTests(CrawlerControlTestBase):
             self.assertGreater(cover_image.width, 0)
         self.assertTrue(media_url(cover.relative_path).startswith("/media/products/derived/cover/"))
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "ffmpeg is not installed")
+    def test_video_cover_is_extracted_in_s3_mode_without_local_file(self):
+        """S3 mode: cover still works; source bytes are staged from the bucket."""
+        from unittest.mock import patch
+
+        from joybuy_crawler.fixtures.http_site import write_video_payload
+
+        from media.tests.test_media_storage_s3 import FakeS3Client
+
+        with tempfile.TemporaryDirectory(prefix="joybuy-vid-") as vid_dir:
+            video_path = Path(vid_dir) / "sample.mp4"
+            write_video_payload(video_path)
+            payload = video_path.read_bytes()
+
+        fake = FakeS3Client()
+        with override_settings(MEDIA_BACKEND="s3", MEDIA_S3_BUCKET="fake-media-bucket"):
+            with patch("media.storage.get_s3_client", return_value=fake):
+                asset, created = process_media_bytes(
+                    payload,
+                    kind="PRODUCT",
+                    mime_type="video/mp4",
+                    source_url=f"{self.base}/media/v.mp4",
+                )
+
+        self.assertTrue(created)
+        self.assertEqual(len(fake.put_calls), 2, "original video + cover frame must be uploaded")
+        asset.refresh_from_db()
+        self.assertEqual(asset.process_status, MediaAsset.ProcessStatus.PROCESSED)
+        cover = MediaVariant.objects.get(asset=asset, preset="cover")
+        self.assertEqual(cover.status, MediaVariant.Status.READY)
+        self.assertIn(f"media/{cover.relative_path}", fake.objects)
+        self.assertFalse(
+            (Path(self._tmp.name) / asset.relative_path).exists(),
+            "S3 mode must not keep the video on local disk.",
+        )
+
     def test_processing_failure_is_recoverable_via_retry(self):
         from unittest.mock import patch
 
