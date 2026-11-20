@@ -44,6 +44,12 @@ vi.mock('../composables/useChannelBanners', () => ({
   useChannelBanners: () => ({ banners: bannerItems }),
 }))
 
+// 频道商品楼层（批次 H）：默认无配置走通用楼层，配置后只渲染真站楼层。
+const channelModuleItems = ref([])
+vi.mock('../composables/useChannelModules', () => ({
+  useChannelModules: () => ({ modules: channelModuleItems }),
+}))
+
 const hotItems = [
   { spu_public_id: 'hot-1', title: 'Storage Box Set', price_min: 3.99 },
   { spu_public_id: 'hot-2', title: 'Ceramic Vase', price_min: 8.5 },
@@ -64,6 +70,7 @@ vi.mock('../composables/useSearchApi', () => ({
 }))
 
 import Page from '../pages/minihome/[code].vue'
+import ChannelPickedForYou from '../components/ChannelPickedForYou.vue'
 import ProductCard from '../components/ProductCard.vue'
 
 const RouterLinkStub = {
@@ -94,6 +101,7 @@ async function mountPage() {
 beforeEach(() => {
   routeState.params = { code: 'UK-Mini-HP-Home-Living' }
   bannerItems.value = []
+  channelModuleItems.value = []
 })
 
 describe('minihome channel page', () => {
@@ -111,6 +119,15 @@ describe('minihome channel page', () => {
     expect(tiles[1].attributes('href')).toBe('/c/bedding-textiles')
     // 二级不超限时没有「查看全部品类」入口。
     expect(wrapper.find('.channel-tiles__more-link').exists()).toBe(false)
+  })
+
+  // 需求 16.4：频道页底部【精选好物】按钮文案为【更多 / More】（en）。
+  it('hands the「More」label to the channel picked-for-you module', async () => {
+    const wrapper = await mountPage()
+    const picked = wrapper.findComponent(ChannelPickedForYou)
+    expect(picked.exists()).toBe(true)
+    expect(picked.props('moreLabel')).toBe('More')
+    expect(picked.props('categorySlug')).toBe('home-living')
   })
 
   it('shows a single configured banner as a static image without arrows', async () => {
@@ -163,6 +180,24 @@ describe('minihome channel page', () => {
     ])
   })
 
+  it('renders configured real-site modules with a More link to the category listing', async () => {
+    channelModuleItems.value = [
+      {
+        public_id: 'm1',
+        title: 'Best sellers',
+        href: '/c/home-living',
+        products: [hotItems[0]],
+      },
+    ]
+    const wrapper = await mountPage()
+    const pools = wrapper.findAll('.cms-pool')
+    expect(pools).toHaveLength(1)
+    expect(pools[0].get('.cms-pool__title').text()).toBe('Best sellers')
+    expect(pools[0].get('.cms-pool__more').attributes('href')).toBe('/c/home-living')
+    expect(pools[0].get('.cms-pool__more').text()).toBe('More')
+    expect(pools[0].text()).toContain('Storage Box Set')
+  })
+
   it('caps the tile area at 22 tiles and links the overflow to the results page', async () => {
     rootWithChannel.children = Array.from({ length: 23 }, (_, index) => ({
       slug: `child-${index}`,
@@ -180,6 +215,65 @@ describe('minihome channel page', () => {
         { slug: 'kitchen-essentials', name_en: 'Kitchen Essentials', name_zh: '厨房用品' },
         { slug: 'bedding-textiles', name_en: 'Bedding & Textiles', name_zh: '床上用品' },
       ]
+    }
+  })
+
+  // 13.1②：行数/每行个数/名称宽度由频道配置驱动（utils/channelTiles.js）。
+  it('renders the channel tile grid with the configured variant, rows and name width', async () => {
+    const wrapper = await mountPage()
+    const carousel = wrapper.get('.channel-tiles__carousel')
+    expect(carousel.find('.category-tiles--channel').exists()).toBe(true)
+    // 家居生活：2 行、6 字宽 → 140px 图容器。
+    expect(carousel.get('.category-tiles').attributes('style')).toContain('--tile-size: 140px')
+    // 模块楼层走 13.1④ 的单行横滑 + 去外框形态。
+    expect(wrapper.findAll('.cms-pool__row').length).toBeGreaterThan(0)
+    expect(wrapper.get('.cms-pool--flat').exists()).toBe(true)
+  })
+
+  it('shows the Category Navigation title only for the health channel', async () => {
+    // 家居生活：无标题。
+    const homeWrapper = await mountPage()
+    expect(homeWrapper.find('.channel-tiles__title').exists()).toBe(false)
+    // 健康保健：标题在卡片区上方。
+    routeState.params = { code: 'UK-Mini-HP-Health-and-Wellness' }
+    treeCategories.value = [
+      {
+        slug: 'health-wellness',
+        name_en: 'Health & Wellness',
+        name_zh: '健康保健',
+        channel_code: 'UK-Mini-HP-Health-and-Wellness',
+        children: [{ slug: 'vitamins', name_en: 'Vitamins', name_zh: '维生素' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(wrapper.get('.channel-tiles__title').text()).toBe('Category Navigation')
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  it('hides the configured tile (other animals) only on the pets channel', async () => {
+    routeState.params = { code: 'UK-Mini-HP-Pets' }
+    treeCategories.value = [
+      {
+        slug: 'pet-supplies',
+        name_en: 'Pets',
+        name_zh: '宠物',
+        channel_code: 'UK-Mini-HP-Pets',
+        children: [
+          { slug: 'cat-food', name_en: 'Cat Food', name_zh: '猫粮' },
+          { slug: 'other-animals', name_en: 'Other Animals', name_zh: '其他动物用品' },
+          { slug: 'dog-food', name_en: 'Dog Food', name_zh: '狗粮' },
+        ],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      const slugs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      expect(slugs).toEqual(['/c/cat-food', '/c/dog-food'])
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
     }
   })
 

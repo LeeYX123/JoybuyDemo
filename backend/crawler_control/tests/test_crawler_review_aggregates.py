@@ -108,7 +108,16 @@ class ReviewAggregateTests(unittest.TestCase):
         payload = self.product.to_payload()
         self.assertNotIn("review_text", payload)
         self.assertNotIn("reviews", payload)
-        self.assertFalse([key for key in payload if key.lower().startswith("comment")])
+        # comment_count_display（2026-11-19）是「80+」这类评价数展示字符串，
+        # 不是评价内容——排除它再断言（评价正文永远不抓）。
+        self.assertFalse(
+            [
+                key
+                for key in payload
+                if key.lower().startswith("comment")
+                and key != "comment_count_display"
+            ]
+        )
         # No review body leaks into free-text fields either.
         self.assertNotIn("湿巾质地柔软", payload["description"])
 

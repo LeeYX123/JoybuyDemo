@@ -6,6 +6,7 @@ import ImageUploader from '@/components/ImageUploader.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
 import ChannelBannersPanel from '@/views/ChannelBannersPanel.vue'
+import ChannelPageCardsPanel from '@/views/ChannelPageCardsPanel.vue'
 
 const state = reactive({
   section: 'campaign',
@@ -17,15 +18,20 @@ const state = reactive({
   notice: '',
 })
 
-// 前两个分区共用一张表与接口（HomeCampaignCard）；「频道页 banner」是独立
-// 模型与接口（ChannelBanner，按 channel_code 分组），渲染独立子面板。
+// 前两个分区共用一张表与接口（HomeCampaignCard）；「频道页 banner」与
+// 「频道页活动卡片」是独立模型与接口（按 channel_code 分组），渲染独立子面板。
 const SECTIONS = [
   { key: 'campaign', label: '首页活动卡片', itemWord: '标题' },
   { key: 'discovery', label: '品类发现（Category discovery）', itemWord: '名称' },
+  { key: 'weekly', label: '每周甄选（Weekly picks）', itemWord: '标题' },
 ]
 const CHANNEL_TAB = { key: 'channel', label: '频道页 banner' }
-const TABS = [...SECTIONS, CHANNEL_TAB]
+const CHANNEL_PAGE_CARDS_TAB = { key: 'channel-page-cards', label: '品类页卡片展示' }
+const TABS = [...SECTIONS, CHANNEL_TAB, CHANNEL_PAGE_CARDS_TAB]
+// 频道页 banner / 品类页卡片两个 tab 都由独立子面板自己加载数据。
+const PANEL_TABS = [CHANNEL_TAB.key, CHANNEL_PAGE_CARDS_TAB.key]
 const sectionMeta = computed(() => SECTIONS.find((s) => s.key === state.section) || SECTIONS[0])
+const isPanelTab = computed(() => PANEL_TABS.includes(state.section))
 
 const editorOpen = ref(false)
 const editorBusy = ref(false)
@@ -63,8 +69,8 @@ async function load() {
 function selectSection(key) {
   state.section = key
   state.notice = ''
-  // 频道页 banner 是独立子面板，自己 onMounted 加载，不共用卡片接口。
-  if (key !== CHANNEL_TAB.key) load()
+  // 频道页 banner / 品类页卡片是独立子面板，自己 onMounted 加载，不共用卡片接口。
+  if (!PANEL_TABS.includes(key)) load()
 }
 
 function openCreate() {
@@ -189,11 +195,11 @@ onMounted(load)
       <div>
         <h1>活动卡片</h1>
         <p>
-          首页搜索框下方的活动卡片/品类发现，以及频道页顶部的 banner
-          轮播。改动保存后，购物端下次打开对应页面即生效。
+          首页搜索框下方的活动卡片/品类发现、频道页顶部的 banner
+          轮播，以及频道页品类卡下方的活动卡片。改动保存后，购物端下次打开对应页面即生效。
         </p>
       </div>
-      <div v-if="state.section !== CHANNEL_TAB.key" class="page-intro__actions">
+      <div v-if="!isPanelTab" class="page-intro__actions">
         <span class="tag">{{ state.total }} / {{ state.maxCards }}</span>
         <button
           type="button"
@@ -219,21 +225,19 @@ onMounted(load)
     </div>
 
     <ChannelBannersPanel v-if="state.section === CHANNEL_TAB.key" />
+    <ChannelPageCardsPanel v-else-if="state.section === CHANNEL_PAGE_CARDS_TAB.key" />
 
-    <p v-if="state.section !== CHANNEL_TAB.key && state.error" class="notice notice--error">
+    <p v-if="!isPanelTab && state.error" class="notice notice--error">
       {{ state.error }}
     </p>
-    <p v-if="state.section !== CHANNEL_TAB.key && state.notice" class="notice notice--ok">
+    <p v-if="!isPanelTab && state.notice" class="notice notice--ok">
       {{ state.notice }}
     </p>
-    <p
-      v-if="state.section !== CHANNEL_TAB.key && state.total >= state.maxCards"
-      class="notice notice--info"
-    >
+    <p v-if="!isPanelTab && state.total >= state.maxCards" class="notice notice--info">
       已达 {{ state.maxCards }} 张上限。要新增请先移除或停用一张。
     </p>
 
-    <div v-if="state.section !== CHANNEL_TAB.key" class="card">
+    <div v-if="!isPanelTab" class="card">
       <div class="card__body">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
         <table v-else-if="state.items.length" class="data-table">
@@ -259,7 +263,7 @@ onMounted(load)
               </td>
               <td>
                 <div class="cell-strong">{{ row.title }}</div>
-                <div v-if="state.section === 'campaign'" class="cell-sub">
+                <div v-if="state.section !== 'discovery'" class="cell-sub">
                   {{ row.subtitle || '—' }}
                 </div>
                 <div v-if="row.title_zh" class="cell-sub">
@@ -326,7 +330,7 @@ onMounted(load)
           <span class="field__label">{{ sectionMeta.itemWord }}（中文，选填）</span>
           <input v-model="editor.title_zh" type="text" maxlength="60" />
         </label>
-        <template v-if="state.section === 'campaign'">
+        <template v-if="state.section !== 'discovery'">
           <label class="field">
             <span class="field__label">副标题（英文，选填）</span>
             <input v-model="editor.subtitle" type="text" maxlength="120" />
@@ -349,7 +353,9 @@ onMounted(load)
       <label class="field" style="margin-top: 12px">
         <span class="field__label">跳转链接（选填）</span>
         <input v-model="editor.href" type="text" placeholder="/c/electronics 或 https://…" />
-        <span class="field__hint">留空则卡片不可点击。</span>
+        <span class="field__hint">
+          以 http(s):// 或 www. 开头按外链原样跳转，否则视为站内路径。留空则卡片不可点击。
+        </span>
       </label>
 
       <label class="checkline" style="margin-top: 12px">

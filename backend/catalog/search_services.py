@@ -6,6 +6,7 @@ a fallback to prefix LIKE for short queries; sorting and pagination are
 stable (price/rating tiebreak on spu id) and depth-capped.
 """
 
+import hashlib
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -24,6 +25,10 @@ SORT_CHOICES = (
 
 MAX_PAGE = 50
 PAGE_SIZE = 24
+
+# 首页【为您推荐】池上限（需求文档03 11.6：10 页 × 24 = 240 件）。
+RECOMMENDATION_POOL_SIZE = 240
+RECOMMENDATION_PAGE_SIZE = 24
 
 # InnoDB FULLTEXT 的最小索引词长（innodb_ft_min_token_size，默认 3）。
 # 比它短的词（如「17」「4L」）在 BOOLEAN MODE 里带 + 号会让整条 MATCH 命中 0，
@@ -298,4 +303,94 @@ def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") ->
         "rating_average": str(row.rating_average) if row.rating_average is not None else None,
         "rating_count": row.rating_count,
         "image_path": image_path,
+    }
+
+
+def recommendation_documents(
+    *,
+    market,
+    locale_code: str | None = None,
+    page: int = 1,
+    category=None,
+    cycle: bool = False,
+) -> dict:
+    """首页【为您推荐】池：全站 ACTIVE 商品跨品类混合，顺序确定性（需求文档03 11.6）。
+
+    排序用 ``md5(spu_public_id)`` 十六进制串做稳定伪随机键——同一个商品每次请求
+    都在同一个位置（刷新不乱序），又不像纯主键序那样一眼假。池子上限
+    ``RECOMMENDATION_POOL_SIZE``（240 = 10 页 × 24），不足 240 时有多少给多少。
+
+    频道页【精选好物】扩展（需求文档03 13.4）：
+
+    * ``category`` 传入一级/二级 ``LocalCategory`` 时只取该类目子树的 ACTIVE 商品；
+    * ``cycle=True`` 时页号超过池子总页数就取模循环（从头再来），响应结构不变，
+      ``page`` 返回取模后的真实页号，``total``/``total_pages`` 仍是池子真实大小，
+      前端据此自行判断「池子已耗尽、当前内容是循环批次」。
+    """
+
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        raise SearchParamsInvalid("page must be a positive integer.")
+
+    locale_code = locale_code or market.default_locale
+    # is_searchable 是 rebuild_search_document 写入的快照：商品导入/下架流程
+    # 中 SPU 状态和 Offer 活性可能已经变化（并发爬虫导入时尤其如此），只信
+    # 快照会让「精选好物/为您推荐」混入 PDP 已 404 的商品（验收 FAIL-A）。
+    # 池子构建时对 SPU ACTIVE + 该市场 ACTIVE Offer 做实时校验。
+    from django.db.models import Exists, OuterRef
+
+    from catalog.models import Spu
+    from offers.models import Offer
+
+    active_offer = Offer.objects.filter(
+        sku__spu=OuterRef("spu_id"),
+        market=market,
+        status=Offer.Status.ACTIVE,
+    )
+    base = ProductSearchDocument.objects.filter(
+        market=market,
+        locale_code=locale_code,
+        is_searchable=True,
+        spu__status=Spu.Status.ACTIVE,
+    ).annotate(has_active_offer=Exists(active_offer)).filter(has_active_offer=True)
+    if category is not None:
+        # 与 search_documents 同口径：类目 + 全部后代（树只有 depth 0/1）。
+        from catalog.services import local_category_descendants
+
+        category_ids = {
+            category.pk,
+            *local_category_descendants(category).values_list("pk", flat=True),
+        }
+        base = base.filter(local_category_id__in=category_ids)
+    pool_rows = list(base.values_list("spu_id", "spu__public_id"))
+    pool_rows.sort(key=lambda row: (hashlib.md5(str(row[1]).encode("utf-8")).hexdigest(), row[0]))
+    pool_rows = pool_rows[:RECOMMENDATION_POOL_SIZE]
+
+    total = len(pool_rows)
+    total_pages = max((total + RECOMMENDATION_PAGE_SIZE - 1) // RECOMMENDATION_PAGE_SIZE, 1)
+    if cycle and total > 0:
+        # 池子耗尽后循环：页号取模回到第 1 页重新开始（13.4 第 4 步）。
+        page = ((page - 1) % total_pages) + 1
+    else:
+        page = min(page, total_pages)
+    offset = (page - 1) * RECOMMENDATION_PAGE_SIZE
+    page_slice = pool_rows[offset : offset + RECOMMENDATION_PAGE_SIZE]
+
+    order = {spu_id: index for index, (spu_id, _) in enumerate(page_slice)}
+    rows = list(
+        ProductSearchDocument.objects.filter(spu_id__in=order)
+        .select_related("spu", "local_category")
+    )
+    rows.sort(key=lambda row: order[row.spu_id])
+    image_paths = _first_gallery_images(rows)
+    return {
+        "market": market.code,
+        "locale": locale_code,
+        "display_currency_symbol": market.display_currency_symbol,
+        "page": page,
+        "page_size": RECOMMENDATION_PAGE_SIZE,
+        "total": total,
+        "total_pages": total_pages,
+        "items": [
+            serialize_search_row(row, image_path=image_paths.get(row.spu_id, "")) for row in rows
+        ],
     }

@@ -689,12 +689,16 @@ class JoybuyRunSpider(scrapy.Spider):
         return settings.getint(VARIANT_PRICE_LIMIT_SETTING, DEFAULT_VARIANT_PRICE_LIMIT)
 
     def _pending_variant_skus(self, product) -> list[str]:
-        """需要补价格的变体源 sku id（主变体继承页面价格，跳过）。"""
+        """需要补价格的变体源 sku id（主变体继承页面价格，跳过）。
+
+        ``CRAWL_VARIANT_PRICE_LIMIT <= 0`` 表示**不限个数**（2026-11-19 用户
+        口径：商品规格必须一比一完整抓取，宁可慢也不能缺变体价格）。
+        """
 
         limit = self._variant_price_limit()
         pending = []
         for variant in product.variants or []:
-            if len(pending) >= limit:
+            if limit > 0 and len(pending) >= limit:
                 break
             sku_id = str(variant.get("source_sku_id") or "").strip()
             if not sku_id or variant.get("price") or variant.get("is_primary"):

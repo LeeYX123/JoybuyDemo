@@ -2,7 +2,1415 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0j. 本次会话记录（2026-11-19，修复管理端 http 下 `crypto.randomUUID is not a function` + cookie Secure 临时降级，✅ 两轮修复均已部署 joybuy2，生产 admin 登录 Playwright 实测打通）
+## 0al. 第六轮总记录（2026-11-20，需求文档03 v1.9 第十七节：批次 T/U + 暂停/恢复 + 独立验收，✅ 全部收口）
+
+- **任务链**：用户第六轮 5 项 → 并入 `功能需求迭代文档03.md` **v1.9 第十七节**（17.1–17.6）→ 批次 T/U 并行 → **用户中途要求暂停**（T 停在调研阶段 0 行改动、U 未产出文件，均已如实记录）→ 用户恢复 → 完成 → 各自独立验收（**T 13/13、U 11/11，0 fail**）。
+- **批次 T ✅ 13/13**（详见 `## 0aj`）：
+  - **17.1**：`hideCategoryNav` 拆分为两条件——【分类】按钮+下拉保留，仅隐藏一级品类行；header 阴影改真站原值 `0 2px 12px .039 / 0 4px 6px .059`（根因：旧值第二层 1px/4px）；header→白卡 32px；左栏 sticky 无遮挡。
+  - **17.2**：用户下拉一比一复刻——面板 280px/radius 16/无边框/真站阴影；行 56px+16px+icon 右对齐（flex space-between+padding 0 16px）；hover #f0f1f4+radius 4；用户区头像 40×40+昵称 16/700+**居中（用户口径覆盖真站左对齐，已注明）**+无分隔线；退出登录 `#6E7078`。保留批次 M hover 开合/Escape/语言 5 项/申请店铺五态。
+  - **17.3（真站裁决）**：四份真站 SSR 存档+CSS 证明右上角顺序为 **申请店铺→购物车→头像**（购物车在左），需求文档原假设"头像→购物车"被证伪；按派单口径"真站是 购物车→头像则按真站"执行 DOM 顺序互换（非 CSS order），SSR 一致。
+  - **17.4**：页脚三栏相邻链接 y 差 52→37px（gap 16/行高 14+21）。
+- **批次 U ✅ 11/11**（详见 `## 0ak`）：
+  - **真站 customer-service 页真实形态 = 分类 FAQ 清单页**（非文章正文页）：面包屑+标题白卡 24/700+文章清单（支付 5 篇/退货 11 篇，0.5px 分隔、hover 下划线）+Browse by categories 7 chips 3 列（两页 chips 顺序不同）+右栏 319px 客服卡（24/7+搜索框+Online chat）；**无折叠/无正文/无配图**——上一版（批次 S）抓移动 help 文章做的聚合页方向全错，已按清单页形态重做（新建 `CustomerServicePage.vue`，含 4 个内联 SVG），旧聚合正文与 8 张无主图删除。
+  - ZH 抓取被风控 → 同日存档 `cat_*_zh.json`+RSC payload 兜底（已标注）。替换口径：邮箱仅 `Joybuyfumi@gmail.com`；两页无网址与 EU 表述（连注释都干净）。
+  - 已知差异：真站本页**无站点页脚**，本地保留页脚（待用户裁决）；文章清单项点击跳文章详情未实现（真站清单本身不带正文跳转目标时为纯展示，与真站一致）。
+- **验收证据**：`var/acceptance_t_20261120/`（13 条+截图+JSON）、`var/acceptance_u_20261120/`（11 条+281 项明细+6 截图）。vitest storefront 154+admin 9；五语言键 461 恒等；console 0 error 全程。
+- **环境新坑**：dev server 曾只监听 IPv6 `[::1]:3000`（127.0.0.1 访问 000）——重启时必须 `HOST=127.0.0.1 PORT=3000`；T 验收时发现并清理了双实例。
+- **待办（等用户）**：爬虫恢复（9+1 分类，`var/crawl_night_20261120/create_jobs20.py`）；AWS 恢复后 `aws s3 sync` 本地增量媒体。
+
+## 0ak. 批次 U（2026-11-20 两个 customer-service 页重做，✅ 完成，未 commit）
+
+- **任务**：需求03 **17.5**。上一版（批次 S，见 `0ah`）把【支付和发票】【退货和退款】做成了
+  抓自移动 help 站的文章聚合页，与真站 customer-service 页**完全不搭边**，本轮按真站
+  customer-service 分类页结构重做并删除旧聚合内容。改动文件：`content/help/payment-and-invoice.js`、
+  `content/help/returns-and-refunds.js`（重写）、`content/helpPages.js`（注释）、
+  **新建** `components/CustomerServicePage.vue` + `components/CustomerServicePage.test.js`、
+  `pages/pages/[slug].vue` 与 `pages/help/[slug].vue`（模板各改一行接线）、
+  `locales/messages.js`（新增 `help.cs*` 7 键 × 5 语言，454→**461** 恒等）、
+  `tests/help-pages.test.js`（重写 CS 断言）、`components/HelpCenter.test.js`（删旧 image 断言）；
+  **删除** `storefront/public/images/help/`（8 张旧文章配图，新结构无正文配图，真站本页也无）。
+  未碰 AppHeader/AppFooter/HelpCenter/布局（页脚两个入口链接本就不变）。
+
+- **真站结构实测**（Playwright+cookies+color-api 打桩；产物 `var/customer_service_20261120/`，
+  详见 `measurement.md`；EN 两页完整命中 200，抓 ZH 时 pay 页被风控只回壳、但 RSC payload
+  完整存于 `cs_pay_zh.html`，returns ZH 停抓，ZH 正文用同日存档
+  `var/footer_help_20261120/cat_pay_zh.json`/`cat_returns_zh.json` 兜底）：
+  - 页面 = 分类 FAQ 清单页，**无 h1-h4 标签、无段落正文、无表格、无 FAQ 折叠、无配图、无返回按钮**；
+  - 骨架：面包屑（根「Customer Service」链到 /customer-service-centre › 当前分类）→
+    左列（标题白卡 24px/700 + 文章列表白卡：行 padding 15px 0、0.5px #E0E1E5 分隔、
+    16px/400/22 hover 下划线 + 「Browse by categories」20px/600 + 7 个分类 chips
+    3 列白卡 16px/600）+ 右栏白卡 319px（24/7 Customer Service + 搜索框 36 高 +
+    Online chat 按钮 40 高 1px #1A1A1A）+ 底部联系行 14px/500（信封 icon + 邮箱下划线）；
+  - 页面底 #F5F6FA、内容宽 min(1264px,92vw)、联系行贴 wrapper 底（margin-top:auto 复现）；
+  - 支付页 5 篇文章 / 退货页 11 篇文章（标题清单，即批次 S 已抓过的同一批文章的入口页），
+    chips 顺序两页不同（均不含自身分类）；真站点击文章行实测无可见跳转（click_test.json）。
+  - 真站本页**没有**深色站点页脚（DOM 无 footer）；本地 footer-page 布局固定带 AppFooter
+    （layouts 禁改）→ 已记录的既知差异。
+
+- **替换规则落地（16.5 口径）**：联系行邮箱 support@joybuy.com → Joybuyfumi@gmail.com；
+  两页可见内容**无** joybuy 域名网址、**无** EU/欧洲表述（无需替换）；文件内连注释都不含
+  `joybuy.com|joybuy.co.uk|support@joybuy.com|EU|欧洲` 字样（grep 干净）。内容存档
+  `content_payment-and-invoice.json` / `content_returns-and-refunds.json`。
+
+- **前端实现**：`CustomerServicePage.vue` 按实测渲染（内联真站 4 个 SVG：chevron/放大镜/
+  聊天气泡/信封；标题用 h1/h2 替代真站 p——真站无 heading 标签，视觉样式逐条按实测值）。
+  差异记录：①面包屑根本地为灰色文本非链接（真站 /customer-service-centre 本地无此页且禁外链）；
+  ②文章行/chips 仅保留 hover 样式不导航（真站可点跳 m 站文章/其它分类页；仅互为对方分类的
+  chip 本地互链，恰 1 个）；③搜索框/在线咨询按钮视觉 1:1、不接真站客服系统；④字体沿用全站栈
+  （真站面包屑/搜索用 Barlow）。
+
+- **抓不到/未做的清单**：returns ZH 页面实时抓取被风控停（ZH 正文用存档兜底，标题 11 条
+  齐全）；真站文章正文页（m 站）本轮不聚合进页面（真站分类页本就不含正文，批次 S 聚合正文
+  已按要求删除）；搜索与在线咨询不接真站功能。
+
+- **验证（按验证纪律仅做针对性验证）**：
+  - vitest 4 个文件 **36/36 过**（CS 数据结构 5/11 篇+chips 顺序+互链、组件 EN/ZH 渲染、
+    政策页回归、页脚链接）；
+  - eslint 0 error、prettier 全过（改动 11 文件）；
+  - messages 五语言 **461 键恒等**（node 逐键比对通过）；
+  - **完全重启 dev server** 后 Playwright `verify_pages.cjs`：**45/45 过** —— EN/ZH ×
+    /pages/* 与 /help/* 双入口 8 个 URL 全 200；标题卡/面包屑/行数 5+11/chips 7/右栏/联系行
+    与 measurement 一致；联系邮箱=Joybuyfumi@gmail.com；正文+链接属性 grep
+    joybuy 域名 0（全局 CSS 里的开发期源码注释 2 处不算，已注明）、EU/欧洲 0、外链图片 0、
+    页脚两个入口存在且可点、双入口结构一致、**console 0 error**；
+    本地截图 `local_pay_en.png`/`local_returns_zh.png` 与真站 `cs_pay_en.png`/
+    `cs_returns_en.png` 并排对比：区块顺序/层级/间距观感一致；
+  - dev server 用 `HOST=127.0.0.1 node node_modules/nuxt/bin/nuxt.mjs dev --host 127.0.0.1
+    --port 3000` 重启（旧两个实例 IPv4/IPv6 已杀）。
+
+- **坑（新会话必读）**：①真站 customer-service 页类名是 FAQList 但**没有 FAQ 折叠**，别臆造
+  折叠交互；②真站该页无站点页脚，本地保留是布局约束非缺陷；③抓 ZH 一次被风控就停，
+  存档兜底要标注来源；④`verify_pages.cjs` 的 joybuy grep 要排除 `<style>` 源码注释
+  （全局 CSS 里有 2 处开发期注释，见 inspect_joybuy.cjs）。
+
+## 0aj. 批次 T（2026-11-20 header 纠正/用户下拉/位置互换/页脚间距，✅ 全部完成，未 commit）
+
+- **任务**：需求03 **17.1 / 17.2 / 17.3 / 17.4**（纠正 16.1 的过度隐藏）。改动文件（均为批次 T 独占）：
+  `storefront/components/AppHeader.vue`、`storefront/components/AppFooter.vue`、
+  `storefront/layouts/footer-page.vue`、`storefront/components/AppHeader.test.js`、
+  `storefront/components/AppFooter.test.js`。**未碰** messages.js（无新键）、content/、HelpCenter.vue、
+  pages/。证据与脚本：`var/header_dropdown_20261120/`（`verify_t.mjs`→`verify_t.json`、
+  `t_home_{en,zh}.png`、`t_policy{,_panel}_{en,zh}.png`、`t_dropdown_{en,zh}.png`、
+  `t_langswitch_{en,zh}.png`）。
+
+- **17.3 顺序的实测判定（重要，勿回退）**：真站右上角顺序 = **申请店铺(原配送至位) → 购物车 → 头像/登录**
+  （购物车在左、头像最右）。证据多重一致：①四份真站 SSR 存档（`var/header_footer_cart_20261119/
+  real_home_{en,zh}.html`、`real_home_check.html`、`real_cart_nl.html`，2026-11-19）`jdi-header-user-info`
+  内均为 `cartEntry_topBtnWrap`(购物车)在前、`userInfoButton_infoBox`(头像)在后；②真站 CSS 无
+  row-reverse/order、cart 有 margin-right:16px；③存档截图 `real_header_closed.png` 视觉一致；
+  ④真站政策页存档 `page_priv_en_check.html` 同序。**需求文档 17.3 写的"真站应为 头像→购物车"与
+  存档不符**（用户记反）；按任务口径"若真站是 购物车→头像 则按真站"执行 → 用 **DOM 顺序**把购物车
+  移到头像/登录之前（未登录：申请店铺→购物车→登录；登录：申请店铺→购物车→头像），SSR 首屏即正确。
+  我们改前的真实顺序是 头像→购物车（主会话 Brief 里"当前是 购物车→头像"描述反了），本次改动=真互换。
+
+- **17.1 政策页 header**：
+  - `AppHeader.vue` 把 `showCategoryNav` 拆成 `showCategoriesButton`（按钮+面板，仅 /p/ 隐藏）与
+    `showCategoryNav`（品类行，/p/ 或 `hideCategoryNav` 时隐藏）。真站政策页存档实测：分类按钮 ×1、
+    `header-mini-home-row` ×0 → 政策页有【分类】按钮（可点开下拉）、无一级品类行。
+  - 阴影 `.site-header` → 真站原文（fc6d34e1e663c66e.css）：`0 2px 12px 0 rgb(0 0 0/3.9%),
+    0 4px 6px 0 rgb(0 0 0/5.9%)`（旧值第二层 1px/4px 偏淡即"太淡"根因）。
+  - 间距：真站 `detail_detailWrapper`（政策页 CSS `aa6a29a3f278211f.css`，本次从 st.joy-sourcing.com
+    CDN 一次性抓 26 个 bundle 到 `var/footer_help_20261120/priv_css/`）自带 `padding:32px 0`、
+    页面底 `#f5f6fa`、白卡 radius 8 → header 下缘到白卡 = **32px**。我们的 HelpCenter 已有
+    `padding:32px 24px`，多出的是全局 `.app-main > * { margin-block: 24px }` → `footer-page.vue`
+    新增 `.app-main > :deep(.help-center){ margin-block: 0 }` **只对 HelpCenter 根归零**
+    （about/contact/news 等页间距不动）。实测 header→白卡 gap = 32px（wrapper 缝 0 + 卡内 padding 32）。
+  - 左栏 sticky 不回归：实测滚动后 navTop=136 ≥ headerBottom=120（`--site-header-height` 机制未动）。
+
+- **17.2 用户下拉一比一**（真站 `userInfoButton_meListDropdownLayer` CSS 原文）：面板 280px /
+  radius 16px / padding 12px / 无边框、阴影 `0 4px 28px 0 rgba(0,0,0,.039), 0 8px 24px 0 rgba(0,0,0,.059)`
+  （替换批次 M 的推断值）；行 56px / 16px / #1a1a1a / 行内 space-between + padding 0 16px（icon 右对齐，
+  20px 线性 SVG 保留）/ hover #f0f1f4 + radius 4px；退出登录 `#6e7078`（含 hover，新增
+  `.account-menu__item--sign-out`）；用户区头像 40×40 + 昵称 16px/700/22px/max-width 188px、
+  **无 border-bottom 分隔线**。⚠️ **用户区居中是用户口径**：真站 `.meAvatarWrap` 实为左对齐+gap 12px，
+  17.2-3 明确要求"整体水平居中"，已按 `justify-content:center` 实现（实测面板中心偏移 0px），
+  验收对照真站截图时此项会不一致，属用户要求而非缺陷。
+  批次 M 行为全保留：hover 即开、移出 ~200ms 关（120ms 仍开/340ms 已关实测）、Escape/外点关、
+  五语言、申请店铺五态入口共存（vitest 五态 4 例 + e2e 未登录/登录两态）。
+
+- **17.4 页脚三栏间距**：真站 `.footer_links___k1TA{font-size:14px}` + `li{margin-bottom:16px}`、
+  全局 `html{line-height:1.5}` → 行盒 21px、相邻 y 差 **37px**。旧值 min-height 44 + gap 8 = 52px。
+  改 `.footer-column__list{gap:16px}`、`.footer-column__link` 去 min-height/padding-block、
+  `font-size:var(--font-size-md)`(14px) + `line-height:1.5`。列标题（16/600/mb8）与支付行/©行/
+  法规段未动（17.4 只圈条目间距；真站列标题实为 16/700/mb14，记录不在本批范围）。
+  实测相邻链接 y 差 EN/ZH 均 **[37, 37]**；ZH 页脚无法规段是既有口径（真站 EN only）。
+
+- **验证（按验证纪律仅做针对性验证；dev server 已 kill 旧实例并以
+  `--host 127.0.0.1 --port 3000` 完全重启后执行）**：
+  - vitest：`AppHeader.test.js`(19) + `AppFooter.test.js`(6) = **25/25 过**（新增/改写：政策页
+    分类按钮保留且可开、17.3 两态 DOM 顺序、17.2 结构行/icon 右位/退出灰类、页脚三栏 3/5/2 结构）。
+    注意：vitest happy-dom + css 不注入，**computed style 断言全部放在 Playwright**（既有"44px"
+    测试在当前环境下实为空转，已确认，未动它）。
+  - eslint 5 个改动文件 **0 error 0 warning**；prettier `--check` **全过**。
+  - Playwright EN/ZH（`verify_t.json`，1440×1000，登录态=临时买家注册 API）**全绿，console
+    error 两语言均 0**：首页分类按钮+品类行(9 links)在、阴影匹配；政策页分类按钮在/可开下拉/
+    品类行 0/阴影匹配/白卡 gap 32/sticky navTop 136>header 120；右上角 DOM 与 SSR 顺序均为
+    申请店铺→购物车→头像/登录（SSR 另用 fetch 断言：policy SSR 无 category-nav__list、有
+    categories-button）；下拉 280/16px/无边框/阴影/行 56px/16px/#1a1a1a/icon 右缘距行右=16px/
+    用户区居中 offset 0/无分隔线/退出 #6e7078，hover 开合+Escape 关+购物车 200+语言切换即时生效；
+    页脚 gap 16px/14px/y 差 37。
+  - 五语言键：en/zh/de/fr/nl **461/461/461/461/461 恒等**（我未改 messages.js；454→461 的 7 键是
+    并行批次 U 加的 customer-service 键，"454+ 恒等"口径满足）。
+  - 本批未跑全量套件；回归抽查含首页头部、语言切换、购物车入口、hover 开合。
+
+- **踩坑（勿重踩）**：
+  - 真站右上角顺序以**存档 SSR+CSS+截图**为准，别信需求文档的"真站应为 头像→购物车"——已证伪。
+  - Chrome computed style 会把阴影 alpha 舍入为两位小数（0.039→0.04），断言需按数值模糊匹配。
+  - vitest（happy-dom，css:false）里 SFC 样式不注入，getComputedStyle 取不到组件样式；
+    样式类断言放 e2e 或只做 DOM 结构断言；SVG 元素的 `className` 是 SVGAnimatedString，
+    用 `getAttribute('class')`。
+  - 政策页"header→正文间距"度量口径 = header 下缘到**白色内容卡**顶（=32px）；wrapper 与 wrapper
+    之间是 0（真站 detailWrapper 的 padding 在内侧），别量错层。
+  - 并行批次 U 在同一仓库工作：dev server 有两个实例（我 127.0.0.1:3000、U [::1]:3000），
+    HMR 互相可见属正常；验证用自己实例即可，**不要杀对方的**。
+  - 真站政策页 CSS 不在旧 bundle 里，从 `st.joy-sourcing.com` CDN 抓 CSS 不触发风控（HTML 才会）。
+
+## 0ai. 第五轮总记录（2026-11-20，需求文档03 v1.8 第十六节：批次 R/S 开发 + 独立验收 + 修复复验，✅ 全部收口，未 commit）
+
+- **任务链**：用户第五轮 5 项 → 并入 `功能需求迭代文档03.md` **v1.8 第十六节**（16.1–16.6）→ 2 个开发子 Agent 并行（R：头部/首页/搜索/频道；S：页脚/帮助中心/政策页网址）→ 各自独立验收 → 问题修复 → 复验通过。
+- **批次 R ✅ 13/13**（详见 `## 0ag`）：
+  - **16.1** `AppHeader` 新增 `hideCategoryNav`，政策页布局删除简顶栏改用 `<AppHeader hide-category-nav />`（**未复制第二份 header**）；顺带修 sticky 冲突（header 写 `--site-header-height`，左栏 `:deep` 抬高）。验收：政策页头部除品类外与首页逐元素一致；搜索框因移除分类按钮左移加宽 154.56px（必然结果）。
+  - **16.2** `.home-reco__more` 加 60px padding-bottom；**补齐改为渲染时计算**——首屏按当前列数补齐（1440→25 件），1024→3 列、768→2 列同步，`items = 已加载 + 池头循环补到列数整数倍`，无占位灰块、无 hydration mismatch。实测 25→50→75→100→120→145 每步末行满。
+  - **16.3** 删除 `/s` 品类 title 下【xx 件商品】（仅展示，分页/筛选不动）。
+  - **16.4** 抽共享 `AppMoreButton.vue`，首页与 9 个频道页复用；频道页文案【更多/More】，购物车 View more 不变。
+- **批次 S ✅ 12/12 + 复验 3/3**（详见 `## 0ah`）：
+  - 页脚三栏 **3/5/2**：了解 Joybuy（删 JoyPlus）/ 政策 5 项（Cookie、隐私、使用条款、**无障碍声明**、**销售条款**）/ 帮助中心仅 2 项（支付和发票、退货和退款）。
+  - 帮助中心两页正文抓自**真站移动站** `m.joybuy.co.uk/help/<slug>`（PC `/help/*` 对这两个 slug 只回空壳）——**支付 5 篇 / 退货 11 篇**，配图 8 个文件本地托管（`public/images/help/`），`HelpCenter` 新增 `image` 块类型。
+  - 替换口径分三类：①帮助中心两页 EU/欧洲→亚洲 + 网址→joyfumi.com + 邮箱→gmail；②5 个政策页**只换网址**（`joybuy.com`/`joybuy.co.uk`/`joybuy.zendesk.com` → `www.joyfumi.com`，保留路径），公司名/地址/注册号/European Commission/ICO **保持真站原文**；③其余不动。实测全 help 目录 joybuy 域名命中 **0**、邮箱仅 `Joybuyfumi@gmail.com`。
+- **决策记录（用户当天两次追加，覆盖此前口径）**：
+  1. 政策页正文此前按 0s 节做过「中性 demo 实体」替换 → 用户要求**恢复真站原文**（含公司名/注册号/地址），仅换邮箱（见 `0ae`）；
+  2. 用户再追加：**政策页网址也统一换 `www.joyfumi.com`**（公司信息仍保留真站原文）。
+- **验证口径**：针对性验证（vitest 140、五语言键 454 恒等、ruff/eslint/prettier、Playwright EN/ZH 多宽度、console 0 error）。**未跑全量套件**。
+- **遗留**：①政策页搜索框位置因移除分类按钮必然偏移（已注明，非缺陷）；②帮助中心两页不入左侧 tab（真站左栏仅 5 政策页），只从页脚进入；③英文版销售条款真站本身无表格（首列加粗只对中文定义表）。
+- **待办（等用户）**：爬虫恢复（9+1 分类，`var/crawl_night_20261120/create_jobs20.py`）；AWS 恢复后 `aws s3 sync` 本地增量媒体；**全部改动未 commit**（已累积四轮 + 政策页返工，建议尽快提交）。
+
+## 0ah. 批次 S（2026-11-20 页脚三栏 + 帮助中心两页，✅ 完成，未 commit）
+
+- **任务**：需求03 **16.5**。独占文件：`components/AppFooter.vue`、`content/help/`
+  （新增 `payment-and-invoice.js`、`returns-and-refunds.js`）、`content/helpPages.js`、
+  `locales/messages.js` 的 footer 键。**未碰** header/布局/首页/搜索页/频道页；
+  `HelpCenter.vue` 仅新增 `image` 块分支（验收返工要求，见下）与对应最小样式，未改既有版式。
+
+- **真站页脚实测**（2026-11-20 Playwright，`var/footer_help_20261120/dump_footer_en2.json`、
+  `footer_zh.json`）：
+  - EN：`Get to know us`（Contact us / About us / Joybuy news / **JoyPlus**）；
+    `Our policies`（Cookies Policy / Privacy policy / Terms and Conditions）；
+    `Let us help you`（**空**，真站当前无链接）。
+  - ZH：`了解Joybuy`（联系我们 / 关于我们 / Joybuy 新闻 / **JoyPlus**）；
+    `我们的政策`（Cookies政策 / 隐私政策 / 使用条款）；`帮助中心`（**空**）。
+  - 真站现状与本轮 16.5 目标不同（目标要求删 JoyPlus、政策栏 5 项、帮助中心 2 项），
+    已按用户表格覆盖；列名沿用真站：EN `Get to know us / Our policies / Let us help you`，
+    ZH `了解Joybuy / 我们的政策 / 帮助中心`。
+  - 最终页脚：了解 3 项（Contact us、About us、Joybuy news）；政策 5 项（Cookies Policy、
+    Privacy policy、**Terms of Sale**（slug `terms-conditions`）、Terms of Use、
+    Accessibility Statement）；帮助中心 2 项（Payment and invoice → `/pages/payment-and-invoice`、
+    Returns and refunds → `/pages/returns-and-refunds`）。`/pages/joyplus` 页面保留，仅页脚不再链接。
+
+- **两页内容来源（真站抓取，非合成）**：
+  - 真站 `www.joybuy.co.uk/help`、`/help/<slug>` 对支付/退货等 slug 返回 200 但只有空壳
+    （正文 “There's nothing more”），**不能拿 200 当有内容**。
+  - 真实入口是客户服务分类页 `https://www.joybuy.co.uk/customer-service-centre`
+    （原始 HTML `var/footer_help_20261120/csc_raw_en.html`，其 RSC 数据给出文章 urlName）；
+    实际正文在 **`https://m.joybuy.co.uk/help/<slug>`**（移动帮助中心，与 www 客户服务页同一内容体系）。
+  - 支付和发票 = **5 篇**：`payment-methods` / `update-payment` / `download-invoice` /
+    `payment-declined` / `apply-coupon`；
+    退货和退款 = **11 篇**：`statutory-rights` / `our-return-policy` / `return-exceptions` /
+    `wrong-return` / `refunds-overview` / `return-request` / `return-window` / `return-method` /
+    `return-pickup-reschedule` / `return-refund` / `submit-complaint`。
+  - 原始抓取：`var/footer_help_20261120/raw_{en_GB,zh_CN}_<slug>.json`（16 篇 × 2 语言；
+    `submit-complaint` 在 m 站首次强风控 403，EN 用同页 SSR HTML 解析 `detail_mainWrapper`，
+    ZH 正常抓到；两语言正文均有）；生成脚本同目录 `build_help_pages.cjs`（输出
+    `storefront/content/help/<slug>.js`，zh 用真站自带中文文章；文章按真站分组，标题作为
+    加粗段落，块类型 `p`/`list`/`image`，未新增 heading）。
+  - **左栏是否收录**：真站 help 左栏只有 5 个政策/条款页（批次 Q 实测），支付/退货属于
+    customer-service 分类，**故不加入左栏**（`helpNav` 仍 5 项），只从页脚进入；
+    路由 `/pages/<slug>` 与 `/help/<slug>` 均可达。
+
+- **替换规则（三类页面，互不混用）**：
+  - 新增两页（16.5 口径）：EU / European / Europe / 欧盟 / 欧洲 → Asia / Asian / 亚洲；
+    所有网址 → `www.joyfumi.com`（保留路径）；所有邮箱 → `Joybuyfumi@gmail.com`。
+  - 5 个既有政策页（本次用户追加口径，**仅换网址**）：所有 `joybuy.com` / `joybuy.co.uk`
+    （含 www、www、带路径、href）→ `www.joyfumi.com`（保留路径，如
+    `https://www.joybuy.co.uk/help/x` → `https://www.joyfumi.com/help/x`）；
+    **EU/EEA/European Commission、公司名（Jingdong Retail…）、地址、注册号 15830555、
+    FCA/ICO 等监管表述保持原文**（与 15.2 一致）；邮箱已替换为 gmail，无重复处理。
+    第三方链接（如 Trustpilot）不是真站网址，保持原样。
+  - 政策页正文替换脚本：`var/footer_help_20261120/replace_policy_urls.cjs`（5 文件，共 45 处网址）。
+  - **验收返工（2026-11-20 追加）**：
+    - 补齐文章：支付 4→**5**（+`apply-coupon`）、退货 8→**11**（+`return-method` /
+      `return-pickup-reschedule` / `submit-complaint`），无缺篇。
+    - `terms-conditions` 残留的 2 个 `joybuy.zendesk.com` 外链（均为空文本图标链，指向
+      Joybuy 客服门户与 After Sales Policy）按“外部客服系统 → joyfumi”处理，改为
+      `https://www.joyfumi.com/hc/en-us` 与
+      `https://www.joyfumi.com/hc/en-us/articles/43253173737497-Joybuy-After-sales-Policy`
+      （保留原路径）；全 help 目录 grep `zendesk` = 0。第三方 Trustpilot / europa.eu /
+      gov.uk / ico / edpb 等非 joybuy 链接保持原样。
+    - 源图按语言各一套共 8 个文件（支付 `download-invoice` 每语言 2 张、退货
+      `return-request` 每语言 1 张、`return-pickup-reschedule` 每语言 1 张；EN/ZH 截图不同），
+      已下载到 `storefront/public/images/help/`（`invoice-step-{1,2}-{en,zh}.png`、
+      `return-request-{en,zh}.jpg`、`pickup-reschedule-{en,zh}.png`），正文对应位置用
+      `image` 块渲染，本地 `/images/help/*` 200；无外链。两页合计每语言 **4 张**
+      （支付 2 + 退货 2）。真站存档中支付页每语言只有这 2 张 `<img>`，不存在第 3 张
+      （已核对 m 站与 www 桌面端 EN/ZH）。
+    - 复验补漏（2026-11-20 第二次）：`return-pickup-reschedule` 的配图在 `<div>` 内、
+      此前解析只认 `<p><img>` 被漏掉；生成脚本已支持 DIV/LI 包裹的图片，并补下载
+      `pickup-reschedule-{en,zh}.png`，两语言该图均渲染（naturalWidth>0）。
+
+- **改动清单**：
+  - `components/AppFooter.vue`：`columns` 改为三栏 3/5/2；删除硬编码空帮助栏；删 JoyPlus。
+  - `locales/messages.js`：`footer.linkTerms` 改为 Terms of Sale / 销售条款 / Verkaufsbedingungen /
+    Conditions de vente / Verkoopvoorwaarden；新增 `footer.linkTermsOfUse`、
+    `footer.linkAccessibility`、`footer.linkPaymentInvoice`、`footer.linkReturnsRefunds`（五语言同键）；
+    `footer.linkJoyPlus` 保留不用。键数 450 → **454**，五语言恒等。
+  - `content/helpPages.js`：`helpPages` 共 7（路由用），`helpNav` 仍 5（左栏用）。
+  - `content/help/*.js`：5 个政策页网址换 joyfumi；新增 2 页（5/11 篇 + image 块）。
+  - `components/HelpCenter.vue`：新增 `block.type === 'image'` 渲染分支与
+    `.help-center__image`（max-width:100%;height:auto;margin:10px 0），其余版式未动。
+  - `public/images/help/`：8 个本地配图（见上）。
+  - 测试：`components/AppFooter.test.js`（10 链接/无 JoyPlus/新标签）、
+    `tests/help-pages.test.js`（7 路由 / nav 5 / 5+11 文章 / 网址替换 / 本地图片 /
+    zendesk 零残留）、`components/HelpCenter.test.js`（image 块渲染）。
+
+- **验证（按验证纪律仅做针对性验证；含验收返工后复跑）**：
+  - vitest（`AppFooter.test.js` + `help-pages.test.js` + `HelpCenter.test.js`）**26/26 过**
+    （新增 5/11 文章标题、8 个本地图片、zendesk 零残留、image 渲染等用例）；
+    eslint 改动文件 **0 error 0 warning**；prettier `--check` 改动文件 **全过**。
+  - `var/footer_help_20261120/verify_local.cjs` → `verify_local.json`：**PASS，errors []**（EN/ZH）。
+    EN/ZH 页脚三栏 **3/5/2**、无 JoyPlus、10 个 href 与目标顺序完全一致；ZH 含
+    销售条款/无障碍声明/支付和发票/退货和退款。两页 200：payment 正文 1675/625 字符、
+    returns 22574/7242 字符、块 129/136；左栏 5 项且新页无 active。
+    支付页每语言 2 张图、退货页每语言 2 张图（合计每语言 4 张），全部 `naturalWidth>0`
+    且 src 为 `/images/help/*`；正文与 href 中 `joybuy.com|joybuy.co.uk` **0**、`zendesk` **0**、
+    EN `EU/European/Europe` **0**、ZH `欧盟/欧洲` **0**、邮箱仅 `Joybuyfumi@gmail.com`；
+    returns 含 `www.joyfumi.com` 链接。
+    回归 privacy：含 `Jingdong Retail (UK) Limited`、`15830555`、`European Commission`（ZH 欧盟委员会）、
+    无 joybuy 域名、邮箱仅 gmail、有 joyfumi 链接；terms-conditions 无 zendesk、有 joyfumi 锚点。
+  - `verify_routes.cjs` → 10 条路由 × EN/ZH（含 `/help/<新 slug>` 双入口、5 个政策页）
+    **全部 200，console/pageerror 0**；截图 `final_footer_{en,zh}.png`、
+    `final_payment_{en,zh}.png`、`final_returns_{en,zh}.png`；
+    配图证据 `final_payment_images_{en,zh}.png`、`final_returns_image_{en,zh}.png`。
+  - 五语言 messages 键 **454/454/454/454/454**，无缺失/多余键。
+
+- **踩过的坑（勿重踩）**：
+  - `www.joybuy.co.uk/help/<slug>` 对所有未知 slug 都回 200 + 空壳，必须检查正文/标题；
+    支付与退货文章在 `m.joybuy.co.uk/help/<slug>`。
+  - ZH `return-refund` 首次加载偶发空 DOM，重试即可；`return-window` 偶发导航超时。
+  - `submit-complaint` 在 m 站频繁触发风控（HTTP 200 + “403 Forbidden”页）：EN 用
+    `curl` 取同页 SSR HTML，解析 `detail_mainWrapper` 后回灌生成脚本；ZH 可正常抓。
+    不要因 200 就当抓取成功。
+  - 支付页真站只有 2 张正文图（每语言），第 3 张不存在；勿臆造。
+  - `joybuy.zendesk.com` 这类第三方域名的 joybuy 品牌链接也算“joybuy 相关网址”，
+    验收要求一并改 `www.joyfumi.com`（保留路径）；但 Trustpilot/europa.eu/gov.uk 等
+    与 joybuy 无关的第三方链接不要动。
+  - 真站页脚当前帮助栏为空，不能据此判断“真站没有这两项”；按 16.5 目标实现。
+  - 本批次只换政策页网址，**不要**顺手把政策页的 EU/欧洲 改成亚洲（用户明确保持原文）；
+    也不要给两页新页加左栏 tab。
+  - prettier 会把 AppFooter/messages.js 写成 LF（仓库 core.autocrlf=true），属格式行为，
+    提交时 git 会归一化，不要手工改回。
+
+## 0ag. 批次 R（2026-11-20 政策页头部/首页 reco/搜索页件数/频道按钮，✅ 完成，未 commit）
+
+需求：功能需求迭代文档03 **16.1 / 16.2 / 16.3 / 16.4**。证据目录 `var/header_reco_20261120/`
+（`verify_r.cjs`→`verify.json`、`shots_buttons.cjs`、`check_i18n.cjs`、`debug_channel.cjs`、
+`header_{en,zh}_policy.png`、`home_reco_after5.png`、`btn_home.png`/`btn_channel.png`、
+`channel_*.png`）。**未 commit；未碰 AppFooter / content/ / HelpCenter.vue / backend/content。**
+
+- **16.1 政策页头部**：
+  - `components/AppHeader.vue` 新增 prop `hideCategoryNav`（默认 false），`showCategoryNav =
+    !hideCategoryNav && !route.path.startsWith('/p/')`；分类按钮 + `AppCategoryPanel` 整块
+    `v-if` 不渲染（下拉逻辑/状态一并不渲染，面板本无请求）。
+  - `layouts/footer-page.vue` 删掉第二份简顶栏（`.simple-header` 及其样式/脚本），改为
+    `<AppHeader hide-category-nav />`；黑条、logo、搜索、申请店铺、登录、购物车与首页同一组件。
+  - **吸顶补偿（新增，勿删）**：header 是 `position: sticky`，help 中心左栏也是 sticky（本地
+    改进，真站为 static）。AppHeader 在 mount + ResizeObserver 把实际高度写到
+    `:root --site-header-height`；`footer-page.vue` 用
+    `.app-main :deep(.help-center__nav){ top: calc(var(--site-header-height,120px) + 16px) }`
+    抬开左栏——**没有改 HelpCenter.vue**（S 边界）。实测 1440 下 header 120 → nav top 136；
+    768 下 header 180，变量同步。
+  - 其他 /pages/*（about-us/contact-us/joyplus/joybuy-news）同布局，一并为新头部且无品类行。
+- **16.2 首页精选好物**（`components/home/HomeRecommended.vue`）：
+  - `.home-reco__more` 加 `padding-bottom: 60px`。
+  - **2026-11-20 修正（用户口径：首屏也要满行）**：补齐改为**渲染时**做——`items`
+    computed = 已加载商品（`loadedItems`，来自 `useFetch` 页一 + `appended` 接口批次）
+    + 池头循环补到当前列数整数倍（`slice(0, cols - len % cols)`），**首屏数据也补**
+    （桌面 5 列 → 25 件）；不用占位骨架/灰块。`appended` 只存接口数据，不再掺补齐项。
+  - **列数随视口**：`columns` ref 默认 5（SSR/桌面），客户端 mount 后按
+    `matchMedia('(max-width:48rem)')` → 2、`(max-width:80rem)` → 3 同步并监听 resize
+    （与 `.home-reco__grid` 断点一致）。SSR 固定按 5 列输出，客户端 hydrate 后才改，
+    **不产生 hydration mismatch**。
+  - key 用 `${spu_public_id}-${index}`（补齐会重复商品，避免重复 key / console 告警）。
+  - `reachedEnd` / `loadEnded` 用 `loadedItems`（接口条数）判断，不受补齐影响；
+    MAX_ITEMS=240 仍成立。
+  - 未回退 O1 结构：仍 `await useFetch` + `appended` ref，列表从 data 派生、未在 setup
+    拷贝首屏 items。
+- **16.3 /s 去掉件数**（`components/ProductListing.vue`）：删除 `.listing-head__count`
+  节点与样式；未用的 `total` computed 一并删除（`totalPages` 仍取接口）。筛选/分页/接口未动，
+  `listing.productsSuffix` 键保留未删（五语言键数不变）。
+- **16.4 频道页底部按钮**：新增共享组件 `components/AppMoreButton.vue`（#1A1A1A / 白字 /
+  131×48 / radius 4 / 16px/500，唯一一份实现），首页与频道页都用它。`ChannelPickedForYou.vue`
+  加 prop `moreLabel`（默认空 → `reco.viewMore`，购物车页不变），`pages/minihome/[code].vue`
+  传 `:more-label="t('channel.more')"`（复用既有键：More/更多/Mehr/Plus/Meer）。10 个频道页
+  （11 个一级里有 channel_code 的 10 个）全部生效。
+- **验证（按验证纪律仅做针对性验证）**：
+  - vitest 4 个受影响文件 **39/39 过**（AppHeader 16、HomeRecommended 6、
+    ChannelPickedForYou 6、minihome 11；HomeRecommended 新增首屏补齐/3 列/2 列 3 例）；命令
+    `node node_modules/vitest/vitest.mjs run --config storefront/vitest.config.js components/home/HomeRecommended.test.js components/AppHeader.test.js components/ChannelPickedForYou.test.js tests/minihome-channel-page.test.js`。
+  - eslint 改动文件 **0 error**；`ChannelPickedForYou.test.js` 剩 2 条**既有** warning
+    （`vue/one-component-per-file`，holder 组件，非本次引入）。prettier `--check` 改动文件
+    **全过**。i18n `check_i18n.cjs`：en/zh/de/fr/nl **450=450 恒等**。
+  - **完全重启 dev server 后**（kill 17448 树 → `node node_modules/nuxt/bin/nuxt.mjs dev
+    --host 127.0.0.1 --port 3000`），`node var/header_reco_20261120/verify_r.cjs` 全绿：
+    - EN/ZH `/pages/privacy-policy`、`/help/privacy-policy`、`/pages/terms-conditions` 均 200；
+      黑条/语言/logo/搜索/申请店铺/登录/购物车都在，分类按钮与一级品类行 **0 个**；
+      logo/购物车/搜索右缘与首页逐像素一致（搜索因少分类按钮左移并加宽 154.56/110px），
+      站头总高比首页少 **35px**（=品类行）。截图 `header_{en,zh}_policy.png`。
+    - 首页 1440：**首屏 25 件（末行 5/5 满格）**，padding-bottom **60px**；连点 5 次总数
+      25→50→75→100→**120**→145（120 本身已是 5 的倍数不再补），**每一步末行都是 5 个**
+      （补齐项来自池头，允许重复；截图 `home_reco_first_screen.png`）。
+    - 首页 1024（3 列）：首屏 24 件 / 末行 3 满格，点 1 次后 48 件 / 末行 3 满格；
+      768（2 列）：24 → 48，末行均为 2 满格（`verify.json.recoResponsive`）。
+    - `/s?category=home-living` EN/ZH：`.listing-head__count` 不存在、title 下无件数、
+      24 商品 + 分页仍在、body 无 `xx products/件商品` 文案。
+    - 10 个 `/minihome/<code>` EN/ZH：模块存在、按钮出现、计算样式与首页按钮**逐值一致
+      （差异对象 {}）**、文案 More/更多、点击后商品数增加（24→48）。
+    - misc：语言下拉 5 项（English/中文（简体）/Deutsch/Français/Nederlands）可切到 zh；
+      help 左栏 sticky top=136px 未被站头遮住；768 宽政策页无横向溢出；
+      console/pageerror **0**。
+- **踩坑（勿重踩）**：
+  - pnpm 启动器在本 Git Bash 坏（解析到 `D:\Anaconda\...`），用 `node node_modules/...`。
+  - 频道页验收滚动 sentinel **必须在 hydration 之后**（`waitUntil:'load'` + 800ms），
+    `domcontentloaded` 就 scrollIntoView 会让 IntersectionObserver 的首次自动加载不触发，
+    表现为"按钮永远不出现"（不是代码 bug）。
+  - 模板里别在 `.listing-head` 内留注释：dev 编译会输出 HTML 注释节点，验收会看到脏 DOM。
+  - 首屏补齐必须让 SSR 与客户端首帧一致：`columns` 初值 5（SSR），只在 `onMounted` 里
+    按视口改；别用 CSS 媒体查询去隐藏/重排补齐项，也别让 setup 直接读 `window.innerWidth`
+    （会 SSR/客户端条数不同 → hydration mismatch）。
+
+## 0af. 政策页表格样式修复（2026-11-20，✅ 完成，未 commit）
+
+- **任务**：修用户指出的两处缺陷 —— ①隐私政策 4.1 表格无外边框；②销售条款第 1 条定义表无外边框、首列文字需加粗。
+- **真站实测**（Playwright 实时，cookie 复用 `var/align_search_20261120/cookies.json`，
+  `**color-api.joybuy.co.uk**` 打桩；数据 `var/policy_table_fix_20261120/{measure_tables,measure_zh}.json`，
+  结论 `measurement.md`）：
+  - **外边框**：真站是**完整四边 1px `#CCC`**，但由两半拼成 —— `table` 只给 `border-top/left:1px solid #ccc`
+    （另有 `display:block;max-width:100%;overflow-x:auto;box-sizing:border-box;border-collapse:collapse`），
+    `td` 给 `border-right/bottom:1px solid #CCC`。真实 CSS bundle `var/cart_page_20261119/all_css/css_01.css`
+    里 td 写的是 `#d9d9d9`，但**线上 computed 实测为 `#CCC`**（以实测 #CCC 为准）。
+    批次 Q 只写了 td 右/下 → 上/左开放，即用户看到的缺陷。
+  - **首列加粗**：**只有销售条款（ZH）「第1条 定义」表**首列每格内是 `<b>`（内层 700，td 自身 400），13 行全部；
+    **隐私政策表格（EN/ZH）首列不加粗**（个别非首列正文有行内 `<b>`，属术语强调）。其余 3 页无表格；
+    **EN 销售条款本身没有表格**（该定义表只在真站 ZH 版存在）。
+  - **表头**：所有表格 `th` 数 = 0，首行也是 `td`（400、透明背景）；真站 CSS 的 `th{background:#f1f1f1}` 不生效。
+- **改动**：
+  - `storefront/components/HelpCenter.vue`：`.help-center__table` 加 `border-top/left:1px solid #ccc` +
+    `box-sizing:border-box`（与 td 右/下合成四边外框，无重复双线）；`td` 增加
+    `:class="{ 'help-center__table-cell--bold': block.firstColBold && cellIndex === 0 }"`
+    与 `.help-center__table-cell--bold{font-weight:700}`。
+  - `storefront/content/help/terms-conditions.js`：仅 ZH 定义表块加 `firstColBold: true`（块级标志，
+    不做全局 `td:first-child`，避免污染隐私政策表格）。
+  - `storefront/components/HelpCenter.test.js`：mock 改为返回带 `.value` 的 locale（原 mock 返回字符串，
+    组件 `locale.value` 恒为 undefined → 永远走英文，zh 分支从未被测到）；新增 1 例校验销售条款首列 bold、
+    隐私政策无 bold。
+- **验证（按验证纪律仅做针对性验证）**：
+  - vitest `components/HelpCenter.test.js` + `tests/help-pages.test.js` **13/13 过**；
+    eslint 改动文件 **0 error 0 warning**；prettier `--check` 改动文件 **全过**。
+  - `var/policy_table_fix_20261120/verify_local.cjs`（EN/ZH × 1440/1024/768 × 5 页）：
+    全部 200、console/pageerror **0**；隐私政策表格四边（table top/left + td right/bottom）均 1px #ccc、
+    首列 400；ZH 销售条款表格首列 **13 格全 700**、其余列 400；其余 3 页 0 表格无回归；
+    各宽度 `wrap.scrollWidth == clientWidth`、`documentElement` 横向溢出 **0**。
+  - `verify_borders.cjs`：表格元素截图 + 像素采样，四条边均为 **(204,204,204)** 且第二像素即白色
+    （证明外框实画、无双线）；截图 `border_{zh_terms-conditions,zh_privacy-policy,en_privacy-policy}.png`，
+    数据 `verify_borders.json`、`verify_local.json`。
+- **未碰**：路由/导航/正文文案/其他组件；未 commit。
+
+## 0ae. 批次 Q 验收（2026-11-20，政策页返工，✅ 13/13 全过，未 commit）
+
+- **独立验收（`var/acceptance_q_20261120/acceptance-report.md`）：13/13 PASS，0 fail。**
+- **文案逐段比对**：EN/ZH 各 5 页与抓取的 `content_*.json` **逐块比对 10/10 一致、块级差异 0**（唯一差异=邮箱）；另复核「存档 JSON ↔ 真站 raw HTML」10/10 一致——即抓取本身可信，不是拿自己产物自证。
+- **合规口径按用户拍板执行**：公司名 `Jingdong Retail`、注册号 `15830555`、King Street 地址、ICO/EEA/欧盟委员会表述均**保留真站原文**；邮箱仅 `Joybuyfumi@gmail.com`（28 处），无 `DPO@jd.com`/`dpo@joybuy.com`/`support@joybuy.com` 残留；**无 `joyfumi.com` 旧口径残留**。
+- 版式：左 240 + 右 1008 / 容器 1264 / 当前项 `#FF0F23` / hover `#F5F6FA`；5 项顺序正确、Terms of Sale 内容对应正确；`/pages/*` 与 `/help/*` 双入口 200，前进/后退正常；1024/768 无横向溢出；左栏 sticky 生效。
+- 回归：about-us/contact-us/joyplus/joybuy-news 正常；vitest 124/124；五语言 450=450；console 0 error。
+- **⚠️ 决策记录（与 0s 节相反，用户明确要求）**：政策/条款正文恢复为真站原文（含他公司法定主体与监管资质），仅替换邮箱。这是用户对本节内容的明确指示，后续**不要**再用 0s 的「中性 demo 实体」口径覆盖。若将来对外公开部署，建议重新评估该风险并告知用户。
+
+## 0ad. 批次 Q（2026-11-20 政策页左 tab 版式 + 正文照抄真站，✅ 完成，未 commit）
+
+> 需求文档03 **v1.7 第十五节 15.1–15.3**（**覆盖 14.8**）。实测/脚本/证据全部在
+> `var/policy_help_20261120/`（`measure_nav.json`、`measure3.json`、`measure_table.json`、
+> `lists.json`、`content_{en_GB,zh_CN}_<slug>.json`、`raw_<lang>_<slug>.html`、
+> `real_*.png`/`final_*.png`、`verify2.json`、`devserver.log`）。
+> **未 commit；未碰首页 / components/home / components/cms / AppCategoryPanel /
+> CategoryTileGrid / ProductListing / pages/s.vue / pages/cart / AppHeader / AppFooter。**
+
+- **任务**：隐私政策页从「单页长文」改为真站 help 中心形态（左 tab + 右内容），并把 help 中心全部
+  政策/条款页正文照抄真站，**唯一替换 = 邮箱 → `Joybuyfumi@gmail.com`**。
+  ⚠️ **本节法律口径与 `0s` 节 / `14.8` 相反**（不再做欧盟→亚洲、域名→www.joyfumi.com、
+  公司实体→Joyfumi (demo) 替换），这是 **用户 2026-11-20 明确拍板**，需求文档 v1.7 已写明覆盖。
+
+- **真站实测（本次 Playwright 带 cookie 实时抓取，非存档；cookie 复用
+  `var/align_search_20261120/cookies.json`，`**color-api.joybuy.co.uk**` 打桩返回
+  `{"code":0,"data":{}}`，`/help/*` 全部 200 无风控拦截）**：
+  - **左栏导航 5 项、不分组件、顺序固定**：Privacy Policy → Terms of Sale → Cookie Policy →
+    Terms of Use → Accessibility Statement。真站 URL 为 `/help/privacy-policy`、
+    `/help/terms-conditions`、`/help/cookie-policy`、`/help/TermsofUse`、
+    `/help/AccessibilityStatement`（后两条驼峰）。
+  - 左栏尺寸：容器 1264 居中（1440 下 x=88）、**nav 宽 240**（padding `4px 12px`、radius 8、白底）、
+    与右卡间距 **16**；`nav` 是 `position: static`（**真站不吸顶**）。
+    条目：`padding 16px 16px 20px`、16px/400/24、`border-bottom 1px #F0F1F2`（末项无）、
+    当前项文字 **#FF0F23**、hover 底 **#F5F6FA** + 文字 #FF0F23、高度 61（末项 60）、
+    整卡高 328；**点击是整页跳转**（`/help/<slug>`），非页内切换。
+  - 右卡：宽 1008（1007.84）、`padding 24px 36px`、radius 8、白底；标题 **32px/700/32px #000**；
+    右上「Archived Version」（zh「存档版本」）28px 图标 + 16/400/20 `#1A1A1A`，**点击在实测中无跳转/无弹层**。
+  - 正文：**16px/24px #000**、`p{margin:10px 0}`、粗体 700、链接 `#0000EE` 下划线；
+    真站正文大量用 `<br><br>` 分段（章节标题只是普通文本行，无标题样式）；
+    表格：`width:100%`、`border-collapse:collapse`、auto 列宽（实测 127/365/443）、
+    `td{padding:3px 5px;border-right:1px solid #CCC;border-bottom:1px solid #CCC;vertical-align:middle}`；
+    有序/无序列表用浏览器默认（`margin 16px 0; padding-left 40px; decimal/disc`）。
+  - **移动/窄屏**：真站**没有移动版**，1024/768 下左栏恒 240、整页横向溢出（内容 768/512）；
+    无折叠、无下拉、无返回顶部、无锚点目录。
+  - **中文版存在且是真站自带**（`_lang=zh_CN`）：5 项 nav 全部中文，正文为人工中文，
+    结构与英文版不同（中文隐私政策把章节拆成独立 `<p>`，并带 11 项 `<ol>` 目录），已原样采用。
+
+- **交付**：
+  - `storefront/content/help/{privacy-policy,terms-conditions,cookie-policy,terms-of-use,accessibility-statement}.js`：
+    每页 `title{en,zh}` + `blocks{en,zh}`，块类型 `p{segments}`（`t/b/i/u/href/br`）、
+    `table{rows}`、`list{ordered,items}`；zh 用真站中文版，de/fr/nl 回退英文（内容页既定口径）。
+  - `storefront/content/helpPages.js`：nav 顺序表 + `helpPageBySlug` + `resolveHelpSlug`
+    （把真站驼峰路径 `TermsofUse`/`AccessibilityStatement` 大小写不敏感映射到本地 kebab slug）。
+  - `storefront/components/HelpCenter.vue`：左 tab + 右内容版式（按上述实测值实现），
+    tab 为 `NuxtLink` **路由切换**（前进/后退正常），当前项 `--active` + `aria-current=page`。
+  - 路由：新增 `storefront/pages/help/[slug].vue`（真站原路径）；
+    `storefront/pages/pages/[slug].vue` 重写为同一组件的别名入口（页脚 `/pages/<slug>` 不用改，
+    `AppFooter` 未动）；两者都 `layout: footer-page`，未知 slug 404。
+  - **删除**：`storefront/content/privacyPolicy.js`、`storefront/content/footerPages.js`
+    （旧 14.8 正文与旧 cookie/terms 正文，避免两套并存；已 grep 确认无其他引用）。
+  - 测试：`storefront/tests/help-pages.test.js`（7 例：nav 顺序/双语非空/仅邮箱被替换/
+    公司名 `Jingdong Retail (UK) Limited`+`15830555`+`Floor 3, 20 King Street` 存在/无 14.8 残留/
+    无 urldefense、无 `/help/` 死链/列表结构 11+22 项）、
+    `storefront/components/HelpCenter.test.js`（5 例：5 项顺序与 href、唯一高亮+aria-current、
+    9 段+9×3 表、Archived 只出现在隐私页、ol/ul 8 个 22 项）。
+
+- **替换范围（严格按 15.2）**：只替换邮箱。真站出现 3 个邮箱 `DPO@jd.com`（正文/链接文本）、
+  `dpo@joybuy.com`、`support@joybuy.com`（mailto）→ 全部 `Joybuyfumi@gmail.com`
+  （`mailto:Joybuyfumi@gmail.com`）。**其余一律原文**：公司名（Jingdong Retail (UK) Limited 等 4 家）、
+  注册号 15830555、地址 Floor 3, 20 King Street / Boompjes 40、ICO/EDPB/European Commission、
+  EEA/UK、生效日期（2026 年 4 月）、`www.joybuy.com` 等域名、`/help/*` 外部链接。
+  唯一技术性处理（非文案替换）：①真站 HTML 里的 `urldefense.com` 跳转包装解码回原始 URL；
+  ②同属本 help 中心的链接指向本地路由（`/pages/<slug>`），避免本站内部跳回真站。
+
+- **验证（按验证纪律仅做针对性验证；验收前已 2 次完全重启 dev server，
+  启动方式 `cd storefront && node node_modules/nuxt/bin/nuxt.mjs dev --host 127.0.0.1 --port 3000`，
+  日志 `var/policy_help_20261120/devserver.log`；backend :8000 未动）**：
+  - vitest `--config storefront/vitest.config.js` **124/124 全过**（24 文件，含新增 12 例）；
+    eslint 改动文件 **0 error 0 warning**；prettier 改动文件 **全过**；
+    五语言键集合自检 `var/align_search_20261120/check_keys.mjs` **450 = 450 PASS**（本轮未新增键）。
+  - Playwright `var/policy_help_20261120/verify2.cjs`（EN + ZH，10 组页面）：
+    ①5 项 nav 文本/顺序/active 与真站一致；②**正文与 `content_<lang>_<slug>.json` 归一化后
+    `text true`（仅邮箱不同）+ 表格逐格 `table true`**，长度逐页相等（如 en privacy 31339/31339，
+    zh privacy 10215/10215）；③列表 8 个/22 项（en a11y）、11 项（zh 隐私目录）、6 项（zh cookie）；
+    ④页面 email 集合**只有** `Joybuyfumi@gmail.com`；⑤标题 EN/ZH 与真站一致；
+    ⑥路由切换 `/help/privacy-policy` → `/pages/terms-conditions` 内容+高亮跟随，back/forward 均正确；
+    ⑦console/pageerror **0**（101 次导航）；⑧1024/768 `overflowX = 0`，768 仍为左 200 + 右 520 两栏，
+    不压内容。截图 `final_privacy_{en,zh}.png`、`final_privacy_{1024,768}.png`。
+  - 冒烟：`/`、`/pages/{about-us,contact-us,joyplus,joybuy-news}`、`/help/terms-conditions`、
+    `/help/AccessibilityStatement`、`/help/TermsofUse` 均 200；`/pages/<未知>` 404。
+
+- **偏差/决策（务必知晓）**：
+  1. **左栏 sticky 是用户本次交付要求**（原文「左栏 sticky」），真站实测为 `static`；
+     已按用户要求做 `position:sticky; top:16px`，其余尺寸/颜色/交互全部照真站。
+  2. 「Archived Version / 存档版本」真站可点但实测无跳转、无弹层（疑似需登录/接口失效），
+     本地按视觉保留为**静态标签**（不可点），并在组件注释标注。
+  3. <768px 改为上下堆叠（真站无移动版且整页横向溢出），1024/768 与真站同构（两栏）。
+  4. `/pages/<slug>` 与 `/help/<slug>` 双入口（15.3 第 4 条要求页脚链接可用）；
+     `/help/` 支持真站驼峰写法。
+  5. de/fr/nl 内容与 nav 标签回退英文（沿用内容页既定口径，不翻译法律文本）。
+
+- **踩坑（不得再踩）**：
+  ①真站正文用 `<br><br>` 分段，抓取时必须保留**连续两个 br**，否则段落黏连、间距失真（曾合并成一个）；
+  ②只按 `<p>/<table>` 取块会**静默丢掉 `<ol>/<ul>`**（zh 隐私 11 项目录、en 无障碍 8 个列表），
+  且「本地渲染 vs 自家 JSON」的对账会**同样缺**而假通过——对账必须包含 list 块；
+  ③对账时 expected 文本要先做同样的邮箱替换，否则永远 diff；
+  ④真站页面里的 `urldefense.com` 链接是跳转包装（不能照抄，需解码）；
+  ⑤`extract2_lang.cjs` 的 raw HTML 曾按 slug 落盘，跑第二语言会覆盖第一语言（已改 `raw_<lang>_<slug>`）；
+  ⑥dev server 必须从 `storefront/` 目录、用 `storefront/node_modules/nuxt/bin/nuxt.mjs` 启动
+  （根目录 `node_modules` 没有 nuxt，`pnpm --filter` 在本机 PATH 下也不可用）。
+
+- **遗留**：①de/fr/nl 回退英文（既定口径）；②真站「Archived Version」目标页未知（本地为静态标签）；
+  ③左栏 sticky 与真站 static 的差异已记录，若验收要求 100% 对齐真站可一行改回；④全部改动未 commit
+  （工作区仍含更早批次未 commit 改动）；⑤`pagesDoc.backHome` 等旧键已无引用但保留（不影响 450 键集合）；
+  ⑥整页 SSR HTML 里唯一一处 `Joyfumi` 来自 `AppFooter` 既有的「non-commercial replica」demo 声明
+  （不归属批次 Q，未改；政策正文本身零残留，grep `(demo)`/`www.joyfumi.com`/`Asian Economic Area`
+  /`DPO@jd.com`/`support@joybuy.com`/`dpo@joybuy.com` 均为 0）。
+
+## 0ac. 第四轮总记录（2026-11-20，需求文档03 v1.6 第十四节：批次 O/P 开发 + 独立验收 + 修复复验，✅ 全部收口，未 commit）
+
+- **任务链**：用户第四轮 8 项购物端细化 → 并入 `功能需求迭代文档03.md` **v1.6 第十四节**（14.1–14.9）→ 2 个开发子 Agent 并行（O 首页 / P 分类·搜索·内容页）→ 各自独立验收 → 3 条问题修复 → 复验通过。
+- **批次 O ✅ 13/13**（详见 `## 0aa`）：品类发现固定 6 卡（宠物/母婴/游戏仅从该模块移除，导航与 /c 直链保留）+ 电子产品换真站手机图 + 卡片样式按真站 CSS 实测；新增 `/marketing` 活动页（无顶部 tab、无品牌筛选、商品取服装+户外）+ 首页【每周甄选】6 卡 + admin「每周甄选」tab + `seed_home_weekly_picks`；查看更多 `#1A1A1A`/白字/131×48；**恢复心选品牌**（根因：`storefront_home` 重建时连带删掉 `brand_logos`）。
+- **批次 P ✅ 15/15**（详见 `## 0ab`）：分类下拉图文居中（69 项 delta ≤0.01px）；`/c` 选中卡 1px `#1a1a1a` 黑边（真站 /c 已 404，颜色为推定）；`/s` 分页重做（40×40/radius4/16px500/gap4/当前页与 hover `rgba(0,16,71,.1)`/禁用 .38/省略号）+ 左筛选与列表间 1px `#E0E1E5` 通栏竖线（x=282）；隐私政策按真站重做（12 标题/46 段/9×3 表，EN/ZH）。
+- **验收修复的 3 项**：①心选品牌标题 line-height 35→28px、色 #17202A→#1E1E1E；②品类发现末卡在 1440/1600 被裁切（行继承 12px gap 且宽度未计入）→ gap 归零 + 断点 1199px + ≥1600 流式公式，1280/1440/1600 三档 `scrollWidth==clientWidth`；③活动页 2 件商品 PDP 面包屑显示 Cookware/Garden **根因是面包屑源 `product_category` 与 LocalCategory 不一致**（非活动页过滤问题）→ 幂等命令 `align_outdoor_product_categories` 修正归属，10 件商品逐一进 PDP 面包屑全部落在服装/户外。
+- **本轮实测/推定标注**：心选品牌标题与 logo 墙为真站实测；/c 选中黑边、查看更多与页脚 64px 间距、每周甄选后 2 张卡（真站历史活动）为**推定/替代**（真站交互态 403 不可测），已在 measurement.md 与验收报告中标注。
+- **验证口径**：针对性验证（vitest 112/112、后端 content+catalog 74/74、campaign 23/23、ruff/eslint/prettier、五语言键 450=450、Playwright EN/ZH/DE console 0 error）。
+- **遗留**：①真站 `/c/<slug>` 404 导致选中黑边颜色/粗细只能推定；②活动页商品池为「服装 + 户外」品类可售商品（非真站各 activityId 独立商品池）；③17 件缺图商品在活动页被 `has_local_image=1` 过滤；④7 个频道页商品图 404 属既有媒体缺失（AWS 封禁期本地缺文件）。
+- **待办（等用户）**：爬虫恢复（9+1 分类，脚本 `var/crawl_night_20261120/create_jobs20.py`）；AWS 恢复后 `aws s3 sync` 本地增量媒体；全部改动未 commit。
+
+## 0aa. 批次 O（2026-11-20 首页品类发现/每周甄选/查看更多/心选品牌，✅ 完成，未 commit）
+
+> 需求文档03 **14.1/14.2/14.3/14.4**。实测与证据目录：`var/home_weekly_20261120/`
+> （`measurement.md` 实测报告、真站 SSR `home_en.html`/`marketing_en.html`、
+> `css/`+`css_marketing/` 离线 bundle、`live_home_full.png`=真站 Playwright 403 风控证据、
+> `verify_o.mjs/.json` + `o_home_{en,zh,de}.png`、`o_marketing_{en,zh,de}.png`）。
+> **未 commit；未碰 `AppCategoryPanel.vue` / `CategoryTileGrid.vue` / `pages/s.vue` / `search.vue` / `pages/pages/`。**
+
+- **实测口径（⚠️ 真站 SSR curl 可抓，Playwright 交互态 403「Temporary service interruption」）**：
+  - 品类发现（真站 `pc-popular-categoryV3` + CSS 实测）：卡片高 366、`#F5F6FA`、radius16、
+    shadow `0 10px 30px rgba(0,0,0,.08)`（hover 仅阴影 `0 14px 38px rgba(0,0,0,.12)`，无位移）；
+    文案绝对定位 top/left 28、18px/600/24px `#1A1A1A`；图片底部 275 高 radius12；
+    宽度 1200–1599 `calc((100%+330px)/6)` + 邻卡 `-66px`，≥1600 279px + `-32px`，<1200 `calc((100%+525px)/6)` + `-105px`。
+  - 每周甄选（`pc-theme-module`）：标题 28/600/42；行 gap16、mt16；方卡 radius8；
+    底部渐变 `transparent 51.92% → rgba(0,0,0,.4)`；卡标题 20/700/36 白色，bottom/left 16。
+    真站当前 4 张（20050029/21090013/21090021/21050021），验收要 6 张 → 补 2 个真站历史活动
+    （20530005/20490005，取自 2026-11-03 存档 SSR 的真实卡与图）。
+  - 活动页：banner 384 高、容器 1264、h1 44/700/44、副标题 18/500/24；主体 mt34；
+    左筛选 234 + 右边框 `#E0E1E5`；商品 4 列 gap `24px 16px`。顶部 tab（banner 底部）与
+    品牌 accordion 按需求删除，仅留「类别」。
+  - 心选品牌：标题 28/600/`#1E1E1E`；单行横滑 logo 圆 194、gap24、`scale(.79)`+4% 蒙层、
+    名称 16/600/20、两侧 194px 白渐隐；无「查看全部」。
+  - 查看更多：真站 footer/按钮为 CSR，交互态被挡 → 用真站黑按钮 token（131×48、radius4、
+    `#1A1A1A`、白字、16/500）实现；**与页脚间距 64px 为推定**（footer 无法实测，原 24px）。
+- **交付 1 品类发现（14.1）**：`campaign_services` 增加 `DISCOVERY_HIDDEN_SLUGS`
+  `{pet-supplies,baby-toddler,games-accessories}` + `DISCOVERY_VISIBLE_LIMIT=6`（只影响该模块，
+  卡片数据/导航保留）；电子产品卡图改本地 `/images/discovery/electronics.webp`（真站「手机」
+  Galaxy S25 卡图，已下载）；`CmsLinkGrid.vue` tiles 变体按上述实测重写（campaign 5×2 未动）。
+- **交付 2 每周甄选 + 活动页（14.2）**：
+  - 复用 `HomeCampaignCard` 新 `section=weekly`（上限 6）+ 新 CMS 模块类型 `weekly_picks`
+    （迁移 `content/0014`），`storefront_home` 注入（position 追加在快照模块后 → 真站顺序
+    品类发现→心选品牌→每周甄选）。新组件 `CmsWeeklyPicks.vue`，6 张卡均可点。
+  - 新页面 `storefront/pages/marketing.vue`：接收 `activityId`/`tagId`（可选），从
+    `/storefront/home` 的 weekly 卡取标题/副标题/图作为 banner；商品用
+    `/api/v1/recommendations` 分别取 `clothing-accessories` + `outdoor-sports` 合并；
+    左筛选仅「全部/服装配饰/户外运动」；**无顶部 tab、无品牌筛选**。
+  - 商品图 404 兜底：recommendations 新增可选 `has_local_image=1`（`catalog/search_views.py`），
+    过滤抓取入库但图片文件缺失的商品；活动页实测 3 服装 + 7 户外 = 10 件，全部有图有价。
+  - 种子命令 `manage.py seed_home_weekly_picks`（幂等）：6 张 weekly 卡 + 电子产品图 +
+    确保快照含 brand_logos（心选品牌）模块；图在 `storefront/public/images/weekly-picks/`。
+- **交付 3 查看更多（14.3）**：`HomeRecommended` 按钮改 `#1A1A1A`/白字/48 高/radius4/16px·500、
+  最小宽 131；`index.vue` `.home-content` 底距 24→64。
+- **交付 4 心选品牌（14.4）**：**根因**——`storefront_home` 注入品类发现时把所有 `link_grid`
+  都替换掉，把快照里的 brand_logos 一起删了。现只覆盖 `variant != brand_logos` 的 link_grid，
+  品牌模块恢复；`CmsLinkGrid.vue` brand_logos 改为真站静态横滑 row（194 圆、24 gap、渐隐，
+  不可点、无箭头、无查看全部）。后台：`admin-web` 活动卡片页新增「每周甄选」tab（复用同表/接口）。
+- **五语言**：`messages.js` 每语言新增 11 键（`home.weekly.title`/`home.brands.title` +
+  `marketing.*` 9 键），脚本复核 **en/zh/de/fr/nl 键集合完全一致（450=450）**、无缺/多。
+- **针对性验证（按验证纪律仅做针对性验证；验收前完全重启 dev server + backend）**：
+  - 后端：ruff 全过；`content` + `catalog.tests.test_search` **74/74 OK**；另 `test_campaign_cards`
+    **23/23 OK**（新增：discovery 隐藏三类且 6 张、brand_logos 不被注入删除、weekly 6 张/注入/上限 6）。
+  - 前端：eslint 0 error；prettier 改动文件全过（messages.js CRLF 既有遗留未动）；
+    vitest **112/112**（+6：CmsRenderer weekly/品牌静态行 + 原有用例更新）。
+  - Playwright EN/ZH/DE（`verify_o.mjs`）：首页品类发现 6 卡且 labels 无宠物/母婴/游戏、
+    电子产品图 `/images/discovery/electronics.webp` 已加载、卡片 279×366（本机容器 1344）、
+    label 18/600/24 top28 left28、图片 279×275；每周甄选 6 卡、首卡 href
+    `/marketing?activityId=20050029`、点击成功落 `/marketing?activityId=20050029`；
+    心选品牌 12 logo 圆 194 不可点；查看更多背景 `rgb(26,26,26)`、高 48、radius4、与页脚距 64；
+    活动页 0 tab、筛选仅 Category（All/Clothing/Outdoor）、商品 10（图 10/价 10）、
+    **三语言 console/资源 error 合计 0**。`verify_filter.mjs`：10 → 服装 3 / 户外 7。
+- **遗留/口径**：①「查看更多」与页脚间距 64px 及按钮宽度为推定（真站 footer CSR + 风控 403），
+  已写进 `measurement.md`；②de/fr/nl 下 CMS 模块标题/品类名/活动卡标题仍回退英文=既定口径；
+  ③17 件户外商品 DB 有行但图片文件缺失，已用 `has_local_image=1` 在活动页过滤（未回滚数据）；
+  ④真站当前 weekly 仅 4 张，补的 2 张为真站历史活动（链接可用，落地页统一取数）；
+  ⑤未 commit（工作区仍含更早批次未 commit 改动）。
+
+- **验收返修（2026-11-20，12/13 PASS + 2 清单外缺陷）**：
+  - ①心选品牌标题：`CmsLinkGrid.vue` 加 `cms-link-grid--brands` 作用域，标题改
+    `line-height:28px`（真站 100%）+ `color:#1E1E1E`；实测 computed 28px/`rgb(30,30,30)`。
+  - ②品类发现末卡裁切：根因是 tiles 行继承了基础行的 `gap:12px`（卡片宽度公式未计 gap），
+    已 `gap:0`；同时把网格回退断点 80rem→1199px，并把 ≥1600px 的固定 279/-32 规则并入
+    ≥1200px 流式公式（本机容器在 1600 为 1504，固定规则会 1514 越界）。实测
+    1280/1440/1600 均 6 卡单行、`last.right - row.right ≤ 0`、scrollWidth=clientWidth。
+  - ③活动页 PDP 面包屑错配（2/10）：实查 `f0941496…`（grill）与 `35b8c0a8…`（patio chairs）
+    `Spu.local_category=outdoor-gear`、搜索文档 local_category 也是 outdoor-gear（一致），
+    错的是 PDP 面包屑数据源 `Spu.product_category`：Cookware / Garden Furniture & Accessories。
+    新增幂等命令 `manage.py align_outdoor_product_categories`：前者→Camping & Hiking（4625），
+    后者→Sports & Outdoor（1819），均已执行（changed=2，复跑 0）。
+    复核 10 件 PDP：6 件户外均有 Sports & Outdoor 面包屑（含原 2 件），其余 4 件（3 服装 +
+    1 滑板车）源类目为空、无错误面包屑。
+  - 返修验证：vitest 112/112；五语言键 450=450 无缺/多；ruff/prettier/eslint 全过；
+    Playwright 1280/1440/1600 三宽度 console/资源 error 0。
+
+## 0ab. 批次 P（2026-11-20 分类居中/黑边/搜索页/隐私政策，✅ 完成，未 commit）
+
+> 需求文档03 **14.5 / 14.6 / 14.7 / 14.8**。真站实测 + 脚本 + 证据全部在
+> `var/align_search_20261120/`（`measurement.md` 为权威记录；`verify.json` 为本地验证结果）。
+> **未 commit；未碰 `index.vue` / `components/home/*` / `components/cms/*` / `backend/content/` / `/marketing`（批次 O 领地）。**
+
+- **交付 1（14.5 图文居中）**：根因是默认瓦片的图片盒是 `display:block; width:100%`，内部 60% 宽图片贴左。
+  `CategoryTileGrid.vue` 的 `.category-tile__media` 改 `display:flex; align-items:center; justify-content:center`。
+  实测修复后：分类下拉子项 图片中心 delta **0**、名称 delta **0**（名称 14px/500/20px 居中，沿用 2026-11-11 真站口径）；
+  `/c` 品类条与频道页 `channel` 变体（`/minihome/UK-Mini-HP-Home-Living`，140px 瓦片、18px/500/24px）delta 全 0。
+  → **给主会话/O 的备注：首页品类发现 tiles 走 `CmsLinkGrid` discovery 变体，结构是「名称左上、275px 图片贴左下」，
+  与真站 `pc-popular-categoryV3` 一致，不属于「图+文居中」类，未发现需修的居中 bug（只读未改）；仅 ≥1600px 卡宽 279px、
+  图 275px 时底部图片左贴会留 4px 右侧空隙，如要居中由 O 决定（非本轮验收项）。**
+- **交付 2（14.6 选中卡黑边）**：`.category-tile--active` 边框色 `var(--colour-accent)` → **`#1a1a1a`**。瓦片本身已有
+  1px 透明边框，只换颜色，**不产生尺寸变化**（实测选中/未选中宽均 136）。仅作用于 `CategoryTileGrid` default 变体
+  （`/c` 品类条 + 分类下拉）；首页白底红边规则在 `CmsLinkGrid`，未改。真站 `/c/<slug>` 路由 404，故「1px 黑边」为
+  **推定**（真站同族选中态口径），已在 measurement.md §2 标注。
+- **交付 3（14.7 /s 分页 + 竖线）**：
+  - 分页按真站 MUI Pagination 实测重做：单项 **40×40、radius 4px、16px/500、gap 4px、无边框**，当前页与 hover 同为
+    `rgba(0,16,71,.1)`，禁用箭头 `opacity .38`，省略号 40×40，上/下页为 Material chevron SVG，容器 **padding-top 24px**
+    居中；页码窗口实测 = 近端 `1 2 3 4 5 … N`、中段 `1 … c-1 c c+1 … N`、末端 `1 … N-4..N`（34 页逐页实抓 1/3/4/5/10/20/31/32/33）。
+    纯函数 `storefront/utils/pagination.js::buildPageList`（+`pagination.test.js` 5 例）。**未改共享 AppPager/AccountPager。**
+  - 竖线：真站是 `search_productArea::before`（1px、**#E0E1E5**、absolute、top 0 / bottom 0 通栏、left −23px）；
+    本地在 `.listing-main::before` 复刻为 left −24px（本地列间距 24），不占布局、不影响 sidebar sticky，单列断点隐藏。
+  - 实测：`/s?k=home&page=10` → `‹ 1 … 9 [10] 11 … 15 ›`，点击 11 URL `page=11`、active 跟随；ZH aria `第 10 页/上一页/下一页`；
+    竖线 x=282 = 左栏右缘，无横向溢出；`/search?q=home` 200 正常。
+- **交付 4（14.8 隐私政策重做）**：真站 `/help/privacy-policy` 200，正文 421 行结构化抓取（`real_privacy_lines.txt`）+
+  第 4 节 9×3 表格（`real_privacy_table.json`）。新建 `storefront/content/privacyPolicy.js`（EN/ZH 各 12 标题 / 46 段 /
+  28 缩进项 / 6 项目符号 / 9×3 表格），`content/footerPages.js` 的 privacy 条目改为引用该模块（其余 cookie/terms 内容零改动）。
+  `pages/pages/[slug].vue` 渲染器新增 `item`（缩进项）与 `table.rows`（真实表格）两种块，旧块类型行为不变。
+  替换铁律已执行：真站主体名→`Joyfumi … (demo)`、公司编号全删、EEA→ASEA、European Commission→Asian Commission、
+  ICO/Secretary of State→`the relevant supervisory authority`/`the relevant authority in the UK`、所有 URL→`www.joyfumi.com`、
+  邮箱→`Joybuyfumi@gmail.com`、真实地址→`Demo address`、Trustpilot→`an external review platform (demo)`；
+  服务器位置 Netherlands→Asia。页面文本 grep：`Jingdong/DPO@jd.com/joybuy.com/European/EEA/Company number/HRP/Trustpilot`
+  **全 0**（含 `HRB` 公司号）。de/fr/nl 回退英文（`blocks[locale] || blocks.en`，内容页既定口径）。
+- **i18n**：新增 `listing.pageAria`、`listing.pageCurrentAria` 各 5 语言（en/zh/de/fr/nl），五语言键集合
+  **恒等、占位符逐键一致**（`var/align_search_20261120/check_keys.mjs`；自检时 450 = 450，含批次 O 并发新增的键）。
+- **验证（按验证纪律：针对性 + messages.js 共享故跑全量单测）**：
+  - `vitest run` **112/112 全过**（22 文件；含新增 pagination 5 例；原 AppCategoryPanel/CategoryTileGrid 用例零改动通过）；
+  - eslint 改动 8 文件 **0 error**；prettier 7 文件全过（`footerPages.js` 沿用既有 CRLF，`--end-of-line crlf` 下全过，
+    默认配置仅因历史 CRLF 报 EOL，非本批引入）；
+  - **完全重启 dev server**（kill PID 5368 → `nuxt dev --host 127.0.0.1 --port 3000`，日志本目录 `devserver.log`；
+    backend :8000 未动）后 Playwright 实跑：见 `verify.json`；console error **0**；截图 `local_s_page*`/`local_s_pager_*`/
+    `local_c_strip*`/`local_dropdown_en.png`/`local_privacy_{en,zh}.png`/`local_channel_en.png`，真站对照
+    `real_s_pager_*`/`real_s_page2_top.png`/`real_privacy.png`。
+- **踩坑（不得再踩）**：①`waitUntil:'networkidle'` 在 Nuxt dev（HMR websocket）下会让 Playwright 定位器等到超时——改
+  `domcontentloaded` + 显式 `waitForTimeout`；②真站 `/c/<slug>` 不存在，active 黑边只能推定；③真站 Categories 下拉列表
+  在风控下恒 `Loading…`（导航瓦片可量），居中数据用导航瓦片 + 2026-11-11 下拉瓦片口径；④`pager` 截图前把鼠标移开，
+  否则 hover 态会被当成第二个「当前页」；⑤`footerPages.js` 是 CRLF 文件（prettier 默认 EOL 会报全文件 diff），
+  本轮用「行区间替换 + 断言唯一」脚本改（`var/align_search_20261120/rewire_privacy.py`），未整文件重写。
+- **遗留**：①de/fr/nl 隐私政策正文回退英文（既定口径，不阻塞）；②真站 `/c` 与下拉列表风控不可量（已标注推定）；
+  ③未 commit（工作区仍含更早批次改动）。
+
+## 0z. 批次 N 验收 + 主会话补修（2026-11-20，多语言词典，✅ 验收 9/9 + aria-label 补修完成，未 commit）
+
+- **验收（独立子 Agent，`var/acceptance_n_20261120/acceptance-report.md`）：9/9 PASS**——键/占位符程序化全量比对一致；de/fr/nl × 首页/频道/PDP/购物车 12 屏全部 8/8 目标语言（0 英语回退 miss）；nl 术语（Inloggen/Toevoegen aan winkelwagen）与真站 pairs 一致；切换链 en→de→fr→nl→zh→en cookie 持久、console 0 error；占位符实渲染正确（fr「Vendu et expédié par …」计数正确）；en/zh 回归 0 miss；vitest 106/106。
+- **验收发现的范围外遗留 → 主会话已补修**：购物车入口 aria-label 硬编码英文（`AppHeader.vue:449`）。修复：新增 `cart.itemsAria`（5 语言各一条，`{count}` 占位），`useLocale.t()` 支持 `params` 替换（`{name}` → 值，replaceAll），`AppHeader` 改 `t('cart.itemsAria', { count })`。**实测 SSR：nl `Winkelwagen, 0 artikelen` / de `Warenkorb, 0 Artikel` / fr `Panier, 0 articles` 全部本地化渲染**。五语言键集合 438=438 恒等复验 ✅；prettier 已跑（messages.js CRLF 本体由 prettier 规范化）；vitest 106/106。
+- **遗留小项**：验收用测试买家（probe-*/accept-*@joybuy.test）与 1 条 dev 购物车行未删（报告有记录）；de/fr 词典按通用电商惯例（真站不响应 Accept-Language），nl 为真站实抓 6450 条。
+
+## 0y. 批次 N（2026-11-20 de/fr/nl 词典补齐，✅ 完成，未 commit）
+
+> 需求文档03 **13.5 第 4 条优化补充**：批次 M 语言下拉 5 项上线后 de/fr/nl 缺词回退英语，本批把
+> `storefront/locales/messages.js` 的 de/fr/nl 词典补齐到与 en 全量对齐。证据与脚本全在
+> `var/batch_n_i18n_20261120/`。**只改 messages.js（纯尾部追加）+ 文件头 1 行注释；未 commit；未碰
+> useLocale.js 回退逻辑、backend、admin-web、merchant-web。**
+
+- **交付 1 词典（messages.js）**：新增 `de:` `fr:` `nl:` 三块，**各 437 键**（=en 键集全量，任务口径
+  874=en+zh 合计），文件 910→2318 行。插入方式：脚本 `apply_dictionaries.mjs apply` 以**文件尾唯一锚点
+  `  },\r\n}\r\n` 做单次精确替换**（先断言锚点唯一=1），CRLF 全程保持（LF-only=0）；文件头注释第 1 行
+  改为提及 batch N。⚠️ `git diff` 显示该文件有 39 行删除——**全是批次 M 等更早的未 commit 工作区改动**
+  （footer 13.6/cart 13.7 旧键值），`git show HEAD:...` 已核对；本批对工作区**纯增量**。
+- **翻译来源与口径（术语表 `glossary.md`，40 高频词 × 3）**：
+  - **nl 跟真站**：joybuy.nl SSR 内嵌 i18n 词条包实抓 **6450 条真值**（`realsite/nl_pairs_raw.txt`，
+    抓取脚本 `realsite/extract_nl_pairs.cjs`，原始 HTML `realsite/joybuy_nl_home.html`，2026-11-20 200 OK）。
+    Winkelwagen / Toevoegen aan winkelwagen / Toegevoegd aan winkelwagen / Inloggen / Uitloggen /
+    Registreren / Afrekenen / Verlanglijstje / Mijn bestellingen / Adressen / Postcode / Telefoonnummer /
+    Adresregel 1 / Privacy- en cookiebeleid / Algemene voorwaarden / Kwaliteit gegarandeerd /
+    Veilige betalingen / Klantenservice / Reviews & Q&A / Ga winkelen / Bekijk meer / Alles bekijken 等
+    **直接采用真站术语**；国家名六国真值（Verenigd Koninkrijk/Nederland/België/Luxemburg/Frankrijk/Duitsland）。
+  - **joybuy.co.uk 实测不响应 Accept-Language**（de/fr 请求 lang 恒 en-GB，`realsite/joybuy_uk_{de,fr}.html`
+    证据），无 de/fr 真站界面 → **de/fr 按通用电商惯例**（Amazon.de/.fr 同场景口径，Sie/vous 敬称）。
+  - 品牌不译（Joybuy/Klarna/WeChat Pay/JoyPlus）；slogan "Don't just buy, Joybuy" 按 zh 块先例保留英文；
+    占位符 `{name}` `{page}` `{total}` 与 `→←…©` 符号原样保留；`footer.langLabel`=Deutsch - DE/
+    Français - FR/Nederlands - NL；`topStrip.region`=UK | Deutsch/Français/Nederlands（市场仍 UK）。
+- **自检（`apply_dictionaries.mjs check/verify`，结果已跑通）**：
+  - `check`（JSON 词典 vs en/zh 真值）：**PASS——en/zh/de/fr/nl 键集合完全一致（437 键），占位符逐键一致**；
+  - `apply` 后 `verify`（import 真实 messages.js 复核）：**PASS 同上**；
+  - 格式：生成行按 prettier（printWidth 100/singleQuote/双引号包容 apostrophe）输出，**LF 副本
+    `prettier --check` 全过**；messages.js 本体仍因 **CRLF 历史问题**不过 prettier（0u 既有遗留，非本批引入，
+    本批保持 CRLF 不恶化）。eslint messages.js 0 error。
+- **翻译质量抽查**：`spot_check_30.md`（固定种子 20261120 随机 30 键 × en/de/fr/nl 四列）人工过目合格；
+  nl 语义错误 1 处（termsNotice「扣款」误写「返还」）在 JSON 阶段已改（`int`）。
+- **针对性验证（按验证纪律；词典是共享文件故 vitest 全量跑了一次）**：
+  - vitest **106/106 全过**（21 文件；无任何用例需要改，批次 M 的 5 语言回退用例原样通过）；
+  - eslint messages.js 0 error；prettier 见上（LF 副本过、本体 CRLF 既有遗留）；
+  - `toggleLocale` 排查：**无活跃调用方**（AppFooter 仅注释引用，批次 M 已停用），行为无误，零改动；
+  - **Playwright（完全重启 dev server 后）**：杀掉旧双进程（PID 41448/[::1]:30352）→ 新起
+    `nuxt dev --host 127.0.0.1 --port 3000`（后台，日志 `devserver_restart.log`，**:3000 现由本批进程托管**；
+    backend :8000 未动）。`verify_n.mjs` → `verify_n.json` + 9 截图 `n_{home,pdp,cart}_{de,fr,nl}.png`：
+    - de/fr/nl **全部 overall pass**：头部（Kategorien/Catégories/Categorieën、搜索占位、Shops/Inloggen 等）、
+      通告条、页脚版权/法务段、购物车（Ga winkelen/Faire du shopping/Einkaufen gehen、Afrekenen (0)、
+      Overzicht、Veilige SSL-versleutelde betaling）、PDP（Ajouter au panier/Acheter maintenant/
+      30 jours de retours gratuits 等）**全部目标语言，不再英语回退**；语言下拉仍 5 项；
+      **三语言 9 页 console error 合计 0**。
+- **踩坑（不得再踩）**：①验证脚本预期值要跟**实际渲染键**——购物车空态按钮是 `cart.goShopping`
+  （不是 `cart.browse`），首跑误报 fail 改预期后全过；②共享热点文件看 `git diff` 出现删除行先
+  `git show HEAD:` 对照——本批 39 删除全是早批未 commit 改动，别误判自己；③Git Bash `node -e` 内嵌
+  含反斜杠正则会炸转义 → 一律写脚本文件；var 下 ESM 用 `.mjs`（root package.json type:module，
+  `.cjs` 例外）；④Windows 下 `pathToFileURL().pathname` 会拼出 `E:\E:\...` → 用 `fileURLToPath`；
+  ⑤joybuy.co.uk 不响应 Accept-Language，de/fr 真站参照拿不到是常态，别硬冲（风控口径不变）。
+- **遗留/既定口径（不阻塞）**：①**品类名、CMS 模块标题（如 "Category discovery"）、PDP 结构化区块标题
+  （"Product Description"/"Product Selling Points"）走后端内容/译文管线**，de/fr/nl 下回退英文=既定口径，
+  不是词典缺词；②messages.js CRLF prettier 遗留同 0u；③未 commit（含更早批次的工作区改动仍在）。
+
+## 0x. 爬虫预检（2026-11-20，✅ 完成，只读未启动任何抓取）
+
+> 任务：为今晚正式抓取（10 分类）做只读预检。报告：`var/crawl_preflight_20261120/preflight.md`，
+> 检查脚本 `var/crawl_preflight_20261120/inspect_db.py`（Django shell 只读）。**未登录账号、未杀/启任务、未改配置、未 commit。**
+> **结论：可启动（7/7 PASS）**。要点：
+> - 后端 :8000 `/api/v1/categories` 200；`showmigrations` 证 MySQL 通。E: 剩 **144G**（`var/media` 现 56.76G/707,786 文件，PS 口径），2–8GB 增量无忧。
+> - baidu 200；joybuy.co.uk / joybuy.nl 均 **307 可达**（真站风控口径不变：只走 SSR，不碰交互态）。
+> - 账号池 62 未删：**44 ACTIVE+VALID / 18 UNKNOWN**。分组 VALID：03=10、01=9、05=8、06=8、02=6、04=**0**（全 UNKNOWN）⚠️ 今晚调度**避开 数据抓取04**。
+> - `MEDIA_BACKEND=local` 行为验证过：:8000 返回 11-19 本地卡片图 200 且字节数与 `var/media` 磁盘文件一致（settings 默认 local，AWS 决策不动）。
+> - CrawlJob 236 行（COMPLETED 114 / READY 90 / FAILED 26 / CANCELED 4 / **RUNNING 2 zombie**：job id=2、id=3，11 月初 demo 遗留，group=default，**未杀**，待主会话决定改 CANCELED；不阻塞新建任务）。
+> - 候选 10 分类：joybuy_uk 树 version 6（211 活跃二级节点，`is_active=False`=0，95 个 SPU=0）。按父类分散各挑 1 个 0-SPU 节点：
+>   l2:1418 Tablets / l2:1405 Kettles & Toasters / l2:2710 Body / l2:1363 Cat Food / l2:3499 Gaming Headsets /
+>   l2:1380 Electronic Toys & Music / l2:1881 Watches / l2:1460 Sports Nutrition & Performance / l2:1445 Pens & Pencils /
+>   l2:1522 Household Essentials（完整表+备选+参数建议在 preflight.md；`source_catalog=joybuy_uk`，product_limit 40–60，allow_pagination 默认 True，组轮转 01/02/03/05/06）。
+> - 树小坑：version 6 有 3 个 depth=1 行 source_id 带 `l3:` 前缀（l3:3129/l3:1430/l3:1500），已排除出候选；`joybuy`/`joybuy_nl` catalog 无 current_version，任务别挂它们。
+
+## 0x-2. 爬虫启动记录（2026-11-20，⚠️ 启动 1 个后**用户叫停**，最终全停）
+
+> 任务：按预检口径创建并启动 10 个分类的正式抓取任务（用户已批准当晚抓取、完成后自动关机）。
+> **执行中途（04:00 UTC 前后）用户经协调者下达「暂停爬虫任务」指令**，已立即执行：
+> 停止创建剩余任务、走正常取消路径停掉唯一在跑的 run。**未关机、未改代码、未 commit、未动配置。**
+
+- **已创建并启动（仅 1 个，后已取消）**：CrawlJob **pk=237** `数据抓取01-平板电脑-1120`
+  （l2:1418 Tablets，joybuy_uk 树 v6，limit=50，allow_pagination=True，group=数据抓取01，
+  其余参数=预检建议口径：SOURCE_DEFAULT/INCREMENTAL/skip_imported=False/PAUSE/媒体=主图+评价图）。
+  Run `fc2e40dc-80c8-480c-8ecc-d821bcd0a9aa`（执行器 PID 17392，独立进程 `manage.py run_crawl_run`，
+  启动命令带 `MEDIA_BACKEND=local`）。**启动健康**（观察 ~2.5 分钟）：LISTING_FETCHED×2（翻页第 2 页都 HTTP 200）、
+  PRODUCT_PARSED/导入持续产出、**零风控/登录墙信号**（无 risk605/维护页/LOGIN_WALL/RISK_CONTROL 事件）。
+- **用户暂停的最终状态（DB 实查 + tasklist 确认）**：
+  * Run `fc2e40dc` → **CANCELED**（finished_at=2026-11-20 04:00:26 UTC，pause_reason=NONE）；
+    job 237 → **CANCELED**。取消走管理端同款 `crawler_control.services.cancel_run`（脚本
+    `var/crawl_night_20261120/cancel_run20.py`），随后向执行器进程组发 **CTRL_BREAK 优雅退出**
+    （非 taskkill /F；日志尾「Spider closed (shutdown)」，进程 17392 已退出）。
+  * 计数：**discovered=50 / imported=5 / failed=0**，钉定账号 `100006876375579`（数据抓取01）。
+    事件：RUN_ACCOUNT_SELECTED/RUN_STARTED/ACCOUNT_POOL_READY/LISTING_FETCHED×2/PRODUCT_PARSED×7/
+    MOBILE_DETAIL_MERGED×7/VARIANT_PRICES_MERGED×3/DATASET_SAVED×5/PRODUCT_IMPORTED×5/DATASET_SUMMARY；
+    trip_signals=none。已导入的 5 件商品数据保留（真实数据，未回滚）。
+  * 其余 9 个任务**从未创建**（无残留）；既有 90 READY/2 zombie（job 2/3）原样未动。
+- **剩余 9 个任务的既定计划（未执行，供恢复时直接用）**：名字/分组已定稿在
+  `var/crawl_night_20261120/create_jobs20.py` 的 PLAN 表（`{group}-{中文名}-1120` 命名，组轮转
+  01/02/03/05/06 各 2 个，避开 04；l2:1405→02、l2:2710→03、l2:1363→05、l2:3499→06、l2:1380→01、
+  l2:1881→02、l2:1460→03、l2:1445→05、l2:1522→06）。恢复时：`create_jobs20.py <source_id>...`
+  逐个建（幂等，撞名自动跳过）→ 复用 `var/night_crawl_20261115/launch_run.py` 启动 →
+  队列按 night_queue.py 模式（**同组串行、5 组并行**，单 run 超时建议提到 150 分钟——limit=50
+  按实测 ~2.5 分钟/件会超 90 分钟旧值）。风控纪律不变：连续 2 账号 email 验证封锁即停批。
+- **本次踩坑（不得再踩）**：①爬虫执行器**不轮询 run.status**——只调 `cancel_run` 只改 DB，Scrapy
+  会继续抓完；要真正停下来需对执行器进程组发 CTRL_BREAK（`close_spider` 见状态非 RUNNING 会跳过
+  回写，不产生脏状态）。②Windows 下跨进程发 CTRL_BREAK：`os.kill` 报 WinError 87；
+  `AttachConsole` 先 `FreeConsole()`（否则 ERROR_ACCESS_DENIED=5），成功后
+  `GenerateConsoleCtrlEvent(1, pid)`。③Git Bash 会把 `tasklist /FI` 转义成路径，要加
+  `MSYS_NO_PATHCONV=1`。④CrawlerAccount 在 `crawler_control.models`（不是 crawler_accounts），
+  软删字段是 `deleted_at`（无 `is_deleted`）。⑤CrawlJob.name unique——重抓同类目换后缀
+  （本次用 `-1120`），复用旧名会撞唯一约束。
+- 本次产物（仅运维脚本与结果 json，无代码改动）：`var/crawl_night_20261120/`
+  （recon.py 只读侦察 / create_jobs20.py 建任务 / cancel_run20.py 取消 / final_state.py 终态核查 /
+  create_jobs_result.json / signal_result.txt）。所有启动/取消命令均带 `MEDIA_BACKEND=local`。
+
+## 0w. 批次 M（2026-11-19/20 头部 6 项 + footer 裁剪 + 购物车 3 项，✅ 完成，未 commit）
+
+> 需求文档03 **13.5/13.6/13.7**。实测与证据目录：`var/header_footer_cart_20261119/`
+> （`measurement.md` 实测报告、real_home_{zh,en}.html/real_cart_nl.html SSR、css/ 24 个真站
+> bundle 离线解析、header_measure*.json 探测、verify_m.{mjs,json} + m_*.png 自验截图）。
+> **全程未 commit；未碰 backend/content/、admin-web/、crawler/、频道页组件。**
+
+- **实测口径（⚠️ 2026-11-20 起真站风控：SSR curl 可抓但悬停打开态/页面交互触发「服务暂时中断」页）**：
+  被挡项改用既有存档（`var/header_drawer_20261116/joybuy_user_hover.png` 头像下拉截图、
+  `var/footer_rework_20261119/measurement.md` 的 `_lang=en_GB` 真值结论）+ 静态证据
+  （真站 24 个 CSS bundle + SSR HTML 离线解析），不硬冲真站（主会话 2026-11-20 拍板）。
+  关键实测值见 measurement.md：主行 14+52+14、sticky 阴影 token
+  `0 2px 12px rgba(0,0,0,.039), 0 4px 6px rgba(0,0,0,.059)`、品类行 y=120 紧贴主行
+  （gap 0）+ padding-bottom 14 + 文本 14px/400/16px、分类按钮 16px/600/icon24/`#F5F6FA`
+  圆 50px、头像下拉 = 笑脸(#E5E7F0 圆 + 白笑脸 SVG 原文抓取) + `user4323txlb` 粗体 +
+  5 行左文右线性 icon、hover 16ms 开/18ms 关、购物车 `paymentLogos` 13 项顺序
+  （Amex→Visa→MC→Maestro→?→PayPal→WeChat→Google→Apple→Klarna→iDEAL→Bancontact→?）。
+- **交付 1 头部（AppHeader/AppCategoryPanel/useMarketLocale）**：①品类下拉阴影换真站
+  token 同族放大 `0 4px 24px .08, 0 12px 48px .06`（⚠️ 打开态 CSS 被风控挡，静态推断项，
+  验收可复核）；②品类行去 40px min-height、14px/400/16px、padding-bottom 14px（视觉间隙
+  ≈真站 0px 结构）；③分类按钮 16px/600/24px icon；④语言下拉 5 项
+  English/中文（简体）/Deutsch/Français/Nederlands（GB 市场放开 de/fr/nl；真站清单为
+  countryLang 键集推定项），切换全站跟随：`useLocale.t()` 已有 en 回退链无需改，
+  de/fr/nl 页面实测不崩、回退生效（词典=批次 N）；⑤头像菜单 hover 即开（mouseenter）
+  / 移出 200ms 关 / click 保留触屏路径，批次 F 五态入口不动；⑥面板 270px、用户行 =
+  笑脸 SVG + 粗体 display_name、5 行左文右 20px 线性 icon。
+- **交付 1b 后端（accounts_buyers）**：`BuyerAccount.display_name`（0007 迁移，dev 库已
+  migrate）+ `_ensure_display_name`：为空时生成 **`user`+4位数字+4位小写字母**（真站格式
+  实证 user4323txlb），查重 10 次后 hex 兜底，一次生成固定存库；`_account_payload` 带
+  `display_name`。⚠️ **:8000 已按 HANDOFF 姿势重启**（并存双 runserver 旧 PID 全杀，
+  `MEDIA_BACKEND=local CRAWL_VARIANT_PRICE_LIMIT=3 manage.py runserver 127.0.0.1:8000
+  --noreload`，AWS 被封口径不动 MEDIA_BACKEND；日志 `var/header_footer_cart_20261119/
+  backend_restart.log`）。
+- **交付 2 Footer（AppFooter）**：顶行/中部 `v-if="false"` 保留代码不渲染，`toggleLocale`
+  解构与 `@click` 一并停用（孤儿引用已清）；底部【内部研究演示项目…】声明删除，法规段
+  中性 demo 实体文案保留（主会话法律安全口径勿回退）；We support 支付行保留。
+- **交付 3 购物车（pages/cart/index.vue + ChannelPickedForYou）**：①h1 删除、useHead
+  保留；②合计下方支付图标行 = 本地 `pdp-services` 8 个 SVG 按真站顺序
+  （Amex/Visa/MC/PayPal/WeChat/Google/Apple/Klarna；Maestro/iDEAL/Bancontact 无本地
+  SVG 记偏差）；③底部【精选好物】：`ChannelPickedForYou` 的 categorySlug 改可选，不传 =
+  不带 category 参数（全库池），四步交互复用（频道页零影响）。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端：ruff 4 个改动文件全过；`manage.py test accounts_buyers --keepdb --parallel 1`
+    **20/20 OK**（新增 BuyerDisplayNameTests 2 例：生成格式/固定存库、已设置不覆盖）。
+  - 前端：eslint 0 error（ChannelPickedForYou.test.js 2 条 one-component-per-file
+    warning，既有模式）；prettier 全过（messages.js 未触碰、仍 CRLF）；vitest
+    **106/106**（+3：AppHeader hover/笑脸/用户名 2 例 + ForYou 无 slug 全库池 1 例）。
+  - Playwright EN/ZH（`verify_m.mjs` → `verify_m.json`，localhost:3000）：分类按钮
+    16/600、品类行 14px/400/16px + pb14、打开态新阴影生效、语言下拉 5 项、de/fr/nl
+    页面 0 pageError 回退英语、footer 两块不渲染+声明不在+We support 7 图标+ZH 无法规段
+    （真站口径）、cart h1=0 + 标签页标题保留 + 8 支付图标全加载、精选好物
+    24→(滚动自动)48→(按钮)72→96 循环、console 0 error、注册临时买家 → 菜单显示
+    `user8392htzs`/`user0372wmso`（格式正则过）、hover 开/120ms 仍开/320ms 关、5 行 icon。
+- **清理**：2 个临时买家（m-batch-en/zh-…）已删净（left 0，含 session 级联）。
+- **遗留项**：①品类面板真站打开态阴影/语言清单为静态推定（真站风控，验收如恢复可复核）；
+  ②Maestro/iDEAL/Bancontact 支付 SVG 需补本地素材；③de/fr/nl 词典=批次 N；
+  ④messages.js CRLF 历史格式未动（0u 遗留）；⑤dev :3000 现由其他会话进程托管
+  （绑 [::1]:3000，curl/验证用 localhost:3000）。
+
+## 0v. 批次 J（2026-11-19/20 品类页活动卡片后台+接口 + 13.8 链接规则 + 13.3 模块数据补抓，✅ 完成，未 commit）
+
+> 需求文档03 13.2 / 13.3 / 13.8。证据与全部脚本：`var/channel_page_cards_20261119/`。
+> **全程未 commit；未碰 storefront/、CategoryTile*、backend/catalog/search_views.py（批次 I 在改，只 import 了其常量）、AppHeader/AppFooter/cart。**
+
+- **交付 1 品类页卡片（13.2）**：新模型 `content.ChannelPageCard`（channel_code/image_url/link_url/sort_order/is_active，
+  迁移 `0012`；权限种子 `0013`：`cms.channel_page_cards.manage/view`，platform_admin+operator 全量、_viewer 只读）。
+  服务 `content/channel_page_card_services.py`（channel_code 校验复用 banner 口径 + **按 `NAV_HIDDEN_ROOT_SLUGS` 过滤下拉到 9 个频道**；
+  图片只收本站 `/media/`；link_url 按 13.8 存原值）；管理端 `merchant_ops/views_channel_page_cards.py`（CRUD+move/toggle，
+  URL `/api/v1/admin/channel-page-cards[/channels|/<uuid>|/<uuid>/actions]`，写操作审计）。
+  **买家接口契约（勿改名）**：`GET /api/v1/cms/channel-page-cards?channel=<channel_code>` →
+  `{"items":[{id,image_url,link_url,sort_order}]}`（sort_order 升序；未知/未配置频道 `{"items":[]}`；缺 channel 参数 400 `CHANNEL_REQUIRED`）。
+  批次 I 按 `storefront/utils/cmsLink.js::resolveCmsLink()` 消费。
+  admin-web：`CampaignCardsView.vue` 新增第三个 tab【品类页卡片展示】（`ChannelPageCardsPanel.vue`，模式照抄 ChannelBannersPanel：
+  频道下拉/ImageUploader(purpose=`channel_page_card`)/排序/启停/上下移/删除，AppModal+overlay 约定一致）。
+  `media/uploads.py` PURPOSES 新增 `channel_page_card`（CMS 桶 2MB）。
+- **种子数据（9 频道 31 张，图片全部本地托管）**：抓 9 频道页 EN SSR（8 UK `.co.uk` + `mini-hp-nl-sports-outdoor` `.nl`），
+  活动卡片在 RSC `moduleCode:"uk-pc-image-ads"` 的 `dataBatch`（每卡 img_small/img_middle/img_large + jump.jumpValue.link）。
+  逐页用「卡片图在渲染 `<img>` 里的字节位置」确定可见行，选择口径：默认取品类卡下第一行 campaign 卡；
+  美妆/健康取 **campaign 行**（module0 是品牌店行）；母婴=两个 2 卡模块（4 张一行两张）；宠物取【热门好价】下方行前 3 张（真站 4 张）；
+  游戏去掉行首 2 张品牌店卡取 3 张 campaign 卡。配置数=家居/电子/美妆/家电/宠物/户外/游戏 3 + 健康 6 + 母婴 4（与 13.1③ 一致）。
+  图片下载 `images3.joy-sourcing.com/product/s820x400_<path>.webp`（母婴用 `s1247x400_`）——**坑：`images2/joybuyimg/` 原始前缀对部分
+  路径返回同一个 fallback 对象（不同路径同字节），必须用尺寸渲染前缀**；链接按真站→域名替换 `www.joyfumi.com`（13.8 全链接原样入库）。
+  入库脚本 `seed_cards.py`（store_upload purpose=channel_page_card + create_card，`--force` 幂等重跑），DB 现存 31 张（9 频道各就位）。
+- **交付 2 链接规则（13.8）**：`content/campaign_services.py::validate_href` 与 `content/channel_banner_services.py::validate_href`
+  统一为 `^(?:https?://|//|www\.|/(?!/))\S*$`（全链接原样保存；javascript: 等仍拒）；`ChannelPageCard.link_url` 与首页轮播
+  HomeBanner 本就存原值不改写。admin 表单说明文案三处已加（活动卡片/频道 banner/品类页卡片："以 http(s):// 或 www. 开头按外链原样跳转，否则视为站内路径"）。
+  验证：admin 实配 `https://www.example.com/x` 与 `/pages/abc` → 接口/公开接口均返回原值（verify_admin.cjs）。
+- **交付 3 模块数据补抓（13.3）**：UK 8 频道 368 个唯一真站 SKU，批次 H 已入库 105 → 缺 263。全程走既有链路：
+  `harvest_uk.py`（`/s?k=<标题>` SSR，parse_search.py 按 skuId 精确匹配，单线程 delay 2.5s，3 次候选词）
+  → **259/263 解析成功**（价格/图/品牌/评分）→ `import_uk.py`（UkProduct payload → joybuy_crawler.ingest →
+  crawler_control.import_services.import_staging_product → 激活 SPU/Offer → rebuild_search_document；GBP/市场 GB，
+  source_category=minihome:<频道 code>）→ 185 直接新建；74 个因「批次 H 已入库但非可售」在导入期冲突
+  （46 商家不一致 + 28 规格/商品绑定冲突）→ `fix_existing.py` 按「已入库直接复用」处置：按 SPU 级/`SkuSourceIdentity`
+  SKU 级身份找到既有 SPU → 补 gallery 图 → 激活 SPU+Offer → 刷搜索文档（63+7 激活，2 本就可售）。
+  媒体下载在导入期整批失败（见下坑②），事后用 `_import_gallery_images` 以 `MEDIA_BACKEND=local` 重跑补齐（182+2+1 张，185/185 有图）。
+  最后重跑 `seed_channel_modules`（**默认 fill，勿加 --no-fill**）：**495 位次，真站商品缺失从 223 → 9，同品类补位从 320 → 12**。
+  统计（`backfill_stats.py` → `stats.json` + `missing_products.json`）：真站 453 唯一 SKU / 产品级可售 448 / 缺 5
+  （3 个真检索 miss：102085953、10474135、10489687 + 2 个真站 payload 里的 `undefined` 占位 id）；户外 67/67、宠物 38/38、
+  家电 79/79、游戏 43/43 全齐。`seed_channel_modules` 新增 SKU 级身份回退（SkuSourceIdentity→spu）+ 楼层内 SPU 去重
+  （两个变体 SKU 解析到同一 SPU 会撞唯一约束 `channel_module_product_unique`）。
+- **⚠️ 环境大坑（影响所有会话，非本批引入）**：①本机 `~/.aws/credentials` 的 key（AKIAUGV5ODE6…）已失效
+  （S3 `InvalidAccessKeyId`），**且 bucket `joybuy-media-fra` 匿名 GET 返回 `AllAccessDisabled`（403）**、生产 IP 从本机不可达
+  ——即 `MEDIA_BACKEND=s3` 时**所有上传 500、旧 S3 媒体本地 302→403 全挂**。本批处置：本机 :8000 改以
+  `MEDIA_BACKEND=local` 重启（写本地 `var/media`，读本地，旧 S3 媒体本地 404——与之前 403 一样不可用，非回归）；
+  31 张卡片图 + 185 张新商品图全部落本地。**待用户修复 AWS key/bucket 策略后，需把本批本地媒体同步到 bucket
+  （重跑 `seed_cards.py`/gallery 重导即可，内容寻址幂等），生产站才能看到这批图。**
+  ⭐ **用户已确认根因与决策（2026-11-20 凌晨）**：亚马逊账户**未付款被暂时封禁**；**决策 = 数据先存本地（MEDIA_BACKEND=local）**，用户恢复账户后会主动通知，届时再把本地增量媒体上传 S3（`aws s3 sync` + 对账）。**在用户通知前：不做任何 AWS/S3 操作、不切回 s3、不重试连接。**
+  ②本机 :8000 / :5173 / :3000 均在跑；重启后端时杀两个 runserver PID（autoreload 有父子两个）。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端：`content.tests`+`catalog.tests.test_standard_categories` **59/59 OK**（无 --keepdb 跑，见下坑⑤）；
+    改动 py `ruff check`+`format --check` 全过。admin-web eslint/prettier 全过。
+  - admin 浏览器实测（临时 staff `cardcheck-j@joybuy.test`（platform_admin，**用完已删**），
+    `verify_admin.cjs` → `admin_verify.json` + 4 截图）：登录→活动卡片页→【品类页卡片展示】tab→9 频道下拉→
+    列表 3 行缩略图 0 破图→UI 上传 canvas 图+填 `https://www.example.com/x` 保存→列表与公开接口原值返回→
+    API 建 `/pages/abc` 卡→公开接口两值都在→清理 10 张测试卡（11/11 PASS，console 0 error）。
+    另 `verify_tabs.cjs`：首页活动卡片/频道页 banner 两 tab 回归通过（banner 下拉仍 10 项=未过滤，属既有口径）。
+  - 接口契约：`GET /api/v1/cms/channel-page-cards?channel=…` 家居 3 张/健康 6 张按序返回、字段四键固定；
+    图片 200 image/webp；未知频道空数组；缺参 400。
+  - 数据：5 个新 SPU 抽查 `/p/<id>` 200 且 PDP API 有 gallery（本地 /media/ URL）+ offer.price；
+    `/api/v1/search?q=Falcon Heritage Electric Bike` 命中新导入；频道模块接口 Pets/Health/Baby 各楼层
+    100% 有价有图（部分楼层标题匹配率<100% 是 PDP 标题 vs 楼层 listing 标题的差异，非补位）。
+    storefront 两个频道页 Playwright 渲染 91/108 张图正常（少数破图=旧 S3-only 媒体本地 404，见坑①）。
+- **坑（不得再踩）**：①AWS/S3 见上（⚠️ 用户需修）；②`MEDIA_BACKEND` 在 `.env`，任何做媒体写入的脚本
+  **必须 `MEDIA_BACKEND=local` 覆盖启动**，否则 store_bytes 走 S3 全 500（本批 185 张图整批失败就是它）；
+  老资产（S3 时代）的行存在但本地无文件，本地模式重下时 `store_bytes` sha256 去重不会补写文件 → 需先写本地文件再
+  `link_asset_to_object`；③真站活动卡片数据在 RSC `uk-pc-image-ads` 的 dataBatch，每个 image-ads 模块会在 RSC 重复出现
+  （去重按卡片 image_path+link 元组）；判断「可见行」要按卡片图在渲染 `<img>` 里的位置（RSC 文本位置≠视觉顺序），
+  且匹配要用图片路径**最后两段**（文件名 hash 不唯一）；④批次 H 从 PDP 导入的商品：SPU 身份=父商品 id、SKU 身份=
+  skuId，用 skuId 找 SPU 必须同时查 `Spu.source_identities` 和 `SkuSourceIdentity`，且这些商品重导会撞
+  商家/规格绑定冲突——**复用激活，不要重建**；⑤`--keepdb` 的既有测试库缺 Market 种子（历史漂移），
+  content 套件要**不带 --keepdb**跑（59/59）；⑥admin 验证脚本里 Node 直接 fetch POST/DELETE 必须带
+  `X-CSRFToken`（取 csrftoken cookie），否则 Django 返回 HTML 403（`.json()` 报 "Unexpected token '<'"）；
+  `joybuy_staff_session` cookie path=/api/v1/，`context.cookies()` 要按 `http://localhost:8000/api/v1/` 取；
+  ⑦真站搜索 SSR 的 4 个 miss 里 `undefined` 是真站 payload 的占位 id，不算风控缺失。
+- **遗留项**：①本批媒体在本地盘，等 AWS 修复后同步 bucket（见坑①）；②真站卡片链接指向
+  `www.joyfumi.com/campaign/active/<id>` 等路径，本站尚无对应落地页（13.8 外链原样跳转口径，落地页属后续需求）；
+  ③13.3 的 3 个真检索 miss 商品未入库（missing_products.json 有清单）；④storefront 卡片渲染与 resolveCmsLink 消费
+  归批次 I（0u），本批只保证契约；⑤批次 I 的 0u 与本批并行执行，两批都对 `content/` 有改动但文件不重叠
+  （0u 未改 backend/content/，已在 0u 节注明）。
+
+## 0u. 批次 I（2026-11-20 频道页视觉改造 + 精选好物，✅ 完成，未 commit）
+
+> 需求文档03 13.1①②④ + 13.4。实测与证据目录：`var/channel_styles_20261119/`
+> （`measurement.md` 实测报告、measure*.json/cjs、cookies.json、verify_channel_styles.{json,cjs}、
+> local_*.png 双语截图）。**全程未 commit；未碰 backend/content/、admin-web/、AppHeader/AppFooter/cart。**
+
+- **实测要点（真站 3 页：家居/健康/户外，登录态 cookie + color-api 打桩，详见 measurement.md）**：
+  二级品类卡两规格——small「140px 图容器 / 名称区 120px ≈ 6 字宽 / 一行 8 张」、
+  big「194px 图容器 / 名称区 174px ≈ 9 字宽 / 一行 6 张」；图片容器 `#F5F6FA`(rgb(245,246,250))
+  只包图、radius 8px，名称在背景**外**：18px/500/lh24 居中、margin-top 12px、**名称盒固定 48px**
+  （2×24 预留，保证列内第 2 张卡纵向 pitch 一致）、max 2 行截断；卡间距 20px。
+  商品楼层卡：194 宽、无边框无阴影、图盒白底 r12、20px 间距、**一行 6 张**；楼层标题
+  28px/700、头块 margin-bottom 24px。健康页模块标题 `Category Navigation` 28px/700、与卡区隔 24px。
+  精选好物（ForYou）真站接口 `guide_recommendation_getSlotList` 登录态 403（风控）→
+  **每批数量无法实测**；i18n 词典证实交互文案 `View more/查看更多`。
+- **交付 1 品类卡改造**：新增 `storefront/utils/channelTiles.js` 频道配置表
+  （rows/perRow/nameChars/maxVisible/hiddenTiles/showTitle，数据驱动，组件零硬编码）；
+  `CategoryTileGrid.vue` 加 `variant="channel"`（背景只包图、名称在外、nameChars→140/194px、
+  48px 名称盒）+ `columns`（2 行频道切成纵向列栈，余量整列横滑）；`CategoryTileCarousel.vue`
+  加 variant/rows/nameChars 透传；行数按 13.1② 表：家居/电子/美妆/家电 2行8个6字、
+  健康 1行8个6字+标题、户外 1行6个9字、宠物 2行6个6字+隐藏 `other-animals`、
+  母婴 2行6个9字、游戏 1行6个9字。首页下拉/结果页条带走 default variant **零变化**。
+- **交付 2 模块卡样式**：`CmsProductPool.vue` 加 `single_row`（单行横滑、6 卡/行 194px、
+  底部圆形箭头+进度条，与 CategoryTileCarousel 同交互）+ `flat`（去外框去 padding），
+  由频道页 payload 传入；首页 CMS 楼层不受影响。
+- **交付 3 精选好物**：新组件 `storefront/components/ChannelPickedForYou.vue`，
+  9 频道页底部（现有模块之后）：SSR 首批 24 件（接口一页=RECOMMENDATION_PAGE_SIZE，
+  与首页为您推荐同口径）→ IntersectionObserver 监听模块底部哨兵**首次自动加载**下一批 →
+  之后出现【View more/查看更多】按钮**点击**加载 → **循环**：请求一律带 `cycle=1`，
+  页号超池后端取模回到第 1 页（响应结构不变，total/total_pages 仍是池子真实大小）。
+  卡片与楼层同款无边框，6 列网格，加载态 spinner。后端 `catalog/search_services.py::
+  recommendation_documents` 加 `category`（子树过滤，与 search_documents 同口径）+
+  `cycle`（取模循环）；`search_views.py::recommendations` 解析 `category=<slug>`
+  （未知 slug → 404 CATEGORY_NOT_FOUND）与 `cycle=1`。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端：`ruff check` 3 个改动文件全过（`ruff format --check` 有 2 处**批次 C 遗留**的
+    历史格式差（search_services.py L79/L364，不在本次 diff 内，未动）；`manage.py test
+    catalog.tests.test_search --keepdb --noinput --parallel 1` → **20/20 OK**
+    （RecommendationTests 5→8：新增子树过滤/cycle 循环/端点参数 3 例）。
+  - 前端：eslint 0 error、prettier 全过（`locales/messages.js` 因整文件 CRLF **历史上**就不满足
+    prettier，仅精确锚点插入 4 组 i18n 键（channel.categoriesNav / reco.pickedForYou /
+    reco.viewMore / reco.loading，EN+ZH），未整文件重写）；vitest 全套 **103/103**
+    （新增 ChannelPickedForYou.test.js 4 例 + CategoryTileGrid 3 例频道 variant +
+    minihome-channel-page 3 例：variant 透传/健康标题/宠物隐藏卡）。
+  - Playwright（`verify_channel_styles.cjs` → `verify_channel_styles.json`，1440×1000，EN/ZH）：
+    9 频道全部 200；家居 2 行(22 卡 11 列)、健康 1 行 9 卡+【Category Navigation/分类导航】、
+    户外 1 行 5 卡 194px；名称区 18px/500/24px/居中/背景外、图块 rgb(245,246,250) r8、间距 20px；
+    楼层单行横滑 6 卡/行、卡 border none；宠物页 12 卡且无 other-animals、**分类树 API 仍 13 子类**
+    （下拉不受影响）；精选好物四步：24 →(滚动自动)→ 48 →(按钮出现)→ 点击 72；
+    `?category=home-living&page=99&cycle=1` → page=9（10 页池循环，backend 直证）；
+    console 0 非 404 error。
+- **环境/数据发现（⚠️ 非本批引入，跨批次问题）**：
+  1. **本机媒体 404**：`MEDIA_ROOT=var/media` 本地缺 12,993/114,915 个 DOWNLOADED 资产
+     （0i 迁 S3 后本地盘不全）。首页/楼层/ForYou 里约 11% 图 404（浏览器 console 计 404，
+     **非 JS error**）。批次 H 楼层商品图同样受影响（家居 7 个 404 中 6 个是楼层商品）。
+  2. **:8000 进程**：2026-11-20 0:06 并行批次（bcad1190 会话）以 `MEDIA_BACKEND=local`
+     显式重启了 :8000（`netstat`/命令行取证）；root `.env` 是 s3，但 s3 302 的匿名桶 URL
+     现测 **403**（桶不再匿名可读）→ 当前 local 模式反而是能出图的可用状态。**动 :8000 前
+     先读本条**；恢复 s3 需先解决桶匿名读策略。
+  3. ForYou 每批数量真站 403 无法实测 → 取接口一页 24（measurement.md §5 偏差 4）。
+- **遗留项**：①媒体缺失/S3 桶匿名读策略（跨批次，需数据侧决策）；②`messages.js` CRLF 历史
+  格式（prettier 全绿需另起格式化任务，避免与批次 M/N 冲突）；③户外真站 h1 `Sports & outdoor`
+  未改（0t 遗留）；④真站品类卡 Swiper 是悬浮半透明箭头，本批按任务口径沿用底部箭头+进度条
+  （measurement.md §5 偏差 5）。
+- **验收修复（2026-11-20，验收 9/12，`var/acceptance_ij_20261119/`，脚本在 `var/channel_styles_20261119/`）**：
+  - **FAIL-A（为您推荐/精选好物点击 40%，已修）根因**：池子只信
+    `ProductSearchDocument.is_searchable=True`，而它是 `rebuild_search_document` 写入的
+    **快照**——并发爬虫导入（批次 J 补抓正在跑，36h 内新建 1,656 SPU/其中 1,534 仍是 DRAFT）
+    期间 SPU 状态/Offer 活性与快照脱节，池子混进 PDP 已 404 的商品。修复：
+    `recommendation_documents` 池子构建改为实时校验——`spu__status=ACTIVE` +
+    `Exists(ACTIVE Offer for market)`，文档快照只作初筛；新增回归用例
+    `test_recommendations_pool_excludes_stale_searchable_docs`（SPU 置回 DRAFT/Offer 撤下但
+    文档仍 searchable → 必须被排除，恢复后重新可见）。
+    **自验**：为您推荐 10 页 EN 239 unique/ZH 240 unique 全部 PDP 200（0 non-200）；
+    家居精选好物 24/24 EN+ZH 200；**9 频道精选好物首批 24×9×2 全 200（OVERALL_BAD=0）**；
+    ForYou 页面交互抽查 24→48→按钮，console 0 非 404 error。
+    脚本：`check_pdp_404.py`/`verify_fail_a.py`/`verify_fail_a_channels.py`。
+    ⚠️ 注意：`--keepdb` 测试库曾因并行批次测试缺 `get_import_fallback_merchant` 的系统商家
+    fixture 而 9/9 报错（非本批代码问题）；**不带 --keepdb 重建后 21/21 OK**，keepdb 复跑也 OK。
+  - **FAIL-B（ZH 品类区图片丢失回归，判非复现）**：品类 tiles 图片来源是
+    `assets/category-images.js` 静态本地清单（204/204 文件在盘），**完全不经过 locale 数据**，
+    与楼层同一策略、无按 locale 的第二份数据。实测 SSR HTML 两 locale 各 22 img；
+    水化后家居/健康/户外 × EN/ZH img=tiles（22/22、9/9、5/5）、0 破图、0 图片 404
+    （`repro_b.cjs`/`repro_b2.cjs` 证据）。验收报告的「9 卡 4 img vs 13/13」在当前代码任何
+    状态下都无法构造（家居 tiles 恒为 22），疑似验收时 dev server 处于 HMR 中间态或计数口径
+    （未滚动时懒加载 img 的 naturalWidth 计数，视口相关而非 locale 相关）。如复现请先确认
+    dev server 已重启至 0u 最终态再测。
+  - **数据问题（按主会话口径，不在本批处理）**：本地缺媒体文件为主会话单独处理，
+    本批不动 :8000 的 MEDIA_BACKEND。
+
+## 0s. 总记录（2026-11-19，需求文档03 v1.4 第二轮 4 项：批次 E–H 开发 + 独立验收 + 修复复验，✅ 全部收口，未 commit）
+
+- **任务链**：用户第二轮 4 项需求（页脚返工 / 申请店铺入口 / 购物车多商家 / 品类对照+频道页模块）→ 并入 `功能需求迭代文档03.md` **v1.4 第十二节**（12.1–12.5）→ 4 个开发子 Agent 滚动执行 → 2 轮独立验收（E+F、G+H）→ 3 条问题原地修复 → 复验通过。
+- **批次 E ✅**（详见 `## 0n.`）：页脚按真站**全量结构**重写（顶行三框 + 订阅/App 块 + 三列 + We support 支付行 + © 行 + 法规段），新建 `layouts/footer-page.vue`（无品类导航简洁顶栏）+ `pages/pages/`（contact-us / about-us / joybuy-news / joyplus / 三个政策页），联系我们页双 tab（Contact us / Partner with Joybuy），关于我们按 `promo/welcome` 1:1；删除 5 个真站无对应页。验收 **10/10**。
+- **批次 F ✅**（详见 `## 0o.`）：右上角【配送至】→【申请店铺】，头像菜单入口移除；状态并入 `GET /api/v1/auth/buyer/session`（`merchant_application_status`+`merchant_id`），SSR 首屏无闪变；五态 24/24。验收 **10/10**。
+- **批次 G ✅**（详见 `## 0q.`）：`serialize_cart` 每 item 增量 `merchant{}`（offer→merchant，select_related），前端按商家分组白卡 + 组/顶全选与半选联动，单商家隐藏顶行不回归；契约零改动；单测 9/9、E2E 37/37。验收通过。
+- **批次 H ✅/⚠️**（详见 `## 0r.`）：①改名改**数据源**（LocalCategory name/en/zh + seed 常量重跑），顶栏/下拉/面包屑/频道 h1 同步；②新增 `NAV_HIDDEN_ROOT_SLUGS` + `visible_in_nav`，隐藏计算机与配件、服装与配饰（直链仍 200）；③比利时站当时判定不可达（`joybuy.be` 无 DNS，且频道 code 用错）→ 回退英国站（**2026-11-19 已由 `## 0t.` 推翻并换成真实比利时频道数据**）；④9 频道 29 层模块，实测 408 商品 → 新建 61 SPU/64 Offer + 复用 50，320 位次用同品类真实可售商品补足。验收 12/13 → 修复 → **复验 2/2、47/47**。
+- **本轮主会话修的 3 处（重要）**：
+  1. **法律风险**：批次 E 把真站 FCA 监管声明与 Jingdong Retail 系列实体/公司号搬进页脚与政策正文 → 已全部替换为 `Joyfumi ... (demo)` / `(demo entity)` / `the relevant supervisory authority` / demo phone（脚本 `var/fix_legal_identity_20261119/replace.py` 可复跑，残留 grep 全 0）。**这是对"一模一样"的有意偏离，不得回退。**
+  2. `layouts/footer-page.vue` 登录态头像链到 `/minihome`（404）→ 改 `/account`。
+  3. 首页【畅销榜单】tabs 仍含两个隐藏品类 → `HomeBestsellers.vue` 按 `visible_in_nav` 过滤（现 9 个 tab，EN/ZH 一致）。
+- **修复的两条真 bug（验收发现）**：
+  - **中文频道页全部无图**：频道楼层按请求 locale 取搜索文档 → zh-CN 的 `image_path` 全空。修法：商品文档统一取市场默认 locale（en-GB）+ 图片改查 `MediaUsage(role=gallery)`，locale 只影响楼层标题。**不要**再往"本地化搜索文档"方向修（该实验已回退）。
+  - **首页品类发现 tiles 用旧口径**：`campaign_payload('discovery')` 按 `NAV_HIDDEN_ROOT_SLUGS` 过滤 + label 覆盖 LocalCategory 现名，新增幂等命令 `sync_home_discovery_categories`。
+- **遗留（需用户决策/后续任务）**：①~~比利时户外数据缺口（现用英国站）~~ → **已解决，见 `## 0t.`（真实 joybuy.nl 频道数据）**；②408 个真站商品仅 111 个真实入库，297 个被风控挡住，320 个位次为同品类补位（非真站同款）；③管理端频道模块**只有 API 无 admin-web 配置页**；④导入商品仅主图；⑤健康保健后 3 层池偏薄；⑥应用商店徽章自绘 SVG、语言框点击切换（非真站 modal）；⑦JoyPlus 商品用本站池 95 折模拟；⑧CSS 注释残留 `joybuy.co.uk`（不影响渲染）。
+- **证据目录**：`var/footer_rework_20261119/`、`var/header_apply_entry_20261119/`、`var/cart_merchant_group_20261119/`、`var/category_align_20261119/`、`var/acceptance_ef_20261119/`、`var/acceptance_gh_20261119/`、`var/fix_legal_identity_20261119/`。
+- **验证口径**：全轮只做针对性验证（各批次 eslint/prettier/vitest/ruff + 相关后端测试 + 浏览器双语实测），未跑全量套件。
+
+## 0t. 比利时户外频道真实数据补齐（2026-11-19，✅ 完成，未 commit）
+
+> 用户提供真实地址 `https://www.joybuy.nl/minihome/mini-hp-nl-sports-outdoor`（域名 joybuy.nl，
+> channel code `mini-hp-nl-sports-outdoor`），推翻 `## 0r.` 的「比利时不可达」结论。
+> 证据目录：`var/be_sports_20261119/`（原始 HTML、floor JSON、商品数据、导入日志、验证 JSON + 截图）。
+
+- **可达性（关键更正）**：直接用 `crawler/debug_session.py` 的 **joybuy.co.uk 会话 cookie** 请求
+  `https://www.joybuy.nl/minihome/mini-hp-nl-sports-outdoor` → **HTTP 200**，~0.95–1.1MB 完整 SSR
+  （`product-pc-floor` ×4 + CMS `floors[].dataBatch.productPool`）。上一轮失败的根因是**频道 code
+  用错**（`NL-Mini-HP-Outdoor-Sports` 是空壳），不是站点不可达。同 cookie 对 `.nl` 通用。
+- **抓到的频道结构（EN/ZH 各一版 SSR）**：4 个楼层、顺序固定：
+  `Bestsellers/热销好物` 11、`Gifting/礼品精选` 20、`New Arrivals/新品上市` 20、
+  `Final Pieces — Don’t Miss Out/最后几件 — 别错过` 20 → **71 个位次 / 67 个唯一 SKU**（EUR）。
+  真站页内 schema.org `ItemList` 是**占位**（`/dp/undefined`、无价无图），真实数据只存在于
+  Next.js RSC 的 `floors[].moduleInstances[].dataBatch.productPool`（title + skuId + skuName +
+  imageUrl），解析脚本 `var/be_sports_20261119/extract_floors.py`。
+- **价格/图片的取数路径（PDP 仍被风控）**：`/dp/<sku>` 对 `.nl` 与 `.co.uk` 均 307 →
+  `/user/risk/pic?...redirectReason=risk605_pic`（PDP 依旧不可达）。改用**同站 SSR 搜索页**
+  `/s?k=<标题>`：RSC 里有 `itemCompleteView`（`itemCommonView.skuId`、`itemTitleView.title`、
+  `itemImageView.imageUrl`、`itemPriceView.priceInfo.mainPrice/crossOffPrice`），按**精确 skuId**
+  匹配 → **67/67 全部命中**（66 个首查命中，1 个换短词命中）。脚本 `harvest.py` + `parse_search.py`，
+  结果 `products_resolved.json`。注意：cookie 里的收货地址是英国 EC1A，所有搜索结果的
+  `inStock` 都是 false（**库存未知，不是比利时地址实测**），价格与图不受影响。
+- **商品入库（既有链路，幂等）**：先查库 —— 78 个 SKU（EN 67）**0 个已存在**（`overlap.json`）。
+  新建数据源 `joybuy_nl`（`SourceCatalog` "Joybuy NL"）+ `SourceCategory
+  minihome:mini-hp-nl-sports-outdoor` → 映射 `outdoor-sports`；用
+  `joybuy_crawler.ingest.ingest_product_payload` → `crawler_control.import_services.
+  import_staging_product` → 激活 SPU/Offer → 每个商品 `rebuild_search_document`（历史坑）。
+  **新建 67 SPU / 67 ACTIVE Offer（0 失败、0 复用）**，每商品 1 张主图（s1248 → 本地媒体库/S3）。
+  4 个商品首轮媒体下载失败（`no-gallery`），已用 `_import_gallery_images` 重下修好 →
+  **67/67 有 gallery 图**。市场口径：`market=GB` + `currency=EUR`（购物端默认市场是 GB；
+  站点价格全站按 `formatDisplayPrice` 显示 `$`，含既有的 GBP 商品，本轮不改这个全局口径）。
+- **频道模块配置**：新增 fixture `backend/content/fixtures/channel_modules_nl_outdoor_20261119.json`
+  （4 层真实标题 + 真实 SKU 清单）；`seed_channel_modules` 改为**按频道 source_system 解析商品**
+  （UK 8 频道 `joybuy_uk`、户外 `joybuy_nl`），`OUTDOOR_CODE` 改为
+  **`mini-hp-nl-sports-outdoor`**，并清理旧 code `NL-Mini-HP-Outdoor-Sports` 的 2 条楼层 +
+  1 条 SourceCategory/映射（受 PROTECT 引用时只断映射）。UK fixture 里的户外回退条目已删除。
+  运行 `manage.py seed_channel_modules`（默认补足）：户外 **71/71 位次全部为真实比利时商品
+  （0 补位）**；其余 8 频道按原补足逻辑重算，**楼层数与批次 H 完全一致**（未被本轮改动影响）。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 接口：`GET /api/v1/channels/mini-hp-nl-sports-outdoor/modules` EN/ZH → 4 楼层标题正确、
+    71 个商品 **100% 有价（EUR）有图**、`href=/c/outdoor-sports`；`/api/v1/categories` 中
+    `outdoor-sports.channel_code=mini-hp-nl-sports-outdoor`、`visible_in_nav=true`；
+    首页头部链接已指向新 code；`/api/v1/search?q=ION8` total=10 且命中新导入 EUR 商品。
+    抽查 `UK-Mini-HP-Beauty` 仍 20/20/3。
+  - 前端（Playwright 1440×1000，`verify_outdoor.cjs` → `verify_outdoor.json`）：EN/ZH 均 200；
+    4 楼层唯一卡片数 **11/20/20/20**、`<img>` 与卡片一一对应、**破图 0**、`pendingImages=0`、
+    每卡都有价格、【更多】全 `/c/outdoor-sports`、console **0 error**；截图
+    `local_nl_outdoor_en.png` / `local_nl_outdoor_zh.png`。中文页商品标题为英文（与全站口径一致，
+    库里只有 en-GB 搜索文档）。
+  - 后端单测：`content.tests.test_channel_modules` **6/6 OK**、`catalog.tests.test_standard_categories`
+    **9/9 OK**；改动 py 文件 `ruff check` + `ruff format --check` 全过。前端本轮无代码改动。
+- **踩坑（不得再踩）**：①真实 channel code 是 **`mini-hp-nl-sports-outdoor`**（`NL-Mini-HP-Outdoor-Sports`
+  是错的/空壳），判断"频道不可达"前先确认 code；②频道页 ld+json `ItemList` 是占位，数据在 RSC
+  `dataBatch.productPool`；③PDP 仍被 `risk605_pic` 挡，价格/图改从 `/s?k=` SSR 结果取（按 skuId 精确匹配）；
+  ④搜索结果的 `inStock` 受 cookie 里英国地址影响，别当成比利时库存；⑤`seed_channel_modules --no-fill`
+  会删掉 UK 楼层的补足位（本轮误跑过一次，已用默认 fill 复跑恢复；**全量重跑不要加 `--no-fill`**）；
+  ⑥`SourceCategory` 新建必须给 `first_seen_at/last_seen_at`，否则 IntegrityError。
+- **遗留项**：①真站频道 h1 是 `Sports & outdoor`，本站一级名仍是 `Outdoor & Sports`（未改，避免
+  影响顶部导航/首页 tile/测试）；②价格全站仍显示 `$`（`formatDisplayPrice` 硬编码 USD，既有口径）；
+  ③库存状态未按比利时地址验证；④旧 code 深链 `/minihome/NL-Mini-HP-Outdoor-Sports` 已无配置
+  （页面降级为空楼层）；⑤商品仅主图，无详情/画廊/规格。
+
+## 0r. 批次 H（2026-11-19 品类对照 + 频道页模块化，⚠️ 商品导入被真站风控阻断，未 commit）
+
+> 编号说明：任务口径原写 `0q`，但批次 G 已先占用 `0q`，按「编号唯一」改用 `0r`。
+
+- **任务**：①顶部 9 个一级品类改 Joybuy 口径（zh 指定 + en 按真站）；②顶部/下拉隐藏
+  `计算机与配件`、`服装与配饰`（直链与商品保留）；③【户外运动】对照比利时站；
+  ④频道页模块化：9 个品类各展示真站特有商品楼层 + 商品入库 + 【更多】落
+  `/c/<一级 slug>`。**全程未 commit；未碰 cart/footer/auth 文件。**
+- **Step 1 改名（数据源，非 i18n）**：名称来自 `catalog.LocalCategory.name/name_en/name_zh`
+  → `catalog/search_views.py::category_tree` → 顶部行/下拉/面包屑/频道 h1 同一来源。
+  改 `backend/catalog/management/commands/seed_standard_categories.py` 的
+  `STANDARD_CATEGORIES` 常量并重跑命令（幂等 upsert），DB 即刻生效：
+  `small-home-appliances`→`Home Appliances/家用电器`、`beauty-personal-care`→`Beauty/美妆`、
+  `health-wellness`→`Health & Wellness/健康保健`、`baby-toddler`→`Toys, Baby and Kids/母婴童玩`、
+  `pet-supplies`→`Pets/宠物`、`games-accessories`→`Gaming/游戏`；另 3 个不变。
+  en 名依据真站频道页 `<h1>`（2026-11-11 存档 + 2026-11-19 登录态实测，截图
+  `var/category_align_20261119/real_*`）。**未动 slug/树结构/channel_code/204 个二级。**
+- **Step 2 隐藏（后端标志，前端不硬编码）**：`catalog/search_views.py` 新增常量
+  `NAV_HIDDEN_ROOT_SLUGS = {computers-accessories, clothing-accessories}`，`category_tree`
+  每行加 `visible_in_nav`；`AppHeader.vue` 用 `navCategories` 过滤顶部行并传下拉面板，
+  其余消费方（面包屑/PDP/筛选）仍见 11 个一级。验证：顶部 9、下拉 9；
+  `/c/computers-accessories` 200（24 卡）、`/c/clothing-accessories` 200（3 卡）、
+  `/minihome/uk-minihp-clothing-footwear-acc-` 200（6 卡），EN/ZH 全过。
+- **Step 3 比利时站结论：不可达 → 回退英国站（⚠️ 已作废，见 `## 0t.`）**：
+  > 2026-11-19 后续任务拿到真实 URL 后确认：站点可达（HTTP 200），上轮失败是**频道 code 用错**
+  > （`NL-Mini-HP-Outdoor-Sports` 空壳）+ 该次探测被 WAAP。现户外频道已换成
+  > `mini-hp-nl-sports-outdoor` 的真实 4 层/67 商品。以下为本轮当时的历史记录（勿再据此回退）。
+  ①`joybuy.be` DNS 不存在（NXDOMAIN）；②`joybuy.com/country-selection` 给出的比利时
+  唯一官方入口是 `https://www.joybuy.nl?lang=en_GB&country=BE`；③`NL-Mini-HP-Outdoor-Sports`
+  频道 code 真实存在（canonical/Next 壳确认），但频道内容由 color-api 客户端拉取；
+  ④匿名/会话/consent 四种 cookie 组合都被 WAAP 风控挡成
+  `Temporary service interruption` / `Oops! Network error`，`ijdst.joybuy.nl/jdst/waap/refresh`
+  `net::ERR_ABORTED`，拿不到任何模块/商品；⑤英国站本身没有 Outdoor 频道（导航无此项，
+  `UK-Mini-HP-Outdoor*`/`Sports*` 候选 code 全是 ~512KB 空壳）。回退：用英国站搜索
+  `?k=outdoor`/`?k=fitness` 的真实商品组两个楼层，标题沿用真实二级名
+  `Outdoors/户外`、`Sports & Leisure/体育与休闲`。**未伪造频道模块**。详见
+  `var/category_align_20261119/measurement.md` §3。
+- **Step 4 频道页模块化（已落地）**：
+  - 实测：登录态抓 8 个英国频道页 SSR，解析 schema.org `ItemList` 得到模块名/商品/价/图
+    （zh+en 各一份，`uk_*.modules.json`）；合并为 `modules_all.json`、默认配置
+    fixture `backend/content/fixtures/channel_modules_uk_20261119.json`。9 频道 29 个楼层。
+  - 后端：新增 `content.ChannelModule` + `ChannelModuleProduct`（迁移 `0010`，权限种子
+    `0011`：`cms.channel_modules.manage/view`）；服务 `content/channel_module_services.py`；
+    公开接口 `GET /api/v1/channels/<code>/modules`（与 `/search` item 同构，`href=/c/<slug>`）；
+    管理端 `GET/PUT /api/v1/admin/channel-modules[/<uuid>]`（RBAC+审计，改标题/排序/开关/
+    商品清单）；幂等命令 `manage.py seed_channel_modules`（默认配置落库，`--no-fill` 可关补足）。
+    另：为 `outdoor-sports` 建 `minihome:NL-Mini-HP-Outdoor-Sports` 的 SourceCategory+
+    CategoryMapping（比利时站真实 code；否则该一级没有频道页入口），顶部户外现在跳
+    `/minihome/NL-Mini-HP-Outdoor-Sports`。
+  - 前端：新增 `composables/useChannelModules.js`（带 market/locale query + 静态 key）；
+    `pages/minihome/[code].vue` 用配置楼层替换原两个通用楼层（无配置时回退旧逻辑）；
+    `CmsProductPool` 支持 `more_label` 与 5 列（默认 4 不变）；i18n `channel.more`=More/更多。
+    【更多】→ `/c/<一级 slug>`。
+  - 模块清单（zh / en，商品数=实际配置）：家居生活 圣诞特惠低至6折 20；电子产品 新品速递 20；
+    美妆 爆品热销 20、新品上线 20、国货美妆 3；家用电器 黑五狂欢提前开启 12、寒冬来袭 13、
+    大家电 20、电动出行上新 15、库存有限卖完即止 20；健康保健 新品首发 20、电动出行上新 15、
+    超值组合购 4、Joybuy必抢榜 16、热销爆款 20、基础维矿 20、运动健身 14、家庭常备 3（真站 10）、
+    运动服装和背包 1（真站 17）、智动科技 4（真站 7）；宠物 热门好价 20、大包装更划算 20；
+    母婴童玩 新品速递 19、多买多省 9；游戏 新品上架 20、促销专区 14、经典回归 16；
+    户外（回退）体育与休闲 20、户外 20。健康后 3 层因同品类可售池不足（101 件/145 需求）
+    未补满，已留短。
+- **商品入库（既有链路，幂等）**：408 个唯一真站商品 id；**新建 61 个 SPU + 64 个 ACTIVE
+  Offer**、**复用 50 个库内可售 SPU**（其中 22 条脚本显式复核并重建搜索文档），共 111 个真站商品可售且有图；
+  另 74 个库内已有但 DRAFT/无 ACTIVE Offer/无图、223 个库内不存在。29 层目标
+  464 位，实配 438 位（健康后 3 层池不足），其中真站商品 118 位/111 个唯一；
+  320 位用「同品类子树真实可售+有图」商品补足（`seed_channel_modules` 默认，`--no-fill`
+  关闭；**补足位不是真站同款，已列为遗留**）。每个商品导入后都执行
+  `rebuild_search_document`（历史坑），实测 `/api/v1/search?q=Fino Premium Touch Shampoo`
+  total=2 且带本地媒体图；`category=beauty-personal-care` total=855。媒体按现状
+  `MEDIA_BACKEND=s3`；418 个唯一模块图片 URL 逐条实测 302→S3→200，0 失败。
+- **⚠️ 真站风控（重要）**：单线程 ~60 件正常；改 8 并发 0.2s 后 PDP 被重定向到
+  `www.joybuy.co.uk/user/risk/pic?...redirectReason=risk605_pic`（title `Joybuy Risk Control`），
+  解析缺 `source_id` 连续失败。立即停掉全部导入进程，未再消耗会话。**剩余 223+74 件
+  未入库是风控阻断，不是脚本错误**；`import_products.py` 幂等，恢复后可续跑。
+- **改动文件**：后端 `content/models.py`、`content/channel_module_services.py`（新）、
+  `content/views.py`、`content/migrations/0010_channel_module.py`、`0011_seed_channel_module_permissions.py`、
+  `content/management/commands/seed_channel_modules.py`、`content/fixtures/channel_modules_uk_20261119.json`、
+  `content/tests/test_channel_modules.py`、`merchant_ops/views_channel_modules.py`（新）、
+  `merchant_ops/urls.py`、`config/urls.py`、`catalog/search_views.py`、
+  `catalog/management/commands/seed_standard_categories.py`、`catalog/tests/test_standard_categories.py`；
+  前端 `composables/useChannelModules.js`（新）、`pages/minihome/[code].vue`、
+  `components/cms/CmsProductPool.vue`、`components/AppHeader.vue`、`locales/messages.js`、
+  `tests/minihome-channel-page.test.js`。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端 `manage.py test content.tests.test_channel_modules catalog.tests.test_standard_categories
+    --keepdb --noinput --parallel 1` → **14/14 OK**；改动 py 文件 ruff check/format 全过。
+  - 前端 eslint 0 error、prettier --check 全过；vitest `minihome-channel-page`(7)+
+    `AppHeader`(13) → **20/20**。
+  - Playwright 1440×900（`var/category_align_20261119/verify_channels.cjs` →
+    `verify_channels.json` + `local_<slug>_<lang>.png` ×18）：9 频道 × EN/ZH 全 200；
+    29 楼层标题与真站实测逐项一致；每层卡片数=配置数、价格 100% 有、链接全 `/p/`；
+    【更多】全 `/c/<slug>`；顶部/下拉 9；两个隐藏品类直链 EN/ZH 全 200 有商品；
+    Beauty 首件 PDP 200 且价格可见；console 0 error。图片懒加载初次断言个别
+    `naturalWidth=0`，延长等待后 0 破图，且 418 个 URL 直连全部 200。
+  - 管理端接口实测（临时 staff，已删净）：`GET /api/v1/admin/channel-modules?channel_code=...`
+    200、`PUT .../<uuid>` 200（标题/排序/清单往返一致）。
+- **坑（不得再踩）**：①临时 source_identities 的 `source_system` 必须用 **`joybuy_uk`**
+  （不是 `joybuy`），否则 `_resolve_local_category` 找不到 SourceCategory → SPU 无本地类目；
+  ②活动商品（如圣诞装饰命中「节日与活动」）导入后 `local_category` 为 None 是**设计如此**，
+  不是 bug；③`LocalCategory.path` 形如 `/2/`、`/1/10/`（按主键，不是 slug），按子树查商品
+  要用 `parent_id=root.pk`（树只有 depth 0/1）；④8 并发抓 PDP 会触发真站风控
+  （`risk605_pic`），批量抓取保持低并发+长间隔；⑤SSR 楼层标题要带 market/locale 查询参数，
+  否则 `resolve_market_context` 只看到默认 en-GB，中文页会显示英文楼层名（`useChannelModules`
+  已按 `useMarketLocale().apiQuery` 拼 query 并进 key）；⑥本机 :8000 常出现两个 runserver
+  监听（重启时两个 PID 都要杀）；⑦Playwright 全页截图/懒加载图片要分步滚动 + 2.5s 以上等待。
+- **遗留项**：①风控导致 223 个不存在 + 74 个不可售的真站商品未入库，补足位 320 个
+  非同款；恢复会话后重跑 `import_products.py` + `seed_channel_modules` 即可替换；
+  ②比利时站不可达（WAAP），户外用英国站搜索数据，频道 code/楼层名非真站频道页；
+  ③健康保健后 3 层可售池不足未补满；④管理端仅提供 API，未做 admin-web 配置页面；
+  ⑤频道楼层图片只导主图（每商品 1 张），PDP 画廊不完整。
+- **验收修复（2026-11-19，`var/acceptance_gh_20261119/acceptance-report.md` FAIL ① + 观察项 ②）**：
+  - **FAIL ①（ZH 频道楼层全无图）根因**：`content/channel_module_services.py::public_modules`
+    用**请求 locale** 查 `ProductSearchDocument`；库里只有 en-GB 文档，zh-CN 查不到 →
+    走 fallback 且 `image_path` 仍取同 locale 文档集合 → 438/438 空，前端只渲染灰骨架。
+    修复：商品文档统一取 `market.default_locale`（GB=en-GB），图片改走新增的
+    `_gallery_paths(spu_ids)`（直接查 `MediaUsage` role=gallery，与 locale 无关）；
+    请求 locale 只用于响应元信息与楼层标题（`language_code`）。不再往 zh-CN 搜索文档方向修。
+    自验：zh-CN 接口 9 频道 438 位 `image_path` 空值 **0**（en-GB 同样 0）；
+    `/minihome/UK-Mini-HP-Beauty` ZH 页 **43 卡 / 43 `<img>` / 0 broken**，EN **43/43/0**
+    （等 `img.complete` 全真后截图）；418 个唯一图片 URL 全部 302→S3→200。
+    证据：`var/category_align_20261119/verify_fix.json`、`fix_channel_beauty_{en,zh}.png`。
+  - **观察项 ②（首页品类发现 tiles 旧名 + 隐藏品类）修复**：tiles 数据来自
+    `HomeCampaignCard(section=discovery)`（load_joybuy_demo fixture）。`campaign_payload('discovery')`
+    现按 href 解析一级 slug：命中后端 `NAV_HIDDEN_ROOT_SLUGS` 的卡片**只过滤不删数据**，
+    并把 label/label_zh 覆盖为 `LocalCategory.name_en/name_zh`（与顶部同源，无前端硬编码）。
+    新增幂等命令 `manage.py sync_home_discovery_categories`（4 created / 4 updated，隐藏卡保留在库），
+    把 9 个可见一级按导航顺序补齐 tiles（缺卡的用第一个有本地图的二级图
+    `/images/categories/<child>.webp`，真实本地资源）。自验：首页 EN/ZH tiles 均 9 项，
+    EN=Home & Living/Electronics/Beauty/Home Appliances/Health & Wellness/Outdoor & Sports/Pets/
+    Toys, Baby and Kids/Gaming；ZH=家居生活/电子产品/美妆/家用电器/健康保健/户外运动/宠物/母婴童玩/游戏；
+    「小家电」「服装与配饰（以及配饰）」均 0 命中；截图 `fix_home_tiles_{en,zh}.png`。
+  - **修复后针对性验证**：后端 `content.tests.test_channel_modules`（+1 locale 独立性用例）
+    + `content.tests.test_campaign_cards`（+1 隐藏过滤/改名用例）+ `catalog.tests.test_standard_categories`
+    → **33/33 OK**；ruff check/format 全过；eslint 0 error、prettier 全过、vitest **20/20**。
+    新增陷阱：图片首次截图偶发 `naturalWidth=0` 是懒加载 + S3 大图（单个 680KB）时序，
+    自验脚本应 `waitForFunction(img.complete)` 后再断言，不能据此判定无图。
+
+## 0q. 批次 G（2026-11-19 购物车多商家分组，✅ 完成，未 commit）
+
+> 编号说明：任务书要求 `0p`，但并行批次 E 已占用 `0p`，按「编号唯一不删旧」改用 `0q`。
+
+- **任务**：`功能需求迭代文档03.md` 12.3——购物车按商家分组渲染白卡（商家头像 + 店名 + 组内全选），组内勾选与顶部全选联动；后端增量加商家字段不破坏契约；单商家观感与批次 D 单卡一致（不回归）；双语。
+- **后端字段口径（增量契约，改动文件 `backend/cart/services.py` + `backend/cart/tests/test_cart_services.py`）**：
+  - `serialize_cart` 每个 item 新增 `merchant: {merchant_id, merchant_name, merchant_avatar_url}`（来源 `CartItem.offer → Offer.merchant`，查询已加 `select_related("offer__merchant")`，无额外 N+1）。既有字段（public_id/offer_public_id/spu_public_id/title/quantity/price/currency/inventory_display/is_valid/issue）**全部保留**。
+  - 新函数 `merchant_entry(offer)`：`merchant_id = str(Merchant.public_id)`；`merchant_name`：**平台自营导入商家（`IMPORT_FALLBACK_SLUG = joybuy-self-operated-import`）对外统一为 `Joybuy`**，其余透传 `Merchant.display_name`；`merchant_avatar_url = Merchant.avatar_url or ""`。None 安全：merchant 缺失时回退 `{"", "Joybuy", ""}`（防御分支，FK 实为 PROTECT 非空）。
+  - `GET /cart`、`PATCH/DELETE /cart/items/:id` 响应、`checkout_views` 快照、`orders` 的 `cart_snapshot` 共用 `serialize_cart` → 全部自动带上该增量字段，契约其余部分零改动。
+- **前端分组/联动（`storefront/pages/cart/index.vue`）**：
+  - `merchantGroups` computed：按行首次出现顺序分组（key = merchant_id，缺失回退店名）；每组一张白卡：组头 = 组内全选勾选框 + 商家头像（`merchant_avatar_url` 有则显示，24x24 radius 4）+ 店名 + 副行「Sold and fulfilled by {name} / 由 {name} 销售并发货」；组内商品行沿用批次 D 行样式。
+  - 顶部全选行放在标题卡（`cart-head__select-row`，文案 `cart.selectAll`）：**仅当分组数 > 1 时显示**——单商家时只有一卡，组头勾选已覆盖全部，隐藏顶部行以保持批次 D 单卡观感（这是「单商家不回归」的落地口径）。
+  - 联动：顶部全选 = 所有组全选；任一组/行未选 → 顶部 indeterminate；组全选 = 组内所有可售行；组内部分选中 → 组 indeterminate；组内取消一件 → 组选取消（`isGroupAllSelected`/`isGroupIndeterminate`/`toggleGroup` + `topIndeterminate`）。半选态视觉 = 黑底 #1A1A1A + 白色横杠（`:indeterminate` CSS，真站实车不可测，按 JDICheckbox 选中口径延伸）。
+  - 结算栏逻辑不变（已选件数/小计/`去结算`），去结算仍 `navigateTo('/checkout')` 无参数；数量步进/删除沿用批次 D 逻辑（item 按行内 group.items 渲染）。
+  - i18n（`storefront/locales/messages.js`，精确锚点 Edit，未动他人键）：新增 `cart.fulfilledByMerchant`（EN `Sold and fulfilled by {name}` / ZH `由 {name} 销售并发货`）；`t()` 无插值，页面用 `fulfilledText()` 做 `{name}` 替换（避免动 useLocale 公共实现）。`cart.fulfilledBy` 旧键保留（无消费方，单商家渲染文案与它完全一致）。
+- **真站样式来源（`var/cart_merchant_group_20261119/measurement.md`）**：真站实车仍不可测（批次 D 已确认 session 被风控，加购 0 请求）。本轮补查 38 个真站 CSS bundle：`grep -il "merchant|seller|store|shop"` 命中 css_01/02/05/09/15，与商家行相关的只有 `optimized_sellerRow`/`legacy_sellerRow`（PDP「Sold and fulfilled by」行）与 `storeTitleInfoFloor_*`（店铺标题楼层，店名 18px/700、头像与店名 8px 间距）；**购物车模块 css_17 的 cartList_* 内无 merchant/seller 规则**（真站分组卡在懒加载 chunk）。故：白卡 radius 8 / 卡间距 10px / 勾选框 20x20 黑底对勾 / 商品行尺寸全部沿用批次 D 实测与 CSS 原文；组头字号 16px/600、副行 12px #888B94、头像 24x24 radius 4 为同站 token 近似（已在 measurement.md 标注可靠度）。
+- **改动文件（4 个，未 commit）**：`backend/cart/services.py`、`backend/cart/tests/test_cart_services.py`（+2 用例：多商家 payload 三字段/自营映射 Joybuy/既有字段不变；`merchant_entry(None)` 回退）、`storefront/pages/cart/index.vue`、`storefront/locales/messages.js`。未触碰 AppHeader/AppFooter/pages/pages/content/HomeRecommended/p/[id]。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端：`ruff check` + `ruff format --check` 2 文件全过；`manage.py test cart.tests.test_cart_services --keepdb --noinput --parallel 1` → **9/9 OK**（含新增 2 用例；含既有 serialize/merge 回归）。
+  - 前端：eslint `pages/cart/index.vue` 0 error；prettier --check cart/index.vue 通过。**注意**：`prettier --check storefront/locales/messages.js` 仍报 1 处格式问题，位置 `footer.appDesc`（并行批次 E 的新增行，非本批改动）——为免与并行 Agent 冲突**未做整文件 --write**；本批新增的两行键已确认符合 prettier。
+  - vitest：`tests/use-locale.test.js`(3) + `tests/design-tokens.test.js`(4) + `components/AppContainer.test.js`(3) = **10/10 通过**（cart 页无既有单测，本轮未新增组件测试——逻辑由 E2E 覆盖）。
+  - **Playwright 本地实测（`var/cart_merchant_group_20261119/e2e_groups.cjs` → `e2e_groups_result.json`，37/37 PASS，console 0 error）**：API 注册临时买家 → 种 3 商家 5 行 6 件（Joybuy×2 行、HOMCOM×2 行（唯一有头像商家）、LEGO×1 行）。断言：API payload 每 item 带 merchant 三字段且既有字段保留、商家名 `Joybuy/HOMCOM/LEGO`、HOMCOM 带 `/media/...jpg` 头像；EN 3 张分组白卡、顺序按行首出现、仅 HOMCOM 显头像、组内 2/2/1 行、初始全选+计数 (6)、副行文案按商家名替换；取消 HOMCOM 组 → 组内行全不选 + 顶部半选（且实测黑底+横杠 computed style）+ 计数 (3)；取消 LEGO 唯一件 → 组取消非半选、顶部仍半选、计数 (2)；HOMCOM 只勾一件 → 组半选、计数 (4)；顶部全选 → 全组全选 (6)，再点 → 全不选 (0)；数量 +1 → 行小计 $1.48→$2.22、合计 $98.05→$98.79、计数 (7)；ZH：3 组仍在、副行「由 xxx 销售并发货」、顶「全选」、按钮「去结算 (7)」；删除 LEGO 最后一件 → 该组消失（剩 Joybuy/HOMCOM）；去结算 → `/checkout` 且无 query（契约不变）；单商家场景：只 1 张分组卡（Joybuy 2 行、无头像）、**顶部全选行隐藏**、默认全选、计数 (2)。
+  - 截图：`cart_groups_en.png`、`cart_groups_zh.png`、`cart_groups_partial_en.png`（顶部半选态）、`cart_single_merchant_en.png`（单商家不回归）。
+  - **hydration/SSR 快检（`check_hydration.cjs`）**：带 cookie 直取 `/cart` SSR HTML 已含 `cart-card--group` 与「Sold and fulfilled by」；浏览器 hydrate 后 3 张分组卡，console **0 warning / 0 error**（含 0 hydration mismatch）；脚本自建自删 `cart-g-hydra-*` 买家（复核 0 残留）。
+- **测试数据清理（已复核 0 残留）**：`cleanup_batch_g.py` 删除 5 个临时买家 `cart-g-*@joybuy.test`，级联 50 行（BuyerSession 5 / Cart 5 / CartItem 10 / RecentlyViewed 25 / BuyerAccount 5）；按前缀复核买家与购物车均为 0。
+- **环境动作**：后端 :8000 原进程（PID 41384，`runserver --noreload`）已 taskkill 并按同参数重启（新代码生效，日志 `var/cart_merchant_group_20261119/backend.log`）；前端 :3000 未重启。
+- **坑（新）**：①`useLocale().t()` **不支持 `{name}` 插值**（纯查表），需要占位文案时在页面内做字符串替换，不要顺手改 useLocale 公共实现；②顶部全选 **不能在单商家时也渲染**，否则单卡页出现两个全选勾选框，与批次 D 观感回归冲突；③`:checked` 与 `:indeterminate` 是互斥状态，自定义 `appearance:none` 勾选框**必须单独写 `:indeterminate` 样式**，否则半选态在 DOM 里正确、视觉上却是空框（本轮 E2E 首跑截图才发现）；④并行批次 E 在 messages.js 新增了不符合 prettier 的行（`footer.appDesc`），本批只保证自己新增行格式正确，不整文件 --write。
+- **遗留项**：①真站购物车商家分组卡仍无实测（风控 + 懒加载 chunk），组头/头像为同站 token 近似，真站布局可得后可按实测微调；②商家头像当前仅 1 个商家（HOMCOM）有值，其余为空 → 不显示头像占位（符合「有则显示」），如需首字母占位可后续加；③「联系商家」等组内其它真站动作未做（真站实车不可测、需求只要求分组+全选）；④分组卡间距 10px 沿用批次 D 口径，未与真站对照。
+
+## 0p. 批次 E（2026-11-19，需求文档03 12.1 页脚与内容页返工，✅ 完成，未 commit）
+
+- **任务**：批次 A 的页脚被用户判「所有内容都与 Joybuy 不相似，完全不一样」（未逐链接实测、4 页合成内容）。本批**逐个真点击真站页脚链接重抓**，以真站为准重做页脚 + 全部内容页。真站实测产物：`var/footer_rework_20261119/`（`measurement.md` 为唯一权威记录，含逐链接落地页实测、联系我们/关于我们结构、本站逐链接对照表、验证结果；原始 JSON + 截图同目录，脚本 crawl_footer/crawl2-8、local_verify）。
+- **真站页脚实际结构（EN，`footer_jdiFooter`）vs 批次 A 的差异**：真站是「顶行（Joybuy logo + "Don't just buy, Joybuy" + 语言/货币/国家三框）→ 订阅块（Be the first to know / Enter your email / Subscribe）+ App 块（Download Joybuy App / 二维码 / App Store + Google Play）→ 三列（Get to know us：Contact us / About us / Joybuy news / JoyPlus；Our policies：Cookies Policy / Privacy policy / Terms and Conditions；Let us help you：**空列**）→ We support 支付行 → © 2026 Joybuy. All Rights Reserved + Personalised settings + Manage cookies」。批次 A 只有 3 列 10 链接 + We support 文字 + 声明，缺顶行/订阅/App 块，且列内塞了真站没有的 accessibility/DSA/payment/returns 链接。现 `AppFooter.vue` 已按上述全量重写（配色用真站 CSS 原文 #F5F6FA/#1A1A1A/#505259/#6E7078、容器 1512px）。
+- **两个特殊页实测要点**：①**联系我们** 真站页脚链到 `/discover/contact-us` 是**空态**（"There's nothing more"），有内容的是 `/discover/contact-us-for-web`——顶部**无品类导航**、左侧白卡双 tab（Contact us / Partner with Joybuy，active 红字）、右侧白卡内容：Tab1 = 标题 + 一句 lead + Email/Live Chat/Callback Service 三段；Tab2 = 标题 + Welcome + Enroll as a Vendor / Enroll as a Seller 两段（各带 "Please click here…"）。实现：新增 `layouts/footer-page.vue`（logo+搜索+账号的简顶栏，**不改 AppHeader.vue**）+ `definePageMeta({layout:'footer-page'})` + `pages/pages/contact-us.vue` 页内双 tab。②**关于我们** = `/promo/welcome`（title "Get to know Joybuy…"）：面包屑 → "Welcome to Joybuy" + Sign-in/Sign-up → 三支柱（Fast delivery / Brands you love / 24/7 support）→ 8 个楼层（当日达含 How it works 3 步、品质含 UEFA 合作、24/7 客服含三联络卡、Smarter prices、30 天退货 3 步、安全支付含 Klarna/PayPal/Apple/Google 瓦片 + We accept、邀请好友 3 步、JoyPlus）→ T&C 手风琴 4 条。`pages/pages/about-us.vue` 按此结构 1:1 复刻，图片全部本地化到 `public/images/about/`。
+- **删/增内容页**：**删** accessibility-statement、digital-services-act、payment-and-invoice、returns-and-refunds、partner-with-joybuy 五个 slug（真站页脚无对应；partner 并入 contact-us 第二 tab）；**增** joybuy-news（复刻 about.joybuy.com Newsroom：顶导航/hero/3 支柱/6 国旗/3 条真新闻/资源区）、joyplus（复刻 /membership：hero/11 品类 tab/Plus Price 商品卡/£5 券/Spotify+ClassPass 权益/4 项会员权益/月·年·学生方案/4 FAQ）。`content/footerPages.js` 只保留 cookie-policy/privacy-policy/terms-conditions 三页；`pages/pages/[slug].vue` 也改用 `footer-page` 布局（真站帮助页同口径无品类导航）。
+- **`footer.legal` 未复刻真站原文的原因（重要，勿改回）**：真站页脚底部那段是 **Jingdong Retail (UK) Limited 的 FCA 金融资质声明**（公司号、FRN、Klarna/NewDay 信贷中介资质）。那是第三方公司的监管牌照表述，我们站点不提供受监管信贷/支付服务，照抄有法律风险。现改为同位置两段中性声明：`Joyfumi Limited (demo replica). …` + 既有 demo 说明（EN 展示；ZH 留空，与真站 ZH 页脚一致）。
+- **验证（按验证纪律仅做针对性验证）**：eslint 0 error、prettier --check 全过（AppFooter/test、layouts、pages/pages 6 个文件、content、messages.js、app.vue）；vitest **27/27**（AppFooter 4 + AppHeader 13 + AppContainer 3 + use-locale 3 + design-tokens 4）；浏览器 1440×900：7 个内容页 EN/ZH 全 200、首页/search/cart/login/minihome 冒烟 200、**console 0 error / 0 Vue warn**、联系我们无品类导航且双 tab 切换正确、关于我们 hero+3 支柱+8 楼层+3 组步骤+4 条 T&C、45 图 0 破图、替换规则源码+渲染文本 grep 0 残留（邮箱仅 Joybuyfumi@gmail.com）。截图见 `var/footer_rework_20261119/local_*.png`。
+- **踩坑**：①真站 `_lang=en_US` cookie **无效**（页面渲染原始 i18n key 如 `footer.contact`），必须走页脚语言 modal 点 English - EN，站点回写 `_lang=en_GB`；②真站 `<footer>` 在部分页面不存在（Contact us 空态页无 footer 元素），找页脚要用文本标记兜底；③Nuxt 下 `useFetch('/api/…')` 在 SSR 会绕开 nitro devProxy 拿不到数据——要 `import.meta.server ? apiBaseInternal : '/api/v1/…'`，且**必须给静态 `key`**，否则 SSR/客户端 URL 不同 → payload 不复用 → hydration mismatch（JoyPlus 页已按 HomeRecommended 口径修好）；④改 `messages.js` 后 dev HMR 可能吃旧模块，异常时 `touch` 再判断。
+- **遗留项**：①App Store/Google Play 徽章为本地自绘 SVG（不外链商店，符合本地托管约束）；②页脚语言框为 EN↔ZH 点击切换（真站是 modal 三选），货币/国家框为静态展示；③JoyPlus 商品网格用本站商品池 + 按真站约 95 折口径算 Plus Price，非真站同批商品；④ZH 页脚无法规段（与真站一致）。
+
+## 0o. 批次 F（2026-11-19，需求文档03 12.2 右上角【申请店铺】入口替换【配送至】，✅ 完成，未 commit）
+
+- **任务**：12.2——右上角【配送至 xxx】删除，替换为状态驱动的【申请店铺/切换商家端】入口；头像下拉菜单移除「申请开店」入口；状态查询并入买家 session（禁止头部单独发请求）；SSR 首屏正确；双语。地址抽屉组件 `AddressDrawer.vue` 本身保留（只删头部触发，文件与其测试未动）。
+- **状态查询实现口径（关键决策）**：后端 `accounts_buyers/views.py::_account_payload` 注入两个轻字段 `merchant_application_status`（MerchantApplication.Status，无申请为 None）+ `merchant_id`（APPROVED 时店铺 public_id，无则 None）。查询走 OneToOne `merchant_application` 反查 + `select_related("merchant")` + `only("status","merchant__public_id")`，单条窄查询。**GET /api/v1/auth/buyer/session 一次带回**（login/register 响应同样带，口径一致）；前端 `useBuyerAuth` 新增 `merchantApplicationStatus` computed，`useMerchantEntry` **删掉模块级缓存和独立的 merchant-application fetch**，全部改为 session 派生（`loadStatus({force:true})` 现在刷新共享 session，同 key 只发一次）。SSR 时 session 由 useFetch SSR 直出 → 首屏即正确，Playwright 实测带 cookie 拉 SSR HTML 已含目标文案、无闪变。
+- **五态行为落点（全部在 `AppHeader.vue`）**：未登录 → `.account-nav__apply` 链接 `header.applyShop.apply`，href=`/auth/login?next=/account/apply-shop`；无申请/PENDING/REJECTED → 同样式链接 `/account/apply-shop`（PENDING/REJECTED 标签仍是【申请店铺】，点进申请页看状态/原因）；APPROVED → 按钮【切换商家端】→ 既有 `openMerchantConsole()`（签发 console session → window.location.assign 商家端）。头像菜单 seller 两项（NuxtLink+button）删除，菜单剩 orders/reviews/wishlist/addresses/sign out。`useMerchantEntry` 的 label/description（merchantEntry.*）保留给 AccountNav/账号首页，未动。
+- **改动文件**：后端 2（`backend/accounts_buyers/views.py`、`backend/accounts_buyers/tests/test_auth_api.py` 新增 `BuyerSessionMerchantApplicationTests` 3 用例：无申请 null/PENDING 无 merchant/APPROVED 带 merchant_id）；前端 6（`components/AppHeader.vue`（删配送至抽屉全部状态/方法/AddressDrawer 挂载/watch，新增 apply 入口三态模板 + `.account-nav__apply` 样式 + `applyShopHref`/`openSellerConsole`，媒体查询隐藏改为 `.account-nav__apply`）、`components/AppHeader.test.js`（删 6 个配送抽屉用例，新增 apply 入口 5 用例 + 菜单无残留用例；RouterLinkStub 改为支持 object `to` 序列化 href）、`components/account/AccountNav.test.js`（mock 补 merchantApplicationStatus/refresh，状态改由 `__setApplicationStatus` 驱动）、`composables/useBuyerAuth.js`、`composables/useMerchantEntry.js`、`locales/messages.js`（en/zh 成对新增 `header.applyShop.apply`/`header.applyShop.switch`，精确锚点小步 Edit；**`header.deliverTo` 键保留未删**——防并行批次冲突，现为未使用键））。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - 后端：ruff check + ruff format --check 2 文件全过；`manage.py test accounts_buyers.tests.test_auth_api --keepdb --parallel 1` → **13/13 OK**（含新 3 用例）。
+  - 前端：eslint + prettier --check 6 个改动文件全过；vitest `AppHeader.test.js`(13) + `AccountNav.test.js`(5) + `AddressDrawer.test.js`(4 回归，组件未动) + `use-locale.test.js`(3) = **25/25 通过**。
+  - **Playwright 五态实测（`var/header_apply_entry_20261119/e2e_five_states.cjs` → `e2e_report.json`，24/24 PASS，console 0 error）**：S1 未登录 EN 显示 Apply for a shop、`.account-nav__deliver` 0 命中、点击落 `/auth/login?next=/account/apply-shop`；S2 API 注册（绕 HMR，见坑①）→ 未申请显示链接进申请页表单态、头像菜单仅 5 项无申请/商家中心残留；S3 DB 造 PENDING（`seed_state.py`）→ 头部仍申请店铺 → 申请页显示 Under review + 已提交信息；S4 DB 造 APPROVED（create_merchant + StaffAccount 复制密码哈希 + owner membership）→ 头部变按钮 Switch to Seller console → **SSR HTML 直出该文案且无 Deliver to** → session payload 实测 `merchant_application_status=APPROVED + merchant_id` → 点击落 `127.0.0.1:5174/dashboard` 经营看板已登录（Header F Shop / Merchant owner）；S5 改 REJECTED（删店铺链）→ 头部恢复申请店铺 → 申请页显示失败原因 + Re-apply；ZH 双语（joybuy-locale cookie）：申请店铺/切换商家端/登录 next 回跳全对；清理后未登录入口回归正常。截图 13 张：`state1_signedout_home/login_en.png`、`state1_signedout_home_zh.png`、`state2_account_page/menu/unapplied_*_en.png`、`state3_pending_applypage_en.png`、`state4_approved_home_en/zh.png`、`state4_approved_merchantweb_en.png`、`state5_rejected_applypage_en.png`。
+  - **清理（已复核 0 残留）**：`seed_state.py cleanup` 按**先 MerchantReferral → membership → Merchant → StaffAccount → MerchantApplication → BuyerAccount（session CASCADE）**顺序删除（PROTECT 纪律：Referral 必须先删）；同时清掉了此前 E2E 崩溃遗留的孤儿买家（按 `header-f-` 邮箱前缀）。ORM 复核：buyer/staff/merchant/application/membership/referral 全部 0。
+- **坑（新，重要）**：①**并行批次 E 改 AppFooter/messages.js 会引发 HMR 风暴**：UI 表单刚填的字段会被页面重渲染清空（注册邮箱框被清空导致提交报错），且 AppFooter.vue 引用图片早于图片落盘时 vite overlay 弹全屏错误挡死交互——本批 UI 注册/登录改走 **API（page.request 共享 cookie jar）** 才稳定；后续批次 E2E 在并行开发期一律优先 API 种会话，UI 表单操作加重试。② **vitest 里 jsdom 的 `window.location.assign` 可直接赋值为 vi.fn()**（APPROVED 点击测试用它断言跳转）。③ playwright 只装了 `@playwright/test`（1.64.1，项目根 node_modules），`require('playwright')` 不存在——从 `@playwright/test` 解构 `chromium` 即可。④ `node_modules/.bin/prettier.cmd` 在**项目根**，storefront 下没有；eslint 在 storefront 目录 `cmd //c "node_modules\\.bin\\eslint.CMD <file>"`。⑤ merchant-web 仪表盘有两个同文案 h1（桌面/移动双实例），Playwright locator 必须 `.first()`。
+- **遗留项**：① `header.deliverTo` 键与 `joybuy:delivery-address` localStorage 约定已无消费方（键保留，后续清理批次可删）；② AddressDrawer 组件与 10 用例测试成为孤儿组件（checkout 实际未引用它，任务口径"checkout 仍在用"与代码现状不符——组件保留未删，等后续拍板是否复用/删除）；③ 头部入口在 SPA 内不主动重查状态：APPROVED 后需刷新一次页面头部才变【切换商家端】（session 派生的自然代价，验收实测以整页加载为准）。
+
+## 0m. 总记录（2026-11-19，需求文档03 v1.3 追加需求 9 项：批次 A–D 开发 + 独立验收 + 修复复验，✅ 全部完成，未 commit）
+
+- **任务链**：用户追加 9 项购物端需求 → 优化并入 `功能需求迭代文档03.md` **v1.3 第十一节**（11.1–11.10，含排期批次 A–D）→ 4 个开发子 Agent 滚动执行 → 2 个独立验收子 Agent 黑盒验收 → 2 条 fail 原地修复 → 复验通过。全程未 commit。
+- **批次 A ✅**（页脚/Crisp/语言/登录态，⚠️ 其交接小节在并发误杀恢复中丢失，本节代记）：`AppFooter.vue` 三栏（列名按真站实测 Get to know us / Our policies / Let us help you）+ 新增 `storefront/content/footerPages.js` + `pages/pages/[slug].vue` 通用内容页 **10 个 slug**（contact-us、partner-with-joybuy、about-us、cookie-policy、terms-conditions、privacy-policy、accessibility-statement、digital-services-act、payment-and-invoice、returns-and-refunds）+ `plugins/crisp.client.js`（`NUXT_PUBLIC_CRISP_WEBSITE_ID` 未配置不加载不报错）+ 顶栏只留语言 + 未登录右上角 Sign in/登录 文本按钮（`?next=` 回跳）。**替换规则零残留**（joybuy.co.uk/.com、European/EU/欧盟/欧洲、47 处邮箱→Joybuyfumi@gmail.com；所有外链→www.joyfumi.com）。vitest 20/20。**兜底说明**：contact-us、无障碍声明、DSA、退货退款 4 页真站无静态正文，按真站已发布口径合成，真站有内容后可回填。
+- **批次 B ✅**（详见 `## 0l-b.`）：380px 竖列 email-first 复刻（真站实测 #1A1A1A/#E1251B/#F5F6FA），删京东/ochama/礼包，`?next=` 回跳，双语行内校验。遗留：①电话注册需后端新端点（待拍板）；②协议行仍是纯文本（批次 A 内容页已落地，后续可换真链接——待做小活）。
+- **批次 C ✅**（详见 `## 0l-c.`）：`GET /api/v1/recommendations?page=N`（与 /search 同构 envelope，ProductCard 直用；240 件池=ProductSearchDocument(is_searchable) 按 md5(spu_public_id) 稳定伪随机排序）；首页 `HomeRecommended.vue` 无 tab、查看更多追加；PDP 去库存行、三段间距 24px；【我们支持】=9 个真站支付 SVG 本地托管（`storefront/public/images/pdp-services/`）。真站首页已无 Recommended for you 模块（按 Bestsellers 楼层实测落地）；「查看更多」按钮样式自行设计（真站无参照）。
+- **批次 D ✅**（详见 `## 0l-d.`）：购物车 1:1（真站实车被风控挡死→用 38 个真站 CSS bundle 提取规则原文复刻），去配送/自提 tab，契约零改动；商家分组按 Sold and fulfilled by Joybuy 单卡近似（购物车 JSON 无商家字段，多商家分组需后端加字段，待拍板）。
+- **验收**：`var/acceptance_ab_20261119/acceptance-report.md`（A+B **11/11 PASS**）+ `var/acceptance_cd_20261119/acceptance-report.md`（C+D 首轮 **9/11**）→ 修复 → 复验**全部 PASS**：
+  - **O1 hydration mismatch（真回归，已修）**：根因比验收初诊更深——`HomeRecommended.vue` 首屏列表在 setup 里把 useFetch 数据**拷贝成本地 ref**，SSR 渲染占位、客户端渲染列表→结构性错配。修复：SSR `await useFetch` 直出真实列表 + 追加页独立 `appended` ref；vitest 改 `<Suspense>` 包裹。复验 3 干净会话 0 warn、SSR HTML 含 `home-reco__grid`。
+  - **D7 购物车容器几何（已修）**：全站 shell 把内容压到 1216px（真站 1344）。修复：弃自设 shell，改 AppContainer + 页面局部 `--container-max: calc(1344px + 2*var(--container-pad))`（minihome 先例口径，全局 1608px 未动）+ 删 Summary 卡真站没有的运费说明行（`cart.deliveryNotice` 键保留）。复验 1440×900 四值 1344/884/48/436 **偏差全 0px**。
+- **验收期间发现的环境级问题（非本批代码）**：并行爬虫导入会挤挂 :8000 写接口（POST /cart/items ~48s 后 500，加购 UI 静默无反馈——既有 UX 缺口，后续可加加载态/重试提示）。
+- **新增踩坑（重要）**：①共享 dev :3000 改 `messages.js` 后 HMR 可能用旧模块致 hydration 错配——先 touch 受影响文件或重启再判断真 bug；②dev :3000 被停后重启要 `HOST=127.0.0.1 PORT=3000` 显式指定；③真站测试 session 会被风控标记（加购 0 网络请求），实车测量要有 CSS bundle 兜底方案。
+- **待用户提供/拍板**：①Crisp Website ID（插件已就绪，配 env 重启即生效）；②电话注册是否要做（后端需新端点）；③购物车多商家分组是否要做（后端需加字段）；④B 批次协议行换 `/pages/<slug>` 真链接（小活，可并入下轮）。
+- **证据目录**：`var/footer_auth_cluster_20261119/`（批次 A）、`var/auth_page_20261119/`（B）、`var/reco_pdp_20261119/`（C）、`var/cart_page_20261119/`（D）、`var/acceptance_ab_20261119/`、`var/acceptance_cd_20261119/`。
+
+## 0l-d. 批次 D（2026-11-19，需求文档03 11.9 购物车页 1:1 复刻 Joybuy（去配送/自提 tabs），✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 11.9——购物车页 `storefront/pages/cart/index.vue` 按 1:1 复刻真站布局/卡片/结算栏/交互；**去掉【配送】【自提】两个 tab**；只换皮不改数据契约（仍走 useCart 的 GET /cart、PATCH/DELETE /cart/items/:id，去结算仍跳现有 /checkout 无参数）；双语 cart.*。
+- **真站实测（先测后写，产物全部在 `var/cart_page_20261119/`，关键数值写入 `measurement.md`）**：Playwright 1440x900 + `var/auth_page_20261119/session.json` cookies + `color-api.joybuy.co.uk` 打桩。实测空车骨架（页面灰底 #F5F6FA、容器 1344px@1440/左右栏 884+436 gap24、白卡 radius 8、Summary 卡 padding 32 16 16、结算钮 #E1251B/hover #990915/disabled #FF9FA7 18px/700 48px radius4、SSL 行 14px/36px #505259、空态文案与颜色）。
+  - **⚠️ 实车布局测不了**：真站加车点击 0 网络请求（session 被真站风控标记，不 mock 时 color-api 返回 "Temporary service interruption"，与 HANDOFF「账号已损 1/3」吻合；Buy now 同样无效）。改用真站 CSS bundle（38 个全量下载到 `var/cart_page_20261119/all_css/`）提取 cartList_/cartOrder_/JDICheckbox/counter 规则原文 + :root 设计 token —— 商品行/勾选框/计数器样式均来自真站 CSS 原文，可信度等同实测。
+  - **商家分组卡**：真站商家头像/店名样式在懒加载 chunk 拿不到；且购物车 JSON 无商家字段（契约不改）——按真站 PDP「Sold and fulfilled by Joybuy」口径做单商家白卡：全选勾选框 + 「Joybuy」店名 + 副行，多商家分组等后端加字段再说（measurement.md 有注明）。
+- **改动文件（未 commit）**：`storefront/pages/cart/index.vue`（整体重写）、`storefront/components/CartEmptyIllustration.vue`（新增，真站 EmptyBox SVG 从 `cart_dom_zh.html` 提取、id 前缀改为 CartEmptySvg__ 防双实例冲突）、`storefront/locales/messages.js`（cart.* 成对新增 7 对键：goShopping/summaryTitle/emptySummary/securePayment/selectAll/fulfilledBy/delete；cart.title/empty/goToCheckout 文案按真站改：Cart/No items yet？/Checkout；**cart.remove 未动**——favourites/recently-viewed 也在用，购物车删除链接用新键 cart.delete）。商品图/规格用只读 GET /api/v1/products/:id 客户端增强（offer_public_id 对 sku 规格），规格对象按真站 PDP 口径渲染为取值 " / " 连接。
+- **坑（新）**：①**Nuxt dev 共享服务吃旧模块**：messages.js 改完后 :3000 的 client bundle 还是旧文案（zh 仍「去结账」）导致 ZH 页 hydration mismatch 报错——`touch storefront/locales/messages.js` 强制 HMR 失效即恢复；遇到「改了没生效/SSR 客户端文案不一致」先 touch 再查代码。②后端 :8000 写接口会被并行 Agent 的爬虫导入挤挂（POST /cart/items 挂 30s+，连 information_schema.innodb_trx 都查不动），是环境级争用不是代码问题，等窗口期重试即可；测试数据可用 curl 直打 API 种入（`seed_cart.cjs`）绕开 UI 加车。③ AuthForm 提交按钮选择器必须用 `.auth-submit`，`button[type="submit"]` 会命中页头搜索按钮。④注册（201）即自动登录，无需再走 /auth/login。
+- **针对性验证（按验证纪律仅做针对性验证）**：
+  - eslint + prettier --check：cart/index.vue、CartEmptyIllustration.vue、messages.js 全过。
+  - vitest：`tests/use-locale.test.js`+`tests/design-tokens.test.js`+`components/AppHeader.test.js`+`components/AppContainer.test.js` = 27/27 通过（cart 页无既有单测）。
+  - 本地 Playwright 全流程（`var/cart_page_20261119/local_e2e.cjs`，dev :3000，临时买家）：注册即登录→3 件商品全部入车→数量步进器 +1 →行小计/合计联动（$2,198.00）→单件勾选/取消（Checkout 计数 (3)→(1)→(3)）→全选/取消全选（(0)/(3)）→去结算落 `/checkout` ✅→删除→空车态 EN/ZH（还没有商品？/去购物/合计/没有待结算的商品/去结算 (0) 粉禁用）——全过；console 0 error；hydration mismatch 0（EN/ZH）。
+  - 截图：`local_cart_en.png`/`local_cart_zh.png`（有货）、`local_cart_empty_en/zh.png`、真站对照 `cart_en_live.png`/`cart_zh_live.png`/`probe_en.png`。
+  - 零残留：cart 页源码无【配送】【自提】tab（仅注释说明），无第三方 CDN。
+- **测试数据清理**：31 个临时买家（cart-d-/cart-dbg-/cart-reg-/cart-curl-* @joybuy.test）已删净，级联 124 行（session/cart/cart_item/address），复核 0 残留；真站购物车从未加入过商品（复核 Checkout (0) 空态）。
+- **遗留项**：①真站实车布局不可得（session 被风控），商品行视觉以真站 CSS bundle 原文为准，商家头像/店名行为近似（已注明）；②购物车 JSON 无商家字段，多商家分组卡与「选中项传 checkout 参数」需后端加字段/参数后才能做（本批契约不动）；③「Added to cart」按钮反馈文字轮询在 dev 高负载下偶发捕捉不到（商品实际已入车），E2E 以购物车条数为准；④ dev :3000 的 HMR 旧模块坑见上，后续批次改 messages.js 后记得 touch。
+- **验收修复（D7，2026-11-19）**：容器几何不对——首版自设 `.cart-page__shell` max-width 1312 导致内容 1216/起点 x=112，与真站 1344/x=48 差 128px；Summary 卡多一行真站没有的运费说明。修复：①改用 AppContainer + 页面局部 `--container-max: calc(1344px + 2 * var(--container-pad))`（minihome/[code].vue 先例口径，全局 token 1608px 不动），窄视口随 --container-pad 降级、<1024px 栈叠；②删 `.cart-summary__note` 运费行（cart.deliveryNotice 键保留，已复核全仓仅 cart 页引用过、现为未使用键）。自验（`var/cart_page_20261119/verify_d7_fix.cjs` → `verify_d7_result.json` + `d7_cart_en/zh.png`）：1440×900 实测内容 1344 / 左栏 884 / 起点 x=48 / 右栏 436，**与真站偏差全部 0px**；全流程回归（数量 +1 → $2,198.00 联动、勾选 → Checkout (1)、取消全选 → (0)、去结算落 /checkout、删除 2→1）全过；console 0 error；`cart-d2-*` 临时买家已删净（left 0）。另：dev :3000 曾被停，已 `HOST=127.0.0.1 PORT=3000` 重启（裸起会漂 3001 且只听 ::1，curl 127.0.0.1 连不上）。
+
+## 0l-c. 批次 C（2026-11-19，需求文档03 11.6 首页为您推荐 + 11.7 PDP 微调 + 11.8 我们支持图标区，✅ 完成，未 commit）
+
+- **任务**：11.6 首页【为您推荐】模块（畅销榜单正下方、无 tab 行、240 件池 10 页×24、点【查看更多】追加、双语）；11.7 PDP 去【库存 999+】行 + 三段按钮区间距调大（以真站实测为准）；11.8 PDP【我们支持】图标区（图标本地托管）。
+- **真站实测（先测后写，脚本+产物全在 `var/reco_pdp_20261119/`，数值详见该目录 `measurement.md`）**：
+  - **当前真站首页（EN，带会话 cookie，慢滚到底+等待）不存在【Recommended for you】模块**（楼层=Bestsellers→Shop the look→story 网格→footer，网络层也无 recommend 接口）——本批次按真站楼层通用规范+Bestsellers 楼层实测值落地：标题 h2 **28px/600 #1A1A1A**（标题行下 4px）、**5 列网格、列距 16px**（卡宽 256、pitch 272）、无 tab。
+  - **PDP 无任何库存行（全文无 999+）**、buy-box 无收藏按钮（本地保留收藏按钮，只调间距）；数量块实测 `padding 12px 0`；数量块→按钮区 **12px**；立即购买/加入购物车各 **317x48、radius 4、按钮间 gap 8px**（红 #E1251B/黑 #1A1A1A）。
+  - **【我们支持】在真站=PDP footer 支付图标区**（`footer_footerPay`，padding 26px 0，标题 14px/400 #505259 margin-right 16px + **9 个支付 SVG 各 32x20**，顺序 American Express/Visa/Mastercard/UnionPay/PayPal/WeChat Pay/Google Pay/Apple Pay/Klarna）；30 天退货/24-7 客服在真站位于 buy-box「Delivery & promises」展开区（此前批次已复刻为 guarantees 行），真站并未与支付图标合成一块——按「真站怎么分区就怎么分区」处理。
+- **接口契约**：新增 `GET /api/v1/recommendations?page=N`（`backend/catalog/search_views.py::recommendations` + `backend/catalog/search_services.py::recommendation_documents`，路由 `backend/config/urls.py`）。返回 `{market, locale, display_currency_symbol, requested_market/requested_locale/price_source_market, page, page_size:24, total, total_pages, items[]}`，item 与 `/search` 完全同构（spu_public_id/title/brand/category_slug/price_min/price_max/currency/rating_average/rating_count/image_path），`ProductCard` 直接复用。**240 件池怎么保证真实可售**：只从 `ProductSearchDocument(is_searchable=True)` 取（该字段口径=rebuild_search_document 里「SPU ACTIVE 且存在 ACTIVE Offer」，下架商品即时删文档），排序键=`md5(spu_public_id)` 十六进制串（稳定伪随机：刷新不乱序、又不是主键序），切片前 240 后按页分页，页内回查按池序重排。市场/locale 复用 search 的市场链兜底（抽成 `_resolve_search_market` 供两处共用）。
+- **改动文件**：后端 4 个（search_views.py、search_services.py、config/urls.py、tests/test_search.py）；前端 5 个（`storefront/components/home/HomeRecommended.vue` 新增、`HomeRecommended.test.js` 新增、`storefront/pages/index.vue` 挂载在 HomeBestsellers 下、`storefront/pages/p/[id].vue`、`storefront/locales/messages.js`）；资源 `storefront/public/images/pdp-services/`（9 个支付 SVG，从真站 footer outerHTML 提取、加 xmlns 本地托管，无第三方引用）。
+- **实现要点/坑**：① `HomeRecommended` 的 useFetch 不加 await（与 HomeBestsellers 同模式，Nuxt SSR 渲染前统一等待挂起请求；vitest 挂载才不会卡 async setup）；key 用静态 `home-recommended-page1`（模板字符串 key 冻结的旧坑）。② 本地 PDP `.detail__panel` 是 flex-column 且自带 `gap: var(--space-3)`（12px），margin 12px 会叠加 → 实测三段间距 24px（qty→收藏、收藏→按钮区），比原 20px 大、真站 12px 的 margin 口径也照抄了。③ `Spu.Status` 只有 DRAFT/ACTIVE/INACTIVE，测试里下架商品用 INACTIVE（没有 DELISTED）。④ vitest 必须在 storefront 目录下跑（项目根跑会因缺 vue 插件报错）；prettier 在项目根 node_modules/.bin（storefront 下没有）。⑤ 本地验证脚本语言切换用的是 `joybuy-locale` cookie（值 en-GB/zh-CN），不是真站的 `_lang`。
+- **i18n 键（en/zh 成对，精确锚点小步 Edit，未动他人键）**：`home.reco.title/viewMore/allLoaded/loading`、`pdp.supportTitle`。
+- **针对性验证（按验证纪律仅做针对性验证）**：① 后端 `manage.py test catalog.tests.test_search.RecommendationTests --keepdb --noinput --parallel 1` **5/5 通过**（确定性/翻页无重复/只含可售/page 校验/端点契约；:8000 已 taskkill 重启后实测 `GET /api/v1/recommendations?page=1` total=240 items=24）；ruff 4 个后端文件全过。② eslint + prettier 全过（4 个改动前端文件 + 2 个新测试文件）。③ vitest `HomeRecommended.test.js`(2 用例) + 回归 `HomeBestsellers.test.js`(2 用例) **4/4 通过**。④ Playwright 本地双语实测（`var/reco_pdp_20261119/verify_local.cjs` → `local_verify.json`）：EN/ZH 推荐楼层均在 Bestsellers/畅销榜单 正下方，首屏 24 件、点 2 次查看更多=72 件且 href 无重复，标题/网格 5 列/16px 间距实测吻合；PDP EN/ZH 全文无 999+、无库存行；三段间距 24px（margin 12px×2 叠加 flex gap）；我们支持区 9 个图标全部 200 加载（`/images/pdp-services/*.svg`，0 第三方域名），EN "We support"/ZH "我们支持"。
+- **截图目录**：`var/reco_pdp_20261119/`（local_reco_en/zh.png、local_pdp_en/zh.png、local_pdp_support_en/zh.png、local_pdp_panel_zh.png、bestsellers_viewport.png、pdp_support 真站对比图等）。
+- **O1 修复（2026-11-19 验收 fail → 已修）**：验收发现 HomeRecommended.vue hydration mismatch——根因是 setup 里把 `data.value.items` 拷进本地 `items` ref 且 useFetch **未 await**：SSR setup 阶段 data 还是 null → SSR HTML 渲染「Loading…」占位，客户端 hydrate 时 payload 已有 24 件 → 结构不一致。修法（只动 `HomeRecommended.vue` + 其测试）：① `await useFetch`（SSR 等数据、直出真实列表）；② 首屏列表改为**从 data 派生的 computed**（`[...first, ...appended]`），点击追加的页放 `appended` ref，不再在 setup 里拷贝——这是 mismatch 的根因，单独 await 也顺手消除。vitest 配套：async setup 必须挂 Suspense 边界，测试改用 `<Suspense>` 包裹 mount + flushPromises。**自验（`var/reco_pdp_20261119/verify_o1_fix.cjs` → `verify_o1_fix.json`，dev server 已 taskkill 完全重启）**：SSR 静态 HTML 含 `home-reco__grid` 且无 `home-reco__empty` 占位；3 个干净 context（无 cookie/全新 storage）console 0 hydration warn / 0 error；功能回归 24 件 → 点 2 次=72 件、href 无重复；ZH 会话同验通过（SSR 含「为您推荐」、0 警告）。vitest 4/4、eslint/prettier 过。
+- **遗留项**：① 卡片/PDP 价格显示 "$"（真站 £）——`formatDisplayPrice`/`display_currency_symbol` 是既有市场展示层行为，不属本批次，未动。② 真站首页当前没有该推荐模块，网格/标题样式取自 Bestsellers 楼层实测，「查看更多」按钮样式（200x48 黑描边）无真站参照、属自行设计。③ 池子 240 件上限与确定性排序依赖 md5(spu_public_id)，新增/下架商品会自然进出池（顺序对已有商品稳定）。
+
+- **任务**：`功能需求迭代文档03.md` 11.1（页脚三栏 + 9 个本地内容页 + 全局替换）、11.2（Crisp 客服，未配置不加载）、11.4（顶栏只留语言）、11.5（未登录显示【登录】）。完成，未 commit。
+- **改动文件**：`storefront/components/AppFooter.vue`（三栏换新 + 支付方式行保留 + 链接指向 `/pages/<slug>`）、`storefront/pages/pages/[slug].vue`（新增通用内容页路由）、`storefront/content/footerPages.js`（新增，9+1 个 slug 的 en/zh 块数据，由脚本生成）、`storefront/plugins/crisp.client.js`（新增）、`storefront/nuxt.config.js`（`runtimeConfig.public.crispWebsiteId`）、`storefront/.env.example`（`NUXT_PUBLIC_CRISP_WEBSITE_ID=`）、`storefront/components/AppHeader.vue`（顶栏去国家、登录文本按钮 + `.login-button` 样式、`loginHref` 用 AuthForm 现有 `?next=` 回跳约定）、`storefront/locales/messages.js`（footer.* 键整块换新成对添加 + `pagesDoc.backHome`，未动 auth.*）、`storefront/components/AppFooter.test.js` / `AppHeader.test.js`（断言更新）。地址抽屉国家选择未动。
+- **内容页 slug（10 个，覆盖 11.1 三栏全部枚举链接；需求口径写"9 个"但三栏枚举实为 10 条，按枚举落地）**：contact-us、partner-with-joybuy、about-us、cookie-policy、terms-conditions、privacy-policy、accessibility-statement、digital-services-act、payment-and-invoice、returns-and-refunds。列名 EN 按真站实测：Get to know us / Our policies / Let us help you。
+- **抓取方式（先测后写）**：脚本与产物全部在 `var/footer_auth_cluster_20261119/`：真站页脚需先点页脚语言按钮（`footer [role="button"]:has-text("中文(简体)")`）→ DOM 点 English 单选（MUI 抽屉在视口外，必须 `page.evaluate` DOM click，Playwright 常规 click 会超时）→ 确定；EN cookies 已存 `cookies_en.json`。内容页正文抓取 `crawl_pages_en.cjs` → `footer_pages_content_en.json`（zh 版 `footer_pages_content.json`）。**生成器 `build_footer_pages.cjs` 输出 `footerPages.js`——改文案改生成器再重跑，不要手改数据文件**。
+- **替换规则核对（grep 断言，0 残留）**：`footerPages.js` 中 `joybuy.co.uk|joybuy.com|European|europa|EU|EEA|欧盟|欧洲|ico.org|edpb` 全部为 0 命中；所有 URL（含第三方外链如 ICO）按口径统一替换为 `www.joyfumi.com`；邮箱 47 处均为 `Joybuyfumi@gmail.com`。
+- **兜底（真站无静态正文的 4 页）**：contact-us（真站是聊天壳页无正文）、accessibility-statement、digital-services-act、returns-and-refunds（真站 Terms 引用的 After Sales Policy 未发布）——按真站已发布口径（About 页 30 天退货承诺、Terms 退款条款、页脚法律实体信息）合成，en/zh 双语，生成脚本内有标注。
+- **针对性验证（按验证纪律仅做针对性验证）**：① vitest `components/AppFooter.test.js` + `AppHeader.test.js` 20/20 通过（storefront 目录下跑 `node ../node_modules/vitest/vitest.mjs run …`，项目根跑会因缺 vue 插件报错——坑）；② eslint 10 个改动文件 0 error（坑：AppHeader 去国家后 `MARKET_OPTIONS` 导入未删会报 no-unused-vars；插件需显式 `import { defineNuxtPlugin } from '#imports'`）；③ prettier 全过（坑：`node_modules\.bin\prettier.CMD` 在**项目根**，storefront 下没有）；④ Playwright 本地实测 `verify_local.cjs` → `verify_report.json`：页脚 EN/ZH 三栏与 10 链接全对、9 页 EN+1 页 ZH 全开无死链、正文 `badEu/badUrl/badEmail` 全 false、顶栏无 `#market-select` 且语言切换全站生效、登出态右上角"Sign in"文本无图标圆框、点击跳 `/auth/login?next=/`、未知 slug 出错误页、Crisp 未配置 0 个 crisp script + `window.$crisp` undefined；干净会话（首页 + terms 页）console 0 error。
+- **截图目录**：`var/footer_auth_cluster_20261119/`（footer_en.png、footer_zh.png、topbar_en/zh.png、header_loggedout.png、page_<slug>.png × 10、page_contact-us_zh.png、lang_modal.png 等）。
+- **遗留项**：① Crisp Website ID 用户还没给——未配置路径已实测零加载零报错；**已配置路径未实测**（需要带 `NUXT_PUBLIC_CRISP_WEBSITE_ID` 重启共享 dev 服务，没动），拿到 ID 后配置 env 重启即可。② 真站页脚实际只有 7 个链接（了解 Joybuy×4 / 政策×3 / 帮助中心只挂支付方式），本批次按需求 11.1 的 9 链接口径落地，与真站的差异是需求拍板不是复刻误差。③ footerPages.js 未提交 prettier 原格式（已跑 --write 过）。
+
+## 0l-b. 批次 B（2026-11-19，需求文档03 11.3 登录/注册页 1:1 复刻 Joybuy，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 11.3——登录/注册页与真站一模一样；去第三方登录入口与【注册即得礼包】文案；表单=邮箱/电话+密码；只换视觉皮不改后端契约；双语；登录成功回跳来源页。
+- **真站实测（先测后写，产物全部在 `var/auth_page_20261119/`）**：Playwright chromium 1440x900 + `crawler/debug_session.py` cookies（`_lang` 覆写 `en_US` 得英文版）+ `color-api.joybuy.co.uk` 打桩。脚本 `measure_auth.cjs` / `probe_auth2.cjs` / `probe_head.cjs`；截图 `login_live.png`（zh）、`login_en_step.png`（en）、`login_step_step.png`（新邮箱→注册形态）、各 `*_measure.json`；**关键数值全部写进 `var/auth_page_20261119/measurement.md`**。要点：
+  - **真站无 tab、无卡片容器**：白底页面中央 **380px 竖列**；登录页是 email-first 两步流（`/register` 直达 URL 404，注册只能从登录页输新邮箱进入）。
+  - 主黑 `#1A1A1A`（按钮 bg，380x48，radius 4px，字 18px/600）；红 `#E1251B`（礼包行金额）；灰字 `#6E7078`（副标题/协议 12px）；灰底输入 `#F5F6FA`（48px 高，radius 4px）；禁用 `#C2C4CC`；密码输入白底 1px 描边聚焦变黑。
+  - 标题 18px/700 居中（登录「登录或创建Joybuy账号」+ 副标题🔒数据加密 14px；注册「创建您的Joybuy账户」+ 副标题 信赖品质，极速送达）。
+- **改动（4 文件，未 commit）**：
+  - `storefront/components/AuthForm.vue` 整体重写（视觉皮）：380px 中央竖列、灰底 identifier 框 + 白底描边密码框、黑色 48px 提交钮、灰字协议行；**删真站第三方登录区（Google/京东/ochama 全不渲染）与礼包文案**；表单=邮箱/电话+密码同屏直填；行内校验双语（identifier 空/格式（电话须 E.164 `+` 开头，与后端 `normalize_identifier` 对齐）、密码空/注册≥8 位）；后端 `error.code` 业务码映射双语（INVALID_CREDENTIALS/EMAIL_INVALID/PASSWORD_TOO_SHORT/BUYER_ACCOUNT_EXISTS/BUYER_LOGIN_RATE_LIMITED/BUYER_ACCOUNT_DISABLED）；**回跳用 `?next=`**（沿用 useWishlist 既有约定，`//` 开头拒绝防 open redirect）；保留忘记密码入口。
+  - `storefront/pages/auth/login.vue` / `register.vue`：title 双语化（`auth.titleLogin`/`auth.titleRegister`）。
+  - `storefront/pages/auth/forgot-password.vue`：同皮肤（380 竖列、同色值）。
+  - `storefront/locales/messages.js`：`auth.*` 命名空间 en/zh 成对新增 29 对键（`auth.titleLogin`…`auth.error.generic`），精确锚点小步 Edit，未动 footer./topbar./header.。
+- **取舍（记录给后续会话）**：①真站无 tab，本站维持 `/auth/login`、`/auth/register` 两页 + 页内切换链接（视觉与真站一致）；②登录=邮箱/电话+密码一步直填（用户拍板"邮箱/电话那里正常加个密码输入就好了"，不做真站 email-first 两步）；③**注册仅邮箱**——后端 `/auth/buyer/register/email` 契约只收 email，电话注册需走验证码契约，本批不改后端（遗留项，见下）。
+- **验证（按验证纪律仅针对性验证）**：
+  - eslint + prettier --check：AuthForm.vue、login/register/forgot-password.vue、messages.js **全过**。
+  - vitest（storefront 配置）：`components/AppHeader.test.js` + `components/account/AccountNav.test.js`（auth 相关的两处既有测试）**2 文件 21 测试全过**。注意根目录跑 vitest 不带 storefront 配置会报缺 @vitejs/plugin-vue，须 `cd storefront` 再跑。
+  - 本地全流程 Playwright（`var/auth_page_20261119/local_e2e.cjs`，dev :3000）：注册新买家→落地 /account ✅ →登出 ✅ →错误密码提示「邮箱/电话或密码不正确。」✅ →带 `?next=/cart` 登录落地 /cart ✅ →再登出 ✅ →忘记密码页可见 ✅ →行内校验 zh/en 双语 ✅。截图 `local_login_en/zh.png`、`local_register_zh/en.png`、`local_login_wrong_pw_zh.png`、`local_forgot_zh.png`；console 仅 1 条预期内 401（错误密码那次 POST 的 resource 日志）。
+  - 零残留 grep：京东/ochama/Ochama 全 storefront 源码 0 命中；auth 页面列（.auth-page，en+zh×login+register 四组合）内 京东/ochama/JD/Google/礼包/Welcome Offers/查看更多选项 0 命中（`residue_check.cjs`）。**注意**：页面顶栏黑条 en 文案含 "Welcome Offers"（`topStrip.welcomeOffers`，全站性促销条，属 topbar 命名空间/头部集群，非本批次范围，未动）。
+- **测试数据清理**：注册的临时买家 `auth_b_1795023866975@example.test`（id 118）已从 dev DB 删除，连带 2 条 buyer_session，复核 0 残留。
+- **遗留项**：①电话注册不支持（后端契约限制，如要支持需后端加免验证码 phone-register 端点，须用户拍板）；②协议行《隐私与Cookie政策》《条款与条件》是带下划线的纯文本（本地无对应内容页；等批次 A 的 `/pages/<slug>` 内容页落地后可换成真链接）；③真站顶栏促销条（礼包字样）不在本批范围。
+
+## 0k. 本次会话记录（2026-11-20，⚠️ AWS 账户关闭/停用事故诊断：S3 全挂（AllAccessDisabled）+ EC2 不可达 + IAM key 全失效，⏸ 等用户恢复账户）
+
+- **用户报障「本机 AWS key 失效 + 存储桶匿名读被禁（AllAccessDisabled）——MEDIA_BACKEND=s3 全挂」→ 主代理实测三层证据，结论升级为账户级事故**：① 本机 `aws sts get-caller-identity` → `InvalidClientTokenId`（key 无效）；② 匿名 GET 桶对象 → **`403 AllAccessDisabled`**（"All access to this object has been disabled"）——**这是 AWS 账户被关闭后 S3 的专属错误码**（普通权限问题是 AccessDenied，不要混淆）；③ EC2 18.184.216.138 的 80/22 全 000 + ping 100% 丢（同时刻本机 baidu/github/aws 官网全 200，网络正常）——账户关闭/停用会停掉所有 EC2。**判定：整个 AWS 账户 closed 或 suspended（多半付款失败），不是单点 key/桶问题。** 生产（站点/API/媒体）当前全不可用；旧 Lightsail 已删，无兜底。
+- **用户待办（只有用户能做，且要快）**：登录 AWS 控制台看账户状态 + 查注册邮箱（AWS 关户/停户必发邮件，主题含 closed/suspended/unpaid）；付款问题 → Billing 补款自动恢复；误关户 → 登录后 **Reopen account**（宽限期内可重开，桶数据仍在；**拖过宽限期 S3 数据真删，要快**）。
+- **账户恢复后的复核清单（新会话照此执行）**：① S3：对象数对账（706,445）+ 匿名 GET 200 + `sts get-caller-identity` 两机验证；② **EC2 重启后公网 IPv4 大概率变化**（停机释放）→ 更新本机 ~/.ssh/config 的 joybuy2 HostName、服务器 .env 的 DJANGO_ALLOWED_HOSTS/DJANGO_CSRF_TRUSTED_ORIGINS、通知用户新地址；③ 生产回归：首页/类目 API/媒体反代/admin 登录（Playwright）；④ 若实例已 terminated（不是 stopped）→ 按 HANDOFF 0g/0h 配方 + git bundle 重新部署（数据从 S3 与最新 dump 恢复）；⑤ 恢复后把本节标注 ✅。
+- **教训（防再踩）**：① `AllAccessDisabled` ≠ `AccessDenied`——前者=账户级停用，后者=策略拒绝，见到前者直接查账户状态不要去改桶策略；② 账户恢复后 EC2 公网 IP 变化会连环影响 ssh 别名/ALLOWED_HOSTS/CSRF/用户书签，要当成一套变更处理；③ 生产单点 EC2 + 同账户 S3：账户被停 = 全站全灭，待办里「备份/容灾」的优先级应上调（至少：DB dump 每日落本地或异地、IAM key 轮换意识）。
+
+## 0k. 本次会话记录（2026-11-18，需求文档03优化：澄清歧义 + 补验收标准 + 标注现状差距，✅ 完成，未 commit）
+
+- **任务**：用户要求阅读 `功能需求迭代文档03.md`（v1.1，2026-11-18 19:51 拍板版）并优化其中需求。**只改文档，未动任何代码。**
+- **产出**：`功能需求迭代文档03.md` 升到 **v1.2**，新增内容全部标注【优化补充】，拍板结论一字未改。要点：
+  1. **已售随机数关键约束**：必须一次性生成落库（同商品恒定，防刷新变数字一眼假），预留真实爬虫值覆盖；评语**不允许随机占位**（抓不到就空着）。
+  2. **无限加载边界**：每页 24 件、总上限 200 件、失败重试、SSR 降级——防拖垮服务器。
+  3. **专区**落到现有 CmsProductPool 机制（默认固定、后台可换、不足自动隐藏），商品清单按真站测量流程配。
+  4. **申请店铺状态机**补"未登录"态；标注现状：四态申请页 + 商家端会话接口已实现（2026-11-17），本轮只做入口迁移（头像菜单→右上角替换配送至）；记录了配送至入口被替换的取舍。
+  5. **管理端路径改造**补安全配套：旧路径 404（非 301，防泄漏）、登录失败限流、新路径不出现在 robots/sitemap。
+  6. **上新流程**与现状对齐：图片直写 S3 已实现（`MEDIA_BACKEND=s3`）；"同步数据文件"固化为 5 步管道，把"导入必刷搜索文档"的历史坑写进需求。
+  7. **HTTPS 补前置依赖：域名**（当前生产是裸 IP 18.184.216.138，无域名签不了证书）；提供 Let's Encrypt 免费备选，不动拍板。
+  8. **爬虫风险**：账号已损 1/3 → 建议 11/21 中期盘点；对数口径按 ACTIVE 上架数；连续 2 账号封锁即停批。
+  9. 新增 第七节依赖表 / 第八节验收清单 / 第九节优先级排期（P0 购物端+管理端路径+HTTPS，P1 数据管道，P2 商家端美化）/ 第十节优化说明。
+- **下一步建议**：①按 v1.2 拆工作包执行（P0 先行）；②域名采购是 HTTPS 硬前置，需用户先定；③已售落库字段方案（建议 Spu 加展示用字段）在开发时定。
+
+## 0j. 前一次会话记录（2026-11-19，修复管理端 http 下 `crypto.randomUUID is not a function` + cookie Secure 临时降级，✅ 两轮修复均已部署 joybuy2，生产 admin 登录 Playwright 实测打通）
 
 - **任务**：修生产管理端（http://18.184.216.138/admin/，纯 http 无 TLS）登录报 `crypto.randomUUID is not a function`，部署并用真实浏览器 E2E 验证登录。**终态：两轮修复（uuid 降级 `a85e985` + cookie Secure env 化 `dde07ae`）全部上线，Playwright 真浏览器登录成功进入商家管理页、console 0 error（主代理独立抽查吻合：三方 git = a4ee6f3、.env 25/26 两行覆盖 chmod 600、admin/buyer 两端点 Set-Cookie 的 Secure 计数均 0、joybuy-api active）。第一轮末曾按纪律停下报告"登录未打通"，第二轮经用户同意选项①后完成。**
 - **根因 1（已修复）**：`crypto.randomUUID()` 是 secure-context-only API，http 且非 localhost 的页面里是 undefined；点击登录 → `apiRequest` 生成 X-Request-ID 时直接抛 TypeError（错误被 LoginView catch 后显示在表单里，console 无 unhandled error）。全仓 grep 只有 2 个调用点，**storefront 干净无此问题**：
@@ -41,6 +1449,8 @@
 
 - **任务**：媒体存储从「本地磁盘 var/media」改为「S3 桶」——爬虫导入的图片/视频、管理端/商家端上传直接 `put_object` 进 S3，不再写本地盘。**商品数据（DB 行）仍写本地 dev 库不改导入目标库**（用户已拍板）。commit `0d06cbd`（含 10 文件 +440/-30），已 push origin main 并部署 joybuy2。
 - **外网已通（同日稍晚，用户加规则后实测）**：用户在 `launch-wizard-1`（sg-0599ae677ad282acc——经 metadata 核实就是实例实际挂载的安全组）加了 HTTP 80 / 0.0.0.0/0 入站。**双网络位置交叉验证全 200**（本机经 VPN + 旧 Lightsail 作为独立远端），服务器侧核实：nginx 监听 0.0.0.0:80、ufw inactive、本机 curl 200。用户随后仍报「无法访问」，疑似**浏览器自动 https://（443 无监听必然失败）或缓存**——已提醒明确输 `http://18.184.216.138` 并强刷；若再失败按其报错文案（超时/REFUSED）继续定位。外网通即满足旧 Lightsail 删除清单最后一项「用户验收」，等用户点头退役。
+- **旧 Lightsail 退役（2026-11-19）**：删除前最后一道保险已做完——新机 DB 九表计数实测（spu 12939 / sku 18455 / offer 16352 / media_asset 101850 / product_search_document 7900 / buyer_account 84 / merchant 694 / merchant_application 0 / staff_account 4），与迁移时逐字节一致，dump 后旧机无业务写入；随后发现旧机 80/22 从**双位置**（本机 + joybuy2 内网）均不可达——**实例已被用户停止或删除**（迁移 dump 之后旧机无独有数据，删除零损失）。已提醒用户控制台三件事：删实例、**删未附着静态 IP（按小时计费的漏账点）**、确认无残留快照；Lightsail 按月计费月中不退、下月起停 $160.91/月。删后可选清理：新机 .env 的 ALLOWED_HOSTS 里遗留旧 IP 18.159.51.52（无害，顺手删）；本地 ssh 别名 joybuy + ~/.ssh/joybuy_fra.pem 留作历史。**生产从此只有 joybuy2 一台 + S3。**
+- **TLS 证书费用口径（2026-11-19 用户问「部署证书亚马逊怎么收费」，咨询已答，决策待用户）**：① ACM 公共证书 **$0**（签发/续期/部署全免费），但**不能导出私钥**——装不进自己 EC2 的 nginx，只能挂 CloudFront/ALB 等托管服务；ACM Private CA $400/月与本场景无关。② 两条路：**路线 A = Let's Encrypt + certbot（推荐）**——证书 $0，唯一花费是域名（Route 53 .com ≈$12/年，外部注册商可能更便宜），DNS zone $0.50/月或用免费第三方；deploy.md 已有 `certbot --nginx` 流程；**上线当天必须回滚 cookie 降级（删 .env 两行 + restart joybuy-api，回滚条件已在 0j 写死）**。**路线 B = ACM + CloudFront**——证书 $0 但引入 CDN 费：出网 1TB/月永久免费 + 超出 $0.085/GB（欧洲），请求 1000 万/月免费 + 超出 ~$0.01/万；按月 2.1TB/180 万 PV ≈ $165-175 vs 直出 $180，基本持平略省——CDN 别按省钱立项（真实收益=免费证书托管+延迟+抗突发）。③ 建议：单机架构先走 A；以后要 CDN 再叠 B，两者不冲突。
 - **改了什么（代码）**：
   * `backend/config/settings.py`：新增 `MEDIA_BACKEND`（local|s3，默认 local）、`MEDIA_S3_BUCKET=joybuy-media-fra`、`MEDIA_S3_PREFIX=media/`、`MEDIA_S3_REGION=eu-central-1`（全部 getenv 可覆盖，非法值启动即报 ImproperlyConfigured）。
   * `backend/media/storage.py`（核心）：`s3_enabled()` / `get_s3_client()`（boto3 懒加载单例，region 来自 settings，凭据走 boto3 默认链 `~/.aws/credentials` 或 AWS_* env，**代码零硬编码密钥**）/ `reset_s3_client()` / `s3_key()`（`media/<relative_path>`）/ `s3_public_url()`（匿名桶 URL）；新增 `store_file_bytes(relative_path, data, content_type)`（s3=put_object；local=原 tmp+os.replace 原子写）、`read_stored_bytes()`（s3=get_object 读回；local=读文件）、`stored_file_exists()`（s3=head_object 404→False；local=is_file）；`store_bytes` 改走 `store_file_bytes`，**维度检测改为从内存 bytes（`Image.open(io.BytesIO(data))`）不再打开本地文件**；DB sha256 去重逻辑完全不变（命中即跳过一切写入、不 put_object）；`delete_asset_file` s3 模式下 delete_object。`_detect_image_dimensions` 签名从 Path 改为 bytes（这是简报预判的坑，已落地）。
@@ -273,7 +1683,63 @@
   - ⑤ IAB 里 Playwright `locator(sel, { hasText })` 的 hasText 选项疑似被忽略（匹配数不收敛），按 name 匹配用 `getByRole('button', { name })` 更可靠。
 - **下一步（承接上一会话）**：①上面 5 处同类冻结 key 是否要修、②后端 `spu_detail_translation` 让规格参数表/图文出译文 —— 均待用户拍板；本次 PASS 后可放量跑 50 个商品译文任务。
 
+- **当前任务（2026-11-19，productCommentSaleFloor 销量/评价展示值入库，已完成）**：用户要「已售 6k+ 件」这类销量数据。实测源站详情页 flight 有 `productCommentSaleFloor{saleAmount:"10k+", starShow, commentCount:"80+"}`（**/dp/ 有、/dg/ 没有**，蜘蛛主详情走 /dp/ 所以零新增请求；值是展示字符串非精确数字）。已实现全链路：
+  1. parser：`extract_sale_info(floors)` 读该 floor 的 saleAmount/commentCount（缺失返回空 dict 不发明数据）→ `UkProduct.sale_amount/comment_count_display` → `to_payload()` 顶层键 + `joybuy.saleInfo{saleAmount, commentCountDisplay}`（有值才输出，向后兼容）。
+  2. 入库：`SpuDetail` 新增 `sale_amount`/`comment_count_display` CharField(32)（迁移 catalog/0017，与 translation 模型同文件一起 apply）；`_sync_spu_detail` 写入，**空值不覆盖已有值**。
+  3. 测试：`SaleFloorTests` 3 例（提取/缺失/部分字段）+ `SaleFloorImportTests` 2 例（落库 + 空 payload 不覆盖）；修正 `test_no_review_text_is_captured` 断言排除 comment_count_display（它是计数展示串非评价正文）。真实商品验证：iPhone `10k+/80+`、饼干 `1k+/50+` 全部进 payload。
+  4. **历史商品不回填**（用户明确：旧的不要，后续自己随机生成这些数据）。后续新爬取任务自动带上。
+  - 验证：`py_compile`/ruff 全过；detail_extras+import+variants+review_aggregates+import_variants 62 tests（1 处断言按新字段调整）全绿；迁移已 apply 到 dev 库。
+  - **存量已随机生成（用户要求「每个商品都加上销量」）**：`var/backfill_sale_amount_20261119/generate.py`（DRY_RUN 预览 → `--apply` 分段写库，seed=20261119 可复现）。长尾分布：46% <100 件、25% 100~999、17% 1k~5k、8% 5k~20k、2% ≥20k；有评分商品销量中枢更高（对数均匀）。**12802/12802 全部写入，0 空值**（只写 sale_amount，comment_count_display 留空待后续爬虫补真实值）。重跑会重新随机化覆盖（固定 seed 则复现同分布）。
+
+- **晨报已汇报（2026-11-19 早上，day_crawl_20261119 批次复盘）**：20 任务终态 8 SUCCEEDED（导入 662）/ 8 FAILED（部分导入 730）/ 5 未跑（01 组 4 个 PENDING + 1 RUNNING 被超时杀）。**熔断触发**（连续 5 个坏 run：全部「150 分钟超时被杀」，RISK_FB 事件都 ≤1——不是风控爆发，是单 run 速度赶不上 150 分钟上限：这批类目商品量大（discovered 400）+ 变体补价请求多）。失败 7 个都是**导入了几百个后被 150 分钟超时杀掉**的半成品（手机 70/摄影 65/理疗 109/哺育 142/婴儿车 91/美发 174/电子配件 89）。冷却账号仅 1 个（06 组）。**明日建议**：①大任务（discovered 200+）单 run 150 分钟不够——队列超时提到 240 分钟，或 CRAWL_VARIANT_PRICE_LIMIT 再降；②01 组 5 个 PENDING 任务与 7 个半成品重跑（需新建 job，名称唯一）可今晚继续；③剩余 READY 89。
+
+- **当前状态（2026-11-19，用户要求「暂停抓取任务」——已全部停干净）**：
+  1. **停止动作**：`var/resume_crawl_20261119/resume_queue.py` 调度进程已 kill（PID 15924；另一位 36848 已不存在）；所有 `run_crawl_run` 执行器进程已 kill（含重复实例：d24e17db/27c20446/625418bd 曾各有 2 个进程，属早前一次尝试的孤儿 + 本次重复派发）；5 个在跑的 CrawlRun 已 `complete_run_failed(reason="用户要求暂停…")`（e870c734 手机 1、d24e17db 饮品机 7、68e5231f 婴幼儿玩具 7、625418bd Drones 2、27c20446 笔记本与纸品 12——已导入数据全部保留，`skip_imported=开` 可无缝续跑）。残留 RUNNING 仅 2 个历史 demo run（d4d82124/e6b6c146），非本轮。
+  2. **按用户新口径已改的代码（未 commit）**：`CRAWL_VARIANT_PRICE_LIMIT <= 0 = 不限个数`（原 0 是「一个都不补」）→ `spiders/joybuy_run.py::_pending_variant_skus` 判断改为 `if limit > 0 and len(pending) >= limit`；`settings.py` 默认值 10 → **0（不限）**。`test_crawler_variants` 8 例全绿、ruff 过。**用户最高优先级：商品规格必须一比一完整抓取，宁可慢/长也不缺变体价格。**
+  3. **未完成的验证**：不限变体后**尚未**在真实多规格商品上实测「32 variants 全部有价」；也未按新口径（超时 360 分钟、熔断不计超时、spawn 显式 limit=0）重跑。下次继续时先做这两步再做批次。
+  4. 昨晚 8 个超时 FAILED 的真因是 150 分钟上限（RISK_FB 全 ≤1，非风控）；队列调度曾出现同一 run 双执行器，下次启动前务必先 `wmic process where "name='python.exe'" get ProcessId,CommandLine | grep run_crawl_run` 清场。
+
 ## 1. 我们在做什么
+
+- **变体完整性实测（2026-11-20，`var/verify_variants_20261120/`，✅ 完成，纯验证、未改业务代码、未 commit）**：验证用户最高优先级「商品规格必须一比一完整抓取」在真实商品上是否成立。**未启动队列/批次、未关机、未碰 9334/FB、未打印 Cookie/密钥、未做任何 S3 操作。**
+  - **环境实况**：当前 shell `CRAWL_VARIANT_PRICE_LIMIT` 未设置；根 `.env` 只有 `MEDIA_BACKEND=s3` 等 4 个键、**无** `CRAWL_VARIANT_PRICE_LIMIT`；`settings.py` 默认已是 0，spider `DEFAULT_VARIANT_PRICE_LIMIT=10` 但被 setting 0 覆盖。验证脚本仍显式 `os.environ["CRAWL_VARIANT_PRICE_LIMIT"]="0"`。`.env` 的 `MEDIA_BACKEND=s3` 与批次 J 结论（AWS 账户暂停、数据先存本地）冲突，**脚本内强制 `MEDIA_BACKEND=local`**，因此本次零 S3 调用；图片本地化结果不影响 SKU/Offer 断言。
+  - **方法（与 spider 同链路）**：`verify.py <source_id>` = `/dp/x/<id>` → `parse_uk_product_detail` → `/dg/` merge → 逐个非主变体 `/dp/x/<sku>` + `extract_variant_price`（间隔 2s）→ `to_payload` → `ingest_product_payload` → `import_staging_product` → DB 实查。风控/HTTP 失败与「源站无价」分开计数；风控连续 3 条即止轮，冷却 90s 换 VALID 账号重试（`--resume-json` 可复用已得价格只补剩余，避免重复请求）。
+  - **实测商品 1（iPhone `100020670022401`，手机类目）**：variants **32**、轴 Series 2 / Colour 4 / Storage 4；补价 31 个非主变体 **31 成功 / 0 失败 / 0 源站无价 / 0 风控**，payload **32/32 有价**。导入 SPU `9d81ebd5…`：同源变体 16 → **Sku 15 / Offer 15（全 ACTIVE）/ offers_skipped_no_price 0**；DB 规格组合 15/16，轴值 Colour 4、Storage 4 完整。缺的 1 条 = `Burgundy/512GB`（`skipped_identity_conflict=1`）：该源 sku `100020670010193` 早在 2026-11-06（WP-45 变体导入之前）已作为独立商品导入 SPU `27f9770a…`（DRAFT、spec 为空、Offer 1399 DRAFT），导入端按设计**不自动改绑身份**，不是本次抓取缺口。另 **16 条 `Series=iPhone 18 Pro Max` 是兄弟源商品**（无 `skuStatus`，spec 仅有 Series），按 WP-45 设计 `skipped_cross_product=16` 跳过；其 `/dp/<sku>` 页均能拿到价格（不是抓不到），storefront `resolvesToPurchasableSku` 会过滤掉解析不到可购 SKU 的轴值，不出现死按钮。
+  - **实测商品 2（女装连衣裙 `100034005174455`，Size 4 × Colour 8 = 32，跨类目）**：实测前 DB 只有 **11 Offer**（旧默认 limit=10 留下的历史缺口：主变体 + 10 个变体价）。首轮 17 个变体页成功后，账号 48 连续 14 次风控页（HTTP 200 risk），首轮导入补到 18；改用账号 49 `--resume-json` 只补剩余 14 个，**14/14 成功、0 风控**，最终 payload **32/32 有价**。重新导入：**Sku 32 / Offer 32（全 ACTIVE）/ offers_skipped_no_price 0 / offers_created 14**；DB 规格组合 **32/32 完全一致**，轴值 Size 4 / Colour 8 与源站一致。**此例直接证明 limit=0 能把旧缺口补齐（11→32）。**
+  - **缺口归因**：①16 条跨商品系列值 = 源站指向另一源商品，不是本商品变体，正确做法是单独抓那个源商品页（建议后续做，不在本次范围）；②1 条身份冲突 = 历史独立导入的重复 SPU，需产品决策「合并/改绑」，按 WP-45 禁止自动重绑；③商品 2 首轮 14 条 = 账号级风控，换号后全成功，**不是源站无价、不是解析 bug**；Scrapy `RiskControlRenderMiddleware` 本就会在风控时 `ACCOUNT_RISK_ROTATED` + 浏览器重抓，生产链路不会静默留空；④实测两商品 `offers_skipped_no_price` 最终均为 0。
+  - **历史缺口规模（DB 实查）**：多 SKU SPU 1585 个，其中 **492 个至少 1 个 SKU 没有有价 Offer**（1099 个全cover）；staging 中 `offers_skipped_no_price>0` 的 **492** 行；`skipped_identity_conflict>0` 的 **64** 行（合计 77 条冲突）。这些是旧 `limit=10/3` 时代留下的存量，**只有重爬（`skip_imported=False`、limit=0）才会补齐**，连衣裙 11→32 已证明可补。
+  - **针对性验证（按验证纪律仅做针对性验证）**：`python -m py_compile var/verify_variants_20261120/verify.py` 通过；`manage.py test crawler_control.tests.test_crawler_variants --keepdb` **8/8 OK**；`ruff check` 两个已改 crawler 文件（`settings.py`、`spiders/joybuy_run.py`）**All checks passed**。**本次未改任何业务代码**（脚本在 `var/`，未跟踪）。
+  - **结论**：「规格一比一完整抓取」在**抓取层成立**——两个真实多规格商品 payload 均 32/32 变体有规格值 + 价格，**62/62 个唯一变体页最终成功解析出价**（iPhone 31/31；连衣裙 31/31，其中首轮 14 条风控换号后补抓成功），0 源站无价；在**落库层**商品 2 为 32/32 Sku+Offer 完全对齐，商品 1 为 15/16 自身变体（唯一缺口来自历史身份冲突，非抓取/解析/limit 语义）。limit=0 语义已实测生效并补齐存量缺口。
+  - **证据**：`var/verify_variants_20261120/`（`verify.py`、`iphone_run.log`、`iphone_100020670022401.json`、`dress_run.log`、`dress_100034005174455.json`（首轮 18 有价/14 风控）、`dress_resume.log`、`dress_100034005174455_resume.json`（32/32））。
+  - **下一步建议**：①按原计划对 492 个缺价多 SKU SPU 用 `skip_imported=False` + limit=0 重爬（优先受旧 limit 影响类目）；②64 行/77 条身份冲突需产品拍板「合并 SPU 还是永久保留独立 SPU」，**不要**在导入端自动改绑；③批量导入后按本脚本口径抽查「Sku 数 = 同源 variants 数、Offer 无空价」；④S3 媒体同步等 AWS 恢复后统一做。
+
+- **当前任务（2026-11-19 白天，`var/resume_crawl_20261119/`：商品规格 1:1 完整抓取，不关机、不 commit）**：用户最高优先级=「规格必须一比一完整抓取，宁可慢也不能缺变体/变体价格」。
+  - **代码改动（仅 2 处，已 targeted 验证）**：①`crawler/joybuy_crawler/spiders/joybuy_run.py::_pending_variant_skus` 判断改为 `if limit > 0 and len(pending) >= limit`，`CRAWL_VARIANT_PRICE_LIMIT<=0` = 不限个数；②`crawler/joybuy_crawler/settings.py` 默认 10 → 0。`manage.py test crawler_control.tests.test_crawler_variants` 8/8 OK（按验证纪律仅跑该模块）。
+  - **env 核查**：当前 shell `CRAWL_VARIANT_PRICE_LIMIT` 为空；根 `.env` 无该键；runserver PID 31364 命令行未带该 env；settings 默认已是 0。队列 spawn 仍**显式**写 `CRAWL_VARIANT_PRICE_LIMIT=0` 防继承旧值（无需重启 runserver）。
+  - **单商品实测（iPhone `100020670022401`，VALID 05 组账号 46）**：DP 200 → `parse_uk_product_detail` 得 **32 variants / 轴 Series 2、Colour 4、Storage 4**；31 个非主变体逐页补价 **31 成功 / 0 失败**，最终 **32/32 有价**（主变体 `detail_page`，其余 `variant_page`）。`import_staging_product` 结果：SPU `9d81ebd5…`，**Sku 15 / Offer 15 / offers_skipped_no_price=0**。15 而非 32 的原因：payload 里 16 条 `Series=iPhone 18 Pro Max` 无 `skuStatus`，是**另一个源商品**（`skipped_cross_product=16`，既有 WP-45 设计不并入），另 1 条 `skipped_identity_conflict=1`（该源 sku 早前已作为独立商品导入，身份不改绑）；这些变体价格均已抓进 payload。DB 15 个 SKU 全部有 Offer，轴值 Colour 4 / Storage 4 完整。
+  - **关键发现（决定任务清单）**：昨晚队列 spawn 的 `CRAWL_VARIANT_PRICE_LIMIT=3` 让 119 个多规格商品**每个只补了 3 个变体价**（近 20h 窗口缺 **489** 个变体价；另有 221 户外历史缺 67 个）。`skip_imported=True` 会在**列表阶段跳过已入库商品、不再请求详情页**，因此照原计划跑会把缺口永久留下。故对受影响类目 clone 任务改 **`skip_imported=False`**（幂等重导，修复缺口），仅 152 饮品机（116 个已入库商品 0 缺价）保留 True 只补未跑部分；194/200/220 无历史入库保留 True。
+  - **20 任务已建（pk）**：01=222 饮品机(True)/223 电子健康理疗/224 美发造型/194 宠物/200 冷冻派对/220 电子烟/221 户外(已改 False)；02=234 婴幼儿玩具/235 婴儿洗护/236 冷冻甜品；03=202 Drones/225 摄影摄像/226 经期护理；05=227 手机/228 键鼠/229 婴儿车；06=230 笔记本纸品/231 医疗保健/232 婴儿哺育/233 电子配件（除标注 True 外均 False）。全部 limit=200、状态 READY。
+  - **队列**：`var/resume_crawl_20261119/resume_queue.py`（每组一线程同组串行、全局 ≤5 并发），单 run 超时 **360 分钟**、**无关机链**、熔断只计 `FAILED` 且带 `RISK_CONTROL_FALLBACK`/`ACCOUNT_POOL_EXHAUSTED`/`CONNECTIVITY_PREFLIGHT_FAILED`（超时不算坏 run）。终态后写 `final_summary.json` 并调用 `final_report.py` 生成 `MORNING_REPORT.md` + 自动插入完成记录。
+  - **启动确认（07:28:38 UTC，脱离会话）**：首波 5 并发 = 222(d24e17db)/234(68e5231f)/230(27c20446)/202(625418bd)/227(e870c734)，全部 RUNNING，`ACCOUNT_POOL_READY` 正常、无风控事件。**psutil 实读 10 个 executor 进程 env：`CRAWL_VARIANT_PRICE_LIMIT=0`、`CRAWL_VARIANT_PRICES=true`（limit 全部为 0，不是 3）**——env 生效已证实。
+  - **新发现（1205 锁等待，既有问题）**：并发导入触发 MySQL `1205 Lock wait timeout exceeded`（历史上已有 132 次，昨夜手机 run 就有 46 次；非本次改动引入）。失败商品在 staging 保留完整 payload、状态 PENDING。`final_report.py` 在全部 run 终态后**串行补导入这些 PENDING 暂存**（此时无并发），再统计变体完整性。若仍有失败会如实写入晨报。
+  - **速度观察（07:28–07:50）**：单商品约 1.5–2 分钟（详情+图文+变体页+主图/详情图/变体图下载并上传 S3），200 商品约 5–6.5h；01 组 7 个串行任务预计 30h+（队列不关机，按用户“宁可慢”执行）。后续会话先看 `var/resume_crawl_20261119/progress.json` 与 `queue.log`。
+
+- **抓取第三晚批进行中（2026-11-19 白天启动，20 任务 + 自动关机，用户已睡；本记录为进行中快照，完成后看护会在本节顶部插入完成记录）**：不改业务代码、不 commit、不碰 9334/FB、不用 `_kill_stale_crawler_browsers`、超时只杀自己启动的 run 进程树、不打印 Cookie/AWS 密钥、不自动上架。
+  - **阶段 0 S3 探针（✅ 通过，15:3x 本地）**：`MEDIA_BACKEND=s3`（根 `.env` 第 1 行 + `config/settings.py:9` load_dotenv，任何 executor 进程 import settings 都生效，队列 spawn 无需显式传）；`~/.aws/credentials` 仅 `[default]` profile（IAM joybuy-up-down，region eu-central-1）。探针 `var/day_crawl_20261119/s3_probe.py`：新色 1x1 PNG → `store_bytes` 写入成功、`stored_file_exists`(head_object)=True、匿名 GET 200（69 bytes）、本地盘无副本；cleanup 后对象 404、`media_asset` 行数复原 101850。DB 实查：READY=94（01=5、02=13、03=14、05=14、06=14、04=32、default=2）；VALID 池 01=9/02=6/03=10/05=8/06=8/04=0；**所有组风控冷却 0 人**（昨晚标记账号 6h 冷却已全部过期）。
+  - **重试 job 已新建**：job 122 电子烟、140 户外（01 组 FAILED）克隆为 **pk 220「数据抓取01-电子烟-重试20261119」、pk 221「数据抓取01-户外-重试20261119」**（`create_retry_jobs.py`，走 `create_crawl_job` 服务，字段与原 job 一致 limit=200）。
+  - **阶段 1 试水（✅ 通过，17:38-17:51 UTC）**：job 152 饮品机 / run `a0839b39` / PID 44164（launch_run.py 未设 CRAWL_VARIANT_PRICE_LIMIT，同昨晚；队列派发 run 由 spawn setdefault 补到 3）。13 分钟 parsed=12 / imported=10 / fail=0，RISK_CONTROL_FALLBACK=0、ACCOUNT_RISK_ROTATED=0（仅 ACCOUNT_ROTATED=1 正常轮换）；**试水期新增 MediaAsset 85 行，head_object 抽查 200 真实字节——媒体确实进 S3**。
+  - **阶段 2 队列（✅ 17:54:15 UTC 启动，脱离会话）**：20 任务=01 组 7 个（152 预启动 + 158/170/194/200/220/221）+ 02=3（93/99/105）+ 03=3（70/88/106）+ 05=3（72/78/96）+ 06=4（85/91/97/103），固化 `var/day_crawl_20261119/task_list.json`（total_budget=20，已核 20 条全 READY）。`night_queue.py`（01 组 worker 等试水 run 结束后串行其余 6 个）+ `morning_watcher.py`（增加 S3 新增对象抽查节）均 nohup detach。启动即 5 并发：93(b5cca727)/72(6ad4c548)/70(389464af)/85(c64224dc)，复查全部 RUNNING、无风控事件。
+  - **关机链已武装**：20 任务全部终态 → `final_summary.json` → `shutdown /s /t 120 /c "day crawl 20261119 done"`；看护在缓冲期做 DB 实查 + S3 抽查 + 晨报（`var/day_crawl_20261119/` 目录下 MORNING_REPORT.md）+ 在本节顶部插入完成记录（锚点连写串已避开）。熔断：连续 3 坏 run → 只停新派发、已跑跑完照常关机。
+  - **留给完成记录/明早会话**：先读晨报再动手；02 组 VALID 只剩 6 注意补号；04 组仍需先解封 Google 帐户验证；电子烟/户外重试若再失败需再新建 job（名称 unique）。
+
+- **当前任务（2026-11-18，需求迭代文档 03 v1.1：第三场录像拆解 + 4 项拍板回填，纯文档，✅ 完成）**：拆解 31.8 分钟录像 `D:/Users/lyx/Videos/Joybuy功能需求讨论03.mp4`（199 段转写 + 160 关键帧），结合用户口述笔记**新建** `功能需求迭代文档03.md`，用户随后拍板 4 项回填为 **v1.1**，待确认项清零。**只产出文档，未动代码**。配套拆解：`D:/Users/lyx/Videos/Joybuy功能需求讨论03_拆解/`（txt/json/srt + _segments.md + 帧 + `Joybuy功能需求讨论03-内容拆解.md`）。
+  - **4 项最终拍板**：①SSL 证书付款方式**先不管**（非阻塞）；②已售数据：前期没采集，**当前对已爬数据随机生成 10k–30k 整数**（"已售 xxk+ 件"），后续爬虫采集真实数据后替换；③27:18 疑似收藏功能那条**不用管**；④专区商品清单**打开 joybuy 网页参考其各品类下对应模块的商品数据来配**。
+  - **购物端**：①品类区【品牌】小分类去掉；各小分类【更多】统一跳【全部】，唯页面最底部【更多】=无限加载全部品类商品；②专区固定死（早餐电器 6 个、智能家电取自冰箱等小品类、关爱自己随便、大牌优惠随便），填充商品**必须先入库再展示**、品类贴切（早餐电器不放洗衣机），不造"热门精选"这类假分类；③详情页：页脚全去掉；30 天退货与 24/7 客服**保留且展开内容也要**；【我们接受】支付 icon 要；配送与服务承诺加"销售及配送方：Joybuy"；画廊上方加评分+已售（10k–30k 随机整数"25k+ 件"样式、无感叹号图标、300+ 评价去掉、后续爬虫抓真实数据）；人工评价评语要（爬虫补抓）；经常一起购买/精选好物**不做**（无算法）；④右上角【配送至】→【申请店铺】四态状态机（未申请/审核中=看提交信息+状态/通过=【切换商家端】直切/失败=看原因可再申请），下拉框里的申请店铺入口移到此处。注意：**四态切换入口 2026-11-16 已在个人中心/侧栏实现过一版**（见 11-16 记录），本轮是把入口换到右上角【配送至】位置。
+  - **管理端**：入口路径 `/admin/` → **`/admin18vm6u4b83sf`**（改 nginx/部署路径时要同步）。
+  - **商家端**：页面要设计美化（原型丑，可参考 GitHub 设计资源）。
+  - **爬虫/数据**：每小品类最少 100–200 件；月底 11/28 目标三四万件（最好五六万）再对数；上新=图片进 S3、数据本地爬完同步文件、不开 3306 公网端口、不重启服务器。
+  - **基础设施**：HTTPS 要上（证书按年买、几百块），与本轮优化一起做。
+  - 客户总要求："一模一样，该有的都要有"；先改一版看效果。
 
 - **夜间抓取已自动完成（2026-11-18 凌晨，关机前自动生成）**：同一 VPN 节点第二晚。白天 15:4x 本地（07:4x UTC）试水 job 86 通过后放量，20 个 READY 任务（01 组剩余 11 个全取、02=3、03=2、05=2、06=2；04 组无 VALID 排除、default 排除）跑完并已自动关机。总账 succeeded=13 failed=2 skipped=5，20 任务成功 13 个，熔断=False。近 12h 风控标记账号 19 个（结论看晨报明细）。剩余 READY 94（按组 {'default': 2, '数据抓取04': 32, '数据抓取03': 14, '数据抓取05': 14, '数据抓取06': 14, '数据抓取02': 13, '数据抓取01': 5}）。晨报 `var/night_crawl_20261118/MORNING_REPORT.md`，原始汇总 `final_summary.json`、实时进度 `progress.json`。详见晨报。
 
@@ -410,7 +1876,7 @@
   - **重翻与验证**：55 个 SPU 两轮重翻（round3 2290s、round4 308+22 units，全部 `units_failed=0`）→ `build-specs --overwrite-specs` → **`verify --all --langs de,fr,nl` 11 项全 PASS、exit 0**（`spec tokens 0`、`sku coverage 424/424`、`terms de/fr/nl 7536 done 0 failed`）。库存现值：`translation_unit=330 done`、`spu_translation` 非 en-GB=**460**、`spu_detail_translation=165`、`sku_specification_translation≈1847`、`translation_term=7536/lang`。
   - **搜索文档实验：已回退（勿重蹈）**：worker 为让 DE 列表显示德语，在 **GB 市场**额外写了 5 组本地化行（GB/de-DE 等 275 行）+ 5 个市场行（275 行，`is_searchable=0`）。后果：`storefront_search` 的回退链「请求市场 → GB+请求 locale → GB 默认」使 DE **优先命中只有 55 行的 GB/de-DE**，**DE 搜 `fridge` 从 32 条变 0 条、DE 列表从 7899 变 55**（GB 不受影响）。已删除这 550 行、恢复 7900 行 GB/en-GB，DE 搜索回到 32 条英文结果。**结论：本地化搜索必须等全量译文（或先做后端合并检索），不能用少量本地化行覆盖回退链**。
   - **环境事故（必须记住）**：一轮翻译中途 `Docker Desktop` 引擎挂了（`//./pipe/dockerDesktopLinuxEngine` 不存在 → MySQL `WinError 10061 拒绝连接` → python 进程 `3221225794/DLL init failed`）。恢复：`"D:/Docker/Docker Desktop.exe"` 拉起 → 轮询 `/d/Docker/resources/bin/docker.exe ps` 等 `joybuy-dev-mysql-1` 出现 → 等 MySQL 可连 → `translate.py recover-stale --minutes 5`（回收 2 条僵尸）→ 同一 `run` 命令续跑（attempt_count=0 的 pending 会接着做）。**docker CLI 在 `/d/Docker/resources/bin/`，Git Bash `docker` 偶发指向坏路径**。
-  - **环境坑（2026-11-18，给的链接打不开）**：购物端 dev server 之前是**手动裸跑 `nuxt dev`**，listhen 绑到 **`[::1]:3000`（仅 IPv6 环回）** → `http://127.0.0.1:3000`（IPv4）连接被拒，只有 `http://localhost:3000` 能开（`curl` 实测 127.0.0.1=000 / localhost=200）。修法：`cmd //c "taskkill /PID <pid> /F"`（Git Bash 里 `/PID` 会被当路径，必须 `//PID` 或走 `cmd //c`）→ `cd storefront && node node_modules/nuxt/bin/nuxt.mjs dev --host 0.0.0.0 --port 3000` → 监听 `0.0.0.0:3000`，**127.0.0.1 与 localhost 均 200**（含 PDP 深链）。以后给用户链接优先 `localhost:3000`。
+  - **环境坑（2026-11-18，给的链接打不开）**：购物端 dev server 之前是**手动裸跑 `nuxt dev`**，listhen 绑到 **`[::1]:3000`（仅 IPv6 环回）** → `http://127.0.0.1:3000`（IPv4）连接被拒，只有 `http://localhost:3000` 能开（`curl` 实测 127.0.0.1=000 / localhost=200）。修法：`cmd //c "taskkill /PID <pid> /F"`（Git Bash 里 `/PID` 会被当路径，必须 `//PID` 或走 `cmd //c`）→ `cd storefront && node node_modules/nuxt/bin/nuxt.mjs dev --host 0.0.0.0 --port 3000` → 监听 `0.0.0.0:3000`，**127.0.0.1 与 localhost 均 200**（含 PDP 深链）。以后给用户链接优先 `localhost:3000`。**2026-11-19 复发一次**：该后台进程随会话退出（日志停在 HMR update，端口无监听），且并发会话另起了一个 `[::1]:3000` 实例造成「双监听、localhost 反而 000」。最终定法：**用 `--host ::` 起单个双栈实例**（`cd storefront && nohup node node_modules/nuxt/bin/nuxt.mjs dev --host :: --port 3000 > ../../../var/logs/storefront_dev.log 2>&1 &`），实测同一 PID 同时 LISTEN `0.0.0.0:3000` 与 `[::]:3000`，localhost 与 127.0.0.1 的首页和 PDP 深链均 200。多个实例抢 3000 时先 `netstat -ano | grep :3000` 全杀再起一个。
   - **品牌词误译修复（2026-11-18，AI guard + 重翻 55）**：用户抽查发现 `Apple→Apfel/Pomme/Appel`、`RoyalBaby→Königsblau`、`Unisex→Alleinstehende`、`Medium→M`、`Akcesoire` 拼错。新增 `translation_agent/tools/brand_guard.py`（`survey/classify/vet/typos/discover/colour-seed/apply/check`，可断点续跑）：用 `qwen3.8:27b` 把全部术语按 `brand/product_line/size_word/generic_noun` 分类，命中的品牌与产品线**一律 identity（译回源文）**并写 `quality_flags.keep_source`；`Medium/Small/Large` 保留源词不缩成尺码码；错拼按 AI 建议修正。结果：`translation_term` **7536→7712 行/语言**（触发 1257 行、其中实际改写 131 行：品牌 30 / 产品线 55 / 尺码 15 / 错拼 28 / 色名 3；新增 528 行 identity），原值存 `var/brand_guard_20261118/term_backup.json`。重翻 330 unit（1304s，0 失败）+ `build-specs --overwrite-specs` → `verify --all` **11 项 PASS**。断言：7964 de `Apple iPhone 17 Pro 256 GB Cosmic Orange`、170 de `Apple iPhone 17 256GB Schwarz`、219 de `Inch's Medium Apple 4x440ml`、2345 de `Unisex Motorradschutzhose…`、2376 de `RoyalBaby Helm Moon Grün…`，55×3 语言标题 **0 处** `Apfel/Pomme/Appel`。四语抽查表 `var/brand_guard_20261118/titles_55.md`，报告 `report.md`。
   - **已知残余（品牌 guard 引入）**：`glossary_hits` 大小写不敏感子串匹配 → 短词（`Royal`/`Switch`/`Small`）在非品牌语境也会保留源文；`Apple` 一律当品牌（水果类商品需标题级处理）；单字母尺码 `S/M/L` 仍走 `size_code`；`7964` 的 `256 GB` 与源文一致（格式统一另开任务）。
   - **仍未解决的质量问题**：法语语序/性数（`47cm Large 144cm Haute Réfrigérateur…`）、`221` 德语从 `Alkoholgehalt` 变 `ABV`（术语表选词，可接受但不如前者）、荷兰语偶发生造词；短语级错误无法靠术语表覆盖，需要**标题级 AI 校对 pass**（27B thinking，2–4s/条起，只能用于短字段）。
@@ -1617,6 +3083,13 @@
 - **2026-11-17 21:44 补启动三个前端（专用启动会话，无代码改动）**：本次开机后 Docker 三容器与后端已在跑（8000=12864 由看护循环托管，应是其他会话所起），3000/5173/5174 空 → 只补 `npx nuxt dev` + 两个 `npx vite`。验证：health ok；三端首页 200。**新发现（勿再踩）：本次 storefront 出现两个 nuxt 进程（34148 与 8808）且 3000 端口同时有 `127.0.0.1:3000` 和 `[::1]:3000` 两行 LISTENING**——新起 nuxt 在 IPv4 上也监听（之前只绑 ::1），两个进程各绑一个协议栈。处理：杀掉其中一个（`taskkill //F //PID <pid>`），只留一个。若再遇 3000 双 LISTENING，先 `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where CommandLine -like '*nuxt.mjs*'` 数进程再清理。
 - **2026-11-18 09:54 每日开机启动（专用启动会话，无代码改动）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 15s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 看护循环 + nuxt + 两个 vite。验证：四端口各一行 LISTENING（8000=23644、3000=9288、5173=9432、5174=5624）；counts：runserverPy=2、keepaliveBash=2、nuxt=1、vite=2；health ok；三端首页 200。**注意：本次 `migrate` 提示 catalog app 有模型改动尚未生成迁移（`makemigrations` 提示）**——应是其他会话正在开发中，启动会话不擅自 makemigrations，留待开发会话处理。
 - **2026-11-18 11:00 跟进（storefront 换手，无代码改动）**：09:52 起的 nuxt（9288）于 ~10:58 退出（后台任务报 exit 1），几乎同时**另一会话起了新 nuxt（PID 32460，绑 `0.0.0.0:3000`）**，3000 现由它托管、200 正常、仅一个 nuxt 进程——启动会话不再重复起，避免双实例。其余三服务未动（8000=23644、5173=9432、5174=5624，health ok）。
+- **2026-11-19 12:29 每日开机启动（专用启动会话，无代码改动）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply（catalog 迁移提示已消失，开发会话已处理）→ 看护循环 + nuxt + 两个 vite。验证：四端口各一行 LISTENING（8000=31364、3000=32484、5173=32376、5174=32388）；counts：runserverPy=2、keepaliveBash=2、nuxt=1、vite=2；health ok；三端首页 200。
+- **2026-11-20 01:03 跟进（storefront 夜间退出后重启，无代码改动）**：11-19 白天起的 nuxt（32484）于夜间静默退出（后台任务 exit 1，日志末尾是正常 HMR，无报错栈）。其余服务未受影响（8000 看护循环已自动换新 PID、5173/5174 原进程存活、容器 healthy 13h）。已重启 nuxt（新 PID 49208，绑 `::1:3000`），页面 200，仅一个 nuxt 进程。**观察：nuxt dev 与后端 runserver 一样会夜间静默死，后端有看护循环、前端没有——如频繁发生可考虑给三个前端也加看护。**
+- **2026-11-20 11:02 跟进（storefront 再次死亡 + 双 runserver + 双 nuxt，均已清理，无代码改动）**：凌晨 01:03 重启的 nuxt（49208）到早上又静默退出（机器未重启，boot 自 11-19 12:12）。同时 8000 出现**双 LISTENING**——一棵孤儿 runserver 树（43280/38940，父 34856 已死，10:59:20 由某个已退出的启动尝试留下）与看护循环的树（33884/34740，10:59:15）撞车；已 taskkill 孤儿树，留 34740。重启 nuxt 时又出现**双 nuxt 各绑一个协议栈**（39096 绑 127.0.0.1 / 42868 绑 ::1，与 11-17 晚同现象）；已杀 39096，留 42868（::1）。验证：四端口各一行 LISTENING（8000=34740、3000=42868、5173=32376、5174=32388）；health ok；三端首页 200。**结论：nuxt 一夜死两次，前端看护循环的必要性上升。**
+- **2026-11-20 11:12 storefront 看护循环上线（`var/run_storefront_keepalive.sh`，无代码改动）**：11:02 清理后几分钟内 nuxt 又死一次（当日第 3 次），裸奔重启治标不治本 → 仿后端看护做了 storefront 版：循环检查 3000 是否 LISTENING，**端口空闲才启动** `npx nuxt dev`（防止双实例/双协议栈绑定），退出后 5s 自动重启，`var/logs/storefront.log` 写 `logger=keepalive` 标记。启动：`bash var/run_storefront_keepalive.sh`（后台）。**实测自动恢复**：taskkill 杀掉 nuxt 后 ~9s 自动拉起（新 PID 35392，绑 `::1:3000`），页面 200。当前四服务：8000=34740（后端看护）、3000=35392（storefront 看护）、5173=32376、5174=32388，health ok。停 storefront 同后端：先杀 nuxt 的 node 再杀看护 shell。
+- **2026-11-20 15:53 再次开机启动（专用启动会话，无代码改动；首次两个前端服务都走看护）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端看护循环 + **storefront 看护循环（首次用于日常启动）** + 两个 vite。验证：四端口各一行 LISTENING（8000=24044、3000=5368、5173=32656、5174=28804）；runserver 一对进程、两条看护循环各一条链、nuxt 1、vite 2；health ok；三端首页 200。排查备注：`Get-CimInstance` 列 bash 时会把**检查命令自身的临时 shell** 也算进去（同宿主派生、即起即灭），别误判成重复看护循环——以端口 LISTENING 行数 + 服务健康为准。
+- **2026-11-20 17:41 跟进（storefront 看护循环实战验证成功，无代码改动）**：15:53 启动的看护循环在 17:35–17:40 之间 nuxt 两次退出（rc=0），**循环均 5s 内自动拉起**（日志有 `logger=keepalive` 标记各两条），3000 当前由新 nuxt（PID 48432）服务、200 正常。后台任务包装层虽报 exit 1，但看护脚本本体仍在跑（进程链 12752→36192→23884）——**后台任务的 exit 通知 ≠ 看护死了，以进程链 + 端口为准**。
+- **2026-11-20 23:01 晚间再次开机启动（专用启动会话，无代码改动）**：全停（Docker 引擎未运行、四端口空）→ Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端 + storefront 两条看护循环 + 两个 vite。验证：四端口各一行 LISTENING（8000=45632、3000=36384、5173=1228、5174=26900）；health ok；三端首页 200。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 

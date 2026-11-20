@@ -9,6 +9,8 @@ from merchant_ops import (
     views_campaign,
     views_catalog,
     views_channel_banners,
+    views_channel_modules,
+    views_channel_page_cards,
     views_finance,
     views_growth,
     views_media,
@@ -575,7 +577,6 @@ urlpatterns = [
         views_media.MerchantMediaUploadView.as_view(),
         name="merchant-media-upload",
     ),
-
     # 首页活动卡片（搜索框下方 10 宫格，A10 同组的运营入口）
     path(
         "api/v1/admin/campaign-cards",
@@ -592,7 +593,6 @@ urlpatterns = [
         views_campaign.AdminCampaignCardActionsView.as_view(),
         name="admin-campaign-card-actions",
     ),
-
     # 频道页 banner（/minihome/<code> 顶部轮播图，按频道分组）
     path(
         "api/v1/admin/channel-banners",
@@ -613,5 +613,37 @@ urlpatterns = [
         "api/v1/admin/channel-banners/<uuid:public_id>/actions",
         views_channel_banners.AdminChannelBannerActionsView.as_view(),
         name="admin-channel-banner-actions",
+    ),
+    # 频道页商品楼层（/minihome/<code> 真站运营楼层，批次 H）
+    path(
+        "api/v1/admin/channel-modules",
+        views_channel_modules.AdminChannelModulesView.as_view(),
+        name="admin-channel-modules",
+    ),
+    path(
+        "api/v1/admin/channel-modules/<uuid:public_id>",
+        views_channel_modules.AdminChannelModuleDetailView.as_view(),
+        name="admin-channel-module-detail",
+    ),
+    # 频道页活动卡片（/minihome/<code> 品类卡下方，13.2）
+    path(
+        "api/v1/admin/channel-page-cards",
+        views_channel_page_cards.AdminChannelPageCardsView.as_view(),
+        name="admin-channel-page-cards",
+    ),
+    path(
+        "api/v1/admin/channel-page-cards/channels",
+        views_channel_page_cards.AdminChannelPageCardChannelsView.as_view(),
+        name="admin-channel-page-card-channels",
+    ),
+    path(
+        "api/v1/admin/channel-page-cards/<uuid:public_id>",
+        views_channel_page_cards.AdminChannelPageCardDetailView.as_view(),
+        name="admin-channel-page-card-detail",
+    ),
+    path(
+        "api/v1/admin/channel-page-cards/<uuid:public_id>/actions",
+        views_channel_page_cards.AdminChannelPageCardActionsView.as_view(),
+        name="admin-channel-page-card-actions",
     ),
 ]

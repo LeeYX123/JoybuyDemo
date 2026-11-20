@@ -15,7 +15,13 @@ const { categories } = useCategoryTree()
 const { t, categoryName, locale } = useLocale()
 const config = useRuntimeConfig()
 
-const activeSlug = ref(categories.value[0]?.slug || 'home-living')
+// Same nav scope as the header: categories hidden from the top nav must not
+// reappear as bestseller tabs (需求文档03 12.4).
+const navCategories = computed(() =>
+  (categories.value || []).filter((category) => category.visible_in_nav !== false),
+)
+
+const activeSlug = ref(navCategories.value[0]?.slug || 'home-living')
 
 function searchUrl(slug) {
   const query = `category=${encodeURIComponent(slug)}&sort=newest&page=1`
@@ -58,7 +64,7 @@ const floorTitle = computed(() => (locale.value === 'zh' ? '畅销榜单' : 'Bes
 
     <nav class="home-bestsellers__tabs" :aria-label="t('bestseller.categoriesAria')">
       <button
-        v-for="category in categories"
+        v-for="category in navCategories"
         :key="category.slug"
         class="home-bestsellers__tab"
         :class="{ 'home-bestsellers__tab--active': category.slug === activeSlug }"

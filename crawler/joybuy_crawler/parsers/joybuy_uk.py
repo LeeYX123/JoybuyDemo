@@ -189,6 +189,12 @@ class UkProduct:
     #: 变体列表（WP-45 阶段 1）：每规格组合一条，见 ``extract_variants``。
     #: 没有规格轴的商品为空列表 —— 旧 payload 没有 variants 时导入行为不变。
     variants: list[dict] = field(default_factory=list)
+    #: 销量展示值（2026-11-19）：``productCommentSaleFloor.saleAmount``，如
+    #: "10k+"。源站只给展示字符串，不给精确数字，所以原样保留。
+    sale_amount: str = ""
+    #: 评价数展示值：同一 floor 的 ``commentCount``（如 "80+"），与精确的
+    #: ``rating_count`` 并存（源站展示口径）。
+    comment_count_display: str = ""
 
     def to_payload(self) -> dict:
         """Joybuy-native block + legacy staging keys in one payload."""
@@ -232,6 +238,13 @@ class UkProduct:
             "sourceUrl": self.source_url,
             "productCategoryPath": self.product_category_path,
         }
+        # 销量/评价展示值（2026-11-19，productCommentSaleFloor）。只在有值时
+        # 输出，payload 保持向后兼容（import 端「空⇒保留旧值」）。
+        if self.sale_amount or self.comment_count_display:
+            native["saleInfo"] = {
+                "saleAmount": self.sale_amount,
+                "commentCountDisplay": self.comment_count_display,
+            }
         # The AI summary block only exists when the page rendered one.
         if self.ai_summary:
             native["aiReviewSummary"] = {
@@ -260,6 +273,8 @@ class UkProduct:
             "ai_summary": self.ai_summary,
             "ai_summary_title": self.ai_summary_title,
             "ai_summary_tags": self.ai_summary_tags,
+            "sale_amount": self.sale_amount,
+            "comment_count_display": self.comment_count_display,
             "skus": self.skus,
             "spec_options": self.spec_options,
             "variants": self.variants,
@@ -749,6 +764,25 @@ def extract_videos(floors: dict) -> list[dict]:
             }
         )
     return videos
+
+
+def extract_sale_info(floors: dict) -> dict:
+    """销量/评价展示值：``productCommentSaleFloor``（2026-11-19 接入）。
+
+    源站把这个 floor 与评分块并列：``saleAmount`` 是「已售 10k+ 件」的展示
+    字符串（非精确数字，原样保留），``commentCount`` 是「80+」这类评价数
+    展示值。floor 缺失或字段为空时返回空 dict，不发明数据。
+    """
+
+    data = floors.get("productCommentSaleFloor") or {}
+    sale = str(data.get("saleAmount") or "").strip()
+    comments = str(data.get("commentCount") or "").strip()
+    info: dict = {}
+    if sale:
+        info["sale_amount"] = sale
+    if comments:
+        info["comment_count_display"] = comments
+    return info
 
 
 def extract_ai_summary(text: str) -> dict:
@@ -1794,6 +1828,7 @@ def parse_uk_product_detail(html: str, *, source_url: str = "") -> UkProduct:
                 rating_source = rating_source or "json_ld"
 
     videos = extract_videos(floors)
+    sale_info = extract_sale_info(floors)
 
     parsed = UkProduct(
         source_id=source_id,
@@ -1827,6 +1862,8 @@ def parse_uk_product_detail(html: str, *, source_url: str = "") -> UkProduct:
         specification_tables=[],
         videos=videos,
         variants=variants,
+        sale_amount=sale_info.get("sale_amount", ""),
+        comment_count_display=sale_info.get("comment_count_display", ""),
     )
     parsed.missing_fields = [
         name

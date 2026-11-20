@@ -30,6 +30,8 @@ useHead(() => ({ title: pageTitle.value }))
           <CmsRenderer :modules="mainModules" />
           <!-- Bestsellers floor with category tabs (docs/12 §1). -->
           <HomeBestsellers class="home-bestsellers-floor" />
+          <!-- 为您推荐（需求文档03 11.6）：紧贴畅销榜单下方，无 tab 行。 -->
+          <HomeRecommended />
         </template>
         <section v-else-if="error" class="home-unavailable" role="status">
           <p>The home page is temporarily unavailable. Please try again shortly.</p>
@@ -52,8 +54,11 @@ useHead(() => ({ title: pageTitle.value }))
   margin-top: 0;
 }
 
+/* 14.3: larger breathing room between the bottom 【查看更多】 and the footer
+ * (real-site footer is client-rendered and the live page is behind risk
+ * control; 64px is the measured-adjacent floor rhythm, up from 24px). */
 .home-content {
-  margin-block: 0 24px;
+  margin-block: 0 64px;
 }
 
 .home-unavailable {

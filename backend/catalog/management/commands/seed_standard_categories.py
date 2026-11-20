@@ -71,8 +71,8 @@ STANDARD_CATEGORIES = [
     ),
     (
         "beauty-personal-care",
-        "Beauty & Personal Care",
-        "美妆个人护理",
+        "Beauty",
+        "美妆",
         [
             ("skincare", "Face Care", "面部护肤"),
             ("makeup", "Makeup", "彩妆"),
@@ -82,8 +82,8 @@ STANDARD_CATEGORIES = [
     ),
     (
         "small-home-appliances",
-        "Small Home Appliances",
-        "小家电",
+        "Home Appliances",
+        "家用电器",
         [
             ("kitchen-appliances", "Oven & Hobs", "厨房电器"),
             ("cleaning-appliances", "Floorcare", "地板清洁电器"),
@@ -92,7 +92,7 @@ STANDARD_CATEGORIES = [
     (
         "health-wellness",
         "Health & Wellness",
-        "健康与保健",
+        "健康保健",
         [
             ("nutrition-supplements", "Vitamins & Supplements", "维生素 & 补充剂"),
             ("health-monitors", "Healthcare devices", "电子健康检测"),
@@ -133,8 +133,8 @@ STANDARD_CATEGORIES = [
     ),
     (
         "pet-supplies",
-        "Pet Supplies",
-        "宠物用品",
+        "Pets",
+        "宠物",
         [
             ("dog-food", "Dog Food", "狗粮"),
             ("cat-food", "Cat Food", "猫粮"),
@@ -144,8 +144,8 @@ STANDARD_CATEGORIES = [
     ),
     (
         "baby-toddler",
-        "Baby & Toddler",
-        "婴幼儿用品",
+        "Toys, Baby and Kids",
+        "母婴童玩",
         [
             ("baby-feeding", "Nursing & Feeding", "婴儿哺育喂养"),
             ("diapers-wipes", "Nappies & Pants", "婴幼儿纸尿裤"),
@@ -154,8 +154,8 @@ STANDARD_CATEGORIES = [
     ),
     (
         "games-accessories",
-        "Games & Accessories",
-        "游戏及配件",
+        "Gaming",
+        "游戏",
         [
             ("consoles", "Consoles", "游戏机"),
         ],

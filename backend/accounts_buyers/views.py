@@ -1,3 +1,6 @@
+import random
+import string
+
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError, transaction
@@ -35,6 +38,7 @@ from accounts_buyers.services import (
     revoke_buyer_session,
     set_buyer_session_cookie,
 )
+from merchants.models import MerchantApplication
 
 DUMMY_PASSWORD_HASH = make_password(None)
 
@@ -43,18 +47,62 @@ def _client_ip(request) -> str | None:
     return request.META.get("REMOTE_ADDR")
 
 
+def _merchant_application_brief(account: BuyerAccount) -> dict:
+    """需求 12.2：申请店铺状态随买家 session 一次带回（头部不再单独发请求）。
+
+    只取状态与店铺 public_id 两个轻字段；无申请时两者均为 None。
+    """
+
+    application = (
+        MerchantApplication.objects.select_related("merchant")
+        .only("status", "merchant__public_id")
+        .filter(buyer=account)
+        .first()
+    )
+    return {
+        "merchant_application_status": application.status if application else None,
+        "merchant_id": (
+            str(application.merchant.public_id)
+            if application is not None and application.merchant is not None
+            else None
+        ),
+    }
+
+
+def _ensure_display_name(account: BuyerAccount) -> str:
+    """需求 13.5-6: 未设置用户名时生成 `user+4位数字+4位小写字母`（真站格式
+    实证 user4323txlb），一次生成固定存库；已设置（含未来用户自改）则原样返回。"""
+
+    if account.display_name:
+        return account.display_name
+    candidate = ""
+    for _ in range(10):
+        candidate = "user" + "".join(random.choices(string.digits, k=4)) + "".join(
+            random.choices(string.ascii_lowercase, k=4)
+        )
+        if not BuyerAccount.objects.filter(display_name=candidate).exists():
+            break
+    account.display_name = candidate
+    account.save(update_fields=["display_name", "updated_at"])
+    return candidate
+
+
 def _account_payload(account: BuyerAccount) -> dict:
     return {
         "id": str(account.public_id),
         "email": account.email,
         "phone": account.phone_e164,
         "status": account.status,
+        # 需求 13.5-6: 头像下拉展示名（未设置时首次生成并固定存库）。
+        "display_name": _ensure_display_name(account),
         # 迭代02：登录渠道（EMAIL / FACEBOOK / GOOGLE）。
         "auth_provider": account.auth_provider or BuyerAccount.AuthProvider.EMAIL,
         # docs/12 6-6: storefront gates Buy now / Add to cart on this flag.
         "purchase_whitelisted": account.purchase_whitelisted,
         # 余额支付真扣，购物端结账页展示真实余额（与商家钱包是两套独立账户）。
         "balance": str(account.balance),
+        # 需求 12.2：申请店铺状态 + 已开通店铺 id（无申请时均为 None）。
+        **_merchant_application_brief(account),
     }
 
 

@@ -7,6 +7,7 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from accounts_buyers.models import BuyerAccount, BuyerSession, VerificationCode
+from merchants.models import Merchant, MerchantApplication
 
 VERIFY_URL = "/api/v1/auth/buyer/verification-codes"
 REGISTER_URL = "/api/v1/auth/buyer/register"
@@ -204,3 +205,113 @@ class BuyerAuthApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+
+class BuyerSessionMerchantApplicationTests(TestCase):
+    """需求 12.2：session payload 随带申请店铺状态（头部入口不再单独发请求）。"""
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+
+    def create_account(self, *, email="shopper@example.test"):
+        account = BuyerAccount(email=email, email_verified_at=timezone.now())
+        account.set_password("StrongPass!234")
+        account.save()
+        session_login = self.client.post(
+            LOGIN_URL,
+            data=json.dumps(
+                {"identifier": email, "password": "StrongPass!234"},
+            ),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.client.get(SESSION_URL).json()["csrf_token"],
+        )
+        self.assertEqual(session_login.status_code, 200)
+        return account
+
+    def session_account(self):
+        payload = self.client.get(SESSION_URL).json()
+        self.assertTrue(payload["authenticated"])
+        return payload["account"]
+
+    def test_session_without_application_has_null_status_and_merchant(self):
+        self.create_account()
+
+        account = self.session_account()
+
+        self.assertIsNone(account["merchant_application_status"])
+        self.assertIsNone(account["merchant_id"])
+
+    def test_session_reports_pending_application_without_merchant(self):
+        account = self.create_account(email="pending@example.test")
+        MerchantApplication.objects.create(buyer=account, shop_name="Pending Shop")
+
+        payload = self.session_account()
+
+        self.assertEqual(payload["merchant_application_status"], "PENDING")
+        self.assertIsNone(payload["merchant_id"])
+
+    def test_session_reports_approved_application_with_merchant_id(self):
+        account = self.create_account(email="approved@example.test")
+        merchant = Merchant.objects.create(slug="approved-shop", display_name="Approved Shop")
+        MerchantApplication.objects.create(
+            buyer=account,
+            shop_name="Approved Shop",
+            status=MerchantApplication.Status.APPROVED,
+            merchant=merchant,
+        )
+
+        payload = self.session_account()
+
+        self.assertEqual(payload["merchant_application_status"], "APPROVED")
+        self.assertEqual(payload["merchant_id"], str(merchant.public_id))
+
+
+class BuyerDisplayNameTests(TestCase):
+    """需求 13.5-6: 未设置用户名显示 `user+数字+字母`（首次生成固定存库）。"""
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+
+    def create_account(self, *, email="named@example.test", display_name=""):
+        account = BuyerAccount(
+            email=email,
+            email_verified_at=timezone.now(),
+            display_name=display_name,
+        )
+        account.set_password("StrongPass!234")
+        account.save()
+        return account
+
+    def login(self, email):
+        session_login = self.client.post(
+            LOGIN_URL,
+            data=json.dumps({"identifier": email, "password": "StrongPass!234"}),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.client.get(SESSION_URL).json()["csrf_token"],
+        )
+        self.assertEqual(session_login.status_code, 200)
+
+    def session_account(self):
+        payload = self.client.get(SESSION_URL).json()
+        self.assertTrue(payload["authenticated"])
+        return payload["account"]
+
+    def test_session_generates_display_name_once_in_real_site_format(self):
+        account = self.create_account()
+        self.login(account.email)
+
+        first = self.session_account()["display_name"]
+        second = self.session_account()["display_name"]
+
+        self.assertRegex(first, r"^user\d{4}[a-z]{4}$")
+        self.assertEqual(first, second)
+        account.refresh_from_db()
+        self.assertEqual(account.display_name, first)
+
+    def test_session_keeps_existing_display_name(self):
+        account = self.create_account(display_name="Alice")
+        self.login(account.email)
+
+        payload = self.session_account()
+
+        self.assertEqual(payload["display_name"], "Alice")

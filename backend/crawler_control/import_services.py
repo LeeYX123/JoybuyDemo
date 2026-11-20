@@ -654,6 +654,15 @@ def _sync_spu_detail(spu, payload: dict, *, observed_at) -> dict:
     if rating_fields:
         fields.update(rating_fields)
 
+    # 销量/评价展示值（2026-11-19，productCommentSaleFloor.saleAmount）：
+    # 展示字符串原样入库（如 "10k+"），空值不覆盖已有值。
+    sale_amount = str(payload.get("sale_amount") or "").strip()
+    if sale_amount:
+        fields["sale_amount"] = sale_amount
+    comment_display = str(payload.get("comment_count_display") or "").strip()
+    if comment_display:
+        fields["comment_count_display"] = comment_display
+
     if not fields:
         return {}
     fields["source_observed_at"] = observed_at
@@ -664,6 +673,7 @@ def _sync_spu_detail(spu, payload: dict, *, observed_at) -> dict:
         "spec_options": len(fields.get("spec_options") or []),
         "ai_summary": bool(fields.get("ai_summary")),
         "rating_count": fields.get("rating_count", 0),
+        "sale_amount": fields.get("sale_amount", ""),
     }
 
 

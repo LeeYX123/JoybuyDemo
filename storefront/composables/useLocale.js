@@ -24,8 +24,14 @@ export function useLocale() {
   const localeCode = computed(() => localeAliases[cookie.value] || cookie.value || 'en-GB')
   const locale = computed(() => localeCode.value.split('-')[0].toLowerCase())
 
-  function t(key) {
-    return messages[locale.value]?.[key] ?? messages.en[key] ?? key
+  function t(key, params) {
+    let text = messages[locale.value]?.[key] ?? messages.en[key] ?? key
+    if (params) {
+      for (const [name, value] of Object.entries(params)) {
+        text = text.replaceAll(`{${name}}`, String(value))
+      }
+    }
+    return text
   }
 
   function setLocale(value) {

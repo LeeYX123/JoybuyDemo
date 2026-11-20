@@ -60,6 +60,24 @@ class SeedStandardCategoriesTests(TestCase):
         )
         self.assertEqual(home.children.first().name_zh, "厨房与餐厅用品")
 
+    def test_renamed_roots_use_joybuy_display_names(self):
+        """2026-11-19 批次 H：6 个一级改成 Joybuy 口径（zh 名 + 真站 en 名）。"""
+
+        self.call_seed()
+        expected = {
+            "beauty-personal-care": ("Beauty", "美妆"),
+            "small-home-appliances": ("Home Appliances", "家用电器"),
+            "health-wellness": ("Health & Wellness", "健康保健"),
+            "pet-supplies": ("Pets", "宠物"),
+            "baby-toddler": ("Toys, Baby and Kids", "母婴童玩"),
+            "games-accessories": ("Gaming", "游戏"),
+        }
+        for slug, (name_en, name_zh) in expected.items():
+            root = LocalCategory.objects.get(slug=slug)
+            self.assertEqual(root.name_en, name_en)
+            self.assertEqual(root.name_zh, name_zh)
+            self.assertEqual(root.name, name_en)
+
     def test_seed_does_not_resurrect_retired_bucket_children(self):
         """2026-11-11 一对一类目拆分：退役桶/基座二级不得被 seed 复活。"""
 
@@ -117,7 +135,9 @@ class SeedStandardCategoriesTests(TestCase):
                 spu=air_fryer, market=market, local_category=air_fryer.local_category
             ).exists()
         )
-        self.assertTrue(Spu.objects.filter(pk=ramen.pk, local_category=ramen.local_category).exists())
+        self.assertTrue(
+            Spu.objects.filter(pk=ramen.pk, local_category=ramen.local_category).exists()
+        )
 
 
 class CategoryTreeApiTests(TestCase):
@@ -134,6 +154,30 @@ class CategoryTreeApiTests(TestCase):
         self.assertTrue(home["children"])
         self.assertIn("name_zh", home["children"][0])
         self.assertEqual(home["children"][0]["slug"], "kitchen-essentials")
+
+    def test_category_tree_marks_nav_hidden_roots(self):
+        """顶部导航隐藏两个一级：只打 visible_in_nav=False，类目本身保留。
+
+        品类树/频道直链/列表页必须继续可用，所以断言只涉及导航标志，不影响
+        status 与 children。
+        """
+
+        call_command("seed_standard_categories")
+        response = self.client.get(reverse("category-tree"))
+        self.assertEqual(response.status_code, 200)
+        roots = {root["slug"]: root for root in response.json()["categories"]}
+        self.assertFalse(roots["computers-accessories"]["visible_in_nav"])
+        self.assertFalse(roots["clothing-accessories"]["visible_in_nav"])
+        for slug in STANDARD_ROOT_SLUGS:
+            if slug in {"computers-accessories", "clothing-accessories"}:
+                continue
+            self.assertTrue(roots[slug]["visible_in_nav"], slug)
+        # 隐藏只作用于导航：类目仍 ACTIVE 且二级照常返回。
+        self.assertEqual(
+            LocalCategory.objects.get(slug="clothing-accessories").status,
+            LocalCategory.Status.ACTIVE,
+        )
+        self.assertTrue(roots["clothing-accessories"]["children"])
 
     @staticmethod
     def _create_channel_source(source_id: str) -> SourceCategory:

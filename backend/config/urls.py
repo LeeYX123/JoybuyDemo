@@ -31,9 +31,20 @@ urlpatterns = [
         content_views.channel_banners,
         name="storefront-channel-banners",
     ),
+    path(
+        "api/v1/cms/channel-page-cards",
+        content_views.channel_page_cards,
+        name="storefront-channel-page-cards",
+    ),
+    path(
+        "api/v1/channels/<str:code>/modules",
+        content_views.channel_modules,
+        name="storefront-channel-modules",
+    ),
     path("api/v1/categories", search_views.category_tree, name="category-tree"),
     path("api/v1/markets", offer_views.storefront_markets, name="storefront-markets"),
     path("api/v1/search", search_views.storefront_search, name="storefront-search"),
+    path("api/v1/recommendations", search_views.recommendations, name="recommendations"),
     path(
         "api/v1/merchants/search",
         merchant_public_views.merchant_search,

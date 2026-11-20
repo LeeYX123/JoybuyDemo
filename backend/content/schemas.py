@@ -8,7 +8,15 @@ minimum so an obviously broken payload never reaches production.
 
 from content.domain import CmsPayloadInvalid
 
-MODULE_TYPES = ("hero", "banner", "product_pool", "rich_text", "link_grid", "campaign_grid")
+MODULE_TYPES = (
+    "hero",
+    "banner",
+    "product_pool",
+    "rich_text",
+    "link_grid",
+    "campaign_grid",
+    "weekly_picks",
+)
 
 SCHEMAS = {
     "hero": {
@@ -34,6 +42,10 @@ SCHEMAS = {
     "campaign_grid": {
         "required": ("items",),
         "optional": ("title",),
+    },
+    "weekly_picks": {
+        "required": ("items",),
+        "optional": ("title", "title_zh"),
     },
 }
 
@@ -89,4 +101,11 @@ def validate_module_payload(module_type: str, payload: dict) -> dict:
         for index, item in enumerate(items):
             if not isinstance(item, dict) or not str(item.get("title") or "").strip():
                 raise CmsPayloadInvalid(f"campaign_grid.items[{index}] requires field 'title'.")
+    if module_type == "weekly_picks":
+        items = payload["items"]
+        if not isinstance(items, list):
+            raise CmsPayloadInvalid("weekly_picks.items must be a list.")
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or not str(item.get("title") or "").strip():
+                raise CmsPayloadInvalid(f"weekly_picks.items[{index}] requires field 'title'.")
     return payload

@@ -25,6 +25,9 @@ class BuyerAccount(models.Model):
     auth_provider = models.CharField(
         max_length=16, choices=AuthProvider.choices, default=AuthProvider.EMAIL
     )
+    # 需求文档03 13.5-6: 展示用户名。未设置时首次登录生成 `user+4位数字+4位小写字母`
+    # （真站格式实证 user4323txlb），一次生成固定存库；用户以后设置昵称则覆盖显示。
+    display_name = models.CharField(max_length=32, blank=True, default="")
     email_verified_at = models.DateTimeField(null=True, blank=True)
     phone_verified_at = models.DateTimeField(null=True, blank=True)
     last_login_at = models.DateTimeField(null=True, blank=True)

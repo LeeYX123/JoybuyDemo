@@ -1,10 +1,19 @@
 from django.http import JsonResponse
 
 from catalog.models import CategoryMapping, LocalCategory, ProductSearchDocument
-from catalog.search_services import SearchParamsInvalid, search_documents
+from catalog.search_services import (
+    SearchParamsInvalid,
+    recommendation_documents,
+    search_documents,
+)
 from offers.market_services import offer_market_chain, resolve_market_context
 
 PAGE_SIZE = 24
+
+# 顶部导航（一级品类行 + Categories 下拉面板）不展示的一级品类。
+# 只影响导航入口：品类树 / 频道页直链（/minihome/<code>）/ 列表页
+# （/c/<slug>）与商品全部保留可用。列表放后端常量，前端不硬编码 slug。
+NAV_HIDDEN_ROOT_SLUGS = frozenset({"computers-accessories", "clothing-accessories"})
 
 
 def root_channel_codes() -> dict:
@@ -85,6 +94,8 @@ def category_tree(request):
         data = serialize_category(root, locale)
         # 频道落地页（/minihome/<code>）入口：只有 depth=0 行带 code。
         data["channel_code"] = channel_codes.get(root.pk)
+        # 顶部导航/下拉面板可见性（见 NAV_HIDDEN_ROOT_SLUGS）。
+        data["visible_in_nav"] = root.slug not in NAV_HIDDEN_ROOT_SLUGS
         data["children"] = [
             serialize_category(child, locale) for child in children_by_parent.get(root.pk, [])
         ]
@@ -96,6 +107,29 @@ def category_tree(request):
             "categories": payload,
         }
     )
+
+
+def _resolve_search_market(context):
+    """按 offer 市场链挑出第一个有可搜索文档的 (market, locale_code)。
+
+    storefront_search / recommendations 共用的兜底逻辑：请求市场+locale 没有
+    文档时，沿市场链回退（含回退市场的默认 locale）。
+    """
+
+    market = context.market
+    locale_code = context.locale.code
+    for candidate_market in offer_market_chain(market):
+        candidates = [(candidate_market, locale_code)]
+        if candidate_market.default_locale != locale_code:
+            candidates.append((candidate_market, candidate_market.default_locale))
+        for candidate_market_item, candidate_locale in candidates:
+            if ProductSearchDocument.objects.filter(
+                market=candidate_market_item,
+                locale_code=candidate_locale,
+                is_searchable=True,
+            ).exists():
+                return candidate_market_item, candidate_locale
+    return market, locale_code
 
 
 def storefront_search(request):
@@ -113,22 +147,7 @@ def storefront_search(request):
 
     market = context.market
     locale_code = context.locale.code
-    search_market = market
-    search_locale_code = locale_code
-    candidates = []
-    for candidate_market in offer_market_chain(market):
-        candidates.append((candidate_market, locale_code))
-        if candidate_market.default_locale != locale_code:
-            candidates.append((candidate_market, candidate_market.default_locale))
-    for candidate_market, candidate_locale in candidates:
-        if ProductSearchDocument.objects.filter(
-            market=candidate_market,
-            locale_code=candidate_locale,
-            is_searchable=True,
-        ).exists():
-            search_market = candidate_market
-            search_locale_code = candidate_locale
-            break
+    search_market, search_locale_code = _resolve_search_market(context)
 
     category = None
     category_slug = request.GET.get("category", "").strip()
@@ -174,3 +193,91 @@ def storefront_search(request):
     result["price_source_market"] = search_market.code
     result["display_currency_symbol"] = market.display_currency_symbol
     return JsonResponse(result)
+
+
+def recommendations(request):
+    """首页【为您推荐】：全站 ACTIVE 商品确定性混排，24 件/页（需求文档03 11.6）。
+
+    频道页【精选好物】扩展（需求文档03 13.4）：可选 ``category=<slug>`` 只取该
+    类目子树商品；``cycle=1`` 页号超池后取模循环。响应结构不变。
+    """
+
+    context = resolve_market_context(request)
+    if context is None:
+        return JsonResponse(
+            {
+                "error": {"code": "MARKET_UNAVAILABLE", "message": "Market not configured."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=503,
+        )
+
+    try:
+        page = int(request.GET.get("page", "1"))
+    except ValueError:
+        page = 1
+
+    category = None
+    category_slug = request.GET.get("category", "").strip()
+    if category_slug:
+        category = LocalCategory.objects.filter(
+            slug=category_slug, status=LocalCategory.Status.ACTIVE
+        ).first()
+        if category is None:
+            return JsonResponse(
+                {
+                    "error": {"code": "CATEGORY_NOT_FOUND", "message": "Unknown category."},
+                    "request_id": getattr(request, "request_id", None),
+                },
+                status=404,
+            )
+
+    cycle = request.GET.get("cycle", "").strip() == "1"
+    try:
+        search_market, search_locale_code = _resolve_search_market(context)
+        result = recommendation_documents(
+            market=search_market,
+            locale_code=search_locale_code,
+            page=page,
+            category=category,
+            cycle=cycle,
+        )
+    except SearchParamsInvalid as exc:
+        return JsonResponse(
+            {
+                "error": {"code": "SEARCH_PARAMS_INVALID", "message": str(exc)},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=400,
+        )
+    if request.GET.get("has_local_image") == "1":
+        result["items"] = _filter_local_images(result.get("items") or [])
+        result["total"] = len(result["items"])
+    result["requested_market"] = context.market.code
+    result["requested_locale"] = context.locale.code
+    result["price_source_market"] = search_market.code
+    result["display_currency_symbol"] = context.market.display_currency_symbol
+    return JsonResponse(result)
+
+
+def _filter_local_images(items: list[dict]) -> list[dict]:
+    """Drop items whose local ``/media/`` file is missing (批次 O 14.2).
+
+    Some crawled products kept a DB row but their downloaded image file is
+    absent; the activity landing page must not render broken images. This is
+    opt-in via ``has_local_image=1`` so other callers keep the full pool.
+    """
+
+    from pathlib import Path
+
+    from django.conf import settings
+
+    root = Path(settings.MEDIA_ROOT)
+    prefix = "/media/"
+    filtered = []
+    for item in items:
+        path = str(item.get("image_path") or "")
+        if path.startswith(prefix) and not (root / path[len(prefix) :]).is_file():
+            continue
+        filtered.append(item)
+    return filtered

@@ -6,10 +6,12 @@ import { useUiToast } from './useUiToast'
 
 // 购物端「申请店铺 / 商家中心」入口的唯一状态源。
 //
-// 状态来自 GET /api/v1/account/merchant-application：
-//   无申请 / REJECTED -> 「申请店铺」       -> /account/apply-shop
-//   PENDING           -> 「申请审核中」     -> /account/apply-shop（看进度）
-//   APPROVED          -> 「进入商家中心」   -> POST merchant-console-session
+// 需求 12.2（2026-11-19）：申请状态随买家 session 一次带回
+// （GET /api/v1/auth/buyer/session 的 account.merchant_application_status，
+// 后端 _account_payload 注入，SSR 首屏即正确），本组合式函数不再单独
+// 请求 /api/v1/account/merchant-application。状态口径：
+//   无申请 / REJECTED / PENDING -> 「申请店铺」 -> /account/apply-shop
+//   APPROVED                    -> 「切换商家端」-> POST merchant-console-session
 // 商家端是独立应用（merchant-web，5174），跳转地址由后端按当前请求主机
 // 计算，前端不写死任何 host/port。
 const ERROR_KEYS = {
@@ -20,55 +22,36 @@ const ERROR_KEYS = {
   BUYER_AUTH_REQUIRED: 'merchantEntry.errorSignIn',
 }
 
-// Module-level cache so the header, account hub and sidebar share one fetch.
-const applicationStatus = ref(null)
-let loaded = false
-let inFlight = null
-
 export function useMerchantEntry() {
-  const { isAuthenticated } = useBuyerAuth()
+  const { isAuthenticated, merchantApplicationStatus, refresh: refreshSession } = useBuyerAuth()
   const { t } = useLocale()
   const { show } = useUiToast()
   const switching = ref(false)
 
+  // 兼容旧签名：force 时刷新共享的买家 session（同一 key 只发一次请求，
+  // 头部 / 账号侧栏 / 账号首页共用同一份派生状态）。
   async function loadStatus({ force = false } = {}) {
-    if (!isAuthenticated.value) {
-      applicationStatus.value = null
-      loaded = false
-      return null
+    if (!isAuthenticated.value) return merchantApplicationStatus.value
+    if (!force) return merchantApplicationStatus.value
+    try {
+      await refreshSession()
+    } catch {
+      // 刷新失败时保持当前派生状态：入口降级为普通「申请店铺」链接。
     }
-    if (!force && loaded) return applicationStatus.value
-    if (inFlight) return inFlight
-
-    inFlight = $fetch('/api/v1/account/merchant-application', { credentials: 'include' })
-      .then((data) => {
-        applicationStatus.value = data?.application?.status || null
-        loaded = true
-        return applicationStatus.value
-      })
-      .catch(() => {
-        // 接口不可用时降级为普通「申请店铺」入口，不阻塞账号页。
-        applicationStatus.value = null
-        loaded = false
-        return null
-      })
-      .finally(() => {
-        inFlight = null
-      })
-    return inFlight
+    return merchantApplicationStatus.value
   }
 
-  const isConsoleEntry = computed(() => applicationStatus.value === 'APPROVED')
+  const isConsoleEntry = computed(() => merchantApplicationStatus.value === 'APPROVED')
 
   const label = computed(() => {
-    if (applicationStatus.value === 'PENDING') return t('merchantEntry.pending')
-    if (applicationStatus.value === 'APPROVED') return t('merchantEntry.console')
+    if (merchantApplicationStatus.value === 'PENDING') return t('merchantEntry.pending')
+    if (merchantApplicationStatus.value === 'APPROVED') return t('merchantEntry.console')
     return t('merchantEntry.apply')
   })
 
   const description = computed(() => {
-    if (applicationStatus.value === 'PENDING') return t('merchantEntry.pendingDesc')
-    if (applicationStatus.value === 'APPROVED') return t('merchantEntry.consoleDesc')
+    if (merchantApplicationStatus.value === 'PENDING') return t('merchantEntry.pendingDesc')
+    if (merchantApplicationStatus.value === 'APPROVED') return t('merchantEntry.consoleDesc')
     return t('merchantEntry.applyDesc')
   })
 
@@ -107,7 +90,7 @@ export function useMerchantEntry() {
   }
 
   return {
-    applicationStatus,
+    applicationStatus: merchantApplicationStatus,
     isConsoleEntry,
     label,
     description,

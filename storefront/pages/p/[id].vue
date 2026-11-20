@@ -387,6 +387,21 @@ const guarantees = computed(() => [
   t('detail.guaranteeSupport'),
 ])
 
+// 【我们支持】支付图标区（需求文档03 11.8）：真站 PDP footer「We support」行实测
+// 复刻（9 个支付 SVG 各 32x20，顺序 = American Express→Klarna）。图标已下载到
+// storefront/public/images/pdp-services/ 本地托管（项目铁律：无第三方 CDN）。
+const paymentIcons = [
+  { src: '/images/pdp-services/payment-american-express.svg', alt: 'American Express' },
+  { src: '/images/pdp-services/payment-visa.svg', alt: 'Visa' },
+  { src: '/images/pdp-services/payment-mastercard.svg', alt: 'Mastercard' },
+  { src: '/images/pdp-services/payment-unionpay.svg', alt: 'UnionPay' },
+  { src: '/images/pdp-services/payment-paypal.svg', alt: 'PayPal' },
+  { src: '/images/pdp-services/payment-wechat-pay.svg', alt: 'WeChat Pay' },
+  { src: '/images/pdp-services/payment-google-pay.svg', alt: 'Google Pay' },
+  { src: '/images/pdp-services/payment-apple-pay.svg', alt: 'Apple Pay' },
+  { src: '/images/pdp-services/payment-klarna.svg', alt: 'Klarna' },
+]
+
 function changeQuantity(delta) {
   quantity.value = Math.max(1, Math.min(99, quantity.value + delta))
 }
@@ -540,10 +555,9 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
                 {{ offer.promotion_label }}
               </BaseBadge>
             </div>
-            <p v-if="offer" class="detail__inventory">
-              {{ offer.inventory_display }} {{ t('product.inStock') }}
-            </p>
-            <p v-else class="detail__inventory detail__inventory--out" role="status">
+            <!-- 需求文档03 11.7：真站 PDP 无库存展示行（实测 var/reco_pdp_20261119/），
+                 999+/库存数据字段保留在后端响应里，仅不再渲染。 -->
+            <p v-if="!offer" class="detail__inventory detail__inventory--out" role="status">
               {{ t('product.unavailableShort') }}
             </p>
 
@@ -735,6 +749,16 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
         :ai-summary="aiSummaryText"
         :review-summary="data?.review_summary"
       />
+
+      <!-- 我们支持：支付图标区（需求文档03 11.8，真站 footer「We support」行实测复刻）。 -->
+      <section class="detail__support" aria-labelledby="support-heading">
+        <h2 id="support-heading" class="detail__support-title">{{ t('pdp.supportTitle') }}</h2>
+        <ul class="detail__support-icons">
+          <li v-for="icon in paymentIcons" :key="icon.alt">
+            <img :src="icon.src" :alt="icon.alt" width="32" height="20" loading="lazy" />
+          </li>
+        </ul>
+      </section>
 
       <!-- 底部吸附购物条：滑过主图区后固定显示，滑回顶部即消失（Joybuy 交互）。 -->
       <div v-if="stickyBarVisible && data" class="buy-bar">
@@ -1109,10 +1133,13 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   font-weight: var(--font-weight-semibold);
 }
 
+/* 真站 dpCounter_counterBoxWrapper 实测：padding 12px 0，label margin-bottom 12px
+   （需求文档03 11.7，var/reco_pdp_20261119/measurement.md）。 */
 .detail__quantity {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  padding: 12px 0;
 }
 
 .detail__quantity-label {
@@ -1152,10 +1179,12 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   font-weight: var(--font-weight-bold);
 }
 
+/* 三段间距按真站实测调大（需求文档03 11.7）：真站相邻区块 12px + 数量块自带
+   padding 12px 0 → 数量→收藏视觉 24px、收藏→按钮区 12px（原 8px）。 */
 .detail__actions {
   display: flex;
   gap: var(--space-2);
-  margin-top: var(--space-2);
+  margin-top: 12px;
 }
 
 .detail__wish {
@@ -1165,7 +1194,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   gap: var(--space-2);
   width: 100%;
   min-height: 44px;
-  margin-top: var(--space-2);
+  margin-top: 12px;
   border: 1px solid var(--colour-border-strong);
   border-radius: 4px;
   background: var(--colour-surface);
@@ -1239,6 +1268,37 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   border-top: 1px solid var(--colour-border);
   font-size: var(--font-size-md);
   color: var(--colour-text);
+}
+
+/* 我们支持：真站 footer_footerPay 实测（padding 26px 0，标题 14px/400 #505259
+   margin-right 16px，图标各 32x20）。 */
+.detail__support {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-8);
+  padding: 26px 0;
+  border-top: 1px solid var(--colour-border);
+}
+
+.detail__support-title {
+  margin: 0 16px 0 0;
+  font-size: 14px;
+  font-weight: var(--font-weight-regular);
+  color: #505259;
+}
+
+.detail__support-icons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail__support-icons img {
+  display: block;
 }
 
 .detail__description {

@@ -4,7 +4,8 @@
 CRUD/排序逻辑：
 
 - ``campaign``：「Offers for you」活动卡片 → 覆盖快照 ``campaign_grid``；
-- ``discovery``：「品类发现」tiles 卡片 → 覆盖快照 ``link_grid``。
+- ``discovery``：「品类发现」tiles 卡片 → 覆盖快照 ``link_grid``；
+- ``weekly``：「每周甄选」活动卡片 → 覆盖 ``weekly_picks``（批次 O 14.2）。
 
 快照本身只读，保证版本回滚不被运营数据污染。
 """
@@ -15,15 +16,27 @@ from django.db import transaction
 
 from content.models import CmsModule, HomeCampaignCard
 
-# campaign：5 列 × 2 排的 10 宫格；discovery：auto-fill 网格，当前 6 张。
-SECTION_LIMITS = {"campaign": 10, "discovery": 12}
+# campaign：5 列 × 2 排的 10 宫格；discovery：固定 6 张；
+# weekly：一排 6 张活动卡（批次 O 14.2 验收口径）。
+SECTION_LIMITS = {"campaign": 10, "discovery": 12, "weekly": 6}
 MAX_CARDS = SECTION_LIMITS["campaign"]  # 兼容旧引用
 
-# storefront 注入时各自覆盖的 CMS 模块类型。
-SECTION_MODULE_TYPES = {"campaign": "campaign_grid", "discovery": "link_grid"}
+# 首页品类发现不展示的根品类（需求文档03 14.1：只影响该模块，品类与导航
+# 不受影响；卡片数据保留，后台仍可管理）。
+DISCOVERY_HIDDEN_SLUGS = frozenset({"pet-supplies", "baby-toddler", "games-accessories"})
+# 14.1：该模块固定只展示 6 张（后台容量仍为 12，便于替换/停用）。
+DISCOVERY_VISIBLE_LIMIT = 6
 
-# 站内路径或外链都允许，但必须以 / 或 http(s) 开头，挡掉 javascript: 等。
-_HREF_PATTERN = re.compile(r"^(?:/[^/\s]|https?://)\S*$", re.IGNORECASE)
+# storefront 注入时各自覆盖的 CMS 模块类型。
+SECTION_MODULE_TYPES = {
+    "campaign": "campaign_grid",
+    "discovery": "link_grid",
+    "weekly": "weekly_picks",
+}
+
+# 13.8 链接规则：以 http(s)://、//、www. 开头按外链原样使用（不改写），
+# 以单个 / 开头视为站内路径；其余（javascript: 等）仍拒绝。
+_HREF_PATTERN = re.compile(r"^(?:https?://|//|www\.|/(?!/))\S*$", re.IGNORECASE)
 
 
 class CampaignCardError(Exception):
@@ -44,12 +57,15 @@ def _clean(value, *, field: str, max_length: int, required: bool = False) -> str
 
 
 def validate_href(value: str) -> str:
+    """13.8：外链（http(s)://、//、www. 开头）原样保存；否则视为站内路径。"""
+
     href = (value or "").strip()
     if not href:
         return ""
     if not _HREF_PATTERN.match(href):
         raise CampaignCardError(
-            "HREF_INVALID", "跳转链接必须以 / 开头的站内路径或 http(s):// 链接。"
+            "HREF_INVALID",
+            "跳转链接需以 / 开头（站内路径），或以 http(s)://、//、www. 开头（外链原样跳转）。",
         )
     return href
 
@@ -84,25 +100,78 @@ def serialize_card(card: HomeCampaignCard) -> dict:
     return item
 
 
+_DISCOVERY_CATEGORY_PATTERNS = (
+    re.compile(r"[?&]category=([^&#]+)"),
+    re.compile(r"^/c/([^/?#]+)"),
+)
+
+
+def _discovery_category_slug(href: str) -> str:
+    """品类发现卡片的跳转链接 → 一级 slug（/s?category=x 或 /c/x）。"""
+
+    for pattern in _DISCOVERY_CATEGORY_PATTERNS:
+        match = pattern.search(href or "")
+        if match:
+            return match.group(1)
+    return ""
+
+
 def campaign_payload(section: str = "campaign") -> dict | None:
     """启用中的卡片按顺序组成对应模块的 payload；无卡片返回 None。
 
     discovery 的模块级标题沿用快照口径（Category discovery / 品类发现），
     连同 variant 一起带上，渲染组件才按 tiles 网格出图。
+
+    品类发现 tiles 与顶部导航同口径（批次 H 验收修复）：按卡片 href 里的
+    一级 slug 过滤掉 ``NAV_HIDDEN_ROOT_SLUGS``（只影响展示，不删数据），
+    并把名称覆盖为 ``LocalCategory`` 的当前 en/zh 名——卡片图片与跳转仍由
+    管理端配置。
     """
 
     cards = list(
-        HomeCampaignCard.objects.filter(section=section, enabled=True).order_by("sort_order", "pk")[
-            : SECTION_LIMITS.get(section, 10)
-        ]
+        HomeCampaignCard.objects.filter(section=section, enabled=True).order_by("sort_order", "pk")
     )
+    if section == "discovery":
+        from catalog.models import LocalCategory
+        from catalog.search_views import NAV_HIDDEN_ROOT_SLUGS
+
+        cards = [
+            card
+            for card in cards
+            if _discovery_category_slug(card.href) not in NAV_HIDDEN_ROOT_SLUGS
+            and _discovery_category_slug(card.href) not in DISCOVERY_HIDDEN_SLUGS
+        ]
+        cards = cards[:DISCOVERY_VISIBLE_LIMIT]
+        if not cards:
+            return None
+        slugs = {_discovery_category_slug(card.href) for card in cards}
+        categories = {
+            category.slug: category
+            for category in LocalCategory.objects.filter(slug__in=slugs, depth=0)
+        }
+        items = []
+        for card in cards:
+            item = serialize_card(card)
+            category = categories.get(_discovery_category_slug(card.href))
+            if category is not None:
+                # 名称以类目表为准（改名后全站一致）；图片/href 仍取卡片配置。
+                item["label"] = category.name_en or category.name
+                item["label_zh"] = category.name_zh
+            items.append(item)
+        payload = {
+            "items": items,
+            "variant": "tiles",
+            "title": "Category discovery",
+            "title_zh": "品类发现",
+        }
+        return payload
+
+    cards = cards[: SECTION_LIMITS.get(section, 10)]
     if not cards:
         return None
     payload = {"items": [serialize_card(card) for card in cards]}
-    if section == "discovery":
-        payload["variant"] = "tiles"
-        payload["title"] = "Category discovery"
-        payload["title_zh"] = "品类发现"
+    if section == "weekly":
+        payload.update({"title": "Weekly picks", "title_zh": "每周甄选"})
     return payload
 
 

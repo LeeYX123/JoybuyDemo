@@ -21,6 +21,11 @@ export function useBuyerAuth() {
   const isAuthenticated = computed(() => Boolean(data.value?.authenticated))
   const account = computed(() => data.value?.account || null)
   const csrfToken = computed(() => data.value?.csrf_token || csrfCookie.value || '')
+  // 需求 12.2：开店申请状态随买家 session 一次带回（后端 _account_payload
+  // 注入 merchant_application_status / merchant_id），头部入口不再单独发请求。
+  const merchantApplicationStatus = computed(
+    () => data.value?.account?.merchant_application_status || null,
+  )
 
   async function post(path, body) {
     // Auth posts always happen in the browser: the CSRF cookie must live in
@@ -67,6 +72,7 @@ export function useBuyerAuth() {
     isAuthenticated,
     account,
     csrfToken,
+    merchantApplicationStatus,
     refresh,
     sendVerificationCode,
     register,

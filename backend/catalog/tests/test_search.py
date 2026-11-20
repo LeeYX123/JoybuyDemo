@@ -15,6 +15,7 @@ from catalog.product_services import (
 from catalog.search_services import (
     SearchParamsInvalid,
     rebuild_search_document,
+    recommendation_documents,
     search_documents,
 )
 from catalog.services import create_local_category
@@ -397,3 +398,242 @@ class SearchTextTests(TransactionTestCase):
         empty = search_documents(market=self.market, query="nothing-matches-this")
         self.assertEqual(empty["total"], 0)
         self.assertEqual(empty["items"], [])
+
+
+class RecommendationTests(SearchFixtureBase):
+    """首页【为您推荐】池（需求文档03 11.6）：确定性混排 + 分页 + 只含可售商品。"""
+
+    def test_recommendations_are_deterministic_and_paginated(self):
+        for index in range(30):
+            self.seed_product(
+                source_id=f"reco-{index}",
+                title=f"Reco Product {index:02d}",
+                price=f"{10 + index}.00",
+                category=self.electronics if index % 2 else self.phones,
+                brand_name="BrandX",
+            )
+        first = recommendation_documents(market=self.market, page=1)
+        self.assertEqual(first["page_size"], 24)
+        self.assertEqual(first["total"], 30)
+        self.assertEqual(first["total_pages"], 2)
+        self.assertEqual(len(first["items"]), 24)
+
+        # 确定性：同样的入参两次调用顺序完全一致（刷新不乱序）。
+        again = recommendation_documents(market=self.market, page=1)
+        self.assertEqual(
+            [item["spu_public_id"] for item in first["items"]],
+            [item["spu_public_id"] for item in again["items"]],
+        )
+
+        # 翻页无重复、无空窗。
+        second = recommendation_documents(market=self.market, page=2)
+        self.assertEqual(len(second["items"]), 6)
+        page_one_ids = {item["spu_public_id"] for item in first["items"]}
+        page_two_ids = {item["spu_public_id"] for item in second["items"]}
+        self.assertEqual(page_one_ids & page_two_ids, set())
+        self.assertEqual(len(page_one_ids | page_two_ids), 30)
+
+    def test_recommendations_only_include_purchasable_products(self):
+        active = self.seed_product(
+            source_id="reco-active",
+            title="Active Reco Product",
+            price="9.99",
+            category=self.electronics,
+        )
+        self.seed_product(
+            source_id="reco-delisted",
+            title="Delisted Reco Product",
+            price="19.99",
+            category=self.electronics,
+            status=Spu.Status.INACTIVE,
+        )
+        result = recommendation_documents(market=self.market, page=1)
+        titles = [item["title"] for item in result["items"]]
+        self.assertEqual(titles, ["Active Reco Product"])
+        self.assertEqual(result["items"][0]["spu_public_id"], str(active.spu.public_id))
+
+    def test_recommendations_page_param_is_validated(self):
+        with self.assertRaises(SearchParamsInvalid):
+            recommendation_documents(market=self.market, page=0)
+
+    def test_recommendations_endpoint_returns_envelope(self):
+        self.seed_product(
+            source_id="reco-api",
+            title="API Reco Product",
+            price="5.00",
+            category=self.electronics,
+        )
+        response = self.client.get("/api/v1/recommendations", {"page": "1"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["page"], 1)
+        self.assertEqual(payload["page_size"], 24)
+        self.assertEqual(len(payload["items"]), 1)
+        item = payload["items"][0]
+        self.assertEqual(item["title"], "API Reco Product")
+        self.assertIn("display_currency_symbol", payload)
+
+    def test_recommendations_endpoint_rejects_bad_page(self):
+        response = self.client.get("/api/v1/recommendations", {"page": "not-a-number"})
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get("/api/v1/recommendations", {"page": "0"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "SEARCH_PARAMS_INVALID")
+
+    def _seed_mixed_category_pool(self, other):
+        """两棵子树各若干件：phones 2 件 + electronics 直挂 1 件 + other 1 件。"""
+        self.seed_product(
+            source_id="cat-a",
+            title="Phone Pool A",
+            price="10.00",
+            category=self.phones,
+        )
+        self.seed_product(
+            source_id="cat-b",
+            title="Phone Pool B",
+            price="11.00",
+            category=self.phones,
+        )
+        self.seed_product(
+            source_id="cat-c",
+            title="Electronics Pool C",
+            price="12.00",
+            category=self.electronics,
+        )
+        self.seed_product(
+            source_id="cat-d",
+            title="Other Pool D",
+            price="13.00",
+            category=other,
+        )
+
+    def test_recommendations_category_limits_pool_to_subtree(self):
+        """13.4：category=<slug> 只取该类目子树的 ACTIVE 商品。"""
+        other = create_local_category(name="Other", slug="other", parent=None, sort_order=2)
+        self._seed_mixed_category_pool(other)
+
+        subtree = recommendation_documents(market=self.market, page=1, category=self.electronics)
+        self.assertEqual(subtree["total"], 3)
+        titles = {item["title"] for item in subtree["items"]}
+        self.assertEqual(titles, {"Phone Pool A", "Phone Pool B", "Electronics Pool C"})
+
+        # 二级类目只圈自己的叶子。
+        phones = recommendation_documents(market=self.market, page=1, category=self.phones)
+        self.assertEqual(phones["total"], 2)
+        self.assertEqual(
+            {item["title"] for item in phones["items"]},
+            {"Phone Pool A", "Phone Pool B"},
+        )
+
+    def test_recommendations_cycle_wraps_pool_from_the_start(self):
+        """13.4 第 4 步：页号超池后取模循环（cycle=True），内容与首批一致。"""
+        for index in range(30):
+            self.seed_product(
+                source_id=f"cycle-{index}",
+                title=f"Cycle Product {index:02d}",
+                price=f"{10 + index}.00",
+                category=self.electronics,
+            )
+        first = recommendation_documents(market=self.market, page=1)
+
+        # 不带 cycle：页号被夹到最后一页（现网行为不变）。
+        clamped = recommendation_documents(market=self.market, page=5)
+        self.assertEqual(clamped["page"], 2)
+        self.assertEqual(len(clamped["items"]), 6)
+
+        # 带 cycle：page=5 → ((5-1) % 2) + 1 = 1，回到第 1 页。
+        wrapped = recommendation_documents(market=self.market, page=5, cycle=True)
+        self.assertEqual(wrapped["page"], 1)
+        self.assertEqual(
+            [item["spu_public_id"] for item in wrapped["items"]],
+            [item["spu_public_id"] for item in first["items"]],
+        )
+        # 循环响应里 total/total_pages 仍是池子真实大小。
+        self.assertEqual(wrapped["total"], 30)
+        self.assertEqual(wrapped["total_pages"], 2)
+
+        # page=3 → ((3-1) % 2) + 1 = 1；page=4 → 第 2 页。
+        wrapped_three = recommendation_documents(market=self.market, page=3, cycle=True)
+        self.assertEqual(wrapped_three["page"], 1)
+        wrapped_four = recommendation_documents(market=self.market, page=4, cycle=True)
+        self.assertEqual(wrapped_four["page"], 2)
+
+    def test_recommendations_endpoint_category_and_cycle_params(self):
+        for index in range(3):
+            self.seed_product(
+                source_id=f"api-cat-{index}",
+                title=f"API Category Product {index}",
+                price=f"{10 + index}.00",
+                category=self.phones,
+            )
+        self.seed_product(
+            source_id="api-cat-other",
+            title="API Other Product",
+            price="99.00",
+            category=self.electronics,
+        )
+
+        response = self.client.get("/api/v1/recommendations", {"page": "1", "category": "phones"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertTrue(all("API Category Product" in item["title"] for item in payload["items"]))
+
+        # cycle=1：page 超池后回卷，不返回空列表。
+        response = self.client.get(
+            "/api/v1/recommendations", {"page": "9", "category": "phones", "cycle": "1"}
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["page"], 1)
+        self.assertEqual(len(payload["items"]), 3)
+
+        # 未知类目 → 404 CATEGORY_NOT_FOUND。
+        response = self.client.get("/api/v1/recommendations", {"category": "no-such-category"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "CATEGORY_NOT_FOUND")
+
+    def test_recommendations_pool_excludes_stale_searchable_docs(self):
+        """验收 FAIL-A：is_searchable 是快照，池子必须实时校验 SPU/Offer。
+
+        并发爬虫导入期间 SPU 可能被重新置回 DRAFT、Offer 可能被下架而文档
+        标志未刷新；只信快照会让「为您推荐/精选好物」点进 PDP 404。
+        """
+
+        active = self.seed_product(
+            source_id="stale-active",
+            title="Still Purchasable",
+            price="10.00",
+            category=self.electronics,
+        )
+        draft_spu = self.seed_product(
+            source_id="stale-draft",
+            title="Draft Since Reimport",
+            price="11.00",
+            category=self.electronics,
+        ).spu
+        no_offer = self.seed_product(
+            source_id="stale-no-offer",
+            title="Offer Withdrawn",
+            price="12.00",
+            category=self.electronics,
+        ).spu
+
+        # 造脏数据：文档仍 is_searchable=True，但 SPU 已回到 DRAFT。
+        draft_spu.status = Spu.Status.DRAFT
+        draft_spu.save(update_fields=["status", "updated_at"])
+        # 另一件：SPU ACTIVE 但 ACTIVE Offer 被撤下（文档未刷新）。
+        Offer.objects.filter(sku__spu=no_offer).update(status=Offer.Status.DRAFT)
+
+        result = recommendation_documents(market=self.market, page=1)
+        self.assertEqual(result["total"], 1)
+        titles = [item["title"] for item in result["items"]]
+        self.assertEqual(titles, ["Still Purchasable"])
+        self.assertEqual(result["items"][0]["spu_public_id"], str(active.spu.public_id))
+
+        # 恢复后重新可见（池子跟随实时状态）。
+        draft_spu.status = Spu.Status.ACTIVE
+        draft_spu.save(update_fields=["status", "updated_at"])
+        Offer.objects.filter(sku__spu=no_offer).update(status=Offer.Status.ACTIVE)
+        result = recommendation_documents(market=self.market, page=1)
+        self.assertEqual(result["total"], 3)

@@ -90,7 +90,8 @@ JOYBUY_MOBILE_DETAIL_ENABLED = (
 JOYBUY_VARIANT_PRICES_ENABLED = (
     os.getenv("CRAWL_VARIANT_PRICES", "true").strip().lower() == "true"
 )
-JOYBUY_VARIANT_PRICE_LIMIT = int(os.getenv("CRAWL_VARIANT_PRICE_LIMIT", "10"))
+# <=0 表示不限个数（2026-11-19 用户口径：规格必须一比一完整抓取）。
+JOYBUY_VARIANT_PRICE_LIMIT = int(os.getenv("CRAWL_VARIANT_PRICE_LIMIT", "0"))
 
 # 代理（2026-11-09）：Scrapy 自带的 HttpProxyMiddleware 会读取进程环境变量
 # 和 Windows 注册表代理，但 `no_proxy` 可能把它旁路掉，也不方便只给爬虫进程

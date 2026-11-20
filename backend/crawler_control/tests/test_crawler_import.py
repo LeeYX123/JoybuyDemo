@@ -427,3 +427,91 @@ class ImportLocalMediaReuseTests(CrawlerControlTestBase):
                     )
             fetch.assert_called_once_with(url)
             self.assertEqual(summary, {"downloaded": 1, "failed": 0, "reused": 0})
+
+
+class SaleFloorImportTests(CrawlerControlTestBase):
+    """productCommentSaleFloor 的 saleAmount/commentCountDisplay 入库（2026-11-19）。"""
+
+    def test_sale_fields_land_on_spu_detail(self):
+
+        from catalog.models import SpuDetail
+
+        self.make_account()
+        self.job = self.make_job(name="Sale floor import job")
+        self.run = start_run(self.job)
+        from joybuy_crawler.ingest import ingest_product_payload
+        from joybuy_crawler.parsers.product_detail import PRODUCT_STRUCTURE_VERSION
+
+        parsed = parse_fixture("product_detail_v1.html")
+        payload = parsed.to_payload()
+        payload["sale_amount"] = "10k+"
+        payload["comment_count_display"] = "80+"
+        payload.setdefault("joybuy", {})["saleInfo"] = {
+            "saleAmount": "10k+",
+            "commentCountDisplay": "80+",
+        }
+        staging = ingest_product_payload(
+            self.run,
+            payload,
+            source_system="joybuy",
+            source_url="https://fixture.test/p/2001.html",
+            parser_version="product-1",
+            structure_version=PRODUCT_STRUCTURE_VERSION,
+        )
+        import_staging_product(staging, market=self.market, currency=self.currency)
+
+
+        spu = SpuDetail.objects.get(
+            spu__source_identities__source_id="1001",
+            spu__source_identities__source_system="joybuy",
+        )
+        self.assertEqual(spu.sale_amount, "10k+")
+        self.assertEqual(spu.comment_count_display, "80+")
+
+    def test_empty_sale_fields_do_not_overwrite(self):
+        from catalog.models import SpuDetail
+
+        self.make_account()
+        self.job = self.make_job(name="Sale floor empty job")
+        self.run = start_run(self.job)
+        from joybuy_crawler.ingest import ingest_product_payload
+        from joybuy_crawler.parsers.product_detail import PRODUCT_STRUCTURE_VERSION
+
+        parsed = parse_fixture("product_detail_v1.html")
+        payload = parsed.to_payload()
+        payload["sale_amount"] = "10k+"
+        payload["comment_count_display"] = "80+"
+        payload.setdefault("joybuy", {})["saleInfo"] = {
+            "saleAmount": "10k+",
+            "commentCountDisplay": "80+",
+        }
+        staging = ingest_product_payload(
+            self.run,
+            payload,
+            source_system="joybuy",
+            source_url="https://fixture.test/p/3001.html",
+            parser_version="product-1",
+            structure_version=PRODUCT_STRUCTURE_VERSION,
+        )
+        import_staging_product(staging, market=self.market, currency=self.currency)
+        # 第二次导入：payload 没带销量字段（例如改版后 floor 消失）→ 不清空已有值
+        payload2 = parsed.to_payload()
+        payload2.pop("sale_amount", None)
+        payload2.pop("comment_count_display", None)
+        payload2.get("joybuy", {}).pop("saleInfo", None)
+        staging2 = ingest_product_payload(
+            self.run,
+            payload2,
+            source_system="joybuy",
+            source_url="https://fixture.test/p/3001.html",
+            parser_version="product-1",
+            structure_version=PRODUCT_STRUCTURE_VERSION,
+        )
+        import_staging_product(staging2, market=self.market, currency=self.currency)
+
+        spu = SpuDetail.objects.get(
+            spu__source_identities__source_id="1001",
+            spu__source_identities__source_system="joybuy",
+        )
+        self.assertEqual(spu.sale_amount, "10k+")
+        self.assertEqual(spu.comment_count_display, "80+")

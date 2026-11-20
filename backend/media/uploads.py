@@ -38,6 +38,7 @@ PURPOSES = {
     "review": (MediaAsset.Kind.REVIEW, REVIEW_MAX_BYTES),
     "banner": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
     "channel_banner": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
+    "channel_page_card": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
     "activity": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
     "avatar": (MediaAsset.Kind.MERCHANT, MERCHANT_MAX_BYTES),
     # 2026-11-17 开店申请：店铺 logo 与个人证件照（买家侧上传，2MB，

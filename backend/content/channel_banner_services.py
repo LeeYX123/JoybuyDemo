@@ -11,8 +11,9 @@ from django.db import transaction
 
 from content.models import ChannelBanner
 
-# 站内路径：以单个 / 开头，挡掉 //host 协议相对链接与 javascript: 等。
-_HREF_PATTERN = re.compile(r"^/(?!/)\S*$")
+# 13.8 链接规则：以 http(s)://、//、www. 开头按外链原样使用（不改写），
+# 以单个 / 开头视为站内路径；其余（javascript: 等）仍拒绝。
+_HREF_PATTERN = re.compile(r"^(?:https?://|//|www\.|/(?!/))\S*$", re.IGNORECASE)
 _MEDIA_PREFIX = "/media/"
 MAX_SORT_ORDER = 9999
 
@@ -71,13 +72,18 @@ def validate_image_url(value) -> str:
 
 
 def validate_href(value) -> str:
+    """13.8：外链（http(s)://、//、www. 开头）原样保存；否则视为站内路径。"""
+
     href = str(value or "").strip()
     if not href:
         return ""
     if len(href) > 1000:
         raise ChannelBannerError("FIELD_TOO_LONG", "跳转链接不能超过 1000 个字符。")
     if not _HREF_PATTERN.match(href):
-        raise ChannelBannerError("HREF_INVALID", "跳转链接只能是以 / 开头的站内路径，或留空。")
+        raise ChannelBannerError(
+            "HREF_INVALID",
+            "跳转链接需以 / 开头（站内路径），或以 http(s)://、//、www. 开头（外链原样跳转）。",
+        )
     return href
 
 

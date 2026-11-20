@@ -20,6 +20,7 @@ import { useLocale } from '../composables/useLocale'
 import CategoryTileCarousel from './CategoryTileCarousel.vue'
 import { resolveCategoryContext } from '../utils/categoryContext'
 import { categoryHref } from '../utils/categoryLinks'
+import { buildPageList } from '../utils/pagination'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,8 +69,12 @@ const params = computed(() => {
 const { data, error, status } = await useSearch(params)
 
 const items = computed(() => (Array.isArray(data.value?.items) ? data.value.items : []))
-const total = computed(() => data.value?.total ?? 0)
+// 16.3：列表不再展示商品总数，页数仍按接口返回的 total_pages 计算。
 const totalPages = computed(() => data.value?.total_pages ?? 0)
+
+// 需求 14.7：底部分页按真站（页码窗口 ±1、首尾页 + 省略号，实测见
+// var/align_search_20261120/measurement.md）。
+const pageList = computed(() => buildPageList(activePage.value, totalPages.value))
 
 const heading = computed(() => {
   if (props.mode === 'category') {
@@ -211,9 +216,6 @@ useHead(() => ({ title: heading.value }))
           </template>
           <header class="listing-head">
             <h1>{{ heading }}</h1>
-            <p class="listing-head__count" role="status">
-              {{ total }} {{ t('listing.productsSuffix') }}
-            </p>
           </header>
 
           <div class="listing-toolbar">
@@ -265,18 +267,58 @@ useHead(() => ({ title: heading.value }))
             </p>
           </div>
 
-          <nav v-if="totalPages > 1" class="pagination" :aria-label="t('pagination.label')">
-            <button type="button" :disabled="activePage <= 1" @click="goToPage(activePage - 1)">
-              {{ t('pagination.previous') }}
-            </button>
-            <span aria-current="page">Page {{ activePage }} of {{ totalPages }}</span>
-            <button
-              type="button"
-              :disabled="activePage >= totalPages"
-              @click="goToPage(activePage + 1)"
-            >
-              {{ t('pagination.next') }}
-            </button>
+          <nav v-if="totalPages > 1" class="listing-pager" :aria-label="t('pagination.label')">
+            <ul class="listing-pager__list">
+              <li>
+                <button
+                  class="listing-pager__btn listing-pager__btn--arrow"
+                  type="button"
+                  :disabled="activePage <= 1"
+                  :aria-label="t('pagination.previous')"
+                  @click="goToPage(activePage - 1)"
+                >
+                  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+                    <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor" />
+                  </svg>
+                </button>
+              </li>
+              <template v-for="(entry, index) in pageList" :key="`${entry}-${index}`">
+                <li v-if="entry === 'gap'">
+                  <span class="listing-pager__ellipsis" aria-hidden="true">…</span>
+                </li>
+                <li v-else-if="entry === activePage">
+                  <span
+                    class="listing-pager__btn listing-pager__btn--active"
+                    aria-current="page"
+                    :aria-label="t('listing.pageCurrentAria', { page: entry })"
+                    >{{ entry }}</span
+                  >
+                </li>
+                <li v-else>
+                  <button
+                    class="listing-pager__btn"
+                    type="button"
+                    :aria-label="t('listing.pageAria', { page: entry })"
+                    @click="goToPage(entry)"
+                  >
+                    {{ entry }}
+                  </button>
+                </li>
+              </template>
+              <li>
+                <button
+                  class="listing-pager__btn listing-pager__btn--arrow"
+                  type="button"
+                  :disabled="activePage >= totalPages"
+                  :aria-label="t('pagination.next')"
+                  @click="goToPage(activePage + 1)"
+                >
+                  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+                    <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor" />
+                  </svg>
+                </button>
+              </li>
+            </ul>
           </nav>
         </div>
       </div>
@@ -305,6 +347,26 @@ useHead(() => ({ title: heading.value }))
 }
 
 /* Category trail: 首页 / 一级 / 二级 (current one is plain text). */
+.listing-main {
+  position: relative;
+}
+
+/* 需求 14.7：筛选列与商品列表之间的 1px 竖线。真站
+ * `.search_productArea::before` 实测（2026-11-20）：width 1px、top 0、
+ * bottom 0（通栏、无上下留白）、background rgb(224,225,229)=#E0E1E5，
+ * 绝对定位贴列间距左缘（真站 left:-23px = 其 23px 列间距）。本地列间距
+ * 24px，故 left:-24px。绝对定位不占布局、不影响 sidebar 的 sticky。 */
+.listing-main::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -24px;
+  width: 1px;
+  background: #e0e1e5;
+  content: '';
+  pointer-events: none;
+}
+
 .listing-breadcrumb {
   display: flex;
   flex-wrap: wrap;
@@ -440,12 +502,6 @@ useHead(() => ({ title: heading.value }))
   font-weight: var(--font-weight-bold);
 }
 
-.listing-head__count {
-  margin: var(--space-1) 0 0;
-  color: var(--colour-muted);
-  font-size: var(--font-size-sm);
-}
-
 .listing-toolbar {
   display: flex;
   align-items: center;
@@ -539,27 +595,67 @@ useHead(() => ({ title: heading.value }))
   text-align: center;
 }
 
-.pagination {
+/* 需求 14.7：底部分页对齐真站（真站 MUI Pagination，2026-11-20 实测）：
+ * 40×40 方块、4px 圆角、16px/500、4px 间距、无边框；当前页与 hover 同为
+ * rgba(0,16,71,.1) 浅色块；禁用箭头 opacity .38；省略号占同样 40×40。
+ * 容器顶部 24px 留白（真站 paginationContainer padding-top 24px）居中。 */
+.listing-pager {
+  display: flex;
+  justify-content: center;
+  padding-top: 24px;
+}
+
+.listing-pager__list {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
-  margin-block: var(--space-8);
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.pagination button {
-  min-height: 44px;
-  padding: 0 var(--space-5);
-  border: 1px solid var(--colour-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
+.listing-pager__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 500;
   cursor: pointer;
-  font-weight: var(--font-weight-semibold);
 }
 
-.pagination button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.listing-pager__btn:hover:not(:disabled),
+.listing-pager__btn--active {
+  background: rgb(0 16 71 / 10%);
+}
+
+.listing-pager__btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.listing-pager__btn--arrow {
+  padding: 0;
+}
+
+.listing-pager__ellipsis {
+  display: block;
+  width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 40px;
+  text-align: center;
 }
 
 @media (max-width: 80rem) {
@@ -575,6 +671,11 @@ useHead(() => ({ title: heading.value }))
 
   .listing-sidebar {
     position: static;
+  }
+
+  /* Single-column layout: no sidebar gap left to divide. */
+  .listing-main::before {
+    display: none;
   }
 
   .listing-grid {

@@ -318,8 +318,10 @@ onMounted(async () => {
       <div class="form-grid" style="margin-top: 12px">
         <label class="field">
           <span class="field__label">跳转链接（选填）</span>
-          <input v-model="editor.href" type="text" placeholder="/c/kitchen 或留空" />
-          <span class="field__hint">只支持以 / 开头的站内路径；留空则整张 banner 不可点。</span>
+          <input v-model="editor.href" type="text" placeholder="/c/kitchen 或 https://…" />
+          <span class="field__hint">
+            以 http(s):// 或 www. 开头按外链原样跳转，否则视为站内路径。留空则整张 banner 不可点。
+          </span>
         </label>
         <label class="field">
           <span class="field__label">排序（选填）</span>

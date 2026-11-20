@@ -1,5 +1,9 @@
 <script setup>
-useHead({ title: 'Create account' })
+import { useLocale } from '../../composables/useLocale'
+
+const { t } = useLocale()
+
+useHead({ title: () => t('auth.titleRegister') })
 </script>
 
 <template>

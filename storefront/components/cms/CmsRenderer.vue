@@ -5,6 +5,7 @@ import CmsHero from './CmsHero.vue'
 import CmsLinkGrid from './CmsLinkGrid.vue'
 import CmsProductPool from './CmsProductPool.vue'
 import CmsRichText from './CmsRichText.vue'
+import CmsWeeklyPicks from './CmsWeeklyPicks.vue'
 // Renders a CMS page top-to-bottom. Unknown module types and malformed
 // payloads degrade to a visible placeholder — a bad floor never breaks the
 // page (docs/08 WP-21 acceptance).
@@ -48,6 +49,10 @@ function payloadOf(module) {
       />
       <CmsRichText
         v-else-if="typeOf(module) === 'rich_text' && Object.keys(payloadOf(module)).length > 0"
+        :payload="payloadOf(module)"
+      />
+      <CmsWeeklyPicks
+        v-else-if="typeOf(module) === 'weekly_picks' && Array.isArray(payloadOf(module).items)"
         :payload="payloadOf(module)"
       />
       <CmsLinkGrid

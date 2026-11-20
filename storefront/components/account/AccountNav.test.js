@@ -2,44 +2,37 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The seller entry status now comes from the shared buyer session payload
+// (requirement 12.2): useMerchantEntry derives it from
+// useBuyerAuth().merchantApplicationStatus instead of a dedicated fetch.
 vi.mock('../../composables/useBuyerAuth', async () => {
   const { ref: createRef } = await import('vue')
   const authenticated = createRef(false)
+  const applicationStatus = createRef(null)
   return {
     __setAuthenticated: (value) => {
       authenticated.value = value
     },
+    __setApplicationStatus: (value) => {
+      applicationStatus.value = value
+    },
     useBuyerAuth: () => ({
       isAuthenticated: authenticated,
       account: createRef(null),
+      merchantApplicationStatus: applicationStatus,
       logout: vi.fn(),
+      refresh: vi.fn(async () => {}),
     }),
   }
 })
 
-import { __setAuthenticated } from '../../composables/useBuyerAuth'
+import { __setApplicationStatus, __setAuthenticated } from '../../composables/useBuyerAuth'
 import AccountNav from './AccountNav.vue'
 
 const RouterLinkStub = {
   name: 'RouterLinkStub',
   props: ['to'],
   template: '<a :href="to"><slot /></a>',
-}
-
-function stubFetch(status) {
-  vi.stubGlobal(
-    '$fetch',
-    vi.fn(async (url) => {
-      if (String(url).includes('merchant-application')) {
-        return { application: status ? { status } : null }
-      }
-      if (String(url).includes('buyer/session')) return { csrf_token: 'csrf-token' }
-      if (String(url).includes('merchant-console-session')) {
-        return { url: 'http://localhost:5174/' }
-      }
-      return {}
-    }),
-  )
 }
 
 async function settle() {
@@ -61,7 +54,18 @@ const wrapped = []
 
 beforeEach(() => {
   __setAuthenticated(true)
-  stubFetch(null)
+  __setApplicationStatus(null)
+  // Console switch posts need $fetch; entry rendering itself stays offline.
+  vi.stubGlobal(
+    '$fetch',
+    vi.fn(async (url) => {
+      if (String(url).includes('buyer/session')) return { csrf_token: 'csrf-token' }
+      if (String(url).includes('merchant-console-session')) {
+        return { url: 'http://localhost:5174/' }
+      }
+      return {}
+    }),
+  )
 })
 
 afterEach(() => {
@@ -94,7 +98,7 @@ describe('AccountNav merchant entry', () => {
   })
 
   it('links to apply-shop and says under review while PENDING', async () => {
-    stubFetch('PENDING')
+    __setApplicationStatus('PENDING')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
     const seller = wrapper.findAll('.account-nav__item')[4]
@@ -104,7 +108,7 @@ describe('AccountNav merchant entry', () => {
   })
 
   it('returns to the apply entry after REJECTED', async () => {
-    stubFetch('REJECTED')
+    __setApplicationStatus('REJECTED')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
     const seller = wrapper.findAll('.account-nav__item')[4]
@@ -113,7 +117,7 @@ describe('AccountNav merchant entry', () => {
   })
 
   it('becomes a Merchant Center action when APPROVED', async () => {
-    stubFetch('APPROVED')
+    __setApplicationStatus('APPROVED')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
     const seller = wrapper.findAll('.account-nav__item')[4]

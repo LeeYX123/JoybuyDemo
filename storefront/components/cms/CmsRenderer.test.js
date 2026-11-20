@@ -68,6 +68,19 @@ describe('CmsRenderer', () => {
           items: [{ label: 'Lightning Offers', icon_path: '/media/x.png' }],
         },
       },
+      {
+        type: 'weekly_picks',
+        payload: {
+          title: 'Weekly picks',
+          items: [
+            {
+              title: 'Adventure awaits',
+              image_path: '/media/weekly/a.png',
+              href: '/marketing?activityId=1',
+            },
+          ],
+        },
+      },
     ]
     const wrapper = mountRenderer(modules)
     expect(wrapper.find('.cms-hero').exists()).toBe(true)
@@ -76,6 +89,7 @@ describe('CmsRenderer', () => {
     expect(wrapper.find('.cms-pool').exists()).toBe(true)
     expect(wrapper.find('.cms-rich-text').exists()).toBe(true)
     expect(wrapper.find('.cms-link-grid').exists()).toBe(true)
+    expect(wrapper.find('.weekly-picks').exists()).toBe(true)
   })
 
   it('drops campaign_grid tiles without titles and never renders a heading', () => {
@@ -140,14 +154,41 @@ describe('CmsRenderer', () => {
       '/media/discovery/home.png',
     )
     expect(cards[0].attributes('href')).toBe('/s?category=home-living')
-    // Brand marquee: one animated track with the items rendered twice for the
-    // seamless right→left loop; cards are static (no links).
-    expect(wrapper.find('.brand-marquee__track').exists()).toBe(true)
+    // Brand row (14.4): a single static list (no duplicated marquee track),
+    // circular logos only, never clickable.
+    expect(wrapper.find('.brand-row').exists()).toBe(true)
+    expect(wrapper.find('.brand-row__list').exists()).toBe(true)
     const brands = wrapper.findAll('.brand-card')
-    expect(brands).toHaveLength(2)
+    expect(brands).toHaveLength(1)
     expect(brands[0].find('img').attributes('src')).toBe('/media/brands/midea.png')
     expect(brands[0].find('.brand-card__name').text()).toBe('Midea')
     expect(brands[0].find('a').exists()).toBe(false)
+  })
+
+  it('renders weekly picks with clickable activity links and localized titles', () => {
+    const wrapper = mountRenderer([
+      {
+        type: 'weekly_picks',
+        payload: {
+          title: 'Weekly picks',
+          title_zh: '每周甄选',
+          items: [
+            {
+              title: 'Adventure awaits',
+              title_zh: '户外探险之旅',
+              image_path: '/media/weekly/adventure.webp',
+              href: '/marketing?activityId=20050029',
+            },
+          ],
+        },
+      },
+    ])
+    const section = wrapper.get('.weekly-picks')
+    expect(section.get('.weekly-picks__title').text()).toBe('Weekly picks')
+    const card = wrapper.get('.weekly-picks__card')
+    expect(card.attributes('href')).toBe('/marketing?activityId=20050029')
+    expect(card.get('img').attributes('src')).toBe('/media/weekly/adventure.webp')
+    expect(card.get('.weekly-picks__card-title').text()).toBe('Adventure awaits')
   })
 
   it('drops link_grid items without labels and renders static tiles without hrefs', () => {

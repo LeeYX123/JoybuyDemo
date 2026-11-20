@@ -19,7 +19,8 @@ from accounts_staff.models import (
     StaffRoleAssignment,
 )
 from accounts_staff.services import create_staff_session
-from content.campaign_services import import_from_published_snapshot
+from catalog.models import LocalCategory
+from content.campaign_services import campaign_payload, import_from_published_snapshot
 from content.models import CmsModule, CmsPage, HomeCampaignCard
 
 
@@ -100,6 +101,19 @@ class CampaignCardCrudTests(CampaignCardTestBase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "HREF_INVALID")
+
+    def test_full_links_stored_verbatim_per_13_8(self):
+        """13.8：http(s)://、//、www. 开头的全链接原样保存，不改写。"""
+        for href in (
+            "https://www.example.com/x",
+            "//cdn.example.com/x",
+            "www.example.com/x",
+        ):
+            response = self.post(
+                "/api/v1/admin/campaign-cards", {"title": "x", "href": href}
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            self.assertEqual(response.json()["card"]["href"], href)
 
     def test_card_cap_is_ten(self):
         for index in range(10):
@@ -291,6 +305,100 @@ class DiscoverySectionTests(CampaignCardTestBase):
         campaign_card = HomeCampaignCard.objects.get(title="活动A")
         self.assertEqual(campaign_card.sort_order, 1)
 
+    def test_discovery_filters_hidden_roots_and_uses_category_names(self):
+        """批次 H 验收修复：tiles 与顶部导航同口径（改名 + 不显示隐藏品类）。"""
+
+        LocalCategory.objects.create(
+            name="Beauty",
+            name_en="Beauty",
+            name_zh="美妆",
+            slug="beauty-personal-care",
+            path="/bh/",
+            depth=0,
+        )
+        self.make_card(
+            "旧美妆", sort_order=1, section="discovery", href="/s?category=beauty-personal-care"
+        )
+        self.make_card(
+            "服装", sort_order=2, section="discovery", href="/s?category=clothing-accessories"
+        )
+
+        payload = campaign_payload("discovery")
+        self.assertEqual(len(payload["items"]), 1)
+        item = payload["items"][0]
+        self.assertEqual(item["label"], "Beauty")
+        self.assertEqual(item["label_zh"], "美妆")
+        self.assertEqual(item["href"], "/s?category=beauty-personal-care")
+
+    def test_discovery_hides_batch_o_roots_and_caps_six(self):
+        """14.1：宠物/母婴童玩/游戏不展示，模块固定 6 张。"""
+
+        slugs = [
+            "home-living",
+            "electronics",
+            "beauty-personal-care",
+            "small-home-appliances",
+            "health-wellness",
+            "outdoor-sports",
+            "pet-supplies",
+            "baby-toddler",
+            "games-accessories",
+        ]
+        for order, slug in enumerate(slugs, start=1):
+            self.make_card(slug, sort_order=order, section="discovery", href=f"/s?category={slug}")
+        payload = campaign_payload("discovery")
+        hrefs = [item["href"] for item in payload["items"]]
+        self.assertEqual(len(hrefs), 6)
+        for hidden in ("pet-supplies", "baby-toddler", "games-accessories"):
+            self.assertNotIn(f"/s?category={hidden}", hrefs)
+
+    def test_storefront_keeps_brand_logos_when_injecting_discovery(self):
+        """14.4：品类发现注入不能连带删除心选品牌（同为 link_grid）。"""
+
+        page = CmsPage.objects.create(
+            page_key="home",
+            title="home",
+            version=1,
+            status=CmsPage.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=1,
+            module_type="link_grid",
+            payload={
+                "variant": "tiles",
+                "title": "Category discovery",
+                "items": [{"label": "快照旧品类"}],
+            },
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=2,
+            module_type="link_grid",
+            payload={
+                "variant": "brand_logos",
+                "title": "Brands we love",
+                "items": [{"label": "Midea", "icon_path": "/media/brands/midea.webp"}],
+            },
+        )
+        self.make_card("独立品类", sort_order=1, section="discovery", href="/s?category=toys")
+
+        modules = self.client.get("/api/v1/storefront/home").json()["modules"]
+        brands = [
+            m
+            for m in modules
+            if m["type"] == "link_grid" and m["payload"].get("variant") == "brand_logos"
+        ]
+        self.assertEqual(len(brands), 1)
+        self.assertEqual(brands[0]["payload"]["items"][0]["label"], "Midea")
+        tiles = [
+            m
+            for m in modules
+            if m["type"] == "link_grid" and m["payload"].get("variant") == "tiles"
+        ]
+        self.assertEqual([i["label"] for i in tiles[0]["payload"]["items"]], ["独立品类"])
+
     def test_storefront_injects_discovery_tiles(self):
         page = CmsPage.objects.create(
             page_key="home",
@@ -327,3 +435,59 @@ class DiscoverySectionTests(CampaignCardTestBase):
         self.assertNotIn("快照旧品类", [i["label"] for i in items])
         # campaign 无数据时不注入 campaign_grid（本页快照也没有）
         self.assertFalse(any(m["type"] == "campaign_grid" for m in response.json()["modules"]))
+
+
+class WeeklySectionTests(CampaignCardTestBase):
+    def test_weekly_section_admin_cap_is_six(self):
+        listing = self.client.get("/api/v1/admin/campaign-cards?section=weekly")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["max_cards"], 6)
+        for index in range(6):
+            self.make_card(f"周{index}", sort_order=index + 1, section="weekly")
+        response = self.post(
+            "/api/v1/admin/campaign-cards", {"section": "weekly", "title": "第7张"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "TOO_MANY_CARDS")
+
+    def test_weekly_cards_payload_and_storefront_injection(self):
+        """14.2：每周甄选 6 张 CMS 卡片，注入 weekly_picks 模块。"""
+
+        page = CmsPage.objects.create(
+            page_key="home",
+            title="home",
+            version=1,
+            status=CmsPage.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CmsModule.objects.create(
+            page=page,
+            position=1,
+            module_type="link_grid",
+            payload={
+                "variant": "brand_logos",
+                "title": "Brands we love",
+                "items": [{"label": "Midea"}],
+            },
+        )
+        for index in range(6):
+            self.make_card(
+                f"活动{index}",
+                sort_order=index + 1,
+                section="weekly",
+                href=f"/marketing?activityId=2005002{index}",
+                image_url=f"/images/weekly-picks/{index}.webp",
+            )
+
+        payload = campaign_payload("weekly")
+        self.assertEqual(payload["title"], "Weekly picks")
+        self.assertEqual(payload["title_zh"], "每周甄选")
+        self.assertEqual(len(payload["items"]), 6)
+
+        modules = self.client.get("/api/v1/storefront/home").json()["modules"]
+        weekly = next(m for m in modules if m["type"] == "weekly_picks")
+        self.assertEqual(len(weekly["payload"]["items"]), 6)
+        self.assertEqual(weekly["payload"]["items"][0]["href"], "/marketing?activityId=20050020")
+        # 真站顺序：心选品牌（快照）→ 每周甄选（注入追加在后）。
+        types = [m["type"] for m in modules]
+        self.assertLess(types.index("link_grid"), types.index("weekly_picks"))

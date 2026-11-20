@@ -25,7 +25,7 @@ def _error(exc: CampaignCardError) -> StaffApiError:
     return StaffApiError(business_code=exc.code, message=exc.message, status_code=exc.status_code)
 
 
-VALID_SECTIONS = ("campaign", "discovery")
+VALID_SECTIONS = ("campaign", "discovery", "weekly")
 
 
 def _resolve_section(request) -> str:

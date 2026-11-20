@@ -670,3 +670,63 @@ class MobileDetailSpiderFlowTests(CrawlerControlTestBase):
         self.assertTrue(
             CrawlRunEvent.objects.filter(run=self.run, code="MOBILE_DETAIL_FAILED").exists()
         )
+
+
+class SaleFloorTests(unittest.TestCase):
+    """productCommentSaleFloor 销量/评价展示值（2026-11-19 接入）。"""
+
+    def _product_with_sale_floor(self, floor_data):
+        from joybuy_crawler.parsers.joybuy_uk import parse_uk_product_detail
+
+        html = _flight_html(
+            {
+                "serverProduct": {
+                    "data": {
+                        "floors": [
+                            {
+                                "floorId": "productCommentSaleFloor",
+                                "data": floor_data,
+                            }
+                        ]
+                    }
+                }
+            },
+            head="<html><body><h1>Test product</h1></body></html>",
+        )
+        return parse_uk_product_detail(
+            html, source_url=f"https://www.joybuy.co.uk/dp/kettle/{PRODUCT_ID}"
+        )
+
+    def test_sale_amount_and_comment_display_extracted(self):
+        product = self._product_with_sale_floor(
+            {
+                "saleAmount": "10k+",
+                "starShow": 4.8,
+                "commentCount": "80+",
+            }
+        )
+        self.assertEqual(product.sale_amount, "10k+")
+        self.assertEqual(product.comment_count_display, "80+")
+        payload = product.to_payload()
+        self.assertEqual(payload["sale_amount"], "10k+")
+        self.assertEqual(payload["comment_count_display"], "80+")
+        self.assertEqual(
+            payload["joybuy"]["saleInfo"],
+            {"saleAmount": "10k+", "commentCountDisplay": "80+"},
+        )
+
+    def test_missing_floor_yields_empty_fields(self):
+        product = self._product_with_sale_floor({})
+        self.assertEqual(product.sale_amount, "")
+        self.assertEqual(product.comment_count_display, "")
+        payload = product.to_payload()
+        self.assertEqual(payload["sale_amount"], "")
+        self.assertNotIn("saleInfo", payload["joybuy"])
+
+    def test_partial_floor_keeps_only_present_value(self):
+        product = self._product_with_sale_floor({"saleAmount": "5k+"})
+        self.assertEqual(product.sale_amount, "5k+")
+        self.assertEqual(product.comment_count_display, "")
+        payload = product.to_payload()
+        self.assertEqual(payload["joybuy"]["saleInfo"]["saleAmount"], "5k+")
+        self.assertEqual(payload["joybuy"]["saleInfo"]["commentCountDisplay"], "")

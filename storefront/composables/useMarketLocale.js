@@ -46,9 +46,14 @@ export const MARKET_OPTIONS = [
     code: 'GB',
     name: 'United Kingdom',
     defaultLocale: 'en-GB',
+    // 需求 13.5-4：语言下拉按真站清单补齐德/法/荷（真站 countryLang 键集
+    // zh_CN/fr_FR/de_DE/nl_NL + en；词典批次 N 补齐，缺词由 useLocale 回退英语）。
     locales: [
       { code: 'en-GB', name: 'English' },
       { code: 'zh-CN', name: '中文（简体）' },
+      { code: 'de-DE', name: 'Deutsch' },
+      { code: 'fr-FR', name: 'Français' },
+      { code: 'nl-NL', name: 'Nederlands' },
     ],
   },
 ]

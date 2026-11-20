@@ -27,61 +27,46 @@ vi.mock('../composables/useCategoryTree', () => ({
   }),
 }))
 
-// Mutable auth state so one file can exercise both the signed-out header and
-// the signed-in account menu / delivery drawer.
+// Mutable auth state so one file can exercise the signed-out header, the
+// signed-in account menu and the shop-application entry states. The entry
+// status comes from the shared buyer session payload (requirement 12.2: no
+// extra request; the header derives its label from merchantApplicationStatus).
 vi.mock('../composables/useBuyerAuth', async () => {
   const { ref } = await import('vue')
   const authenticated = ref(false)
+  const applicationStatus = ref(null)
   return {
     __setAuthenticated: (value) => {
       authenticated.value = value
     },
+    __setApplicationStatus: (value) => {
+      applicationStatus.value = value
+    },
     useBuyerAuth: () => ({
       isAuthenticated: authenticated,
-      account: ref({ email: 'buyer@example.com' }),
+      // 需求 13.5-6：session payload 带 display_name（后端生成 user+数字+字母）。
+      account: ref({ email: 'buyer@example.com', display_name: 'user4323txlb' }),
+      merchantApplicationStatus: applicationStatus,
       logout: vi.fn(),
+      refresh: vi.fn(async () => {}),
     }),
   }
 })
 
-import { __setAuthenticated } from '../composables/useBuyerAuth'
+import { __setApplicationStatus, __setAuthenticated } from '../composables/useBuyerAuth'
 import AppHeader from './AppHeader.vue'
 
 const RouterLinkStub = {
   name: 'RouterLinkStub',
   props: ['to'],
-  template: '<a :href="to"><slot /></a>',
-}
-
-const ADDRESSES = [
-  {
-    public_id: 'address-default',
-    full_name: 'Ada Lovelace',
-    phone: '07000000001',
-    line1: '1 Main Street',
-    line2: '',
-    city: 'London',
-    county: '',
-    postcode: 'EC1A 1BB',
-    is_default: true,
+  computed: {
+    href() {
+      if (typeof this.to === 'string') return this.to
+      const query = new URLSearchParams(this.to?.query || {}).toString()
+      return `${this.to?.path || ''}${query ? `?${query}` : ''}`
+    },
   },
-  {
-    public_id: 'address-second',
-    full_name: 'Alan Turing',
-    phone: '07000000002',
-    line1: '2 King Road',
-    line2: 'Flat 3',
-    city: 'Manchester',
-    county: 'Greater Manchester',
-    postcode: 'M1 1AE',
-    is_default: false,
-  },
-]
-
-function stubAddressFetch(addresses = ADDRESSES) {
-  const fetchMock = vi.fn(async () => ({ addresses }))
-  vi.stubGlobal('$fetch', fetchMock)
-  return fetchMock
+  template: '<a :href="href"><slot /></a>',
 }
 
 async function settle() {
@@ -105,8 +90,7 @@ const mountedWrappers = []
 
 beforeEach(() => {
   __setAuthenticated(false)
-  window.localStorage.clear()
-  stubAddressFetch()
+  __setApplicationStatus(null)
 })
 
 afterEach(() => {
@@ -124,9 +108,12 @@ describe('AppHeader', () => {
     expect(wrapper.get('#site-search').attributes('placeholder')).toBe('Search on Joybuy')
     // The categories trigger carries the label text (docs/12 header).
     expect(wrapper.get('.categories-button__label').text()).toBe('Categories')
-    // Round 52px icon buttons for account and cart, labelled for a11y.
+    // 需求 11.5：未登录时右上角是文本【登录】按钮（无图标圆框），购物车仍是圆图标。
+    expect(wrapper.get('.login-button').text()).toBe('Sign in')
+    expect(
+      wrapper.findAll('.icon-button').every((b) => b.classes().includes('icon-button--cart')),
+    ).toBe(true)
     expect(wrapper.findAll('.icon-button').map((b) => b.attributes('aria-label'))).toEqual([
-      'Sign in',
       'Cart, 0 items',
     ])
     // The 11 standard categories come from the API (requirement 1-1).
@@ -148,6 +135,33 @@ describe('AppHeader', () => {
     expect(text).not.toContain('Download Joybuy')
     expect(text).not.toContain('Same-day')
     expect(text).toContain('Unlock Your Welcome Offers')
+  })
+
+  // 需求 17.1（纠正 16.1）：政策/内容页只隐藏一级品类行；【分类】按钮保留且下拉可用
+  // （真站 /help/privacy-policy 存档：分类按钮 ×1、品类行 ×0）。
+  it('hides only the category row with hideCategoryNav but keeps the trigger', async () => {
+    const wrapper = mountHeader({ hideCategoryNav: true })
+    expect(wrapper.find('.categories-button').exists()).toBe(true)
+    expect(wrapper.find('.categories-anchor').exists()).toBe(true)
+    expect(wrapper.find('.category-nav').exists()).toBe(false)
+    expect(wrapper.findAll('.category-nav__link')).toHaveLength(0)
+    // 其余元素与首页一致：黑条（语言）、logo、搜索、登录/申请店铺/购物车。
+    expect(wrapper.get('.top-strip').exists()).toBe(true)
+    expect(wrapper.get('#locale-select').exists()).toBe(true)
+    expect(wrapper.get('.brand__logo').attributes('src')).toBe('/images/logo.png')
+    expect(wrapper.get('form.search').exists()).toBe(true)
+    expect(wrapper.get('.account-nav__apply').exists()).toBe(true)
+    expect(wrapper.get('.login-button').exists()).toBe(true)
+    expect(wrapper.get('.icon-button--cart').exists()).toBe(true)
+    // 【分类】按钮在政策页可点开下拉。
+    await wrapper.get('.categories-button').trigger('click')
+    expect(wrapper.find('.category-panel').exists()).toBe(true)
+  })
+
+  it('keeps only the language selector in the top strip (requirement 11-4)', () => {
+    const wrapper = mountHeader()
+    expect(wrapper.find('#market-select').exists()).toBe(false)
+    expect(wrapper.find('#locale-select').exists()).toBe(true)
   })
 
   it('opens the categories panel from the trigger button and on hover', async () => {
@@ -219,262 +233,194 @@ describe('AppHeader', () => {
     expect(wrapper.find('.account-menu__panel').exists()).toBe(true)
   })
 
-  it('opens the delivery drawer with the real-site layout and committed address', async () => {
+  // -------------------------------------------------------------------------
+  // Top-right shop application entry (requirement 12.2): the deliver-to pin
+  // and its drawer trigger are gone; the entry mirrors the application status
+  // carried by the buyer session payload (no extra fetch, no flash).
+  // -------------------------------------------------------------------------
+  it('removes the deliver-to entry and its drawer trigger entirely', async () => {
     __setAuthenticated(true)
     const wrapper = mountHeader()
     await settle()
 
-    // The header mirrors the default saved address once it is loaded.
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to EC1A 1BB')
-    expect(wrapper.get('.account-nav__deliver').attributes('aria-expanded')).toBe('false')
-
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
-    expect(wrapper.get('.address-drawer__panel').attributes('aria-modal')).toBe('true')
-    expect(wrapper.get('.account-nav__deliver').attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get('.country-select__name').text()).toBe('United Kingdom')
-    expect(wrapper.get('.country-select .country-flag').classes()).toContain('country-flag--gb')
-    expect(wrapper.findAll('.address-drawer__tab').map((tab) => tab.text())).toEqual([
-      'Delivery',
-      'Pickup',
-    ])
-    expect(wrapper.get('.address-drawer__tab--active').text()).toBe('Delivery')
-    expect(wrapper.get('.address-drawer__manage').attributes('href')).toBe('/account/addresses')
-    expect(wrapper.get('.address-drawer__location').attributes('aria-disabled')).toBe('true')
-    expect(wrapper.get('.address-drawer__location').text()).toBe('Use my location')
-    expect(wrapper.get('.address-drawer__postcode-label').text()).toBe('Postcode')
-    expect(wrapper.get('.address-drawer__postcode-input').attributes('placeholder')).toBe(
-      'Enter your postcode.',
-    )
-    expect(wrapper.get('.address-drawer__section-title').text()).toBe('My addresses')
-    expect(wrapper.get('.address-drawer__apply').text()).toBe('Apply')
-
-    const rows = wrapper.findAll('.address-drawer__address')
-    expect(rows).toHaveLength(2)
-    expect(rows[0].text()).toContain('Ada Lovelace')
-    expect(rows[0].text()).toContain('1 Main Street, London')
-    expect(rows[0].text()).toContain('EC1A 1BB')
-    expect(rows[0].attributes('aria-checked')).toBe('true')
-    expect(rows[1].attributes('aria-checked')).toBe('false')
-  })
-
-  it('only commits an address draft when Apply is pressed', async () => {
-    __setAuthenticated(true)
-    const wrapper = mountHeader()
-    await settle()
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
-
-    const rows = wrapper.findAll('.address-drawer__address')
-    await rows[1].trigger('click')
-    await settle()
-
-    // Draft only: drawer stays open, header and storage are unchanged.
-    expect(wrapper.find('.address-drawer').exists()).toBe(true)
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to EC1A 1BB')
-    expect(wrapper.findAll('.address-drawer__address')[1].attributes('aria-checked')).toBe('true')
-    expect(wrapper.findAll('.address-drawer__address')[0].attributes('aria-checked')).toBe('false')
-    expect(wrapper.get('.address-drawer__postcode-input').element.value).toBe('')
-    // Storage still holds the committed default, not the draft.
-    expect(JSON.parse(window.localStorage.getItem('joybuy:delivery-address'))).toMatchObject({
-      mode: 'address',
-      addressId: 'address-default',
-    })
-
-    await wrapper.get('.address-drawer__apply').trigger('click')
-    await settle()
+    expect(wrapper.find('.account-nav__deliver').exists()).toBe(false)
     expect(wrapper.find('.address-drawer').exists()).toBe(false)
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to M1 1AE')
-    expect(JSON.parse(window.localStorage.getItem('joybuy:delivery-address'))).toMatchObject({
-      mode: 'address',
-      addressId: 'address-second',
-    })
+    expect(wrapper.find('.account-nav__apply').exists()).toBe(true)
   })
 
-  it('validates a postcode draft and applies it only when valid', async () => {
+  it('shows the apply link that returns from sign-in when signed out', () => {
+    const wrapper = mountHeader()
+    const entry = wrapper.get('.account-nav__apply')
+    expect(entry.text()).toBe('Apply for a shop')
+    expect(entry.element.tagName).toBe('A')
+    expect(entry.attributes('href')).toBe('/auth/login?next=%2Faccount%2Fapply-shop')
+  })
+
+  it('links to the apply-shop page without an application', async () => {
     __setAuthenticated(true)
     const wrapper = mountHeader()
     await settle()
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
 
-    await wrapper.get('input[name="delivery-method"]').setValue()
-    const input = wrapper.get('.address-drawer__postcode-input')
-    await input.setValue('ABC')
-    await wrapper.get('.address-drawer__apply').trigger('click')
-    await settle()
-
-    expect(wrapper.find('.address-drawer').exists()).toBe(true)
-    expect(wrapper.get('.address-drawer__error').text()).toBe(
-      'Enter a valid UK postcode, for example EC1A 1BB.',
-    )
-    expect(wrapper.get('.address-drawer__postcode-input').classes()).toContain(
-      'address-drawer__postcode-input--invalid',
-    )
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to EC1A 1BB')
-
-    await input.setValue('m1 1ae')
-    await wrapper.get('.address-drawer__apply').trigger('click')
-    await settle()
-    expect(wrapper.find('.address-drawer').exists()).toBe(false)
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to M1 1AE')
-    expect(JSON.parse(window.localStorage.getItem('joybuy:delivery-address'))).toMatchObject({
-      mode: 'postcode',
-      postcode: 'M1 1AE',
-    })
+    const entry = wrapper.get('.account-nav__apply')
+    expect(entry.text()).toBe('Apply for a shop')
+    expect(entry.element.tagName).toBe('A')
+    expect(entry.attributes('href')).toBe('/account/apply-shop')
   })
 
-  it('switches to the Pickup tab and shows an honest empty state', async () => {
+  it('keeps the apply-shop link while the application is PENDING or REJECTED', async () => {
     __setAuthenticated(true)
-    const wrapper = mountHeader()
-    await settle()
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
-
-    await wrapper.findAll('.address-drawer__tab')[1].trigger('click')
-    await settle()
-    expect(wrapper.get('.address-drawer__tab--active').text()).toBe('Pickup')
-    expect(wrapper.get('.address-drawer__pickup-title').text()).toBe(
-      'Pickup stores are not available yet.',
-    )
-    expect(wrapper.find('.address-drawer__apply').exists()).toBe(false)
-    expect(wrapper.find('.address-drawer__manage').exists()).toBe(false)
-    expect(wrapper.find('.address-drawer__section-title').exists()).toBe(false)
-
-    await wrapper.findAll('.address-drawer__tab')[0].trigger('click')
-    await settle()
-    expect(wrapper.find('.address-drawer__apply').exists()).toBe(true)
-  })
-
-  it('closes the delivery drawer with Escape and the backdrop, locking scroll while open', async () => {
-    __setAuthenticated(true)
-    const wrapper = mountHeader()
-    await settle()
-    const deliver = wrapper.get('.account-nav__deliver')
-
-    await deliver.trigger('click')
-    await settle()
-    expect(document.body.style.overflow).toBe('hidden')
-    expect(document.activeElement).toBe(wrapper.get('.address-drawer__close').element)
-
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await settle()
-    expect(wrapper.find('.address-drawer').exists()).toBe(false)
-    expect(document.body.style.overflow).toBe('')
-
-    await deliver.trigger('click')
-    await settle()
-    await wrapper.get('.address-drawer__backdrop').trigger('click')
-    await settle()
-    expect(wrapper.find('.address-drawer').exists()).toBe(false)
-  })
-
-  it('keeps the sign-in prompt but allows an anonymous postcode lookup', async () => {
-    const wrapper = mountHeader()
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
-
-    expect(wrapper.get('.address-drawer__signin-text').text()).toBe(
-      'Please sign in to your account to use your address information.',
-    )
-    expect(wrapper.get('.address-drawer__signin-link').attributes('href')).toBe('/auth/login')
-    expect(wrapper.findAll('.address-drawer__address')).toHaveLength(0)
-    expect(wrapper.find('.address-drawer__section-title').exists()).toBe(false)
-    expect(wrapper.find('.address-drawer__postcode-input').exists()).toBe(true)
-
-    await wrapper.get('.address-drawer__postcode-input').setValue('M1 1AE')
-    await wrapper.get('.address-drawer__apply').trigger('click')
-    await settle()
-    expect(wrapper.find('.address-drawer').exists()).toBe(false)
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to M1 1AE')
-  })
-
-  it('only enforces the UK postcode shape when the country is GB', async () => {
-    const wrapper = mountHeader()
-    await wrapper.get('.account-nav__deliver').trigger('click')
-    await settle()
-
-    await wrapper.get('.country-select').trigger('click')
-    const france = wrapper
-      .findAll('[role="option"]')
-      .find((option) => option.text().includes('France'))
-    await france.trigger('click')
-    await wrapper.get('.address-drawer__postcode-input').setValue('ABC')
-    await wrapper.get('.address-drawer__apply').trigger('click')
-    await settle()
-
-    expect(wrapper.find('.address-drawer').exists()).toBe(false)
-    expect(wrapper.get('.account-nav__deliver-text').text()).toBe('Deliver to ABC')
-  })
-
-  // The avatar dropdown carries a seller entry whose label mirrors the buyer's
-  // shop application status (read-only GET /api/v1/account/merchant-application).
-  function stubSellerStatus(status) {
-    const fetchMock = vi.fn(async (url) => {
-      if (String(url).includes('merchant-application')) {
-        return { application: status ? { status } : null }
-      }
-      return { addresses: ADDRESSES }
-    })
-    vi.stubGlobal('$fetch', fetchMock)
-    return fetchMock
-  }
-
-  async function openAccountMenu(wrapper) {
-    await wrapper.get('button[aria-label="My account"]').trigger('click')
-    await settle()
-    return wrapper.get('.account-menu__panel .account-menu__item')
-  }
-
-  it('lists a seller entry that opens the apply-shop page', async () => {
-    __setAuthenticated(true)
-    stubSellerStatus(null)
-    const wrapper = mountHeader()
-    await settle()
-
-    const seller = await openAccountMenu(wrapper)
-    expect(seller.text()).toBe('Apply for a shop')
-    expect(seller.attributes('aria-label')).toBe('Apply for a shop')
-    expect(seller.element.tagName).toBe('A')
-    expect(seller.attributes('href')).toBe('/account/apply-shop')
-    // Same styling hook as every other dropdown entry.
-    expect(seller.classes()).toContain('account-menu__item')
-  })
-
-  it('labels the seller entry with the live application status', async () => {
-    __setAuthenticated(true)
-    stubSellerStatus('PENDING')
+    __setApplicationStatus('PENDING')
     const pending = mountHeader()
     await settle()
-    const underReview = await openAccountMenu(pending)
-    expect(underReview.text()).toBe('Application under review')
-    expect(underReview.attributes('href')).toBe('/account/apply-shop')
+    expect(pending.get('.account-nav__apply').text()).toBe('Apply for a shop')
+    expect(pending.get('.account-nav__apply').attributes('href')).toBe('/account/apply-shop')
 
-    __setAuthenticated(true)
-    stubSellerStatus('APPROVED')
-    const approved = mountHeader()
+    __setApplicationStatus('REJECTED')
+    const rejected = mountHeader()
     await settle()
-    const seller = await openAccountMenu(approved)
-    expect(seller.text()).toBe('Enter Merchant Center')
-    // APPROVED is an action: it swaps the buyer session for a merchant staff
-    // session and navigates to merchant-web (no apply-shop link any more).
-    expect(seller.element.tagName).toBe('BUTTON')
-    expect(seller.attributes('href')).toBeUndefined()
+    expect(rejected.get('.account-nav__apply').text()).toBe('Apply for a shop')
+    expect(rejected.get('.account-nav__apply').attributes('href')).toBe('/account/apply-shop')
   })
 
-  it('falls back to the apply label when the status request fails', async () => {
+  it('switches to the Seller console action when the application is APPROVED', async () => {
     __setAuthenticated(true)
+    __setApplicationStatus('APPROVED')
+    const assign = vi.fn()
+    window.location.assign = assign
     vi.stubGlobal(
       '$fetch',
       vi.fn(async (url) => {
-        if (String(url).includes('merchant-application')) throw new Error('offline')
-        return { addresses: ADDRESSES }
+        if (String(url).includes('buyer/session')) return { csrf_token: 'csrf-token' }
+        if (String(url).includes('merchant-console-session')) {
+          return { url: 'http://localhost:5174/' }
+        }
+        return {}
       }),
     )
     const wrapper = mountHeader()
     await settle()
 
-    const seller = await openAccountMenu(wrapper)
-    expect(seller.text()).toBe('Apply for a shop')
+    const entry = wrapper.get('.account-nav__apply')
+    expect(entry.text()).toBe('Switch to Seller console')
+    expect(entry.element.tagName).toBe('BUTTON')
+    expect(entry.attributes('href')).toBeUndefined()
+
+    await entry.trigger('click')
+    await settle()
+    expect(assign).toHaveBeenCalledWith('http://localhost:5174/')
+  })
+
+  it('drops the seller entry from the avatar dropdown (requirement 12.2)', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    await wrapper.get('button[aria-label="My account"]').trigger('click')
+    await settle()
+
+    const items = wrapper.findAll('.account-menu__item')
+    expect(items.map((item) => item.text().trim())).toEqual([
+      'My orders',
+      'Reviews and Q&A',
+      'Wishlist',
+      'Addresses',
+      'Sign out',
+    ])
+    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Apply for a shop')
+    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Merchant Center')
+  })
+
+  // -------------------------------------------------------------------------
+  // 需求 13.5-5/6：头像 hover 即展开、移出 ~200ms 延迟关闭；面板用户行 =
+  // 笑脸头像 + display_name；菜单行右侧带线性 icon。
+  // -------------------------------------------------------------------------
+  it('opens the account menu on hover and closes it ~200ms after mouse-leave', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(false)
+
+    await wrapper.get('.account-menu').trigger('mouseenter')
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(true)
+
+    await wrapper.get('.account-menu').trigger('mouseleave')
+    // 延迟关闭窗口内仍打开（防误移出）。
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 260))
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(false)
+
+    // 重新 hover 前 click 触发器仍可开合（触屏路径不回归）。
+    await wrapper.get('button[aria-label="My account"]').trigger('click')
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(true)
+  })
+
+  it('shows the smiley avatar and the backend display_name in the menu header', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    await wrapper.get('.account-menu').trigger('mouseenter')
+    await settle()
+
+    const panel = wrapper.get('.account-menu__panel')
+    // 笑脸占位 SVG（真站 viewBox 0 0 56 56 内联复刻）：触发器 + 用户行各一个。
+    expect(wrapper.findAll('svg[viewBox="0 0 56 56"]').length).toBeGreaterThanOrEqual(2)
+    expect(panel.get('.account-menu__name').text()).toBe('user4323txlb')
+    // 每行左右对齐：文字在前、icon 在后。
+    const rows = wrapper.findAll('.account-menu__item')
+    expect(rows.length).toBe(5)
+    for (const row of rows) {
+      expect(row.get('.account-menu__label').text().length).toBeGreaterThan(0)
+      expect(row.find('.account-menu__icon').exists()).toBe(true)
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // 需求 17.3：右上角顺序按真站 = 申请店铺 → 购物车 → 登录/头像。真站四份 SSR
+  // 存档（2026-11-19）jdi-header-user-info 内 cartEntry(购物车)在前、
+  // userInfoButton(头像)在后，CSS 无 row-reverse/order → 用 DOM 顺序实现。
+  // -------------------------------------------------------------------------
+  it('orders the top-right actions apply → cart → sign-in when signed out', () => {
+    const wrapper = mountHeader()
+    const nodes = wrapper.get('.account-nav').element.children
+    expect(nodes[0].className).toContain('account-nav__apply')
+    expect(nodes[1].className).toContain('icon-button--cart')
+    expect(nodes[2].className).toContain('login-button')
+  })
+
+  it('orders the top-right actions apply → cart → account menu when signed in', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    const nodes = wrapper.get('.account-nav').element.children
+    expect(nodes[0].className).toContain('account-nav__apply')
+    expect(nodes[1].className).toContain('icon-button--cart')
+    expect(nodes[2].className).toContain('account-menu')
+  })
+
+  // -------------------------------------------------------------------------
+  // 需求 17.2：下拉一比一复刻真站 userInfoButton_meListDropdownLayer（CSS 原文）。
+  // 结构断言（行数 / icon 右位 / 退出登录灰化类 / 用户区元素）；尺寸与颜色
+  // （面板 280、行 56px、16px 字号、#6e7078）由 Playwright 计算样式实测
+  // （vitest happy-dom + css:false 不注入 SFC 样式，computed style 全空）。
+  // -------------------------------------------------------------------------
+  it('renders the dropdown rows with trailing icons and the gray sign-out class', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    await wrapper.get('.account-menu').trigger('mouseenter')
+    await settle()
+
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(true)
+    expect(wrapper.find('.account-menu__user').exists()).toBe(true)
+    expect(wrapper.find('.account-menu__name').exists()).toBe(true)
+
+    const rows = wrapper.findAll('.account-menu__item')
+    expect(rows.length).toBe(5)
+    for (const row of rows) {
+      // icon 右对齐：icon 是行内最后一个子元素（文字在前，CSS space-between）。
+      const last = row.element.children[row.element.children.length - 1]
+      expect(last.className).toContain('account-menu__icon')
+    }
+    // 退出登录灰化（17.2-5）：独立 modifier 承载 #6e7078（Playwright 验色）。
+    expect(wrapper.find('.account-menu__item--sign-out').exists()).toBe(true)
   })
 })

@@ -593,6 +593,12 @@ class SpuDetail(models.Model):
     rating_count = models.PositiveIntegerField(default=0)
     #: 星级分布 {"5": n, ...}，原样保存源站口径。
     rating_distribution = models.JSONField(default=dict, blank=True)
+    #: 销量展示值（2026-11-19）：源站 productCommentSaleFloor.saleAmount，如
+    #: "10k+"。展示字符串原样保存，非精确数字。
+    sale_amount = models.CharField(max_length=32, blank=True, default="")
+    #: 评价数展示值：同 floor 的 commentCount（如 "80+"），与精确的
+    #: rating_count 并存（源站展示口径）。
+    comment_count_display = models.CharField(max_length=32, blank=True, default="")
     #: 最近一次从源站刷新这些字段的时间。
     source_observed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

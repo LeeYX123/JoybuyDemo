@@ -102,7 +102,12 @@ function select(index) {
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-lg);
   background: var(--colour-surface);
-  box-shadow: var(--shadow-overlay);
+  /* 需求 13.5-1：下拉阴影按真站加大。真站打开态 CSS 被风控挡（见
+     var/header_footer_cart_20261119/measurement.md §1.5），按真站自家 sticky
+     阴影 token（0 2px 12px rgba(0,0,0,.039), 0 4px 6px rgba(0,0,0,.059)）同族放大。 */
+  box-shadow:
+    rgb(0 0 0 / 8%) 0 4px 24px 0,
+    rgb(0 0 0 / 6%) 0 12px 48px 0;
   overflow: hidden;
 }
 

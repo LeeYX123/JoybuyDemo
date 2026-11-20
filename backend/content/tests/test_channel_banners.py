@@ -172,17 +172,35 @@ class ChannelBannerAdminCrudTests(ChannelBannerTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "IMAGE_URL_INVALID")
 
-    def test_rejects_external_href(self):
-        response = self.post(
+    def test_full_links_stored_verbatim_and_bad_scheme_rejected(self):
+        """13.8：http(s)://、//、www. 开头的全链接原样保存；javascript: 等仍拒绝。"""
+        for href in (
+            "https://www.example.com/x",
+            "http://www.example.com/x",
+            "//cdn.example.com/x",
+            "www.example.com/x",
+        ):
+            response = self.post(
+                "/api/v1/admin/channel-banners",
+                {
+                    "channel_code": HOME_CODE,
+                    "image_url": "/media/cms/a.webp",
+                    "href": href,
+                },
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            self.assertEqual(response.json()["banner"]["href"], href)
+
+        bad = self.post(
             "/api/v1/admin/channel-banners",
             {
                 "channel_code": HOME_CODE,
                 "image_url": "/media/cms/a.webp",
-                "href": "https://example.com/out",
+                "href": "javascript:alert(1)",
             },
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "HREF_INVALID")
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.json()["error"]["code"], "HREF_INVALID")
 
     def test_channels_endpoint_lists_mapped_roots(self):
         response = self.client.get("/api/v1/admin/channel-banners/channels")

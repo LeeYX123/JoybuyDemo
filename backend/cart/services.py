@@ -4,10 +4,14 @@ from django.db import transaction
 from django.utils import timezone
 
 from cart.models import MAX_QTY_PER_ITEM, Cart, CartItem, generate_anonymous_token
+from merchants.services import IMPORT_FALLBACK_SLUG
 from offers.models import Offer
 
 ANONYMOUS_COOKIE_NAME = "joybuy_cart_token"
 CART_MAX_AGE_SECONDS = 60 * 60 * 24 * 30  # 30 days
+# 需求文档03 12.3：平台自营口径的对外店名（自营导入商家的商品在购物车/下单
+# 快照里统一按 Joybuy 官营呈现，与真站「Sold and fulfilled by Joybuy」一致）。
+JOYBUY_OFFICIAL_MERCHANT_NAME = "Joybuy"
 
 
 class CartError(Exception):
@@ -146,6 +150,32 @@ def remove_item(context, *, item_public_id: str) -> Cart:
     return cart
 
 
+def merchant_entry(offer) -> dict:
+    """Per-item merchant payload (需求文档03 12.3，增量字段不破坏既有契约)。
+
+    来源 offer→merchant 链；None 安全：无商家（防御分支）回退 Joybuy 官营口径；
+    平台自营导入商家（IMPORT_FALLBACK）对外也统一为 Joybuy 官营店名。
+    """
+
+    merchant = getattr(offer, "merchant", None)
+    if merchant is None:
+        return {
+            "merchant_id": "",
+            "merchant_name": JOYBUY_OFFICIAL_MERCHANT_NAME,
+            "merchant_avatar_url": "",
+        }
+    merchant_name = (
+        JOYBUY_OFFICIAL_MERCHANT_NAME
+        if merchant.slug == IMPORT_FALLBACK_SLUG
+        else merchant.display_name
+    )
+    return {
+        "merchant_id": str(merchant.public_id),
+        "merchant_name": merchant_name,
+        "merchant_avatar_url": merchant.avatar_url or "",
+    }
+
+
 def serialize_cart(cart: Cart) -> dict:
     """Live re-validation: prices come from the current offer, invalid rows
     are flagged instead of silently dropped so the buyer can act on them."""
@@ -154,7 +184,9 @@ def serialize_cart(cart: Cart) -> dict:
     subtotal = None
     changed = False
     currency_code = ""
-    for item in cart.items.select_related("offer", "offer__currency", "offer__sku__spu"):
+    for item in cart.items.select_related(
+        "offer", "offer__currency", "offer__sku__spu", "offer__merchant"
+    ):
         offer = item.offer
         translation = offer.sku.spu.translations.order_by("pk").first()
         entry = {
@@ -166,6 +198,7 @@ def serialize_cart(cart: Cart) -> dict:
             "price": str(offer.current_price),
             "currency": offer.currency.code,
             "inventory_display": offer.display_inventory,
+            "merchant": merchant_entry(offer),
             "is_valid": offer.status == Offer.Status.ACTIVE
             and offer.local_inventory > 0
             and offer.source_availability != Offer.SourceAvailability.UNAVAILABLE,

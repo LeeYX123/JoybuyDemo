@@ -1,8 +1,10 @@
 <script setup>
-// Horizontal category carousel for the category results page: one row of
-// tiles, arrows appear when the row overflows, and the bottom nav bar shows a
-// scroll-progress thumb between the two arrows (same language as the header
-// dropdown's carousel on the source site).
+// Horizontal category carousel: one row of tiles, arrows appear when the row
+// overflows, and the bottom nav bar shows a scroll-progress thumb between the
+// two arrows (same language as the header dropdown's carousel on the source
+// site). The channel landing page (13.1②) reuses it with `variant="channel"`
+// and stacks tiles into `rows`-tall columns so multi-row modules still slide
+// horizontally as one unit.
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useLocale } from '../composables/useLocale'
@@ -19,6 +21,21 @@ const props = defineProps({
   activeSlug: {
     type: String,
     default: '',
+  },
+  // 'default' (listing strip) or 'channel' (channel page tiles).
+  variant: {
+    type: String,
+    default: 'default',
+  },
+  // Channel variant: name wrap width in CJK chars (6 → 140px, 9 → 194px).
+  nameChars: {
+    type: Number,
+    default: 6,
+  },
+  // Channel variant: tiles per vertical stack (rows of the 13.1② table).
+  rows: {
+    type: Number,
+    default: 1,
   },
 })
 
@@ -70,7 +87,14 @@ onBeforeUnmount(() => {
 <template>
   <div class="category-carousel">
     <div ref="scroller" class="category-carousel__track" @scroll="sync">
-      <CategoryTileGrid row :items="props.items" :active-slug="props.activeSlug" />
+      <CategoryTileGrid
+        row
+        :items="props.items"
+        :active-slug="props.activeSlug"
+        :variant="props.variant"
+        :name-chars="props.nameChars"
+        :columns="props.variant === 'channel' ? Math.max(props.rows, 1) : 0"
+      />
     </div>
     <div v-if="overflowing" class="category-carousel__nav">
       <button
