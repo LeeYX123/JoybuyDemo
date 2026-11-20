@@ -40,8 +40,10 @@ CSRF_TRUSTED_ORIGINS = env_list(
     # 3000 商城端 / 5173 平台管理端 / 5174 商家端（三个前端都要能发写请求）
     # localhost 与 127.0.0.1 是不同的 Origin，两个变体都必须配置，
     # 否则用 localhost 访问时所有写请求都会被 CSRF 中间件 403。
+    # m.localhost:5174 是商家端手机壳主机名（merchant-web 双壳方案），写请求同样要放行。
     "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,"
-    "http://localhost:3000,http://localhost:5173,http://localhost:5174",
+    "http://localhost:3000,http://localhost:5173,http://localhost:5174,"
+    "http://m.localhost:5174",
 )
 
 INSTALLED_APPS = [

@@ -2,6 +2,85 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0an. 商家端手机版双壳（2026-11-20/21，✅ 完成并全量验收，未 commit）
+
+- **需求来源**：`商家端手机版需求/` 静态稿（README 明确 `Joyplay-folio.html` 为定稿入口，URL 固定 `design=studio`+`concept=folio`，即 **studio 信息架构 + folio 红色皮肤 + merchant-mobile.js 移动交互**；orbit 远洋蓝/flow 绿洲是过程稿不实现）。用户要求：静态页转 Vue+JS 成为手机版商家端，`m.*` 主机名访问手机版 + 宽度小于阈值自动切换。
+- **方案（已实现）**：merchant-web 内「双壳」——同一 Vite app（:5174）、同一路由表、同一会话：
+  1. `src/shell.js` 维护响应式 `isMobileShell`：**主机名以 `m.` 开头 → 永远手机壳**（与宽度无关）；否则 `matchMedia('(max-width: 767.98px)')`，另挂 window resize 兜底（真机旋转/WebView 不派发 mql change）。跨阈值切换**无 reload、无路由跳转**（探针法验证：切壳往返 `window.__probe` 存活、路由不变）。
+  2. 路由表一份：13 个业务路由用 `dualShell(桌面loader, 手机loader)` 包装（`defineAsyncComponent` 保住独立 chunk）；根布局 `RootShell.vue` 双壳切换。**桌面视图/样式一行未改**（git status 可证）。
+  3. 新建 18 文件：`src/shell.js`、`src/styles/mobile-tokens.css`（folio tokens：accent #c31324/hero #a81324/canvas #f5f6f8/radius 8-12-16/space 4-8-12-16/--m-target:44px/gutter clamp(12px,4.1vw,16px)，m- 前缀构件）、`src/layouts/RootShell.vue`、`MobileShell.vue`（顶栏 ←返回+标题+多店紧凑下拉+退出；内容列 max-width min(100%,390px) 居中=folio 预览行为；**无底部 tabbar**）、`src/mobile/` 13 视图+`SheetModal.vue`（底部 sheet：Teleport/safe-area/滚动锁）。
+  4. 新增路由 `/orders/:id`（手机订单详情独立页；桌面直连守卫重定向回 /orders，桌面详情仍是抽屉）。守卫：手机壳 `/` 绑店即放行（首页宫格即导航根），模块显隐由宫格按 `can()`+deposit_enabled 过滤；桌面 LANDING 逻辑原样。
+  5. 手机视图自取数（复用 `src/lib/api.js`+`useMerchantSession.js`，与桌面同端点），**不重构桌面视图**避免回归。
+- **后端唯一改动**：`config/settings.py` `CSRF_TRUSTED_ORIGINS` 追加 `http://m.localhost:5174`（已重启生效）。Vite 8 默认放行 `.localhost` 子域（**未改 vite.config.js**）；**`m.127.0.0.1` 浏览器不解析（IP 无子域），实际入口是 `http://m.localhost:5174/`**。SESSION_COOKIE_DOMAIN 未动：cookie host-only，m.localhost 与 127.0.0.1 登录态各自独立（已知限制，各登一次；不动它否则 admin-web 现状会破）。
+- **页面↔端点**：登录 /admin/auth/login；首页 /merchant/overview+conversations+notifications（badge=待发货/会话未读/通知未读）；商品双段 /merchant/catalog/*+/merchant/listings；订单 /merchant/orders(+{id}/ship)；详情 {id}（node_labels/progress/can_ship）；钱包 /merchant/wallet(+entries/password/withdrawals)；保证金 {deposit}；售后 {after-sales,+actions}；活动 {activities,+join}；消息 {conversations,/{id},/{id}/messages}；通知 {notifications,/{id},/{id}/replies}；店铺 GET/PATCH /merchant/profile+/merchant/media。
+- **静态稿演示逻辑全部丢弃**（localStorage 数据/OrderLifecycle 模拟/PBKDF2 本地哈希/CSV Blob 导出/切换去商城与语言预览工具）——改接真实 API。偏差：折叠面板指标 folio 实际 5 个、按派单口径做了 6 个；桌面「推荐返佣」板块 folio 未画、手机壳未做。
+- **README 验收①②③④全过**（截图 24 张 `var/mobile_shell_20261120/`）：①PENDING 详情默认只显当前节点→「查看全部进度」展开 8 节点→实际发货成功（PENDING→SHIPPED、钱包实时扣款）→COMPLETED 详情整个进度区隐藏；②会话页无订单号、右下角发送+textarea 自动增高、发客服消息成功；③首页身份卡（头像/复制ID toast/编辑资料）+三组宫格+图表直显数值不交互；④375/390/430 三档实测不破版。m.localhost 宽视口强制手机壳（登录页 390 居中偏差 0）；127.0.0.1 1366→390→1366 无 reload 切壳；桌面看板/订单表格+抽屉/消息双栏截图对比零回归；console error 全程 0；m.localhost 下 8 次写操作无一 403。
+- **坑（不得再踩）**：①无头环境 rAF 节流——toast 必须同步赋值不能等 rAF；②clipboard 可能挂起——复制 ID 用「先 toast、异步复制+失败回退」；③`?view=shop` 直达商品页时 mount 必须按段取数（曾写死 loadPool 出现假空态）；④会话态写 `?c=<id>` 历史，否则顶栏返回跳过列表；⑤首页「联系平台客服」`?open=support` 改 query 后 watcher 会被 loading 挡住，需手动 syncViewFromQuery；⑥chips 漏 `m-chip` 类导致样式缺失。
+- **临时数据已清**：`var/mobile_shell_20261120/cleanup_temp_account.py` 原子删除临时账号+2 店铺+全部关联数据逐项 count=0；CHiQ/HOMCO 与共享 [demo] 活动未动。**注意**：seed 附带给 200 个无价商品池 SPU 补了演示价（62% 估算，seed 原有幂等逻辑，仅本地演示库）。
+- **验证（按验证纪律仅针对性验证）**：`npx vite build` 两次通过；merchant-web 无 eslint/prettier 配置（无法跑，如实说明）；未跑全量套件；未 git commit。
+
+## 0an. 16 篇文章详情页验收（2026-11-21，✅ 10/10 全过，未 commit→本轮随批提交）
+
+- **独立验收（`var/acceptance_cs_articles_20261121/acceptance-report.md`）：10/10 PASS，0 fail。**
+  - 16 篇（支付 5 + 退货 11）清单行全部可点、落地 `/help/<slug>`；`/pages/` 与 `/help/` 双入口 16×2 URL 全 200 且渲染逐字符一致；面包屑 32/32 可回清单、互链 5 个去重目标全可达。
+  - 内容强化比对：16 篇 EN/ZH 标题+分块与 `article_*.json` 逐块一致，**另独立比对批次 S raw 存档**（去标签+声明替换后全文）**32/32 逐字符一致**——不是拿开发方产物自证。
+  - 8 图本地 200、0 外链请求；joybuy 域名/EU/欧洲 grep 0；邮箱仅 gmail；our-return-policy 存在 `www.joyfumi.com`（giftcard 处）。
+  - 回归：清单页批次 U 形态（7 chips/右栏客服卡）、政策页 5 tab、页脚 3/5/2、批次 T header 全部不回归；vitest 177 全过；五语言 461 恒等；console 0 error。
+- **观察项（非阻断，建议后续排查）**：长会话偶发 dev 模式 hydration mismatch 告警（4/13 轮、URL 不固定、隔离复现 0 次、内容检查仍全过）——疑似共享布局异步数据竞态，dev 模式才有，非本批引入。
+- **环境坑**：项目 keepalive 会自动复活默认 nuxt 实例——验收时清理后保持 127.0.0.1:3000 单实例。
+
+## 0am. 支付 5 篇 + 退货 11 篇文章详情页复刻（2026-11-20/21，✅ 完成，未 commit）
+
+- **任务**：customer-service【Checkout & Payments】清单页（批次 U 0ak）的文章行此前不可点；
+  本批给**支付 5 篇 + 退货 11 篇（用户中途扩范围）全部 16 篇**做真站文章详情页复刻并接通清单页。
+  **全程 0 次访问真站**（零风控暴露）：正文用批次 S 存档
+  `var/footer_help_20261120/raw_{en_GB,zh_CN}_<slug>.json`（16×2 全 status 200，EN/ZH 均真站自带文案）；
+  版式用真站 www 文章页完整 SSR 存档 `invoice_www_en.html` 本地渲染实测（详见
+  `var/cs_articles_20261120/measurement.md` + `measure_real_article.cjs`/`real_article_measure.json`）。
+- **16 篇 slug（真站 URL 形态 `https://www.joybuy.co.uk/help/<slug>`，全部 ✅ 完成）**：
+  支付：`payment-methods` / `update-payment` / `download-invoice` / `apply-coupon` / `payment-declined`；
+  退货：`statutory-rights` / `our-return-policy` / `return-exceptions` / `wrong-return` /
+  `refunds-overview` / `return-request` / `return-window` / `return-method` /
+  `return-pickup-reschedule` / `return-refund` / `submit-complaint`。
+  没有抓不到的文章（16×2 全有正文）；EN/ZH 结构本就不同（如 submit-complaint EN=ol、ZH=ul；
+  download-invoice 图片 URL 两语言不同），数据按语言各存一套 blocks 逐语言还原。
+- **真站详情页结构实测**：wrapper #F5F6FA padding 32px 0 flex 居中；mainWrapper 1264px/min-height
+  200px/flex；白卡 `margin-left 16px`（真站 detail_itemContent 原值，无左菜单时保留 → 卡片
+  x=104/w=1248）、radius 8、padding 24px 36px；标题 32px/700/32 #000；正文 16px/24px、
+  块 margin 10px 0；ul disc、margin 10px 0 10px 20px + padding-left 40px；链接 #0000EE 下划线；
+  图片 width:100% + hover 阴影 0 0 5px #333。**真站文章页无面包屑/无页脚/无相关文章区**
+  （差异：本地按任务要求加清单页同款面包屑，分类项链回 `/help/<分类 slug>`；footer 保留）。
+  本地 vs 真站逐项对照（`compare_layout.cjs`→`layout_compare.json`）：卡片 x/w、标题字号、
+  p 行高全部一致。
+- **改动文件**：新建 `components/CsArticlePage.vue`(+test)、`content/help/csArticles.js`
+  （16 篇双语言 blocks，89KB，生成器 `var/cs_articles_20261120/build_cs_articles.cjs` 0 警告）、
+  `storefront/public/images/help/`（8 张真站配图本地托管）；改 `CustomerServicePage.vue`
+  （文章行 div→NuxtLink `/help/<slug>`）、两个 content js（articles 加 slug）、
+  `pages/help/[slug].vue` 与 `pages/pages/[slug].vue`（csArticles 注册表命中→CsArticlePage，
+  双入口同渲染）、`tests/help-pages.test.js`（+7 例）。i18n **无新增键**（复用
+  help.csBreadcrumbRoot，461×5 恒等）。未碰 HelpCenter/AppHeader/AppFooter/layouts。
+- **替换规则（16.5）**：`support@joybuy.com`→Joybuyfumi@gmail.com（statutory-rights、
+  submit-complaint）；真站互链→本地 `/help/<slug>`（23 处全映射）；无本地页的真站网址→
+  `https://www.joyfumi.com` 保留路径（giftcard-terms-conditions）；`EU`→Asia、`欧盟`→亚洲
+  （EN 4 处/ZH 3 处）；return-window 真站 help.joybuy.com **空锚点**（无可见文本）丢弃。
+- **验证（按验证纪律仅针对性验证；dev server 双实例已杀、`HOST=127.0.0.1 --port 3000` 完全重启）**：
+  vitest 5 文件 **50/50**（新组件 7 + CS 组件 8 + help-pages 22 + 政策回归 + 页脚）；
+  eslint 0 error、prettier 全过（10 改动文件）；五语言 461 键恒等（node 逐键比对）；
+  **Playwright `verify_articles.cjs`：269/269 全过** —— EN/ZH × 16 篇：清单行可点、落
+  `/help/<slug>`、面包屑可回清单、标题+正文与抓取 JSON **逐段一致**（块数/每块文本/src）、
+  8 张图片本地 200（naturalWidth>0）、替换规则 grep 零残留（joybuy 域名/真站邮箱/EU/欧盟）、
+  无远程媒体、`/pages/*` 与 `/help/*` 双入口 32 URL 全 200 同标题、**console 0 error**；
+  批次 U `verify_pages.cjs` 回归 **45/45 过**（清单页改链接后不回归）。
+  截图：`local_article_invoice_en.png`、`local_article_returnrequest_zh.png`。
+- **退货 11 篇真实 URL 清单**：已写入 `var/cs_articles_20261120/measurement.md` 第六节
+  （含 www/m 两种真站路径形态与每篇 EN/ZH 标题），下批可直接用。
+- **坑（新会话必读）**：①真站文章页卡片自带 `margin-left:16px`（非对称 16px 左缝）是
+  detail_itemContent 原值，别"修对称"；②Playwright route 是**后注册先匹配**，CSS 兜底
+  fulfill 必须注册在 abort 之后（0am 实测踩过）；③批次 S 的 submit-complaint 抓自
+  m.joybuy.co.uk（同一篇文章），raw JSON 的 url 字段不全是 www；④detail 类 CSS 只在
+  bundle `aa6a29a3f278211f.css`，styled-components 富文本规则在存档页内联 <style>；
+  ⑤EN/ZH 文章结构不同，别共用一套块骨架，逐语言存 blocks。
+
 ## 0al. 第六轮总记录（2026-11-20，需求文档03 v1.9 第十七节：批次 T/U + 暂停/恢复 + 独立验收，✅ 全部收口）
 
 - **任务链**：用户第六轮 5 项 → 并入 `功能需求迭代文档03.md` **v1.9 第十七节**（17.1–17.6）→ 批次 T/U 并行 → **用户中途要求暂停**（T 停在调研阶段 0 行改动、U 未产出文件，均已如实记录）→ 用户恢复 → 完成 → 各自独立验收（**T 13/13、U 11/11，0 fail**）。

@@ -16,8 +16,9 @@ import { useLocale } from '../composables/useLocale'
 // 与真站的既知差异（见 measurement.md 第六节）：
 //   1. 真站本页无站点页脚；本地 footer-page 布局固定带 AppFooter（layouts 本批次禁改）。
 //   2. 真站面包屑根节点链到 /customer-service-centre，本地无此页 → 同款灰色文本非链接。
-//   3. 真站文章行可跳文章页、chips 可跳分类页；本地无可跳目标（旧文章聚合已删、
-//      禁止外链 joybuy）→ 仅保留 hover 样式；互为对方分类的 chip 本地互链。
+//   3. 真站文章行跳文章详情页；批次 0am（2026-11-20）起本地 16 篇详情页齐备
+//      （/help/<slug>，真站 URL 形态，正文见 content/help/csArticles.js）→ 行改为可点链接；
+//      chips 可跳分类页，本地仅互为对方分类的 chip 互链。
 //   4. 搜索框 / Online chat 按钮视觉 1:1，不接真站客服系统。
 //   5. 联系行邮箱按 16.5 口径替换为 Joybuyfumi@gmail.com。
 const props = defineProps({
@@ -29,7 +30,10 @@ const { locale, t } = useLocale()
 const page = computed(() => helpPageBySlug[props.slug] || null)
 const cs = computed(() => (page.value && page.value.customerService) || null)
 const category = computed(() => cs.value.category[locale.value] || cs.value.category.en)
-const articles = computed(() => cs.value.articles.map((a) => a[locale.value] || a.en))
+// 批次 0am：行带真站文章 slug，详情页路由 /help/<slug>（真站 URL 形态）。
+const articles = computed(() =>
+  cs.value.articles.map((a) => ({ label: a[locale.value] || a.en, slug: a.slug })),
+)
 const categories = computed(() =>
   cs.value.categories.map((c) => ({ label: c[locale.value] || c.en, slug: c.slug || null })),
 )
@@ -64,14 +68,15 @@ const CONTACT_EMAIL = 'Joybuyfumi@gmail.com'
         <h1 class="cs-page__title">{{ category }}</h1>
 
         <div class="cs-page__articles">
-          <div
+          <NuxtLink
             v-for="(article, index) in articles"
-            :key="article"
+            :key="article.slug"
             class="cs-page__article-row"
             :class="{ 'cs-page__article-row--last': index === articles.length - 1 }"
+            :to="`/help/${article.slug}`"
           >
-            <p class="cs-page__article-text">{{ article }}</p>
-          </div>
+            <p class="cs-page__article-text">{{ article.label }}</p>
+          </NuxtLink>
         </div>
 
         <div class="cs-page__browse">
@@ -234,7 +239,9 @@ const CONTACT_EMAIL = 'Joybuyfumi@gmail.com'
   justify-content: space-between;
   padding: 15px 0;
   border-bottom: 0.5px solid #e0e1e5;
+  color: inherit;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .cs-page__article-row:hover .cs-page__article-text {

@@ -7,6 +7,7 @@ import {
   helpPagePath,
   resolveHelpSlug,
 } from '../content/helpPages'
+import { csArticles, csArticleBySlug } from '../content/help/csArticles'
 
 // 批次 Q（需求 15.1 / 15.2）数据自检：
 // - 左栏 tab 的条目与顺序必须与真站一致（2026-11-20 实测：5 项，不分组件）；
@@ -91,6 +92,152 @@ function policyText(page) {
     })
     .join('\n')
 }
+
+// 批次 0am（2026-11-20）：16 篇文章详情（支付 5 + 退货 11）的真站 slug 与顺序。
+const REAL_ARTICLES = {
+  'payment-and-invoice': [
+    'payment-methods',
+    'update-payment',
+    'download-invoice',
+    'apply-coupon',
+    'payment-declined',
+  ],
+  'returns-and-refunds': [
+    'statutory-rights',
+    'our-return-policy',
+    'return-exceptions',
+    'wrong-return',
+    'refunds-overview',
+    'return-request',
+    'return-window',
+    'return-method',
+    'return-pickup-reschedule',
+    'return-refund',
+    'submit-complaint',
+  ],
+}
+
+function csArticleText(article, lang) {
+  return article.blocks[lang]
+    .map((block) => {
+      if (block.type === 'image') return '[image]'
+      if (block.type === 'list') {
+        return block.items
+          .map((item) => item.map((seg) => (seg.br ? '\n' : seg.t)).join(''))
+          .join('\n')
+      }
+      return block.segments.map((seg) => (seg.br ? '\n' : seg.t)).join('')
+    })
+    .join('\n')
+}
+
+describe('csArticles data (batch 0am)', () => {
+  it('registers all 16 real articles (5 payment + 11 returns) with real slugs', () => {
+    expect(csArticles).toHaveLength(16)
+    for (const [category, slugs] of Object.entries(REAL_ARTICLES)) {
+      const registered = csArticles.filter((article) => article.category === category)
+      expect(registered.map((article) => article.slug)).toEqual(slugs)
+    }
+    for (const article of csArticles) {
+      expect(csArticleBySlug[article.slug]).toBe(article)
+      // 批次 S 存档：submit-complaint 抓自 m 站（同一篇文章），其余为 www 站。
+      expect(article.realUrl).toMatch(/^https:\/\/(www|m)\.joybuy\.co\.uk\/help\//)
+    }
+  })
+
+  it('keeps the real list order: cs page articles carry matching slugs', () => {
+    for (const [category, slugs] of Object.entries(REAL_ARTICLES)) {
+      expect(helpPageBySlug[category].customerService.articles.map((a) => a.slug)).toEqual(slugs)
+    }
+  })
+
+  it('carries real zh + en copy for every article (both non-empty, zh not machine translation)', () => {
+    for (const article of csArticles) {
+      for (const lang of ['en', 'zh']) {
+        expect(article.title[lang]).toBeTruthy()
+        expect(article.blocks[lang].length).toBeGreaterThan(0)
+        expect(csArticleText(article, lang).length).toBeGreaterThan(40)
+      }
+      expect(/[\u4e00-\u9fa5]/.test(csArticleText(article, 'zh'))).toBe(true)
+    }
+  })
+
+  it('keeps every visible string free of real domains / emails / EU wording (16.5 rules)', () => {
+    for (const article of csArticles) {
+      for (const lang of ['en', 'zh']) {
+        const text = csArticleText(article, lang)
+        expect(text).not.toMatch(/joybuy\.co\.uk|joybuy\.com|help\.joybuy/i)
+        expect(text).not.toMatch(/support@joybuy\.com/i)
+        expect(text).not.toMatch(/(^|[^A-Za-z])EU([^A-Za-z]|$)/)
+        expect(text).not.toMatch(/欧盟|欧洲/)
+        // 16.5 口径：唯一允许出现的邮箱是 Joybuyfumi@gmail.com。
+        for (const email of text.match(EMAIL_RE) || []) {
+          expect(email).toBe('Joybuyfumi@gmail.com')
+        }
+      }
+    }
+    // 真站正文里的联系邮箱必须替换为 Joybuyfumi@gmail.com（statutory-rights / submit-complaint）。
+    const statutory = csArticleText(csArticleBySlug['statutory-rights'], 'en')
+    expect(statutory).toContain('Joybuyfumi@gmail.com')
+    const complaint = csArticleText(csArticleBySlug['submit-complaint'], 'en')
+    expect(complaint).toContain('Joybuyfumi@gmail.com')
+  })
+
+  it('maps in-content links to local article pages or joyfumi (no real-site links)', () => {
+    const hrefs = new Set()
+    for (const article of csArticles) {
+      for (const lang of ['en', 'zh']) {
+        for (const block of article.blocks[lang]) {
+          const segs = block.type === 'p' ? block.segments : (block.items || []).flat()
+          for (const seg of segs) {
+            if (seg.href) hrefs.add(seg.href)
+          }
+        }
+      }
+    }
+    for (const href of hrefs) {
+      expect(href.startsWith('/help/') || href.startsWith('https://www.joyfumi.com')).toBe(true)
+    }
+    // 真站正文互链 → 本地详情页（真站 URL 形态）。
+    expect(hrefs.has('/help/our-return-policy')).toBe(true)
+    expect(hrefs.has('/help/return-exceptions')).toBe(true)
+    expect(hrefs.has('/help/return-request')).toBe(true)
+    expect(hrefs.has('/help/refunds-overview')).toBe(true)
+    // 无本地页面的真站网址按 16.5 保留路径换域。
+    expect(hrefs.has('https://www.joyfumi.com/help/giftcard-terms-conditions')).toBe(true)
+  })
+
+  it('hosts all article images locally (8 files, width 100% via CSS)', () => {
+    const srcs = []
+    for (const article of csArticles) {
+      for (const lang of ['en', 'zh']) {
+        for (const block of article.blocks[lang]) {
+          if (block.type === 'image') srcs.push(block.src)
+        }
+      }
+    }
+    expect(srcs).toHaveLength(8)
+    for (const src of srcs) {
+      expect(src).toMatch(/^\/images\/help\//)
+    }
+    expect(srcs).toContain('/images/help/download-invoice-en-1.png')
+    expect(srcs).toContain('/images/help/download-invoice-zh-2.png')
+    expect(srcs).toContain('/images/help/return-request-en-1.jpg')
+    expect(srcs).toContain('/images/help/return-pickup-reschedule-zh-1.png')
+  })
+
+  it('keeps real block shapes: ordered list in submit-complaint (en), ul in zh; images per language', () => {
+    // 真站 EN 提交投诉用 <ol>、ZH 用 <ul>（真站两语言结构本就不同）。
+    const enComplaint = csArticleBySlug['submit-complaint'].blocks.en
+    expect(enComplaint.filter((block) => block.type === 'list' && block.ordered)).toHaveLength(1)
+    const zhComplaint = csArticleBySlug['submit-complaint'].blocks.zh
+    expect(zhComplaint.filter((block) => block.type === 'list' && !block.ordered)).toHaveLength(1)
+    // 发票文章配图：EN 2 张、ZH 2 张（真站两语言图片 URL 不同，均已本地托管）。
+    const di = csArticleBySlug['download-invoice']
+    expect(di.blocks.en.filter((block) => block.type === 'image')).toHaveLength(2)
+    expect(di.blocks.zh.filter((block) => block.type === 'image')).toHaveLength(2)
+  })
+})
 
 describe('helpPages data', () => {
   it('exposes the 5 real help-center nav entries in real order', () => {

@@ -66,17 +66,39 @@ describe('CustomerServicePage', () => {
       'How do I apply a coupon or promo code?',
       'Why was my payment declined?',
     ])
+    // 批次 0am：每行都是链接，指向真站 URL 形态的本地详情页 /help/<slug>。
+    expect(rows.map((row) => row.attributes('href'))).toEqual([
+      '/help/payment-methods',
+      '/help/update-payment',
+      '/help/download-invoice',
+      '/help/apply-coupon',
+      '/help/payment-declined',
+    ])
     // 行间分隔：末行无下分隔线（真站 border-bottom 0.5px #E0E1E5）。
     const bordered = rows.filter((row) => !row.classes().includes('cs-page__article-row--last'))
     expect(bordered).toHaveLength(4)
     expect(rows[4].classes()).toContain('cs-page__article-row--last')
   })
 
-  it('renders 11 return article rows', () => {
+  it('renders 11 return article rows linking to their detail pages', () => {
     const wrapper = mountPage('returns-and-refunds')
     expect(wrapper.find('.cs-page__title').text()).toBe('Returns & Refunds')
-    expect(wrapper.findAll('.cs-page__article-row')).toHaveLength(11)
+    const rows = wrapper.findAll('.cs-page__article-row')
+    expect(rows).toHaveLength(11)
     expect(wrapper.text()).toContain('Submit a Complaint')
+    expect(rows.map((row) => row.attributes('href'))).toEqual([
+      '/help/statutory-rights',
+      '/help/our-return-policy',
+      '/help/return-exceptions',
+      '/help/wrong-return',
+      '/help/refunds-overview',
+      '/help/return-request',
+      '/help/return-window',
+      '/help/return-method',
+      '/help/return-pickup-reschedule',
+      '/help/return-refund',
+      '/help/submit-complaint',
+    ])
   })
 
   it('renders the real browse chips in real order; only the counterpart category is a link', () => {

@@ -13,18 +13,35 @@ export const returnsAndRefundsPage = {
   customerService: {
     // 真站面包屑当前项 = 标题卡文案（EN Returns & Refunds / ZH 退货与退款）。
     category: { en: 'Returns & Refunds', zh: '退货与退款' },
+    // slug = 真站文章详情 URL（/help/<slug>），详情页正文见 ./csArticles.js（批次 0am）。
     articles: [
-      { en: 'Your Statutory Rights', zh: '法定撤销权' },
-      { en: 'Our Return Policy', zh: '退货政策' },
-      { en: 'Return Exceptions', zh: '不符合无理由退货的场景' },
-      { en: 'Ineligible or Incorrect Returns', zh: '错误或不符合条件的退货' },
-      { en: 'Refund Timing and Amount', zh: '退款说明' },
-      { en: 'How do I return an item for a refund?', zh: '如何申请退货退款？' },
-      { en: 'What is the return window for my order?', zh: '我的订单退货时限是多少？' },
-      { en: 'Can I change my return method?', zh: '我可以更改退货方式吗？' },
-      { en: 'How can I reschedule my return pickup?', zh: '如何重新预约退货取件时间？' },
-      { en: 'Will I receive a full refund after return?', zh: '退货后我能收到全额退款吗？' },
-      { en: 'Submit a Complaint', zh: '提交投诉' },
+      { en: 'Your Statutory Rights', zh: '法定撤销权', slug: 'statutory-rights' },
+      { en: 'Our Return Policy', zh: '退货政策', slug: 'our-return-policy' },
+      { en: 'Return Exceptions', zh: '不符合无理由退货的场景', slug: 'return-exceptions' },
+      { en: 'Ineligible or Incorrect Returns', zh: '错误或不符合条件的退货', slug: 'wrong-return' },
+      { en: 'Refund Timing and Amount', zh: '退款说明', slug: 'refunds-overview' },
+      {
+        en: 'How do I return an item for a refund?',
+        zh: '如何申请退货退款？',
+        slug: 'return-request',
+      },
+      {
+        en: 'What is the return window for my order?',
+        zh: '我的订单退货时限是多少？',
+        slug: 'return-window',
+      },
+      { en: 'Can I change my return method?', zh: '我可以更改退货方式吗？', slug: 'return-method' },
+      {
+        en: 'How can I reschedule my return pickup?',
+        zh: '如何重新预约退货取件时间？',
+        slug: 'return-pickup-reschedule',
+      },
+      {
+        en: 'Will I receive a full refund after return?',
+        zh: '退货后我能收到全额退款吗？',
+        slug: 'return-refund',
+      },
+      { en: 'Submit a Complaint', zh: '提交投诉', slug: 'submit-complaint' },
     ],
     // 真站「Browse by categories」chips，顺序按真站（不含本分类、第 3 位起与支付页不同；
     // 第 5 位为互链的支付分类）。

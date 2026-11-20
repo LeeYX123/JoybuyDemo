@@ -13,12 +13,29 @@ export const paymentAndInvoicePage = {
   customerService: {
     // 真站面包屑当前项 = 标题卡文案（EN Checkout & Payments / ZH 下单支付）。
     category: { en: 'Checkout & Payments', zh: '下单支付' },
+    // slug = 真站文章详情 URL（/help/<slug>），详情页正文见 ./csArticles.js（批次 0am）。
     articles: [
-      { en: 'Payment Methods', zh: '支付方式' },
-      { en: 'How do I add or update my payment method?', zh: '如何添加或更新我的付款方式？' },
-      { en: 'Where can I find and download my invoice?', zh: '我可以在哪里找到并下载我的发票？' },
-      { en: 'How do I apply a coupon or promo code?', zh: '如何使用优惠券或促销代码？' },
-      { en: 'Why was my payment declined?', zh: '我的付款为什么被拒绝了？' },
+      { en: 'Payment Methods', zh: '支付方式', slug: 'payment-methods' },
+      {
+        en: 'How do I add or update my payment method?',
+        zh: '如何添加或更新我的付款方式？',
+        slug: 'update-payment',
+      },
+      {
+        en: 'Where can I find and download my invoice?',
+        zh: '我可以在哪里找到并下载我的发票？',
+        slug: 'download-invoice',
+      },
+      {
+        en: 'How do I apply a coupon or promo code?',
+        zh: '如何使用优惠券或促销代码？',
+        slug: 'apply-coupon',
+      },
+      {
+        en: 'Why was my payment declined?',
+        zh: '我的付款为什么被拒绝了？',
+        slug: 'payment-declined',
+      },
     ],
     // 真站「Browse by categories」chips，顺序按真站（不含本分类；第 3 位为互链的退货分类）。
     categories: [
