@@ -2,6 +2,34 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bg. 批量上架 DRAFT 商品（2026-11-22，✅ 完成，未 commit）
+
+- **任务**：用户已批准把「6,889 个 ACTIVE Offer 挂在 DRAFT SPU 上」的商品批量上架。复用 2026-11-15 配方（`var/sql_online_crawled_20261115/bring_crawled_online.sql`，见本文 §2「把这两天抓取的商品全部上架」），本次差异：那次 Offer 也全是 DRAFT（两层都翻），这次 Offer 本来就是 ACTIVE，只翻 SPU。工作目录 `var/bulk_online_20261122/`。
+- **摸底（决定口径）**：全库 SPU 16,310 → ACTIVE 8,353 / DRAFT 7,955 / INACTIVE 2。按验收 `sellable-ratio.json` 同口径（只看 searchable 商家：onboarding ACTIVE、非 IMPORT_FALLBACK、有 ACTIVE Offer，共 661 家）：**DRAFT 且至少一个 ACTIVE Offer(sku ACTIVE) 的 SPU = 1,926 个，对应 6,889 个 ACTIVE Offer**；这些 SPU 当时 `product_search_document` 0 条（导入不建文档）。全商家口径为 3,100 个 SPU，其中 **1,174 个属 onboarding 未完成 / import-fallback 商家，本次故意不激活**（否则商品能搜到但店铺页 404）。
+- **变更前后（searchable 商家口径，与验收同口径）**：
+  - **可售 Offer 4,712 → 11,601（+6,889，一行不差；占 searchable 商家 Offer 13,701 的 84.7%；验收当时分母 13,700，差 1 是期间数据自然增长）**；
+  - **ACTIVE Offer 挂 DRAFT SPU：6,889 → 0**；**可售为 0 的商家：130 → 0**；
+  - **搜索文档 `is_searchable=1`：8,353 → 10,279**，与「ACTIVE 且有 ACTIVE Offer 的 SPU」数完全一致；
+  - SPU：ACTIVE 8,353 → 10,279、DRAFT 7,955 → 6,029、INACTIVE 2 不变；
+  - **Offer 状态分布完全未变**（ACTIVE 17,432 / DRAFT 4,711 / INACTIVE 568）——本次没有改任何 Offer。
+- **执行（三层，均分批 + 每批独立事务）**：
+  1. 备份 `var/bulk_online_20261122/backup_ids.json`：1,926 个 SPU（id/public_id/status_before/updated_at_before）+ 6,889 个 Offer（含 status_before / listed_at_before）；
+  2. DRY_RUN（默认只读，必须 `--execute` 才写）：4 批共 **1,926 行**、Offer 全 ACTIVE、目标 SPU 现有文档 0 条；
+  3. 第一层 `UPDATE spu SET status='ACTIVE', updated_at=NOW() WHERE id IN (...) AND status<>'ACTIVE'`：500/批 × 4 批 = **1,926 行**；
+  4. 第二层 Offer **只读核对**（不改）：前后均 `{ACTIVE: 6889}`，DRAFT/INACTIVE Offer 原样保留（脚本发现变化会 `ABORT`）；
+  5. 第三层逐 SPU `catalog.search_services.refresh_spu_search_documents(spu)`：250/批 × 8 批 = **ok 1,926 / fail 0**；
+  6. **总耗时 63s**（22:57:08–22:58:11 本地），无约束错误、无回滚批次。
+- **踩坑（新，务必记住）**：**MySQL 8.4.7 InnoDB FULLTEXT 索引会落后于表数据**。批量插入文档后抽查发现 id 8908–8999 这 92 行 `MATCH(title)` 得分 0 → doc `is_searchable=1` 但搜索搜不到；抽样 200 个**历史**文档另有 12 个同样不在索引里（id 8480–8866 段），说明是操作前就存在的索引漂移，不是本次写入逻辑写坏。**重跑 refresh（UPDATE 行）补不上索引**；`OPTIMIZE TABLE product_search_document`（返回 "Table does not support optimize, doing recreate + analyze instead" + status OK）重建后目标集 unindexed 92 → 0，全量抽样 300 条 + 历史段 427 条 unindexed 均为 0。→ 以后大批量建/改文档后若「doc 在、搜索搜不到」，先查 MATCH 得分再 `OPTIMIZE TABLE`，不要先怀疑 refresh 逻辑。检查/修复脚本 `var/bulk_online_20261122/fix_fts.py --check | --refresh | --optimize --execute`。
+- **执行后核对（按验证纪律只做针对性验证）**：
+  1. DB 三层一致：可售 11,601 = 4,712 + 6,889；searchable docs 10,279 = ACTIVE 且有 ACTIVE Offer 的 SPU 10,279（另有 1 条 `is_searchable=0` 的历史文档 id=71/spu DRAFT，操作前就存在，不影响搜索）。
+  2. 抽查 5 个刚上架 SPU（7967 / 8656 / 11933 / 14293 / 17003）：`/api/v1/search?q=` **5/5 命中**、`/p/<public_id>` **5/5 = 200**（`post_verify.json`）。其中 7967 正是 FTS 修复前唯一搜不到的样本，修复后同一 query total 10 → 11 并命中。
+  3. 抽查 3 家此前可售为 0 的商家（Modewe `source-a29d…`、HOBIBEAR `source-777b…`、Ubjuliwa `source-a628…`）：`GET /api/v1/merchants/<slug>` 均 200、`products` 均 50（接口上限）。
+  4. 未重启后端（8000 仍在跑）、`MEDIA_BACKEND=local` 未动、无 AWS 操作、未 commit。
+- **缺图 / 缺详情比例（新上架 1,926 个）**：**缺主图 406 个（21.08%）** —— 这些 SPU 的 gallery `MediaUsage` 指向 `var/media` 下不存在的文件，`/media/products/original/...webp` 实测 **404**（前台会白块/占位）；只有 1,520 个有本地真实存在的图。**缺详情 0 个**（`SpuDetail` 的 content_sections/specification_tables 或 `description` 至少一项非空）。两者都缺 0 个。**属爬虫未抓全的历史数据问题，不是本次操作引入**（本次只改 `spu.status`，没碰媒体与详情）。
+- **遗留**：1,174 个 DRAFT SPU 带 ACTIVE Offer 但属 onboarding 未完成 / IMPORT_FALLBACK 商家，本次故意不激活；待这些商家 onboarding 完成后需再评估是否上架（用 `var/bulk_online_20261122/stats.py` 可复测该数字）。
+- **回滚方式**：`cd E:/code/AgentProject/Joybuy && .venv/Scripts/python.exe var/bulk_online_20261122/bulk_online.py --mode rollback --execute` —— 按 `backup_ids.json` 把 1,926 个 SPU 改回 DRAFT（`updated_at=NOW()`），并对每个 SPU 调 `refresh_spu_search_documents`（非 ACTIVE 会自动删除其搜索文档，搜索立刻消失）。Offer 无需回滚（本次未改）。
+- **产物**：`var/bulk_online_20261122/` 下 `backup_ids.json`（清单）、`stats_before.json` / `stats_after.json`（前后统计）、`run.log`（执行日志）、`report.json`（汇总）、`post_verify.json`（抽查）、`gap_stats.json` / `spu_missing_image.json`（缺图）、`fts_unindexed.json`（FTS 修复记录）、`bring_draft_spus_online.sql`（配方/回滚 SQL 说明）、脚本 `bulk_online.py` `stats.py` `verify.py` `fix_fts.py` `gap_stats.py`。
+
 ## 0bf. 批次 Y（2026-11-22 全局客服入口 + 管理端买家咨询，✅ 完成，未 commit）
 
 - **任务**：`功能需求迭代文档03.md` 第二十一节 21.3-2、21.4。关闭 Crisp 原生挂件，全站右下角改用自研【客服】按钮/面板（所有登录买家，不要求白名单），管理端客服中心新增「买家咨询」分组。**未 commit；未改后端契约、未动商家端/mobile.html/folio。**
