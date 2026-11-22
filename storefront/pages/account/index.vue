@@ -7,11 +7,12 @@ import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
 import { useMerchantEntry } from '../../composables/useMerchantEntry'
 
-// Account hub rebuilt from joybuy.co.uk/profile (screenshots in
-// var/account_pages_20261116): avatar + username header, one order summary
-// strip, then the kept modules (orders, after-sales, reviews and Q&A,
-// addresses) plus the seller entry: apply for a shop, track the review, or
-// switch to the merchant portal once approved.
+// 需求 22.3-2（2026-11-22 真站 /profile 实测）：用户中心是**纵向堆叠**结构
+// （无左侧导航）：用户信息行 → 订单状态条 → 权益 tile 网格；内容区 1264px、
+// 页面白底、卡片 #f5f6fa / 8px 圆角。实测值见
+// var/z2_support_account_20261122/real_profile_structure_zh.json 与
+// real_profile_rules_zh.css。功能保持原样（订单/售后/评价/地址/收藏/浏览记录/
+// 申请店铺），只重做视觉与结构。
 const { isAuthenticated, account, logout } = useBuyerAuth()
 const { t } = useLocale()
 const config = useRuntimeConfig()
@@ -43,6 +44,7 @@ const counts = computed(() => ({
   completed: orders.value.filter((order) => order.state === 'COMPLETED').length,
 }))
 
+// 真站订单条：首格【我的订单】+ 状态格（数字 24/700、标签 18/400）。
 const orderStats = computed(() => [
   {
     key: 'pending_payment',
@@ -53,14 +55,8 @@ const orderStats = computed(() => [
   { key: 'completed', label: t('orders.tabCompleted'), count: counts.value.completed },
 ])
 
+// 真站权益 tile（22/700 标题 + 24px 图标 + 16px 右箭头 + 18px 灰描述）。
 const modules = computed(() => [
-  {
-    key: 'orders',
-    to: '/account/orders',
-    title: t('accountMenu.orders'),
-    description: t('account.moduleOrdersDesc'),
-    icon: 'orders',
-  },
   {
     key: 'returns',
     to: '/account/returns',
@@ -76,11 +72,18 @@ const modules = computed(() => [
     icon: 'reviews',
   },
   {
-    key: 'addresses',
-    to: '/account/addresses',
-    title: t('accountMenu.addresses'),
-    description: t('account.moduleAddressesDesc'),
-    icon: 'addresses',
+    key: 'favourites',
+    to: '/account/favourites',
+    title: t('account.favourites'),
+    description: t('account.moduleFavouritesDesc'),
+    icon: 'favourites',
+  },
+  {
+    key: 'recently-viewed',
+    to: '/account/recently-viewed',
+    title: t('account.recentlyViewed'),
+    description: t('account.moduleRecentlyViewedDesc'),
+    icon: 'recentlyViewed',
   },
   {
     key: 'merchant',
@@ -95,8 +98,14 @@ onMounted(() => {
   if (isAuthenticated.value) loadStatus({ force: true })
 })
 
+// 真站 /profile 昵称优先用账号 display_name（与右上角下拉一致），旧 payload
+// 缺字段时退回 display_identifier / 邮箱 / 手机号。
 const displayName = computed(
-  () => account.value?.display_identifier || account.value?.email || account.value?.phone_number,
+  () =>
+    account.value?.display_name ||
+    account.value?.display_identifier ||
+    account.value?.email ||
+    account.value?.phone_number,
 )
 
 async function signOut() {
@@ -108,253 +117,437 @@ useHead(() => ({ title: t('account.myAccount') }))
 </script>
 
 <template>
-  <AppContainer>
-    <section v-if="isAuthenticated" class="profile" aria-labelledby="profile-title">
-      <header class="profile-head">
-        <div class="profile-head__avatar" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="40" height="40">
-            <circle cx="20" cy="20" r="20" fill="#dfe3e8" />
-            <circle cx="14" cy="17" r="2" fill="#fff" />
-            <circle cx="26" cy="17" r="2" fill="#fff" />
-            <path
-              d="M12 26c2.2 2.6 4.8 3.9 8 3.9s5.8-1.3 8-3.9"
-              fill="none"
-              stroke="#fff"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
-        </div>
-        <div class="profile-head__identity">
-          <h1 id="profile-title" class="profile-head__name">{{ displayName }}</h1>
-          <p class="profile-head__meta">
-            {{ t('account.signedInAs') }} <span>{{ displayName }}</span>
-          </p>
-        </div>
-        <button class="profile-head__signout" type="button" @click="signOut">
-          {{ t('accountMenu.signOut') }}
-        </button>
-      </header>
+  <div class="profile-page">
+    <AppContainer>
+      <section
+        v-if="isAuthenticated"
+        class="profile"
+        aria-labelledby="profile-title"
+        data-testid="account-profile"
+      >
+        <!-- 真站 UserInfoSection（120px 高 / 20px 24px 内边距）：60px 头像 +
+             28px/700 昵称 + 18px 文本链接行（8px 12px 内边距 / 4px 圆角）。 -->
+        <header class="profile-me">
+          <div class="profile-me__identity">
+            <span class="profile-me__avatar" aria-hidden="true">
+              <svg viewBox="0 0 56 56" width="60" height="60">
+                <rect width="56" height="56" fill="#E5E7F0" rx="28" />
+                <path
+                  fill="#fff"
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                  d="M29.782 17.512a2.989 2.989 0 1 1-5.978 0 2.989 2.989 0 0 1 5.978 0m-9.284 9.415a2.988 2.988 0 1 1-5.977-.001 2.988 2.988 0 0 1 5.977 0m-3.02 9.574v6.082c13.81 0 25.042-11.235 25.042-25.044h-6.08c0 10.456-8.507 18.962-18.962 18.962"
+                />
+              </svg>
+            </span>
+            <div class="profile-me__body">
+              <h1 id="profile-title" class="profile-me__name" data-testid="account-profile-name">
+                {{ displayName }}
+              </h1>
+              <div class="profile-me__links">
+                <NuxtLink
+                  class="profile-me__link"
+                  to="/account/addresses"
+                  data-testid="account-addresses"
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                    <path
+                      d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7Zm0 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  {{ t('accountMenu.addresses') }}
+                </NuxtLink>
+                <span class="profile-me__divider" aria-hidden="true"></span>
+                <button class="profile-me__link" type="button" @click="signOut">
+                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                    <path
+                      d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 8l-4 4 4 4M6 12h9"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  {{ t('accountMenu.signOut') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
 
-      <section class="order-summary" :aria-label="t('accountMenu.orders')">
-        <NuxtLink class="order-summary__all" to="/account/orders">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path
-              d="M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 4v2h8V7H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"
-              fill="currentColor"
-            />
-          </svg>
-          <span>{{ t('accountMenu.orders') }}</span>
-          <span class="order-summary__arrow" aria-hidden="true">›</span>
-        </NuxtLink>
-        <NuxtLink
-          v-for="stat in orderStats"
-          :key="stat.key"
-          class="order-summary__stat"
-          :to="`/account/orders?tab=${stat.key}`"
-        >
-          <strong>{{ stat.count }}</strong>
-          <span>{{ stat.label }}</span>
-        </NuxtLink>
-      </section>
-
-      <nav class="profile-modules" :aria-label="t('account.modules')">
-        <component
-          :is="module.to ? NuxtLink : 'button'"
-          v-for="module in modules"
-          :key="module.key"
-          class="profile-module"
-          :class="{ 'profile-module--action': !module.to }"
-          :to="module.to || undefined"
-          :type="module.to ? undefined : 'button'"
-          :disabled="!module.to && switching"
-          @click="!module.to && openMerchantConsole()"
-        >
-          <span class="profile-module__icon" aria-hidden="true">
-            <svg v-if="module.icon === 'orders'" viewBox="0 0 24 24" width="22" height="22">
+        <!-- 真站 OrderStatusSection：1264×120 的 #f5f6fa 卡片（20px 24px、
+             8px 圆角）；首格透明，状态格 80px 高白底 8px 圆角。 -->
+        <section class="profile-orders" :aria-label="t('accountMenu.orders')">
+          <NuxtLink
+            class="profile-orders__item profile-orders__item--all"
+            to="/account/orders"
+            data-testid="account-orders"
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
                 d="M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 4v2h8V7H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"
                 fill="currentColor"
               />
             </svg>
-            <svg v-else-if="module.icon === 'returns'" viewBox="0 0 24 24" width="22" height="22">
+            <span>{{ t('accountMenu.orders') }}</span>
+            <svg
+              class="profile-orders__arrow"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              aria-hidden="true"
+            >
               <path
-                d="M4 6h16v4H4V6Zm0 6h16v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7Zm3 3v2h6v-2H7Zm9-9h4v14h-2V8h-2V6Z"
-                fill="currentColor"
+                d="m9 5 7 7-7 7"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
             </svg>
-            <svg v-else-if="module.icon === 'reviews'" viewBox="0 0 24 24" width="22" height="22">
-              <path
-                d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4V5a1 1 0 0 1 1-1Zm3 5v2h10V9H7Zm0 4v2h7v-2H7Z"
-                fill="currentColor"
-              />
-            </svg>
-            <svg v-else-if="module.icon === 'addresses'" viewBox="0 0 24 24" width="22" height="22">
-              <path
-                d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7Zm0 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
-                fill="currentColor"
-              />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="22" height="22">
-              <path
-                d="M4 4h16v3H4V4Zm0 5h16v10a1 1 0 0 1-1 1h-5v-5H10v5H5a1 1 0 0 1-1-1V9Zm2 2v2h2v-2H6Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Z"
-                fill="currentColor"
-              />
-            </svg>
-          </span>
-          <span class="profile-module__body">
+          </NuxtLink>
+          <NuxtLink
+            v-for="stat in orderStats"
+            :key="stat.key"
+            class="profile-orders__item"
+            :to="`/account/orders?tab=${stat.key}`"
+            :data-testid="`account-orders-${stat.key}`"
+          >
+            <strong class="profile-orders__num">{{ stat.count }}</strong>
+            <span class="profile-orders__label">{{ stat.label }}</span>
+          </NuxtLink>
+        </section>
+
+        <!-- 真站 UserBenefitsSection：3 列 tile（104px 高 / #f5f6fa / 8px 圆角 /
+             24px 24px 16px 内边距；标题 22/700、描述 18/400 #888b94）。 -->
+        <nav class="profile-modules" :aria-label="t('account.modules')">
+          <component
+            :is="module.to ? NuxtLink : 'button'"
+            v-for="module in modules"
+            :key="module.key"
+            class="profile-module"
+            :class="{ 'profile-module--action': !module.to }"
+            :to="module.to || undefined"
+            :type="module.to ? undefined : 'button'"
+            :disabled="!module.to && switching"
+            :data-testid="`account-module-${module.key}`"
+            @click="!module.to && openMerchantConsole()"
+          >
             <span class="profile-module__title">
-              {{ switching && !module.to ? t('merchantEntry.opening') : module.title }}
+              <span class="profile-module__title-text">
+                <svg
+                  v-if="module.icon === 'returns'"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4 6h16v4H4V6Zm0 6h16v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7Zm3 3v2h6v-2H7Zm9-9h4v14h-2V8h-2V6Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <svg
+                  v-else-if="module.icon === 'reviews'"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4V5a1 1 0 0 1 1-1Zm3 5v2h10V9H7Zm0 4v2h7v-2H7Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <svg
+                  v-else-if="module.icon === 'favourites'"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 20.3C8.4 17.7 3 13.9 3 9.5A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 9 2.5c0 4.4-5.4 8.2-9 10.8Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <svg
+                  v-else-if="module.icon === 'recentlyViewed'"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 3a9 9 0 1 1-8.5 6.1M12 7v5.2l3.6 2.1M3.5 9.1 4 3.6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+                  <path
+                    d="M4 4h16v3H4V4Zm0 5h16v10a1 1 0 0 1-1 1h-5v-5H10v5H5a1 1 0 0 1-1-1V9Zm2 2v2h2v-2H6Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <span>{{
+                  switching && !module.to ? t('merchantEntry.opening') : module.title
+                }}</span>
+              </span>
+              <svg
+                class="profile-module__arrow"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path
+                  d="m9 5 7 7-7 7"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
             </span>
             <span class="profile-module__desc">{{ module.description }}</span>
-          </span>
-          <span class="profile-module__arrow" aria-hidden="true">›</span>
-        </component>
-      </nav>
-    </section>
+          </component>
+        </nav>
+      </section>
 
-    <section v-else class="profile-signed-out" aria-labelledby="profile-title">
-      <h1 id="profile-title">{{ t('account.myAccount') }}</h1>
-      <p>{{ t('account.signInPrompt') }}</p>
-      <div class="profile-signed-out__actions">
-        <NuxtLink to="/auth/login"
-          ><BaseButton variant="primary">{{ t('header.signIn') }}</BaseButton></NuxtLink
-        >
-        <NuxtLink to="/auth/register">
-          <BaseButton variant="secondary">{{ t('auth.createAccount') }}</BaseButton>
-        </NuxtLink>
-      </div>
-    </section>
-  </AppContainer>
+      <section v-else class="profile-signed-out" aria-labelledby="profile-title">
+        <h1 id="profile-title">{{ t('account.myAccount') }}</h1>
+        <p>{{ t('account.signInPrompt') }}</p>
+        <div class="profile-signed-out__actions">
+          <NuxtLink to="/auth/login"
+            ><BaseButton variant="primary">{{ t('header.signIn') }}</BaseButton></NuxtLink
+          >
+          <NuxtLink to="/auth/register">
+            <BaseButton variant="secondary">{{ t('auth.createAccount') }}</BaseButton>
+          </NuxtLink>
+        </div>
+      </section>
+    </AppContainer>
+  </div>
 </template>
 
 <style scoped>
+/* 真站 /profile 实测（1440×1200，2026-11-22）：
+   profile_container = 白底 + 上下 48px，内层 w=1264 居中；无左侧导航。 */
+.profile-page {
+  --container-max: calc(1264px + 2 * var(--container-pad));
+
+  padding-block: 48px;
+  background: #fff;
+}
+
 .profile {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  margin-block: var(--space-6) var(--space-12);
 }
 
-.profile-head {
+/* UserInfoSection：120px 高、20px 24px 内边距。 */
+.profile-me {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-5) var(--space-6);
+  justify-content: space-between;
+  height: 120px;
+  padding: 20px 24px;
 }
 
-.profile-head__avatar {
+.profile-me__identity {
   display: flex;
-  flex: 0 0 auto;
-}
-
-.profile-head__identity {
   flex: 1;
+  align-items: center;
   min-width: 0;
 }
 
-.profile-head__name {
-  margin: 0;
+.profile-me__avatar {
+  display: inline-flex;
+  width: 60px;
+  height: 60px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
+  border-radius: 50%;
+  background: #fff;
   overflow: hidden;
+}
+
+.profile-me__avatar svg {
+  display: block;
+  border-radius: 50%;
+}
+
+.profile-me__body {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 76px;
+  margin-right: 20px;
+}
+
+.profile-me__name {
+  overflow: hidden;
+  max-width: 750px;
+  margin: 0 0 0 12px;
+  color: #1a1a1a;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 1.5rem;
-  font-weight: var(--font-weight-bold);
 }
 
-.profile-head__meta {
-  margin: var(--space-1) 0 0;
-  color: var(--colour-muted);
-  font-size: var(--font-size-sm);
+.profile-me__links {
+  display: flex;
+  align-items: center;
+  margin-left: 12px;
 }
 
-.profile-head__signout {
-  min-height: 40px;
-  padding: 0 var(--space-4);
-  border: 1px solid var(--colour-border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--colour-surface);
-  color: var(--colour-text);
+.profile-me__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 20px;
+  line-height: 24px;
+  text-align: center;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.profile-head__signout:hover {
-  background: var(--colour-surface-muted);
+.profile-me__link svg {
+  display: inline-block;
+  flex: none;
 }
 
-.order-summary {
-  display: grid;
-  grid-template-columns: 1.35fr repeat(3, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-radius: 4px;
-  background: var(--colour-surface);
+.profile-me__link:hover {
+  background: rgb(0 16 71 / 6%);
 }
 
-.order-summary__all {
+.profile-me__link:active {
+  background: rgb(0 16 71 / 10%);
+}
+
+.profile-me__divider {
+  display: inline-block;
+  width: 1px;
+  height: 20px;
+  margin: 0 16px;
+  background: #f0f1f2;
+}
+
+/* OrderStatusSection：margin-top 24 / #f5f6fa / padding 20px 24px / 8px 圆角。 */
+.profile-orders {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 80px;
-  padding: 0 var(--space-4);
-  border-radius: 2px;
-  color: var(--colour-text);
-  text-decoration: none;
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 24px;
+  padding: 20px 24px;
+  border-radius: 8px;
+  background: #f5f6fa;
 }
 
-.order-summary__arrow {
-  margin-left: auto;
-  color: var(--colour-muted);
-  font-size: 1.25rem;
-}
-
-.order-summary__stat {
+.profile-orders__item {
   display: flex;
+  width: 224px;
+  height: 80px;
+  flex: 1;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  min-height: 80px;
-  border-radius: 2px;
-  background: var(--colour-surface-soft);
-  color: var(--colour-text);
+  justify-content: space-between;
+  padding: 10px 0;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a1a1a;
+  text-align: center;
   text-decoration: none;
-  font-size: var(--font-size-md);
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
-.order-summary__stat:hover,
-.order-summary__all:hover,
-.profile-module:hover {
-  background: var(--colour-hover);
+.profile-orders__item:hover {
+  background: #fafafa;
 }
 
-.order-summary__stat strong {
-  font-size: 1.5rem;
-  font-weight: var(--font-weight-bold);
+.profile-orders__item--all {
+  flex-direction: row;
+  justify-content: center;
+  gap: 4px;
+  background: transparent;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 24px;
 }
 
+.profile-orders__item--all:hover {
+  background: rgb(0 0 0 / 2%);
+}
+
+.profile-orders__arrow {
+  flex: none;
+}
+
+.profile-orders__num {
+  color: #1a1a1a;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.profile-orders__label {
+  color: #1a1a1a;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+/* UserBenefitsSection：margin-top 32 / 3 列 / 104px 高 / #f5f6fa / 16px 间距。 */
 .profile-modules {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: var(--space-4);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 32px;
 }
 
 .profile-module {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
   min-height: 104px;
-  padding: var(--space-4);
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 24px 24px 16px;
   border: 0;
-  border-radius: 4px;
-  background: var(--colour-surface);
-  color: var(--colour-text);
+  border-radius: 8px;
+  background: #f5f6fa;
+  color: #1a1a1a;
   text-align: left;
   text-decoration: none;
   font: inherit;
   cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.profile-module:hover {
+  background: #f0f1f4;
 }
 
 .profile-module--action:disabled {
@@ -362,40 +555,36 @@ useHead(() => ({ title: t('account.myAccount') }))
   opacity: 0.75;
 }
 
-.profile-module__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--colour-surface-muted);
-  color: var(--colour-text-secondary);
+.profile-module__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 22px;
 }
 
-.profile-module__body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-1);
+.profile-module__title-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-.profile-module__title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-}
-
-.profile-module__desc {
-  color: var(--colour-muted);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
+.profile-module__title-text svg {
+  flex: none;
 }
 
 .profile-module__arrow {
-  color: var(--colour-muted);
-  font-size: 1.25rem;
+  flex: none;
+}
+
+.profile-module__desc {
+  color: #888b94;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 24px;
 }
 
 .profile-signed-out {
@@ -422,28 +611,83 @@ useHead(() => ({ title: t('account.myAccount') }))
 }
 
 @media (max-width: 63.999rem) {
-  .profile-modules {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .profile-module__title {
+    font-size: 20px;
+    line-height: 20px;
+  }
+
+  .profile-module__desc {
+    font-size: 16px;
+    line-height: 22px;
   }
 }
 
 @media (max-width: 47.999rem) {
-  .profile-head {
+  .profile-page {
+    padding-block: 24px;
+  }
+
+  .profile-me {
+    padding: 16px 0;
+  }
+
+  .profile-me__name {
+    font-size: 24px;
+  }
+
+  .profile-me__link {
+    padding: 8px 6px;
+    font-size: 16px;
+  }
+
+  .profile-me__divider {
+    margin: 0 4px;
+  }
+
+  .profile-orders {
     flex-wrap: wrap;
-    padding: var(--space-4);
+    gap: 12px;
+    padding: 16px;
   }
 
-  .order-summary {
-    grid-template-columns: repeat(3, 1fr);
+  .profile-orders__item {
+    width: calc(50% - 6px);
+    height: 72px;
+    flex: none;
   }
 
-  .order-summary__all {
-    grid-column: 1 / -1;
-    min-height: 56px;
+  .profile-orders__item--all {
+    width: 100%;
+    height: 56px;
+  }
+
+  .profile-orders__num {
+    font-size: 22px;
+  }
+
+  .profile-orders__label {
+    font-size: 16px;
   }
 
   .profile-modules {
     grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-top: 24px;
+  }
+
+  .profile-module {
+    min-height: 88px;
+    padding: 20px 16px 14px;
+  }
+
+  .profile-module__title {
+    font-size: 20px;
+    line-height: 20px;
+  }
+
+  .profile-module__desc {
+    font-size: 16px;
+    line-height: 22px;
   }
 }
 </style>

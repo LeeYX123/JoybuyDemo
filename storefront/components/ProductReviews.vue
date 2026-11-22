@@ -104,11 +104,24 @@ function goToPage(next) {
 
     <div class="reviews__overview" :class="{ 'reviews__overview--ai-only': displayCount === 0 }">
       <div v-if="displayCount > 0" class="reviews__stats">
-        <p class="reviews__average">
-          {{ averageText }}
-          <span class="reviews__average-max">/ 5</span>
-        </p>
-        <p class="reviews__count">{{ displayCount }} {{ t('reviews.countSuffix') }}</p>
+        <div class="reviews__score">
+          <p class="reviews__average">{{ averageText }}</p>
+          <span class="reviews__stars" aria-hidden="true">
+            <svg
+              v-for="star in 5"
+              :key="star"
+              class="reviews__star"
+              :class="{ 'reviews__star--filled': star <= Math.round(displayAverage) }"
+              viewBox="0 0 20 20"
+            >
+              <path
+                d="M10 1.6l2.5 5.2 5.7.8-4.1 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4.1-4 5.7-.8z"
+                fill="currentColor"
+              />
+            </svg>
+          </span>
+          <p class="reviews__count">{{ displayCount }} {{ t('reviews.countSuffix') }}</p>
+        </div>
 
         <div class="reviews__distribution" role="group" :aria-label="t('reviews.filterLabel')">
           <button
@@ -120,7 +133,7 @@ function goToPage(next) {
             :aria-pressed="activeRating === String(star)"
             @click="filterBy(String(star))"
           >
-            <span class="reviews__dist-label">{{ star }} {{ t('reviews.starSuffix') }}</span>
+            <span class="reviews__dist-label">{{ star }}</span>
             <span class="reviews__dist-track" aria-hidden="true">
               <span class="reviews__dist-fill" :style="{ width: `${barWidth(star)}%` }"></span>
             </span>
@@ -192,86 +205,119 @@ function goToPage(next) {
 </template>
 
 <style scoped>
+/* 需求 22.1-2：评价区按真站实测（customer-reviews-box）——整块无外框/圆角，
+   上方一条分隔线，内边距 20px 8px 16px；标题 24px/600 line-height 26。 */
 .reviews {
-  margin-block: var(--space-8);
-  padding: var(--space-6);
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-lg);
+  margin-block: 0;
+  padding: 20px 8px 16px;
+  border-top: 1px solid #f0f1f2;
   background: var(--colour-surface);
 }
 
 .reviews__heading {
-  font-size: 1.375rem;
-  font-weight: var(--font-weight-bold);
+  margin: 0 0 16px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 26px;
   color: #1a1a1a;
 }
 
-/* Joybuy 布局：左侧评分与星级分布，右侧 AI 评价总结。 */
+/* Joybuy 布局：左侧评分卡（736px），右侧 AI 评价总结（736px），gap 24。 */
 .reviews__overview {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--space-8);
-  margin-top: var(--space-5);
+  gap: 24px;
+  margin-top: 0;
 }
 
 .reviews__overview--ai-only {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* 评分卡：1px #F0F1F2、radius 12、padding 20，内部 gap 32。 */
 .reviews__stats {
+  display: flex;
   min-width: 0;
+  gap: 32px;
+  padding: 20px;
+  border: 1px solid #f0f1f2;
+  border-radius: 12px;
+}
+
+.reviews__score {
+  flex: none;
+  width: 100px;
 }
 
 .reviews__average {
+  margin: 0;
   color: #1a1a1a;
-  font-size: 2rem;
-  font-weight: var(--font-weight-bold);
-  line-height: 1.1;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 40px;
 }
 
-.reviews__average-max {
-  color: var(--colour-muted);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
+.reviews__stars {
+  display: flex;
+  align-items: center;
+  height: 16px;
+  margin-top: 4px;
+  color: #d17d00;
+}
+
+.reviews__star {
+  width: 13px;
+  height: 13px;
+  margin-right: 2px;
+  color: #e5e7eb;
+}
+
+.reviews__star--filled {
+  color: #d17d00;
 }
 
 .reviews__count {
-  margin-top: var(--space-1);
-  color: var(--colour-muted);
-  font-size: var(--font-size-sm);
+  margin: 8px 0 0;
+  color: #6e7078;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .reviews__distribution {
   display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-4);
+  gap: 8px;
+  margin-top: 0;
 }
 
+/* 分布行：高 22、18/1fr/24 三列、列间距 16，无多余内边距。 */
 .reviews__dist-row {
   display: grid;
-  grid-template-columns: 3.75rem minmax(0, 1fr) 2rem;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  gap: 16px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
   background: none;
-  color: var(--colour-text-secondary);
+  color: #1a1a1a;
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: 16px;
+  line-height: 22px;
   text-align: left;
 }
 
-.reviews__dist-row:hover {
-  background: var(--colour-canvas);
+.reviews__dist-row:hover .reviews__dist-fill {
+  background: #b96f00;
 }
 
 .reviews__dist-row--active {
-  border-color: var(--colour-accent);
-  background: var(--colour-accent-soft);
-  color: var(--colour-accent);
-  font-weight: var(--font-weight-semibold);
+  color: #d17d00;
+  font-weight: 600;
 }
 
 .reviews__dist-label {
@@ -279,42 +325,51 @@ function goToPage(next) {
 }
 
 .reviews__dist-track {
-  height: 8px;
+  height: 6px;
   overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--colour-surface-muted);
+  border-radius: 999px;
+  background: #f5f6fa;
 }
 
 .reviews__dist-fill {
   display: block;
   height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--colour-star);
+  border-radius: 999px;
+  background: #d17d00;
 }
 
 .reviews__dist-count {
+  color: #6e7078;
   text-align: right;
 }
 
+/* AI 总结：真站无卡片（无背景/边框/圆角/内边距），正文 16px/500 lh22，
+   说明文字 14px/500 #6E7078 lh20。 */
 .reviews__ai {
-  padding: var(--space-4);
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface-soft);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
 
 .reviews__ai-title {
-  color: #1a1a1a;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-bold);
+  margin: 0;
+  color: #6e7078;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .reviews__ai-text {
-  margin-top: var(--space-3);
-  color: #55565b;
-  font-size: var(--font-size-md);
-  line-height: 1.6;
+  margin: 0 0 8px;
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
   white-space: pre-line;
+  order: -1;
 }
 
 .reviews__filtered {
@@ -408,7 +463,11 @@ function goToPage(next) {
 @media (max-width: 64rem) {
   .reviews__overview {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-6);
+    gap: 24px;
+  }
+
+  .reviews__stats {
+    gap: 20px;
   }
 }
 </style>

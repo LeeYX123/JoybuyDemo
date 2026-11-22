@@ -373,6 +373,26 @@ describe('AppHeader', () => {
     }
   })
 
+  it('links the avatar + display_name block to /account and closes the menu (requirement 22.3-1)', async () => {
+    __setAuthenticated(true)
+    const wrapper = mountHeader()
+    await settle()
+    await wrapper.get('.account-menu').trigger('mouseenter')
+    await settle()
+
+    const profileLink = wrapper.get('[data-testid="account-menu-profile"]')
+    expect(profileLink.element.tagName).toBe('A')
+    expect(profileLink.attributes('href')).toBe('/account')
+    expect(profileLink.classes()).toContain('account-menu__user')
+    // 头像 + 用户名整块都在链接内。
+    expect(profileLink.find('.account-menu__avatar').exists()).toBe(true)
+    expect(profileLink.get('.account-menu__name').text()).toBe('user4323txlb')
+
+    await profileLink.trigger('click')
+    await settle()
+    expect(wrapper.find('.account-menu__panel').exists()).toBe(false)
+  })
+
   // -------------------------------------------------------------------------
   // 需求 17.3：右上角顺序按真站 = 申请店铺 → 购物车 → 登录/头像。真站四份 SSR
   // 存档（2026-11-19）jdi-header-user-info 内 cartEntry(购物车)在前、

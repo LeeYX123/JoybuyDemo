@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from django.conf import settings
+from django.core.signals import request_finished
+from django.db import close_old_connections
 from django.http import Http404
 from django.test import RequestFactory, TestCase, override_settings
 from PIL import Image
@@ -164,7 +166,7 @@ class S3VariantTests(S3BackendTestCase):
 
 
 class ServeMediaFileTests(IsolatedMediaRootMixin, TestCase):
-    """Dev /media/ endpoint: S3-mode redirect vs local-mode 404.
+    """Dev /media/ endpoint: S3-mode redirect vs local-mode placeholder/200.
 
     Calls the view directly (the URL route only exists when DEBUG was True at
     import time). 404 paths assert on the Http404 exception; the FileResponse
@@ -178,10 +180,74 @@ class ServeMediaFileTests(IsolatedMediaRootMixin, TestCase):
     def request(self, path):
         return serve_media_file(self.factory.get(f"/media/{path}"), path)
 
-    def test_local_mode_missing_file_returns_404(self):
+    def drain(self, response) -> bytes:
+        """Read a streaming response and close it without breaking the test DB.
+
+        ``HttpResponseBase.close()`` fires ``request_finished``; its
+        ``close_old_connections`` receiver closes the DB connection, which marks
+        the surrounding TestCase atomic block as needing rollback (the next
+        query in the class then raises TransactionManagementError). Django's
+        test client disconnects that receiver for the same reason.
+        """
+
+        payload = b"".join(response.streaming_content)
+        request_finished.disconnect(close_old_connections)
+        try:
+            response.close()
+        finally:
+            request_finished.connect(close_old_connections)
+        return payload
+
+    def test_local_mode_missing_file_returns_svg_placeholder(self):
+        with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
+            response = self.request("products/original/aa/bb/missing.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/svg+xml")
+        self.assertEqual(response["Cache-Control"], "public, max-age=3600")
+        self.assertIn(b"<svg", response.content)
+
+    def test_local_mode_placeholder_is_extension_agnostic(self):
+        bodies = set()
+        with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
+            for name in ("x.jpg", "x.png", "x.webp", "x.avif", "x.bin"):
+                response = self.request(f"products/original/aa/bb/{name}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["Content-Type"], "image/svg+xml")
+                bodies.add(response.content)
+        self.assertEqual(len(bodies), 1, "Every missing extension must yield one placeholder.")
+
+    def test_local_mode_existing_file_is_served_without_placeholder(self):
+        payload = make_png(color=(4, 4, 9))
+        with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
+            asset, _ = store_bytes(payload, kind="PRODUCT", mime_type="image/png")
+            response = self.request(asset.relative_path)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.drain(response), payload)
+
+    def test_local_mode_missing_fallback_queries_no_db_and_logs_event(self):
+        path = "products/original/aa/bb/missing.webp"
+        with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
+            with self.assertNumQueries(0):
+                with self.assertLogs("media.fallback", level="DEBUG") as captured:
+                    response = self.request(path)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(captured.records), 1)
+        record = captured.records[0]
+        self.assertEqual(record.levelname, "DEBUG")
+        self.assertEqual(record.event, "media.placeholder_fallback")
+        self.assertEqual(record.path, path)
+
+    def test_local_mode_path_traversal_is_404_not_placeholder(self):
         with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
             with self.assertRaises(Http404):
-                self.request("products/original/aa/bb/missing.png")
+                self.request("../../etc/passwd")
+
+    def test_local_mode_directory_path_is_404_not_placeholder(self):
+        directory = Path(settings.MEDIA_ROOT) / "products" / "original" / "aa"
+        directory.mkdir(parents=True)
+        with override_settings(DEBUG=True, MEDIA_BACKEND="local"):
+            with self.assertRaises(Http404):
+                self.request("products/original/aa")
 
     def test_s3_mode_missing_local_file_redirects_to_bucket(self):
         with override_settings(DEBUG=True, MEDIA_BACKEND="s3"):
@@ -201,8 +267,7 @@ class ServeMediaFileTests(IsolatedMediaRootMixin, TestCase):
         with override_settings(DEBUG=True, MEDIA_BACKEND="s3"):
             response = self.request(asset.relative_path)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(b"".join(response.streaming_content), payload)
-        response.close()
+        self.assertEqual(self.drain(response), payload)
 
     def test_s3_mode_path_traversal_is_404_not_redirect(self):
         with override_settings(DEBUG=True, MEDIA_BACKEND="s3"):

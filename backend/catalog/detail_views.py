@@ -2,12 +2,12 @@ import uuid
 
 from django.db import OperationalError, ProgrammingError
 from django.http import JsonResponse
-
-from catalog.localization_services import localized_specification, resolve_product_content
-from catalog.models import Sku, Spu, SpuDetailTranslation
 from offers.market_services import offer_market_chain, resolve_market_context
 from offers.models import Offer
 from reviews.models import Review
+
+from catalog.localization_services import localized_specification, resolve_product_content
+from catalog.models import Sku, Spu, SpuDetailTranslation
 
 
 def _offer_merchant_payload(offer: Offer) -> dict:
@@ -286,7 +286,6 @@ def product_detail(request, public_id):
 
     gallery = []
     from django.contrib.contenttypes.models import ContentType
-
     from media.models import MediaUsage
 
     spu_usages = MediaUsage.objects.filter(
@@ -364,5 +363,9 @@ def product_detail(request, public_id):
             "skus": skus,
             **detail_payload,
             "review_summary": review_summary,
+            # 需求 22.1-5：PDP 商品名下方「已售 x 件」。源站销量展示值（如
+            # "10k+"）由爬虫写入 SpuDetail.sale_amount；无详情行时为 null，
+            # 前端只在 null 时使用确定性占位值。
+            "sale_amount": (detail.sale_amount or None) if detail is not None else None,
         }
     )

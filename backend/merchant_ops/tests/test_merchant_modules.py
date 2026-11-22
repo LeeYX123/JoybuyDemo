@@ -16,7 +16,7 @@ from django.utils import timezone
 from accounts_buyers.models import BuyerAccount
 from accounts_staff.models import StaffAccount
 from accounts_staff.services import create_staff_session
-from catalog.models import LocalCategory, Spu, SpuTranslation
+from catalog.models import LocalCategory, Spu, SpuDetail, SpuTranslation
 from merchant_ops.models import (
     AfterSale,
     MerchantActivity,
@@ -175,6 +175,65 @@ class CatalogListingTests(MerchantModuleTestBase):
         rows = {item["id"]: item for item in response.json()["items"]}
         self.assertFalse(rows[str(product.public_id)]["listed"])
         self.assertTrue(rows[str(listed_product.public_id)]["listed"])
+
+    def test_product_detail_returns_crawler_content_and_specs(self):
+        """查看详情：图文区块 / 规格表 / SKU 规格来自 SpuDetail 与 Sku。"""
+        product = self.make_product()
+        # 爬虫商品：Spu.description 是历史兜底字段，通常为空；真数据在 SpuDetail。
+        product.description = ""
+        product.save(update_fields=["description"])
+        sku = product.skus.first()
+        sku.specification = {"颜色": "黑色", "存储空间": "256GB"}
+        sku.save(update_fields=["specification"])
+        SpuDetail.objects.create(
+            spu=product,
+            content_sections=[
+                {
+                    "title": "商品描述",
+                    "blocks": [
+                        {"type": "heading", "text": "产品亮点"},
+                        {"type": "paragraph", "text": "6.1 英寸超视网膜显示屏。"},
+                    ],
+                    "images": [],
+                }
+            ],
+            specification_tables=[
+                {"title": "规格参数", "rows": [{"name": "颜色", "value": "黑色"}]}
+            ],
+            specifications=[{"group": "", "name": "颜色", "value": "黑色"}],
+        )
+
+        response = self.get(f"/api/v1/merchant/catalog/products/{product.public_id}")
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["product"]
+        # 既有字段保持不变（description 仍是历史兜底字段）。
+        self.assertEqual(payload["name"], "演示商品")
+        self.assertEqual(payload["description"], "")
+        self.assertTrue(payload["has_detail"])
+        self.assertEqual(
+            payload["content_sections"][0]["blocks"][1]["text"], "6.1 英寸超视网膜显示屏。"
+        )
+        self.assertEqual(payload["specification_tables"][0]["rows"][0]["value"], "黑色")
+        self.assertEqual(payload["specifications"][0]["name"], "颜色")
+        self.assertEqual(payload["skus"][0]["specification"]["颜色"], "黑色")
+        self.assertEqual(payload["sku_count"], 1)
+
+    def test_product_detail_without_crawler_detail_returns_empty_structures(self):
+        """商家自建 / 未采集详情的商品：结构字段返回空，不报错。"""
+        product = self.make_product()
+        response = self.get(f"/api/v1/merchant/catalog/products/{product.public_id}")
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["product"]
+        self.assertFalse(payload["has_detail"])
+        self.assertEqual(payload["content_sections"], [])
+        self.assertEqual(payload["specification_tables"], [])
+        self.assertEqual(payload["description"], "演示商品")
+
+    def test_product_detail_hides_inactive_product(self):
+        product = self.make_product(status=Spu.Status.INACTIVE)
+        response = self.get(f"/api/v1/merchant/catalog/products/{product.public_id}")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "PRODUCT_NOT_FOUND")
 
     def test_list_product_creates_offer_with_cost_snapshot(self):
         product = self.make_product(cost="11.50", price="25.00")

@@ -212,6 +212,8 @@ export const messages = {
     'account.moduleReturnsDesc': 'Returns, refunds and after-sales',
     'account.moduleReviewsDesc': 'Your reviews and product questions',
     'account.moduleAddressesDesc': 'Manage delivery addresses',
+    'account.moduleFavouritesDesc': 'The items you have saved',
+    'account.moduleRecentlyViewedDesc': 'Products you viewed recently',
     'breadcrumb.label': 'Breadcrumb',
     'pagination.previous': 'Previous',
     'pagination.next': 'Next',
@@ -427,6 +429,15 @@ export const messages = {
     'detail.guaranteeWarranty': "1 Year Manufacturer's Warranty",
     'detail.guaranteeSupport': '24/7 Customer Support',
     'pdp.supportTitle': 'We support',
+    'pdp.deliveryTitle': 'Delivery & service promise',
+    'pdp.sellerLabel': 'Sold and shipped by',
+    'pdp.soldCount': '{count} sold',
+    'pdp.guaranteeReturnsDetail':
+      'At Joybuy, we want you to love your purchase as much as we do. That’s why we offer a 30-day free return policy. If you’re not completely satisfied, simply return your item for a full refund.',
+    'pdp.guaranteeSupportDetail':
+      'Experience unparalleled support with our 24/7 online customer service! Whether you have questions, need assistance, or require immediate solutions, our dedicated team is always ready to help. No matter the time or day, we’re just a click away.',
+    'pdp.guaranteeWarrantyDetail':
+      'This product comes with a One Year Manufacturer’s Warranty covering hardware defects and technical failures. Shop with confidence knowing your purchase is covered by the brand’s official service network.',
     'reviews.heading': 'Reviews',
     'reviews.empty': 'No reviews or Q&A yet.',
     'returns.tabAll': 'All',
@@ -728,6 +739,8 @@ export const messages = {
     'account.moduleReturnsDesc': '退货、退款与售后',
     'account.moduleReviewsDesc': '我的评价与商品问答',
     'account.moduleAddressesDesc': '管理收货地址',
+    'account.moduleFavouritesDesc': '您已保存的商品',
+    'account.moduleRecentlyViewedDesc': '您最近浏览的商品',
     'breadcrumb.label': '面包屑导航',
     'pagination.previous': '上一页',
     'pagination.next': '下一页',
@@ -939,6 +952,15 @@ export const messages = {
     'detail.guaranteeWarranty': '厂家保修 1 年',
     'detail.guaranteeSupport': '24/7 客户支持',
     'pdp.supportTitle': '我们支持',
+    'pdp.deliveryTitle': '配送与服务承诺',
+    'pdp.sellerLabel': '销售及配送方',
+    'pdp.soldCount': '已售{count}件',
+    'pdp.guaranteeReturnsDetail':
+      '在Joybuy，我们希望您和我们一样喜爱所购商品。因此我们提供30天免费退换服务——若您对商品不满意，可轻松退回并获得全额退款。',
+    'pdp.guaranteeSupportDetail':
+      '体验我们全天候 24/7 在线客服提供的卓越支持！无论您有疑问、需要帮助，还是需要立即解决问题，我们专业的团队都随时准备为您提供帮助。无论何时何地，只需点击一下，我们就能为您提供所需的支持。',
+    'pdp.guaranteeWarrantyDetail':
+      '厂家保修说明：本产品享有一年的厂家保修服务，涵盖硬件缺陷与技术性故障。请放心购买，您的产品将受到品牌官方售后服务网络的全面保障。',
     'reviews.heading': '评价',
     'reviews.empty': '暂无评价与问答。',
     'returns.tabAll': '全部',
@@ -1250,6 +1272,8 @@ export const messages = {
     'account.moduleReturnsDesc': 'Retouren, Rückerstattungen und After-Sales',
     'account.moduleReviewsDesc': 'Ihre Bewertungen und Produktfragen',
     'account.moduleAddressesDesc': 'Lieferadressen verwalten',
+    'account.moduleFavouritesDesc': 'Ihre gespeicherten Artikel',
+    'account.moduleRecentlyViewedDesc': 'Zuletzt angesehene Produkte',
     'breadcrumb.label': 'Breadcrumb-Navigation',
     'pagination.previous': 'Zurück',
     'pagination.next': 'Weiter',
@@ -1474,6 +1498,15 @@ export const messages = {
     'detail.guaranteeWarranty': '1 Jahr Herstellergarantie',
     'detail.guaranteeSupport': '24/7-Kundenservice',
     'pdp.supportTitle': 'Wir akzeptieren',
+    'pdp.deliveryTitle': 'Lieferung & Serviceversprechen',
+    'pdp.sellerLabel': 'Verkauft und versandt von',
+    'pdp.soldCount': '{count} verkauft',
+    'pdp.guaranteeReturnsDetail':
+      'Bei Joybuy möchten wir, dass Sie Ihren Kauf genauso lieben wie wir. Deshalb bieten wir eine kostenlose Rückgabe innerhalb von 30 Tagen an. Wenn Sie nicht vollständig zufrieden sind, senden Sie den Artikel einfach zurück und erhalten Sie eine vollständige Rückerstattung.',
+    'pdp.guaranteeSupportDetail':
+      'Erleben Sie herausragenden Support mit unserem 24/7-Online-Kundenservice! Ob Fragen, Hilfe oder eine schnelle Lösung – unser Team ist immer für Sie da.',
+    'pdp.guaranteeWarrantyDetail':
+      'Dieses Produkt verfügt über eine einjährige Herstellergarantie, die Hardwarefehler und technische Defekte abdeckt. Ihr Kauf ist über das offizielle Servicenetzwerk der Marke abgesichert.',
     'reviews.heading': 'Bewertungen',
     'reviews.empty': 'Noch keine Bewertungen oder Q&A.',
     'returns.tabAll': 'Alle',
@@ -1791,6 +1824,8 @@ export const messages = {
     'account.moduleReturnsDesc': 'Retours, remboursements et après-vente',
     'account.moduleReviewsDesc': 'Vos avis et questions sur les produits',
     'account.moduleAddressesDesc': 'Gérez vos adresses de livraison',
+    'account.moduleFavouritesDesc': 'Les articles que vous avez enregistrés',
+    'account.moduleRecentlyViewedDesc': 'Les produits consultés récemment',
     'breadcrumb.label': "Fil d'Ariane",
     'pagination.previous': 'Précédent',
     'pagination.next': 'Suivant',
@@ -2012,6 +2047,15 @@ export const messages = {
     'detail.guaranteeWarranty': 'Garantie constructeur 1 an',
     'detail.guaranteeSupport': 'Service client 24/7',
     'pdp.supportTitle': 'Nous acceptons',
+    'pdp.deliveryTitle': 'Livraison et engagements de service',
+    'pdp.sellerLabel': 'Vendu et expédié par',
+    'pdp.soldCount': '{count} vendus',
+    'pdp.guaranteeReturnsDetail':
+      "Chez Joybuy, nous souhaitons que vous aimiez votre achat autant que nous. C'est pourquoi nous proposons un retour gratuit sous 30 jours. Si vous n'êtes pas entièrement satisfait, renvoyez simplement l'article pour un remboursement intégral.",
+    'pdp.guaranteeSupportDetail':
+      "Profitez d'une assistance exceptionnelle avec notre service client en ligne 24h/24 et 7j/7 ! Que vous ayez des questions ou besoin d'une solution immédiate, notre équipe est toujours prête à vous aider.",
+    'pdp.guaranteeWarrantyDetail':
+      "Ce produit bénéficie d'une garantie constructeur d'un an couvrant les défauts matériels et les pannes techniques. Votre achat est couvert par le réseau de service officiel de la marque.",
     'reviews.heading': 'Avis',
     'reviews.empty': 'Aucun avis ni question pour le moment.',
     'returns.tabAll': 'Tous',
@@ -2325,6 +2369,8 @@ export const messages = {
     'account.moduleReturnsDesc': 'Retouren, terugbetalingen en service na aankoop',
     'account.moduleReviewsDesc': 'Je reviews en productvragen',
     'account.moduleAddressesDesc': 'Beheer je bezorgadressen',
+    'account.moduleFavouritesDesc': 'Je opgeslagen artikelen',
+    'account.moduleRecentlyViewedDesc': 'Producten die je recent hebt bekeken',
     'breadcrumb.label': 'Kruimelpad',
     'pagination.previous': 'Vorige',
     'pagination.next': 'Volgende',
@@ -2543,6 +2589,15 @@ export const messages = {
     'detail.guaranteeWarranty': '1 jaar fabrieksgarantie',
     'detail.guaranteeSupport': 'Klantenservice 24/7',
     'pdp.supportTitle': 'Wij accepteren',
+    'pdp.deliveryTitle': 'Levering en servicebelofte',
+    'pdp.sellerLabel': 'Verkocht en verzonden door',
+    'pdp.soldCount': '{count} verkocht',
+    'pdp.guaranteeReturnsDetail':
+      'Bij Joybuy willen we dat je net zo van je aankoop houdt als wij. Daarom bieden we een gratis retourbeleid van 30 dagen. Ben je niet volledig tevreden, stuur het artikel dan eenvoudig terug voor een volledige terugbetaling.',
+    'pdp.guaranteeSupportDetail':
+      'Ervaar ongeëvenaarde ondersteuning met onze 24/7 online klantenservice! Of je nu vragen hebt, hulp nodig hebt of snel een oplossing wilt, ons team staat altijd voor je klaar.',
+    'pdp.guaranteeWarrantyDetail':
+      'Dit product heeft een fabrieksgarantie van één jaar op hardwaredefecten en technische storingen. Je aankoop valt onder het officiële servicenetwerk van het merk.',
     'reviews.heading': 'Reviews',
     'reviews.empty': 'Nog geen reviews of Q&A.',
     'returns.tabAll': 'Alles',

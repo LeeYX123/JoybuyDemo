@@ -1,6 +1,15 @@
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
+from merchants.models import Merchant
+from merchants.services import (
+    IMPORT_FALLBACK_NAME,
+    IMPORT_FALLBACK_SLUG,
+    get_import_fallback_merchant,
+)
+from offers.models import Currency, Locale, Market, Offer
+from offers.services import import_offer_from_source
+from reviews.services import upsert_source_review
 
 from catalog.models import (
     ProductCategory,
@@ -11,15 +20,6 @@ from catalog.models import (
 )
 from catalog.product_services import get_or_create_sku_from_source, get_or_create_spu_from_source
 from catalog.search_services import rebuild_search_document
-from merchants.models import Merchant
-from merchants.services import (
-    IMPORT_FALLBACK_NAME,
-    IMPORT_FALLBACK_SLUG,
-    get_import_fallback_merchant,
-)
-from offers.models import Currency, Locale, Market, Offer
-from offers.services import import_offer_from_source
-from reviews.services import upsert_source_review
 
 
 class ProductDetailApiTests(TestCase):
@@ -95,6 +95,27 @@ class ProductDetailApiTests(TestCase):
         self.assertEqual(data["review_summary"]["count"], 2)
         self.assertIn(data["review_summary"]["average"], {"4.50", "4.5"})
         self.assertIn("href", data["review_summary"]) if False else None
+
+    def test_detail_exposes_stored_sale_amount(self):
+        """需求 22.1-5：详情接口暴露 SpuDetail.sale_amount 供「已售 x 件」展示。"""
+        self.make_sku("sku-black", "19.99")
+        SpuDetail.objects.create(spu=self.spu, sale_amount="25k+")
+
+        response = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sale_amount"], "25k+")
+
+    def test_detail_sale_amount_is_none_without_detail_row(self):
+        """没有 SpuDetail 行（历史/商家自建商品）时返回 null，不发明销量。"""
+        self.make_sku("sku-black", "19.99")
+
+        response = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["sale_amount"])
 
     def test_review_summary_falls_back_to_crawled_rating_snapshot(self):
         """爬虫商品没有本地评价行：评分/评价数/分布用 SpuDetail 的源站快照。"""

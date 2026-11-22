@@ -436,7 +436,14 @@ const brandLogoUrl = '/images/logo.png'
               </svg>
             </button>
             <div v-if="accountMenuOpen" class="account-menu__panel">
-              <div class="account-menu__user">
+              <!-- 需求 22.3-1：头像 + 用户名整块是链接 → /account（用户中心），
+                   点击后关闭下拉；下面 5 行菜单项与行为保持不变。 -->
+              <NuxtLink
+                class="account-menu__user"
+                to="/account"
+                data-testid="account-menu-profile"
+                @click="accountMenuOpen = false"
+              >
                 <span class="account-menu__avatar" aria-hidden="true">
                   <!-- 需求 17.2：面板内头像 40×40（真站 meAvatar 40px 圆）。 -->
                   <svg viewBox="0 0 56 56" width="40" height="40">
@@ -450,7 +457,7 @@ const brandLogoUrl = '/images/logo.png'
                   </svg>
                 </span>
                 <span class="account-menu__name">{{ accountLabel }}</span>
-              </div>
+              </NuxtLink>
               <!-- 需求 12.2：头像下拉菜单不再有「申请开店」入口（右上角统一承载）。
                    需求 13.5-6：每行左右对齐、右侧线性 icon（对齐真站行布局）。 -->
               <template v-for="row in accountMenuRows" :key="row.key">
@@ -889,7 +896,16 @@ const brandLogoUrl = '/images/logo.png'
   align-items: center;
   justify-content: center;
   gap: 12px;
+  width: 100%;
   height: 56px;
+  border-radius: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* 需求 22.3-1：整块可点，hover 与菜单行同款浅灰反馈。 */
+.account-menu__user:hover {
+  background: var(--colour-hover);
 }
 
 .account-menu__avatar {

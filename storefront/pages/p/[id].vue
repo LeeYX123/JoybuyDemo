@@ -9,7 +9,9 @@ import { useLocale } from '../../composables/useLocale'
 import { useMarketLocale } from '../../composables/useMarketLocale'
 import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
+import { categoryHref } from '../../utils/categoryLinks'
 import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
+import { ratingAverageLabel, ratingCountLabel, soldCountLabel } from '../../utils/pdpDisplay'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
 // title, thumb rail + 591px-class main image + buy panel (Buy now / Add to
@@ -424,6 +426,57 @@ const productCategoryCrumb = computed(() =>
   Array.isArray(data.value?.category_breadcrumb) ? data.value.category_breadcrumb : [],
 )
 
+// 需求 22.1-6：面包屑每一级都可点击。商品类目（product_category）只有源站
+// 数字 id，没有 slug/channel_code；按名称匹配本地类目树拿到落地页：
+// L1 → /minihome/<channel_code>（无频道码时 /c/<slug>），L2 → /c/<slug>。
+// 类目名优先显示本地化名称（源站面包屑是英文原名）。
+function normalizeCategoryName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function findTreeCategory(node) {
+  const target = normalizeCategoryName(node?.name)
+  if (!target) return null
+  const pool =
+    node.depth === 0 ? categories.value : categories.value.flatMap((root) => root.children || [])
+  return (
+    pool.find((candidate) =>
+      [candidate.name, candidate.name_en, candidate.name_zh].some(
+        (name) => normalizeCategoryName(name) === target,
+      ),
+    ) || null
+  )
+}
+
+const breadcrumbNodes = computed(() => {
+  const crumbs = productCategoryCrumb.value
+  if (!crumbs.length) {
+    return categoryTrail.value.map((node) => ({
+      key: `trail-${node.slug}`,
+      label: categoryName(node),
+      to: categoryHref(node),
+    }))
+  }
+  return crumbs.map((node, index) => {
+    const treeNode = findTreeCategory(node) || categoryTrail.value[index] || null
+    return {
+      key: `crumb-${node.id}`,
+      label: treeNode ? categoryName(treeNode) : node.name,
+      to: treeNode ? categoryHref(treeNode) : '',
+    }
+  })
+})
+
+// 需求 22.1-5：商品名下方「评分 + 已售 x 件」。评分用 review_summary（本地
+// 评价优先、爬虫快照兜底）；销量用后端已落库的 sale_amount，接口返回 null
+// 时才用确定性展示占位值（见 utils/pdpDisplay.js）。
+const reviewSummary = computed(() => data.value?.review_summary || null)
+const ratingAverage = computed(() => ratingAverageLabel(reviewSummary.value))
+const ratingCount = computed(() => ratingCountLabel(reviewSummary.value))
+const soldCount = computed(() => soldCountLabel(publicId.value, data.value?.sale_amount))
+
 // Hover zoom: the real site shows an enlarged detail view to the right of
 // the main image while the cursor moves over it.
 const zoomVisible = ref(false)
@@ -453,12 +506,32 @@ function onZoomMove(event) {
   zoomMaskStyle.value = { left: `${left}%`, top: `${top}%` }
 }
 
-// Service guarantees: plain text rows, no accordion (requirement 6-4).
-const guarantees = computed(() => [
-  t('detail.guaranteeReturns'),
-  t('detail.guaranteeWarranty'),
-  t('detail.guaranteeSupport'),
+// 服务承诺三项：真站为可展开 accordion（需求 22.1-3）。顺序按真站实测：
+// 30 天退货 → 24/7 客户支持 → 厂家保修；行高 54、16px/600，展开正文
+// 14px/20、行首无缩进，chevron 旋转 180°。
+const guaranteeItems = computed(() => [
+  {
+    key: 'returns',
+    label: t('detail.guaranteeReturns'),
+    detail: t('pdp.guaranteeReturnsDetail'),
+  },
+  {
+    key: 'support',
+    label: t('detail.guaranteeSupport'),
+    detail: t('pdp.guaranteeSupportDetail'),
+  },
+  {
+    key: 'warranty',
+    label: t('detail.guaranteeWarranty'),
+    detail: t('pdp.guaranteeWarrantyDetail'),
+  },
 ])
+
+const openGuarantee = ref('')
+
+function toggleGuarantee(key) {
+  openGuarantee.value = openGuarantee.value === key ? '' : key
+}
 
 // 【我们支持】支付图标区（需求文档03 11.8）：真站 PDP footer「We support」行实测
 // 复刻（9 个支付 SVG 各 32x20，顺序 = American Express→Klarna）。图标已下载到
@@ -502,25 +575,34 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
            历史商品没有商品类目时回退到本地类目树（Home / root / child / title）。 -->
         <nav class="detail__crumbs" :aria-label="t('breadcrumb.home')">
           <NuxtLink class="detail__crumb" to="/">{{ t('detail.home') }}</NuxtLink>
-          <template v-if="productCategoryCrumb.length">
-            <template v-for="node in productCategoryCrumb" :key="node.id">
-              <span class="detail__crumb-sep" aria-hidden="true">/</span>
-              <span class="detail__crumb">{{ node.name }}</span>
-            </template>
-          </template>
-          <template v-else>
-            <template v-for="node in categoryTrail" :key="node.slug">
-              <span class="detail__crumb-sep" aria-hidden="true">/</span>
-              <NuxtLink class="detail__crumb" :to="`/c/${node.slug}`">{{
-                categoryName(node)
-              }}</NuxtLink>
-            </template>
+          <template v-for="node in breadcrumbNodes" :key="node.key">
+            <span class="detail__crumb-sep" aria-hidden="true">/</span>
+            <NuxtLink v-if="node.to" class="detail__crumb" :to="node.to">{{ node.label }}</NuxtLink>
+            <span v-else class="detail__crumb">{{ node.label }}</span>
           </template>
           <span class="detail__crumb-sep" aria-hidden="true">/</span>
           <span class="detail__crumb detail__crumb--current">{{ data?.title }}</span>
         </nav>
         <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
         <h1 class="detail__title">{{ data?.title }}</h1>
+
+        <!-- 需求 22.1-5：商品名下方评分 + 已售（真站 16px，与标题同宽左对齐）。 -->
+        <div v-if="data" class="detail__rating" data-testid="pdp-rating">
+          <svg class="detail__rating-star" viewBox="0 0 20 20" aria-hidden="true">
+            <path
+              d="M10 1.6l2.5 5.2 5.7.8-4.1 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4.1-4 5.7-.8z"
+              fill="currentColor"
+            />
+          </svg>
+          <span class="detail__rating-average">{{ ratingAverage }}</span>
+          <span class="detail__rating-count"
+            >({{ ratingCount }} {{ t('reviews.countSuffix') }})</span
+          >
+          <span class="detail__rating-divider" aria-hidden="true"></span>
+          <span class="detail__sold" data-testid="pdp-sold">{{
+            t('pdp.soldCount', { count: soldCount })
+          }}</span>
+        </div>
 
         <div class="detail__main">
           <div
@@ -733,9 +815,72 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
               </button>
             </div>
 
+            <!-- 需求 22.1-4：配送与服务承诺（位于 30 天退货上方），含销售及
+                 配送方 + Joybuy 图标（真站 24px/600 标题、16px/500 销售方行）。 -->
+            <section class="detail__promise" data-testid="pdp-delivery-promise">
+              <h2 class="detail__promise-title">{{ t('pdp.deliveryTitle') }}</h2>
+              <p class="detail__seller" data-testid="pdp-seller">
+                <span>{{ t('pdp.sellerLabel') }}</span>
+                <img
+                  class="detail__seller-logo"
+                  src="/images/news/logo.svg"
+                  alt="Joybuy"
+                  width="66"
+                  height="18"
+                />
+              </p>
+            </section>
+
+            <!-- 需求 22.1-3：三项服务承诺可点击展开；chevron 展开时旋转。 -->
             <ul class="detail__guarantees">
-              <li v-for="line in guarantees" :key="line">{{ line }}</li>
+              <li
+                v-for="item in guaranteeItems"
+                :key="item.key"
+                class="detail__guarantee"
+                :class="{ 'detail__guarantee--open': openGuarantee === item.key }"
+              >
+                <button
+                  class="detail__guarantee-summary"
+                  type="button"
+                  :aria-expanded="openGuarantee === item.key"
+                  @click="toggleGuarantee(item.key)"
+                >
+                  <span>{{ item.label }}</span>
+                  <svg
+                    class="detail__guarantee-caret"
+                    viewBox="0 0 24 24"
+                    width="24"
+                    height="24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M6 9.5l6 6 6-6"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <div v-if="openGuarantee === item.key" class="detail__guarantee-detail">
+                  <p>{{ item.detail }}</p>
+                </div>
+              </li>
             </ul>
+
+            <!-- 需求 22.1-1：【我们支持】+ 支付图标紧跟购买区（真站 footer 实测
+                 14px/400 #505259、图标 32x20；位置按本轮要求放在右栏购买区下方）。 -->
+            <section class="detail__support" aria-labelledby="support-heading">
+              <h2 id="support-heading" class="detail__support-title">
+                {{ t('pdp.supportTitle') }}
+              </h2>
+              <ul class="detail__support-icons">
+                <li v-for="icon in paymentIcons" :key="icon.alt">
+                  <img :src="icon.src" :alt="icon.alt" width="32" height="20" loading="lazy" />
+                </li>
+              </ul>
+            </section>
           </div>
         </div>
       </section>
@@ -831,15 +976,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
         :review-summary="data?.review_summary"
       />
 
-      <!-- 我们支持：支付图标区（需求文档03 11.8，真站 footer「We support」行实测复刻）。 -->
-      <section class="detail__support" aria-labelledby="support-heading">
-        <h2 id="support-heading" class="detail__support-title">{{ t('pdp.supportTitle') }}</h2>
-        <ul class="detail__support-icons">
-          <li v-for="icon in paymentIcons" :key="icon.alt">
-            <img :src="icon.src" :alt="icon.alt" width="32" height="20" loading="lazy" />
-          </li>
-        </ul>
-      </section>
+      <!-- 我们支持已移到右栏购买区下方（需求 22.1-1），页面底部不再渲染。 -->
 
       <!-- 底部吸附购物条：滑过主图区后固定显示，滑回顶部即消失（Joybuy 交互）。 -->
       <div v-if="stickyBarVisible && data" class="buy-bar">
@@ -934,16 +1071,18 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   margin-block: var(--space-4);
 }
 
-/* Top nav: Home / categories / product, clickable like the real site. */
+/* Top nav: Home / categories / product, clickable like the real site
+   (real 16px/500, gap 8, margin-bottom 16). */
 .detail__crumbs {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
   min-height: 24px;
+  margin-bottom: 16px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 14px;
-  font-weight: var(--font-weight-bold);
+  font-size: 16px;
+  font-weight: 500;
   color: #1a1a1a;
 }
 
@@ -977,6 +1116,35 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   font-size: 1.5rem;
   font-weight: var(--font-weight-bold);
   line-height: var(--line-height-tight);
+}
+
+/* 需求 22.1-5：商品名下方评分 + 已售，真站 16px/400 黑字、行高 38px。 */
+.detail__rating {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  margin: -8px 0 12px;
+  font-size: 16px;
+  line-height: 24px;
+  color: #1a1a1a;
+}
+
+.detail__rating-star {
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  color: #1a1a1a;
+}
+
+.detail__rating-average {
+  margin-right: 8px;
+}
+
+.detail__rating-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 8px 0 0;
+  background: #e5e7eb;
 }
 
 /* Real layout: 56px thumb rail, fluid main image, 671px buy panel. */
@@ -1108,17 +1276,21 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   pointer-events: none;
 }
 
+/* 需求 22.1-7：主图圆角（真站 wrapper radius 16px）+ 背景 #F5F5F5。
+   圆角加在图片本身而非容器 overflow:hidden，否则悬停放大层会被裁掉。 */
 .detail__image {
   position: relative;
-  background: #eeeff0;
+  border-radius: 16px;
+  background: #f5f5f5;
 }
 
 .detail__image img {
   display: block;
   width: 100%;
   aspect-ratio: 1;
+  border-radius: 16px;
   object-fit: cover;
-  background: #eeeff0;
+  background: #f5f5f5;
 }
 
 /* 画廊视频：与主图同尺寸，完整显示不裁切（竖屏视频也不变形）。 */
@@ -1126,6 +1298,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   display: block;
   width: 100%;
   aspect-ratio: 1;
+  border-radius: 16px;
   background: #000000;
   object-fit: contain;
 }
@@ -1364,29 +1537,96 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   cursor: not-allowed;
 }
 
-/* Plain guarantee rows, no arrows/expanders (requirement 6-4). */
-.detail__guarantees {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
+/* 需求 22.1-4：配送与服务承诺。真站 section padding 8px 0、标题 24px/600
+   line-height 48，销售方行 16px/500 line-height 22。 */
+.detail__promise {
+  padding: 8px 0 0;
+  border-top: 1px solid var(--colour-border);
 }
 
-.detail__guarantees li {
+.detail__promise-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 48px;
+  color: #1a1a1a;
+}
+
+.detail__seller {
   display: flex;
   align-items: center;
-  min-height: 54px;
-  border-top: 1px solid var(--colour-border);
-  font-size: var(--font-size-md);
-  color: var(--colour-text);
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
+  color: #1a1a1a;
 }
 
-/* 我们支持：真站 footer_footerPay 实测（padding 26px 0，标题 14px/400 #505259
-   margin-right 16px，图标各 32x20）。 */
+.detail__seller-logo {
+  display: block;
+  width: auto;
+  height: 18px;
+}
+
+/* 需求 22.1-3：服务承诺 accordion。真站行高 54、16px/600、右内边距 16，
+   展开正文 14px/400 line-height 20、底部留白 20，chevron 展开旋转 180°。 */
+.detail__guarantees {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--colour-border);
+}
+
+.detail__guarantee {
+  border-top: 1px solid var(--colour-border);
+}
+
+.detail__guarantee-summary {
+  display: flex;
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 0;
+  border: 0;
+  background: none;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detail__guarantee-caret {
+  flex: none;
+  transition: transform 180ms ease;
+}
+
+.detail__guarantee--open .detail__guarantee-caret {
+  transform: rotate(180deg);
+}
+
+.detail__guarantee-detail p {
+  margin: 0;
+  padding: 0 16px 20px 0;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  white-space: pre-line;
+}
+
+/* 需求 22.1-1：我们支持 + 支付图标（真站 footer_footerPay 实测：标题
+   14px/400 #505259 margin-right 16px，图标各 32x20），现位于右栏购买区下方。 */
 .detail__support {
   display: flex;
   align-items: center;
-  margin-top: var(--space-8);
-  padding: 26px 0;
+  flex-wrap: wrap;
+  gap: 12px 0;
+  padding: 16px 0 0;
   border-top: 1px solid var(--colour-border);
 }
 

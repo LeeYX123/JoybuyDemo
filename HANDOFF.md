@@ -2,6 +2,127 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bk. 本地媒体占位回退（2026-11-23，✅，未 commit）
+
+- **任务/根因**：`MEDIA_BACKEND=local` 下大量 `var/media/products/original/...` 文件本地缺失（S3 时代资产 + 爬虫未抓全；0bg 测得新上架 1,926 个 SPU 中 406 个缺主图 = 21%），`/media/...` 直接 404 → 搜索/购物车/PDP 破图与白块（商家页 API 层早已回退，故本批前后均无 404）。本批在**统一媒体服务层**回退，不再逐页修。
+- **改动**（仅后端 2 文件；未改前端、未动 `.env`、无 AWS 操作、未 commit）
+  - `backend/media/views.py`：`serve_media_file` 在 `s3_enabled()` 为 False 时先 `resolve_media_path` + `os.path.isfile`（`os.stat`，**每条请求 0 条 DB 查询**）判定；文件不存在 → `placeholder_image_response()`：**HTTP 200 + `image/svg+xml` + `Cache-Control: public, max-age=3600`**，内联 360×360 SVG（灰底 #f5f6f7 + 图片图标，与 `storefront/public/images/categories/_placeholder.svg` 视觉一致但**不跨目录引用前端文件**）。扩展名无关（.jpg/.png/.webp/.avif/无扩展名同一张）。路径穿越（`MediaPathInvalid`）与目录路径仍 404。**S3 模式一行未改**（缺文件仍 302 到桶 URL，缺对象必须可见，不能拿占位图掩盖）；`DEBUG=False` 仍 404（生产走 Nginx）。
+  - 选 200 内联 SVG 而非 302 到静态占位图的理由：不依赖前端/静态目录部署布局；省一次跳转；单响应可缓存；`nosniff` 下 `image/svg+xml` 在 `<img>` 中正常渲染（截图已验证）。
+  - **日志口径**：每次回退 `logging.getLogger("media.fallback").debug("media.placeholder_fallback", extra={"event": "media.placeholder_fallback", "path": <相对路径>})`；JSON 日志可直接 `grep '"event":"media.placeholder_fallback"'` 统计缺图规模。默认 root 级别 INFO → 不输出；`DJANGO_LOG_LEVEL=DEBUG` 才采集（避免每张图刷屏）。实测样本：`{"level":"DEBUG","logger":"media.fallback","event":"media.placeholder_fallback","path":"products/original/zz/zz/log_probe.webp",...}`（临时 :8010 探针，已停）。
+  - `backend/media/tests/test_media_storage_s3.py`：原 `test_local_mode_missing_file_returns_404` 改为断言 200/SVG/缓存头；新增扩展名无关、存在文件原样返回、`assertNumQueries(0)` + `assertLogs`（event/path）、目录路径 404；S3 缺文件仍 302、S3 存在文件仍本地返回（原用例保留）。测试辅助 `drain()` 解决下面「坑 1」。
+- **验证（按验证纪律仅针对性验证）**
+  - `manage.py test media --noinput` → **Ran 36, OK**（原 31 + 新增 5）；`ruff check` + `ruff format --check` 2 文件 → All checks passed / already formatted；`makemigrations --check --dry-run` → No changes detected。
+  - `curl -I`（:8000 单实例、最终代码）：已知缺失 `products/original/72/fe/72fe…webp` → `HTTP 200`、`Content-Type: image/svg+xml`、`Cache-Control: public, max-age=3600`；`.jpg/.png/.webp/无扩展名` 同上；已存在 `.webp` → `200 image/webp` 原内容；`/media/products/original/00`（目录）→ 404；`/media/../../etc/passwd` → 404。
+  - Playwright（`var/media_placeholder_20261123/measure.mjs`，1440×900，Nuxt dev :3000 代理 /media→:8000；搜索 `/search?q=phone`、商家 `/merchants/source-5f19c3a976ba9182ec064185`、3 个缺图商品 PDP、临时买家经 API 加 3 件缺图商品到购物车）：
+    | 页面 | 前（HEAD 旧 `views.py`） | 后（本批） |
+    |---|---|---|
+    | 搜索 | media 4xx **6**（破损 `<img>` 6） | **0**（占位图可见，`naturalWidth>0`） |
+    | 购物车（3 件真实缺图商品） | media 4xx **4**（3 商品图 + 1 推荐位；破损 4） | **0**（占位图可见） |
+    | PDP | media 4xx **31** | **0** |
+    | 商家页 | 0（既有 API 层回退） | 0 |
+    - 前后对比用同一脚本、同一批商品、同一缺图文件；「前」通过临时 `git checkout -- backend/media/views.py` 重启 :8000 测得（旧 diff 存 `var/media_placeholder_20261123/views.patch`），随后 `git apply` 还原并按最终代码再跑一轮（`final2_result.json`）。截图：`before_real_cart.png`（破图图标+alt 文字）、`after_final_cart.png`、`after_search_placeholder_visible.png`（占位图）。
+  - 临时买家已清理（6 账号 / 6 购物车 / 15 CartItem / 6 会话 / 12 RecentlyViewed，`delete()` 共 45 行）；`MEDIA_BACKEND=local` 未改；无 AWS 操作；未 commit。
+- **坑（新会话必看）**
+  1. **不要在 TestCase 里直接 `response.close()` 后继续查 DB**：`HttpResponseBase.close()` 会发 `request_finished`，其 `close_old_connections` 接收器在 atomic 块内关连接 → `needs_rollback=True`，同测试类下一个 DB 查询抛 `TransactionManagementError`（本批新增测试改变字母序才暴露）。测试用 `drain()`：先读 streaming_content，再临时 `request_finished.disconnect(close_old_connections)` 后 close。
+  2. **生产 `/media/` 由 Nginx `alias` 直接服务、不走 Django**（`infra/nginx/joybuy.conf`；Django 的 `/media/` 路由仅在 `DEBUG` 时注册）。所以本修复只覆盖 dev/DEBUG 实例；生产缺图仍会 404，彻底覆盖需部署时给 Nginx 加 `try_files … @placeholder`（本轮**未改** Nginx、未部署）。
+  3. 重启 :8000 后仍可能出现**两个 LISTENING**（Windows SO_REUSEADDR）：本轮 38432/49272 同时监听，仅因两进程代码相同才无害；以后先 `netstat` 确认只剩 1 个。
+  4. 占位响应缓存 1 小时：后续从 S3/爬虫补回真实图片后，浏览器最多 1 小时内仍显示占位图（强刷或等过期即可），不是回退失效。
+  5. 商家页 API 回退返回前端静态 `categories/_placeholder.svg`，与本层内联 SVG 视觉一致但来源不同；两处不要互相删除。
+- **遗留**：缺失文件真实规模建议后续从 S3 恢复或由爬虫补抓（0bg：406/1,926）。统计可用 `DJANGO_LOG_LEVEL=DEBUG` 起后端后按 `event=media.placeholder_fallback` 聚合，或直接用 `var/media_placeholder_20261123/count_missing.py` / `find_targets.py`（读 `var/media` 文件系统）。
+
+## 0bh. 批次 Z1（2026-11-22 PDP 七项，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 22.1 的 7 项 PDP 对齐。**未 commit；未动商家端/mobile.html/其它页面；MEDIA_BACKEND=local 未改。**
+- **真站实测**（cookies 来自 `crawler/debug_session.py` + Playwright route 打桩 `**color-api.joybuy.co.uk**` → `{"code":0,"data":{}}`；`https://www.joybuy.co.uk/dp/iphone-18-pro-max-256-gb/100020640078595` **zh 200 实测成功**，EN 另抓一轮取承诺正文；产物 `var/pdp_round7_20261122/`，含 `real_zh_full.png`、`probe_*.json`、`crop_panel_*.png`）：
+  1. 真站字段：主图 wrapper（`.mainMedia_bigImg`）**border-radius 16px**；画廊区背景实际透明（商品图自带底色），本轮按用户要求改 **#F5F5F5**（标注：圆角实测、底色按需求）。
+  2. 评价区：h2 **24px/600 lh26**；section `padding 20px 8px 16px`、无外框；评分卡 **1px #F0F1F2 / radius 12 / padding 20 / 内部 gap 32**；均分 **32px/700 lh40**；评价数 **14px/500 #6E7078**；分布条 6px #F5F6FA、填充 #D17D00、行高 22；AI 总结**无卡片**（无背景/边框/圆角/内边距），正文 16px/500 lh22、说明 14px/500 #6E7078 lh20，无图标。
+  3. 承诺行：高 **54px**、**16px/600 lh22**、右侧 16px、divider 1px；展开正文 **14px/400 lh20**、底部 20px；真站顺序为 **30 天退货 → 24/7 客户支持 → 厂家保修**（chevron 真站换字形，本轮用 24px SVG 旋转 180° 等价实现）。
+  4. 配送与服务承诺：真站 section `padding 8px 0`、标题 **24px/600 lh48**、销售方行 16px/500 lh22；Joybuy 为红色字标。
+  5. 评分+已售：位于 h1 下方、画廊上方，整行 **16px/400**、高 38；真站示例 `★ 4.8 (70+ 评价) | 已售 7k+ 件`。
+  6. 面包屑：真站 **16px/500**、`/` 分隔、每级 `<a>`；本地按 categoryLinks 口径：L1→`/minihome/<channel_code>`，L2→`/c/<slug>`。
+- **改动**
+  - `storefront/pages/p/[id].vue`：
+    - 【我们支持】+9 个支付图标从页尾移入右栏 `.detail__panel`，紧跟三项承诺之后（购买按钮下方）；页尾不再渲染。
+    - 新增 `.detail__promise`（配送与服务承诺 + `pdp.sellerLabel` + `/images/news/logo.svg` 18px 高 Joybuy 图标），位于承诺列表上方。
+    - 三项承诺改 accordion（`guaranteeItems` + `openGuarantee`，aria-expanded，chevron 旋转，正文 i18n 详情）。
+    - h1 下新增 `.detail__rating`（黑色星标 + 均分 + `(N 条评价)` + 分隔线 + 已售）。
+    - 面包屑改用 `breadcrumbNodes`：商品 `category_breadcrumb` 按名称匹配本地类目树（`findTreeCategory`），用 `categoryHref` 生成链接并显示本地化类目名。
+    - `.detail__image`/`img` 改 `border-radius:16px` + `background:#F5F5F5`（圆角不放在 overflow:hidden 容器上，避免裁掉放大层）。
+  - `storefront/components/ProductReviews.vue`：评价区/评分卡/分布条/AI 总结按上述实测值重做（AI 正文用 `order:-1` 放到说明上方，视觉与真站一致）。
+  - `storefront/utils/pdpDisplay.js`（新）+ `storefront/tests/pdpDisplay.test.js`（新）：`soldCountLabel` 优先接口 `sale_amount`，仅 **null** 时用 public_id FNV-1a 哈希生成 10k–30k 的**确定性展示占位**（同 id 恒定、非运行时随机）；`ratingAverageLabel`/`ratingCountLabel`。
+  - `storefront/locales/messages.js`：新增 6 个 `pdp.*` 键（deliveryTitle / sellerLabel / soldCount / 三个 guarantee*Detail），en/zh/de/fr/nl 各 7 个 `pdp.*` 键集合一致（脚本核对）。
+  - **后端（协调者批准，增量字段）** `backend/catalog/detail_views.py`：详情 payload 新增 `"sale_amount": detail.sale_amount or None`（无 SpuDetail 行为 null，不发明数据）。`backend/catalog/tests/test_product_detail_api.py` 新增 2 例（有详情返回 "25k+"、无详情 null）；顺带按 ruff 口径整理该文件 import 顺序。
+- **验证（按验证纪律仅针对性验证；EN+ZH，完全重启 :8000/:3000 后）**
+  - `prettier --check` 5 个改动前端文件 → 全过；`eslint` 5 文件 → 0；`vitest run storefront/tests/pdpDisplay.test.js` → **4 passed**。
+  - 后端：`ruff check --config backend/pyproject.toml` 2 文件 → All checks passed；`manage.py test catalog.tests.test_product_detail_api --noinput` → **Ran 15, OK**（含新增 2）。
+  - API 抽查与 DB 一致：`c38390ff…` API/页面 `17k+`；`864f00f8…` API/页面 `139`；`3324e318…` API `18k+`。
+  - Playwright `var/pdp_round7_20261122/verify_z1.cjs`（EN+ZH，测试商品 `c38390ff-6d21-427a-8806-1b60c22649bc`，DB `sale_amount=17k+` / 1208 评价 / 有 AI 摘要）→ **FAILURES= 0**：
+    1. 【我们支持】只渲染 1 次且在 `.detail__panel` 内；support y=981.5 > buy/add y=652.5，< footer y=8247；且在承诺列表之后。
+    2. 配送与服务承诺在第一条承诺上方；标题 24px/600；销售方行 + Joybuy logo `naturalWidth>0`（高 18）。
+    3. 三项均可展开/收起：aria-expanded true/false、正文 14px/20px（>20 字）、caret `matrix(-1,0,0,-1,0,0)`，收起后 detail 移除。
+    4. 评价区：h2 24px/600、section `20px 8px 16px`、卡片 radius 12 / border rgb(240,241,242) / padding 20、均分 32px/700、计数 14px/500 rgb(110,112,120)、track 6px rgb(245,246,250)、fill rgb(209,125,0)、AI 无卡片（padding 0 / radius 0 / 透明）、AI 标题 14px/500 #6E7078、正文 16px/500。
+    5. 评分在 h1 下方、画廊上方；`已售17k+件` 连续刷新 3 次完全一致（EN `17k+ sold`）。
+    6. 面包屑 3 级链接：`/`、`/minihome/UK-Mini-HP-Electronics`、`/c/mobile-phones`，点击 L1/L2 落地 URL 正确。
+    7. 主图计算值 `border-radius:16px`、`background-color:rgb(245,245,245)`（img 与容器均一致）。
+    8. PDP 单独复测（`check_pdp_clean.cjs`）EN/ZH **console 0、404 0**；两语截图 `local_*_{top,panel,reviews,full,guarantee_open}.png`。
+- **踩坑（新会话必看）**
+  1. :8000 当时**同时有两个 `--noreload` runserver 进程**（46164/50168，Windows SO_REUSEADDR），请求随机落到旧进程 → 同一接口时而返回新字段、时而旧字段、值还是 None。已全部结束并只启动 1 个（日志 `var/pdp_round7_20261122/runserver_8000.log`）；以后改后端后先 `netstat -ano | grep :8000` 确认只有一个 LISTENING。
+  2. :3000 也有多套 Nuxt dev 进程；本轮已按 PID 树全停后用 `storefront/node_modules/nuxt/bin/nuxt.mjs dev --host 127.0.0.1 --port 3000` 单实例重启（日志 `storefront_3000.log`）。
+  3. 商品图/详情图有历史缺失（0bg 已知 406 个 SPU 缺主图）；面包屑点到 minihome/category 页会带出其它页的 404。验收 PDP console 必须**限定在 PDP 页面内**统计；测试商品已选媒体齐全的 `c38390ff…`。`5b7098bf…` 商品数据本身有 3 张变体图 404，勿用作验收样本。
+  4. 真站 **EN 版本的 AI 摘要/Delivery 区块在部分请求下不渲染**（实测 EN probe 为 null），故区块文案/尺寸以 zh 实测为准，EN 只取承诺正文。
+  5. Vue scoped CSS 里 `.detail__image` 不能加 `overflow:hidden` 实现圆角，否则 `left:calc(100%+16px)` 的悬停放大层会被裁掉；圆角加在 img 上。
+- **遗留/说明**
+  - 真站把支付图标放在页脚（`支付方式`），本轮按用户 22.1-1 明确要求放进右栏购买区；两者不一致处**以用户要求为准**。
+  - 已售回退只在后端 `sale_amount` 为 null（无 SpuDetail 行/空值）时生效，值形如 `24k+`，同商品恒定；DB 真实值存在时绝不覆盖。当前 ACTIVE 商品绝大多数有值（15,030/16,373 个 SPU 有 `sale_amount`）。
+  - 评价列表条目（头像/有用/图片）沿用旧样式，本轮只对齐 22.1-2 要求的区块与 AI 总结卡片。
+  - 未做真站 3 级类目（Electronics/Phones/Smartphones）第 3 级：后端 `category_breadcrumb` 只保留 2 级。
+
+
+## 0bj. 批次 Z2（2026-11-22 客服按钮/用户下拉/用户中心，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 22.2（首页右下角【客服】按钮按真站改样式）+ 22.3-1（用户下拉头像+用户名整块可点 → `/account`）+ 22.3-2（用户中心按真站 `/profile` 重做视觉）。保留全部既有逻辑与功能，**只改视觉/结构**；未动 PDP（Z1）、商家端（Z3）、后端；未 commit。
+- **真站实测**（cookies `crawler/debug_session.py` + Playwright，color-api 打桩 `{"code":0,"data":{}}`；1440×1000，产物 `var/z2_support_account_20261122/`）
+  - **客服入口**：真站不是单按钮，是 `#jdi-floating-toolbar`（固定 `right:0 / bottom:100px / z-index:1100`，宽 80、flex column）。单个入口 80×60（`min-height:48` + `padding:8px 5px` + 4px 间距）、`border:1px solid rgba(0,0,0,.059)` 且**无右边框**、`border-radius:8px 0 0 8px`、白底 `#fff`、文字 `#1a1a1a`/12px、图标 24px 在上、文字在下、hover **仅文字下划线**（无背景变化）。图标为 `joybuy-icons` 字体 `U+E601`（耳机+笑脸），字体未本地托管，本批用等效 SVG 复刻（**推定项**，标注见下）。
+  - **客服面板**：375×720，`right:84 / bottom≈104.5`，背景 `#f5f6fa`、圆角 8、阴影 `0 2px 16px rgba(0,0,0,.08)`、z-index 1200 → 本批把面板右移 84、底边贴按钮、顶边落在站头下方。
+  - **`/profile`**：**没有左侧导航**，是纵向堆叠（实测 `profile_profile_container` 白底 + 上下 48px，内层 **1264px** 居中）。①用户行 120px 高 / `padding:20px 24px`：60px 圆头像、昵称 28px/700、链接行 `padding:8px 12px`/4px 圆角/20px，分隔线 1px `#f0f1f2`；②会员 banner（76px，`#f5f6fa`，圆角 8，`margin-top:24`，紫色文案 + 黑色按钮）；③订单条（`#f5f6fa`，圆角 8，`padding:20px 24px`，`margin-top:24`）：首格【我的订单】22px/700 透明底，状态格 224×80 白底圆角 8、数字 24/700、标签 18/400；④权益 tile：`margin-top:32`、104px 高、`#f5f6fa`、圆角 8、`padding:24px 24px 16px`，标题 22/700（24px 图标 + 16px 右箭头），描述 18/400 `#888b94`。
+- **交付 1（`storefront/components/SupportChatLauncher.vue`，样式区重写，逻辑一行未动）**
+  - 按钮改为真站贴边形态：`fixed right:0 / bottom:100 / 80×60 / 12px / #fff / #1a1a1a / 8px 0 0 8px / 无右边框`，图标 24px + 文字竖排；hover 文字下划线；`.support-chat__launcher svg { flex:none }` 防 flex 压成 22px。
+  - 面板：`top:calc(var(--site-header-height,180px)+16px) / right:84 / bottom:104 / width:375 / z-index:1200`（**必须把顶边压到站头下方**，否则会盖住右上角购物车/头像——本轮实测踩到并已修）。
+  - PDP 错位（不改 PDP）：`body.pdp-merchant-contact` → 按钮 `bottom:156`（【联系商家】top=140，留 16px）；再叠加 `pdp-buybar-visible` → `bottom:212`（联系商家 148+44=192 之上）。面板同步 228/284。
+- **交付 2（`storefront/components/AppHeader.vue`）**：下拉里 `.account-menu__user` 由 `div` 改为 `NuxtLink to="/account"`（`data-testid="account-menu-profile"`），头像+昵称整块可点，`@click` 关闭下拉；5 行菜单项、申请店铺五态入口、hover 开合/延迟关闭全部保持。
+- **交付 3（`storefront/pages/account/index.vue` 重写模板/样式，脚本数据逻辑保留）**
+  - 结构对齐真站：白底页 + 1264 内容区；用户行（60px 头像、昵称 28/700、我的地址 + 退出登录，链接 20px/8×12 内边距/4px 圆角）；订单条（`#f5f6fa`/圆角 8/20×24/`margin-top:24`，首格透明【我的订单】，3 个状态格白底 80 高、数字 24/700、标签 18/400）；权益 tile（3 列、104 高、`#f5f6fa`、24/24/16 内边距、标题 22/700 + 24px 图标 + 16px 箭头、描述 18/400 `#888b94`、`margin-top:32`）。
+  - 功能入口：订单（含 3 个状态 tab 深链）、售后、评价、**收藏**、**最近浏览**、申请店铺（五态复用 `useMerchantEntry`），地址在用户行；收藏/最近浏览是新挂到 hub 的既有页面（此前只存在于路由/头部下拉）。
+  - `displayName` 改为优先 `display_name`（与右上角一致），回退 `display_identifier`/邮箱/手机号。
+  - 五语言新增 `account.moduleFavouritesDesc` / `account.moduleRecentlyViewedDesc`（en/zh/de/fr/nl，精确锚点插入）；脚本核对五语言键集合 **509/509/509/509/509** 一致。
+  - 与真站的**有意差异**：真站会员 JoyPlus banner 与「邀请有礼」卡未实现（本项目无会员/邀请功能）；订单状态格 3 个（真站 4 个，本项目评论/售后无后端数据）；权益 tile 5 个（真站 3 个，保留售后/评价/收藏/浏览/申请店铺）；头像沿用既有笑脸占位。
+- **验证（按验证纪律仅做针对性验证）**
+  - `prettier --check` 5 个改动文件 → 全过；`eslint` 5 文件 → 0 告警；`vitest` `AppHeader.test.js`(20) + `SupportChatLauncher.test.js`(7) → **27 passed**（AppHeader 新增 1 例：用户块是 `<a href="/account">`、含头像+昵称、点击后面板关闭）。
+  - Playwright（`var/z2_support_account_20261122/e2e.mjs`，完全重启 :3000 后，EN+ZH；临时买家见 `setup_fixture.py`/`cleanup.py`）：**FAILURES=[]**
+    1. 首页按钮计算样式逐项 = 真站实测：`fixed / right:0 / bottom:100 / 80×60 / min-height:48 / radius "8px 0px 0px 8px" / rgb(255,255,255) / rgb(26,26,26) / 12px / border-top 1px rgba(0,0,0,.06)（CSS 0.059 计算值）/ border-right 0 / column / 图标 24×24 / hover underline`；box `(1360,740)-(1440,800)`；点击开面板 375×625、z=1200（截图 `local_home_launcher_*_en.png`）。
+    2. 下拉用户块 `tag=A href=/account`，点击跳 `/account` 且面板关闭；5 行菜单项 href/顺序不变。
+    3. `/account` 计算值：内容区 1264、页白底、用户行 120、头像 60、昵称 28/700、订单条 `rgb(245,246,250)`+8px、状态格白底、3 列、tile 104/`#f5f6fa`/标题 22/700/描述 18 `rgb(136,139,148)`、**无左侧导航**；10 个入口 URL 全部 200；ZH 文案（我的订单/售后单/我的收藏/最近浏览/申请店铺）正常（截图 `local_account_{en,zh}.png`、`local_account_section_*.png`，真站对照 `real_profile_full.png`）。
+    4. PDP（白名单买家 + `?offer=&from=merchant`）：客服 `(1360,684,80×60)` vs 联系商家 `(1268,760,148×44)` **不相交**；`body.pdp-merchant-contact` 生效。当前 PDP（Z1 并行改动中）在 1440×520 滚到底主图 bottom=58 仍不离屏、`.buy-bar` 不出现，购物条态改为手动挂 `pdp-buybar-visible` 验证：客服 212 / 联系商家 148，**不相交**（截图 `local_pdp_buttons_900.png`）。
+    5. 全部页面 console error **0**。
+  - 清理：删除 2 临时买家/2 会话/1 客服线程，leftovers 全 0；:3000 已用新代码完全重启、:8000 未动；`MEDIA_BACKEND=local` 未改；无 AWS 操作；未 commit。
+- **坑（新会话必看）**
+  1. 真站客服图标是 `joybuy-icons` 私有字体 `U+E601`，项目未本地托管该字体；本批用等效 SVG（耳机+笑脸）**推定**，若后续拿到字体可替换。
+  2. 真站 `/profile` **没有左侧导航**；不要拿 `AccountShell`（240px 左栏 + 白面板）套用户中心 hub。
+  3. 客服面板必须限制在站头下方（用 `--site-header-height`）；只按 `bottom` 定高会在 900 高视口盖住购物车/头像（本轮已踩）。
+  4. 客服按钮改为 `right:0` 后会与 PDP【联系商家】（right 24 / bottom 96 / 44 高）重叠，必须保留 `body.pdp-merchant-contact` 这个类名（PDP 侧由 Z1 维护）以触发上移；若 Z1 改名，需同步本组件两条 `:global(body.pdp-merchant-contact …)`。
+  5. 真站 `rgba(0,0,0,.059)` 在 Chromium computed 值是 `rgba(0,0,0,0.06)`，验收比较时按计算值。
+  6. Playwright 在 Nuxt dev 下仍需 `networkidle + ~700ms` 再交互（沿用批次 Y 的 `gotoReady`）。完全重启后**第一次**跑 e2e 可能在首屏编译期超时；等 `curl :3000` 200 且 Vite warmup 完成后重跑即可（本轮第二次通过）。
+
+## 0bi. 批次 Z3（2026-11-22 商家上架中心，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 22.4（商家端「商品上架中心」查看详情）：描述/规格要显示真实采集数据；去掉【商家数】与【成本价用于发货扣款…】提示；无采集详情显示空态。只改桌面 Vue，手机版 `mobile.html`+`src/folio/` 一行未动。
+- **根因（接口 + 前端双缺）**：①商家端商品池列表 `/api/v1/merchant/catalog/products` 复用 `_spu_payload`，只带 `Spu.description` / `Spu.specs`；爬虫商品的这两个历史字段基本为空（实测 16k SPU 中 15.9k 有 `SpuDetail`，真实图文/规格全在 `detail.content_sections`/`specification_tables`/`specifications`/`spec_options` 与 `Sku.specification`），且商家端**没有单品详情接口**；②前端抽屉直接把列表行当详情渲染（`detail.value = item`），从不请求详情。两条叠加 → 描述/规格必空。
+- **后端改动**：`backend/merchant_ops/views_merchant_catalog.py` 新增 `MerchantCatalogProductDetailView`（`GET /api/v1/merchant/catalog/products/<uuid>`，权限 `merchant.listings.manage`，仅 ACTIVE 商品，404 `PRODUCT_NOT_FOUND`）：在 `_spu_payload` 既有字段之上**增量**返回 `content_sections` / `content_source` / `specification_tables` / `specifications` / `spec_options` / `ai_summary*` / `skus[{id,specification,status}]` / `sku_count`，成本价按本店折扣折算（与列表/上架公式一致），`listed` 标本店是否已上架；既有字段与列表接口零改动。路由 `backend/merchant_ops/urls.py`。
+- **前端改动**：`merchant-web/src/views/CatalogueView.vue` 打开抽屉时先用列表行占位再拉单品详情（`requestId` 防串台/关闭后回写）；描述按 section 标题 + heading/paragraph + 图片渲染，无结构化区块回退 `description` 纯文本；规格优先规格表（属性/值表格），再回退平铺 `specifications`/`specs`、SKU 规格汇总、`spec_options` chips；都为空显示「该商品暂无图文详情。」/「该商品暂无规格信息。」。删除【商家数】`<dt>` 与价格混用提示；抽屉改 `wide`。样式新增 `.detail-content*` / `.detail-spec-table` / `.detail-spec-options*`。
+- **验证（按验证纪律仅做针对性验证）**：`ruff check` 三文件过（`ruff format --check` 仍只报 `views_merchant_catalog.py` 既有的 `merchant_category_label` 换行漂移，未顺手重排）；`manage.py test merchant_ops.tests.test_merchant_modules.CatalogListingTests --keepdb --noinput --parallel 1` → **Ran 10, OK**（新增 3 例：有采集详情时 blocks/规格表/SKU 规格返回且既有字段不变、无详情返回空结构、INACTIVE 404）；`merchant-web` `npm run build` 通过。浏览器（IAB 127.0.0.1:5174，账号 `123456@joybuy.com` 测试商家）：搜索并打开 SPU `6b556170…` → 描述有 section 标题 `Product Description` + heading + 段落，规格表 `Materials & Specifications` 4 行；与 DB 逐项一致（2 sections/10 headings/32 paragraphs/1 table/3 rows 的另一 SPU `f39ee3fa…` 亦与接口完全一致）；`document.body.innerText` 不再含「商家数」「成本价用于发货扣款」；无采集详情 `4255c614…`（描述空态 + SKU 规格 Colour: GREEN/khaki）与完全无详情 `0ca53144…`（描述与规格双空态）均正常。
+- **手机版是否同问题**：否（`src/folio/base-2.js`/`base-3.js` 的商品详情弹窗是静态稿自拟文案，无【商家数】也无该价格提示；按铁律**未改**，仅记录）。
+- **环境备注/坑**：:8000 原进程是 `runserver --noreload`，新路由必须重启后端才生效（已按 `MEDIA_BACKEND=local` 重启，`.env` 未动、无 AWS 操作、未 commit）；`功能需求迭代文档03.md` 在 `git status` 中显示已修改（22 节由用户/他批写入，非本批改动，勿回滚）。
+
 ## 0bg. 批量上架 DRAFT 商品（2026-11-22，✅ 完成，未 commit）
 
 - **任务**：用户已批准把「6,889 个 ACTIVE Offer 挂在 DRAFT SPU 上」的商品批量上架。复用 2026-11-15 配方（`var/sql_online_crawled_20261115/bring_crawled_online.sql`，见本文 §2「把这两天抓取的商品全部上架」），本次差异：那次 Offer 也全是 DRAFT（两层都翻），这次 Offer 本来就是 ACTIVE，只翻 SPU。工作目录 `var/bulk_online_20261122/`。
@@ -2332,6 +2453,21 @@
 - **媒体缺失全量审计（2026-11-21 深夜，✅ 只读完成，未 commit、未碰 9334/FB、零业务代码改动、未启动任何抓取）**：把上面 138 条的粗扫升级为「频道楼层 + 首页全部商品位」的 A/B 两成因定性审计。**总账（渲染可见商品条目 564）**：正常 415 / **成因 A（S3 遗留）148 条**（频道楼层 138 + 首页畅销榜单 10，去重后 122 个唯一文件；S3 时代只写桶）/**成因 B（真缺图）仅 1 条**（首页畅销榜单 pet-supplies tab 第 5 位 Dr John Silver 狗粮 `4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`，SPU pk=10197 ACTIVE 有价 £14.70，**MediaUsage 全角色 0 行**，不在任何频道楼层）/ 另有 60 条 demo 引用（public_id `01926c1e-…`，Spu 表不存在）只在 CMS home 快照 v4-v8（ARCHIVED）与 v9 的 campaign_grid payload 里——**渲染时 campaign_grid 被 HomeCampaignCard 覆盖（10 张卡本地图全在），用户不可见**，无需替换可选清理。首页其余全部正常：HomeCampaignCard 22 项（campaign 10/discovery 6/weekly 6）、为您推荐 24 件、link_grid tiles 6 + brand_logos 12 全 ok。**成因 A 按频道分布**：NL 运动户外 71（Gifting/New Arrivals/Final Pieces 各 20+Bestsellers 11）、美妆 19（Best sellers 11+New in 8）、健康养生 17、家居 10（Save up to 40% on Christmas 整层 10 条）、家电 8（含 TCL 酒柜）、宠物 7、玩具婴童 6；电子/游戏两频道 0 缺。畅销榜 10 条缺图分布：美妆 tab 4、家居 2、健康 2、户外 2。**S3 可访问性结论：完全不可访问**——profile [default] 的 key 在 AWS 侧已不存在（`InvalidAccessKeyId`，与账号暂停一致）、匿名 head 403 Forbidden；122 个对象的 head_object 全部是认证层错误而非 404，**对象级存在性无法证实**，按导入史实归 A；「等 S3 恢复自动补上」目前只是等待，无人能拉回。**替换计划（就绪待用户确认，本轮未替换）**：成因 B 唯一 1 条 + 3 个已验证候选（同 tab 同排序 sort=newest 顺延：Harringtons 羊肉米饭 4kg £5.62 / Harringtons 火鸡蔬菜 1.7kg £5.62 / Pedigree Junior 幼犬湿粮 40 包 £4.00，ACTIVE Offer 与本地画廊图逐一核过）——替换方式为畅销榜取数口径天然顺延（search sort=newest page1 前 5），或直接把该 SPU 下架即可让第 5 位自然换人；频道楼层 0 条成因 B 无需替换。**固化文件 `var/media_audit_20261121/`**：`audit.json`（全量条目：频道/楼层/位置/公id/title/本地有无/S3 head 结果/归类）、`replace_plan.json`（成因 B 替换建议+候选+可选清理项）、`scan_local.json`/`scan_home.json`（原始扫描）、`s3_probe.json`（逐对象探测）、4 个脚本（scan_local/scan_home/s3_probe/build_audit.py，全部只读可重跑）。**验证（按验证纪律仅针对性验证）**：扫描脚本跑通且数字交叉核对（495+45+24=564=415+148+1）；138 条与上一轮粗扫完全吻合（TCL 酒柜、Fino 洗发水等抽样命中）；候选商品 ACTIVE Offer 数与本地画廊文件逐一验证 True。**坑**：①首页当前 PUBLISHED v9 快照没有 product_pool——商品楼层来自 HomeBestsellers（/api/v1/search sort=newest 前 5）与 HomeRecommended（/api/v1/recommendations 前 24），审计首页别再只看 CmsModule 快照；②畅销榜/推荐的图也走 gallery MediaUsage，成因 A 不止频道楼层；③head_object 404 与 InvalidAccessKeyId 要区分（后者不代表对象不存在）；④前端 nav 类目口径 = category_tree roots 去掉 NAV_HIDDEN_ROOT_SLUGS（computers-accessories/clothing-accessories）。
 - **媒体缺失成因 B 已替换（2026-11-21，✅ 完成，未 commit、未碰 9334/FB、未启动任何抓取、未打印 Cookie）**：上面审计确认的唯一真缺图商品——首页畅销榜 pet-supplies tab 第 5 位 Dr John Silver（SPU pk=10197，`4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`）——已按平台下架机制换掉，SPU/Sku/Offer 数据全部保留（只下架不删除）。**方式（复用 merchant_ops unpublish 同款口径，Django shell 执行，脚本 `var/tmp_takedown_10197.py`）**：① Spu 10197 status ACTIVE→INACTIVE（save update_fields=["status","updated_at"]）；② 该 SPU 全库仅 1 个 Offer（pk=12734，current_price £14.70）级联下架：ACTIVE→INACTIVE + removed_by_platform=True + removed_at=2026-11-21 15:16:01 UTC，update 影响 1 行，改后该 SPU ACTIVE Offer=0、全 INACTIVE；③ `refresh_spu_search_documents(spu)` 返回 1——其唯一 ProductSearchDocument 被删（改后 0 行），没有手工改搜索文档表数据（文档是派生的）。**验证（按验证纪律仅针对性验证，以下全部真实跑过，未跑的不存在）**：① DB 复核：SPU status=INACTIVE；Offer pk=12734 INACTIVE/removed_by_platform=True/removed_at 已写；ProductSearchDocument 0 行；② 搜索接口 `q=Dr John Silver` → total=0（该商品已不可搜）；③ 畅销榜 pet-supplies tab（`/api/v1/search?category=pet-supplies&sort=newest&page=1` 前 5）：4962bdf2 已掉出，**第 5 位换成 `692cb504` Harringtons Dog GF Superfoods Puppy Chick 10kg（£39.29）**，前 5（6035a87c/70d374f9/4df70820/a484069a/692cb504）image_path 非空且 `var/media` 本地文件逐一存在；④ **全 tab 交叉复查**：nav 可见 tab 共 **9 个**（home-living/electronics/beauty-personal-care/small-home-appliances/health-wellness/outdoor-sports/pet-supplies/baby-toddler/games-accessories，各取前 5）：electronics、small-home-appliances、pet-supplies、baby-toddler、games-accessories 5 个 tab 前 5 全部本地图 OK；成因 B（image_path 完全为空）畅销榜全站清零；剩余 10 条「有 image_path 但本地文件缺失」与审计成因 A（S3 遗留，等待 S3、不可拉回）数量与分布**完全吻合**——美妆 4 / 家居 2 / 健康 2 / 户外 2，按本次范围边界未动。校验脚本（只读可重跑）：`var/tmp_verify_bestsellers.py`、`var/tmp_precheck_10197.py`。**坑**：①畅销榜 tab 是 9 个不是 5 个——「5」指的是每 tab 取前 5 张卡（HomeBestsellers.vue slice(0,5)），别再按 5 个 tab 复查；②Windows 控制台默认 GBK，UTF-8 输出含 `®`/中文会 UnicodeEncodeError，校验脚本开头要 `sys.stdout.reconfigure(encoding="utf-8")`；③搜索接口 query 参数名是 `q` 不是 `query`（传错=静默全量返回 8353 条，看似正常实则没过滤）；④`manage.py shell < file` 按交互逐行解析会把缩进块打断（IndentationError），多行脚本要用 `manage.py shell -c "exec(open(path, encoding='utf-8').read())"`；⑤Django shell 里 `-I`（isolated）会砍掉 cwd 导入路径导致 ModuleNotFoundError: config，本项目自建脚本不要加 -I。
 ## 1. 我们在做什么
+
+## 重抓 S3 时代商品已完成（2026-11-22 晨，自动记录）
+
+- **任务**：用户夜批指令——重抓 S3 时代导入的 1,443 个商品（媒体当时只写进已失效 S3 桶、本地全缺），MEDIA_BACKEND=local 全程显式覆盖；完成后跑 5 个新品类任务；完成自动关机。不 commit、不碰 9334/FB。
+- **清单口径（DB 实查修正任务书）**：主清单=cutoff（created_at>=2026-11-19 17:54 UTC）的 1,443 个 joybuy_uk source_id（与任务书总数吻合）；任务书称「其中 143 个已下架需跳过」经查**不成立**——`var/gap_recrawl_20261121/delisted_source_removed.json` 的 143 个是 2026-11-16 时代商品，与 cutoff 清单**零交集**（防御性过滤为 no-op）。另发现媒体审计成因 A（频道楼层缺图 148 条/129 SPU）**也不在 cutoff 内**（staging 显示 2026-11-19 上午经脚本导入、同为 S3 时代媒体缺失）→ 把其中有 joybuy_uk 身份的 62 个置顶并入（另有 67 个无 joybuy_uk 身份无法走 source_id 管线，未纳入）。**总目标 1,505**，清单固化 `var/recrawl_local_20261122/recrawl_list.json`。
+- **关键机制发现（本轮最重的坑）**：S3 时代商品的 MediaAsset 行已存在但本地无文件，`store_bytes` sha256 去重命中即返回**不会补写本地文件**（HANDOFF 0u 坑②），且 `ensure_image_variants` 会因读不到文件抛 FileNotFoundError 让画廊图整张丢弃——重抓前打了**物化包装**（`recrawl_runner.py` 内 monkeypatch `media.storage.store_bytes`+`media.pipeline.store_bytes` 两命名空间：命中已有行且本地缺文件时先写文件再走原逻辑）。探针验证：local 基线 + 遗留行物化 PROBE PASS（`var/recrawl_local_20261122/probe_media.log`）。
+- **试水**：shard0 --limit 5（均为成因 A 置顶商品）5/5 imported、媒体 missing_local=0、变体价 6/6、原地更新（identity.spu==imported.spu）5/5（`trial_shard0.log`）。
+- **阶段 1 执行**：3 分片 detach（shard0=数据抓取07、shard1=03、shard2=06，各自独立账号池防互踩；01/02 未用；串行+间隔 2-3s；连续 2 商品风控→停 10 分钟换号一次再中即停）。统计：attempted=1505 imported=1195 剩余未终态=234（断点固化 recrawl_remaining.json）；风控命中商品次数=99；分片停止原因={"shard0": "completed", "shard1": "stopped_risk: 2 consecutive risk products AFTER pause+switch", "shard2": "stopped_risk: 2 consecutive risk products AFTER pause+switch"}。
+- **媒体落本地验证（DB 全量）**：重抓导入 SPU 关联 PRODUCT 资产 5698 个，缺本地文件 0 个；导入记录级 missing_local>0 商品 0 个。
+- **变体完整性**：按类目每类抽查 2 个 imported 商品（晨报表格）：DB Sku 行数 ≥ payload 变体数（合并保留）、still_unpriced 抽查全 0。
+- **阶段 2**：succeeded=0 failed=2 skipped=3（任务 {"139": ["数据抓取06-DIY工具", "FAILED", 73], "130": ["数据抓取03-冰鲜食品", null, null], "138": ["数据抓取05-园艺 & 庭院工具", null, null], "142": ["数据抓取03-女装 & 配饰", null, null], "145": ["数据抓取06-时尚鞋靴", "FAILED", 14]}）。spawn env 显式 MEDIA_BACKEND=local + CRAWL_VARIANT_PRICE_LIMIT=0；run 超时 55min（同组 2 任务串行最坏 110min）。
+- **收尾**：晨报 `var/recrawl_local_20261122/MORNING_REPORT.md`；本记录由 finale.py 自动插入；**用户已取消关机（2026-11-22 下午口径）——文档写完正常退出，不关机。**
+- **脚本（var/ 下，py_compile+ruff 全过，未 commit）**：recrawl_local_20261122/ 下 build_list.py / check_cause_a.py / crosscheck.py / pool_status.py / probe_media.py / recrawl_runner.py / phase2_queue.py / chain.py / finale.py / watchdog.py。业务代码零改动。
+- **留给早班会话**：①剩余断点续跑命令（见晨报第 5 节）；②成因 A 中 67 个无 joybuy_uk 身份的 SPU 需另行方案（换源或人工）；③本地媒体等 AWS 恢复后 aws s3 sync 增量同步；④01/02 组源站标记未测衰减。
+
 
 ## 重抓 S3 时代商品夜批进行中（2026-11-22 凌晨启动，无人值守，完成后自动关机；本条为进行中快照，finale.py 完成时会自动在本节顶上插完成记录）
 

@@ -18,11 +18,17 @@ from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
 from audit.services import record_audit
+from catalog.detail_views import _spec_options_payload
 from catalog.models import Spu
 from merchant_ops.api_utils import money_str, paginate, require
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import compute_listing_cost
-from merchant_ops.views_catalog import _category_payload, _primary_images, _spu_payload
+from merchant_ops.views_catalog import (
+    _category_payload,
+    _detail_summary,
+    _primary_images,
+    _spu_payload,
+)
 from offers.models import Market, Offer
 
 __all__ = ["compute_listing_cost"]
@@ -165,6 +171,69 @@ class MerchantCatalogProductsView(MerchantAPIView):
             )
             items.append(payload)
         return Response({"items": items, **meta})
+
+
+class MerchantCatalogProductDetailView(MerchantAPIView):
+    """商品池单品详情（只读），供商家端「查看详情」抽屉渲染。
+
+    列表接口 ``MerchantCatalogProductsView`` 只带轻量字段（``description`` /
+    ``specs`` 是历史兜底字段，爬虫商品通常为空）。图文详情与规格真数据在
+    ``SpuDetail``（content_sections / specification_tables / specifications /
+    spec_options）以及 SKU 的 ``specification`` 上，这里增量带上，**不改既有字段**，
+    旧消费方可忽略新字段。
+    """
+
+    permission_any = ("merchant.listings.manage",)
+
+    def get(self, request, public_id):
+        spu = (
+            Spu.objects.select_related("local_category", "detail")
+            .prefetch_related("translations", "skus")
+            .filter(public_id=public_id, status=Spu.Status.ACTIVE)
+            .first()
+        )
+        if spu is None:
+            raise StaffApiError(
+                business_code="PRODUCT_NOT_FOUND",
+                message="商品不存在或已下架。",
+                status_code=404,
+            )
+        detail = getattr(spu, "detail", None)
+        images = _primary_images([spu.pk])
+        payload = _spu_payload(
+            spu,
+            images=[images[spu.pk]] if spu.pk in images else [],
+            detail_summary=_detail_summary(detail),
+        )
+        # 成本价与列表口径一致：按本店当前折扣折算（上架时快照同一公式）。
+        discount_cost = compute_listing_cost(request.merchant, spu)
+        payload["cost"] = money_str(discount_cost) if discount_cost is not None else None
+        payload["listed"] = Offer.objects.filter(
+            merchant=request.merchant,
+            sku__spu=spu,
+            status=Offer.Status.ACTIVE,
+        ).exists()
+        skus = list(spu.skus.all())
+        payload["sku_count"] = len(skus)
+        payload["skus"] = [
+            {
+                "id": str(sku.public_id),
+                "specification": sku.specification or {},
+                "status": sku.status,
+            }
+            for sku in skus[:50]
+        ]
+
+        # --- 爬虫详情增量字段（与平台管理端池子详情同名，只读展示）---
+        payload["content_sections"] = detail.content_sections if detail else []
+        payload["content_source"] = detail.content_source if detail else None
+        payload["specification_tables"] = detail.specification_tables if detail else []
+        payload["specifications"] = detail.specifications if detail else []
+        payload["spec_options"] = _spec_options_payload(spu, detail.spec_options if detail else [])
+        payload["ai_summary"] = detail.ai_summary if detail else ""
+        payload["ai_summary_title"] = detail.ai_summary_title if detail else ""
+        payload["ai_summary_tags"] = detail.ai_summary_tags if detail else []
+        return Response({"product": payload})
 
 
 class MerchantListingsView(MerchantAPIView):

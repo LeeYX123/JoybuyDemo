@@ -420,17 +420,28 @@ onBeforeUnmount(() => {
       :aria-label="t('support.launcher')"
       @click="toggle"
     >
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <!-- 真站右下角【客服】图标（joybuy-icons U+E601）：头戴式耳机 + 笑脸。 -->
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
         <path
-          d="M4 13a8 8 0 0 1 16 0v3.5A2.5 2.5 0 0 1 17.5 19H16v-6h4M4 13v3.5A2.5 2.5 0 0 0 6.5 19H8v-6H4"
+          d="M4.2 13.6v-1.2a7.8 7.8 0 0 1 15.6 0v1.2"
           fill="none"
           stroke="currentColor"
-          stroke-width="1.6"
+          stroke-width="2"
           stroke-linecap="round"
-          stroke-linejoin="round"
+        />
+        <path
+          d="M4.2 13.2a1.6 1.6 0 0 1 3.2 0v4.2a1.6 1.6 0 0 1-3.2 0v-4.2Zm12.4 0a1.6 1.6 0 0 1 3.2 0v4.2a1.6 1.6 0 0 1-3.2 0v-4.2Z"
+          fill="currentColor"
+        />
+        <path
+          d="M9.3 14.2c1.6 1.7 3.8 1.7 5.4 0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
         />
       </svg>
-      <span>{{ t('support.launcher') }}</span>
+      <span class="support-chat__label">{{ t('support.launcher') }}</span>
     </button>
 
     <Transition name="support-chat-pop">
@@ -570,50 +581,76 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 需求 21：右下角【客服】按钮（图标 + 文字），与 PDP【联系商家】(bottom 96px)
-   纵向错开；PDP 底部购物条出现时 body 挂 pdp-buybar-visible，按钮整体上移。 */
+/* 需求 22.2（2026-11-22 真站实测）：Joybuy 首页右下角 floating toolbar 的
+   【客服】入口 —— 贴右边缘（right 0）、距底 100px，80×60（min-height 48 +
+   padding 8/5），白底、1px rgba(0,0,0,.059) 左边框（右边框无）、圆角
+   8px 0 0 8px，图标 24px 在上、文字 12px 在下，hover 仅文字下划线。
+   实测值来源 var/z2_support_account_20261122/real_toolbar_measure.json +
+   CSS bundle ea4701f5901099fe.css（.FloatingToolBarBtn_floatingBtn__7gO95）。 */
 .support-chat__launcher {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  right: 0;
+  bottom: 100px;
   z-index: 1100;
+  box-sizing: border-box;
   display: inline-flex;
+  width: 80px;
+  min-height: 48px;
+  height: 60px;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  height: 48px;
-  padding: 0 20px;
-  border: 1px solid var(--colour-accent);
-  border-radius: var(--radius-pill);
-  background: var(--colour-surface);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 16%);
-  color: var(--colour-accent);
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 5px;
+  border: 1px solid rgb(0 0 0 / 5.9%);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: #fff;
+  color: #1a1a1a;
   font: inherit;
-  font-size: 14px;
-  font-weight: var(--font-weight-semibold);
+  font-size: 12px;
+  line-height: 16px;
   cursor: pointer;
-  transition:
-    bottom 160ms ease,
-    background 160ms ease;
+  transition: bottom 160ms ease;
 }
 
 .support-chat__launcher:hover {
-  background: var(--colour-accent-soft);
+  background: #fff;
+  text-decoration: underline;
+}
+
+.support-chat__label {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.support-chat__launcher svg {
+  flex: none;
 }
 
 /* 整段选择器必须一起放进 :global()：Vue scoped 编译器会丢弃
-   `:global(body.x) .child` 里的后代部分（只剩 body.x 规则）。 */
-:global(body.pdp-buybar-visible .support-chat__launcher) {
-  bottom: 84px;
+   `:global(body.x) .child` 里的后代部分（只剩 body.x 规则）。
+   PDP 上【联系商家】（right 24 / bottom 96 / height 44，顶边 140）可见时，
+   客服按钮整体上移到 156，保证两个 bounding box 不相交。 */
+:global(body.pdp-merchant-contact .support-chat__launcher) {
+  bottom: 156px;
 }
 
+/* 购物条出现且【联系商家】同时存在：入口在 148 + 44 = 192 之上。 */
+:global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__launcher) {
+  bottom: 212px;
+}
+
+/* 真站客服面板：375 宽、右侧让开 toolbar（right 84）、底边贴按钮（104）、
+   顶边落在站头下方（AppHeader 会把实际高度写到 --site-header-height）。 */
 .support-chat__panel {
   position: fixed;
-  right: 24px;
-  bottom: 84px;
-  z-index: 1100;
+  top: calc(var(--site-header-height, 180px) + 16px);
+  right: 84px;
+  bottom: 104px;
+  z-index: 1200;
   display: flex;
-  width: min(24rem, calc(100vw - 32px));
-  height: min(34rem, calc(100vh - 120px));
+  width: min(23.4375rem, calc(100vw - 96px));
   flex-direction: column;
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-md);
@@ -625,8 +662,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-:global(body.pdp-buybar-visible .support-chat__panel) {
-  bottom: 144px;
+/* 面板底边跟随按钮上移，避免遮住客服入口本身。 */
+:global(body.pdp-merchant-contact .support-chat__panel) {
+  bottom: 228px;
+}
+
+:global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
+  bottom: 284px;
 }
 
 .support-chat__head {
@@ -905,24 +947,33 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 40rem) {
+  /* 小屏沿用真站贴边形态（right 0），仅把距底抬高避让移动端浏览器工具条。 */
   .support-chat__launcher {
-    right: 16px;
-    bottom: 16px;
+    bottom: 84px;
+    width: 72px;
   }
 
   .support-chat__panel {
+    top: calc(var(--site-header-height, 180px) + 8px);
     right: 8px;
-    bottom: 76px;
+    bottom: 152px;
     width: calc(100vw - 16px);
-    height: min(34rem, calc(100vh - 96px));
   }
 
-  :global(body.pdp-buybar-visible .support-chat__launcher) {
-    bottom: 80px;
+  :global(body.pdp-merchant-contact .support-chat__launcher) {
+    bottom: 156px;
   }
 
-  :global(body.pdp-buybar-visible .support-chat__panel) {
-    bottom: 140px;
+  :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__launcher) {
+    bottom: 212px;
+  }
+
+  :global(body.pdp-merchant-contact .support-chat__panel) {
+    bottom: 228px;
+  }
+
+  :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
+    bottom: 284px;
   }
 }
 

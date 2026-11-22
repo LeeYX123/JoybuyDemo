@@ -29,11 +29,55 @@ const state = reactive({
   listingQ: '',
 })
 
-const detail = reactive({ value: null, open: false })
+const detail = reactive({ value: null, open: false, loading: false, error: '', requestId: 0 })
 const confirm = reactive({ value: null, open: false, busy: false, error: '' })
 
 const listedCount = computed(() => state.listings.length && state.listingTotal)
 const poolEmpty = computed(() => !state.loading && !state.items.length)
+
+// --- 查看详情：图文区块 / 规格（数据来自商家端单品详情接口）---
+const detailSections = computed(() =>
+  (detail.value?.content_sections || []).filter(
+    (section) =>
+      (section.blocks || []).some((block) => block.text) ||
+      section.text ||
+      (section.images || []).length,
+  ),
+)
+// 历史兜底：没有结构化图文区块时，用纯文本描述。
+const detailText = computed(() => (detail.value?.description || '').trim())
+const specTables = computed(() =>
+  (detail.value?.specification_tables || []).filter((table) => (table.rows || []).length),
+)
+// 没有规格表时用平铺规格参数（SpuDetail.specifications / Spu.specs）。
+const flatSpecs = computed(() => {
+  if (specTables.value.length) return []
+  const detailed = detail.value?.specifications || []
+  if (detailed.length) return detailed
+  return detail.value?.specs || []
+})
+// 再兜底：从 SKU 的规格字典汇总「属性 → 可选值」。
+const skuSpecs = computed(() => {
+  if (specTables.value.length || flatSpecs.value.length) return []
+  const buckets = new Map()
+  for (const sku of detail.value?.skus || []) {
+    for (const [name, value] of Object.entries(sku.specification || {})) {
+      if (value === null || value === undefined || value === '') continue
+      const values = buckets.get(name) || []
+      if (!values.includes(String(value))) values.push(String(value))
+      buckets.set(name, values)
+    }
+  }
+  return [...buckets.entries()].map(([name, values]) => ({
+    name,
+    value: values.join(' / '),
+  }))
+})
+// 最后兜底：爬虫规格选项（只有可选值、没有表格时）。
+const specOptionChips = computed(() => {
+  if (specTables.value.length || flatSpecs.value.length || skuSpecs.value.length) return []
+  return (detail.value?.spec_options || []).filter((option) => (option.values || []).length)
+})
 
 async function loadCategories() {
   const payload = await apiRequest('/merchant/catalog/categories')
@@ -132,14 +176,32 @@ function selectTab(key) {
   else loadListings()
 }
 
-function openDetail(item) {
+async function openDetail(item) {
+  // 先用列表行数据占位，避免抽屉空白；再拉单品详情补图文区块与规格。
+  const requestId = detail.requestId + 1
+  detail.requestId = requestId
   detail.value = item
   detail.open = true
+  detail.loading = true
+  detail.error = ''
+  try {
+    const payload = await apiRequest(`/merchant/catalog/products/${item.id}`)
+    if (detail.requestId !== requestId || !detail.open) return
+    detail.value = { ...item, ...(payload.product || {}) }
+  } catch (error) {
+    if (detail.requestId !== requestId) return
+    detail.error = error.message
+  } finally {
+    if (detail.requestId === requestId) detail.loading = false
+  }
 }
 
 function closeDetail() {
+  detail.requestId += 1
   detail.open = false
   detail.value = null
+  detail.loading = false
+  detail.error = ''
 }
 
 function askList(item) {
@@ -372,7 +434,7 @@ onMounted(async () => {
       />
     </template>
 
-    <AppDrawer :open="detail.open" title="商品详情" @close="closeDetail">
+    <AppDrawer :open="detail.open" title="商品详情" wide @close="closeDetail">
       <template v-if="detail.value">
         <dl class="detail-grid">
           <div>
@@ -397,21 +459,93 @@ onMounted(async () => {
             <dt>可售状态</dt>
             <dd>{{ detail.value.status === 'ACTIVE' ? '可售' : '已下架' }}</dd>
           </div>
-          <div>
-            <dt>商家数</dt>
-            <dd>{{ detail.value.stores ?? '—' }}</dd>
-          </div>
         </dl>
+
+        <p v-if="detail.error" class="notice notice--error">{{ detail.error }}</p>
+
         <h3 class="section-title">商品描述</h3>
-        <p class="muted-text">{{ detail.value.description || '暂无描述' }}</p>
+        <p v-if="detail.loading" class="inline-loading">详情加载中…</p>
+        <div v-else-if="detailSections.length" class="detail-content">
+          <section
+            v-for="(section, si) in detailSections"
+            :key="si"
+            class="detail-content__section"
+          >
+            <h4 v-if="section.title">{{ section.title }}</h4>
+            <template v-for="(block, bi) in section.blocks || []" :key="bi">
+              <h5 v-if="block.type === 'heading' && block.text" class="detail-content__heading">
+                {{ block.text }}
+              </h5>
+              <p v-else-if="block.text" class="detail-content__paragraph">{{ block.text }}</p>
+            </template>
+            <p v-if="section.text && !(section.blocks || []).length" class="detail-content__paragraph">
+              {{ section.text }}
+            </p>
+            <div v-if="(section.images || []).length" class="detail-content__images">
+              <img
+                v-for="url in section.images"
+                :key="url"
+                :src="url"
+                alt=""
+                class="detail-content__image"
+              />
+            </div>
+          </section>
+        </div>
+        <p v-else-if="detailText" class="detail-content__paragraph">{{ detailText }}</p>
+        <p v-else class="muted-text">该商品暂无图文详情。</p>
+
         <h3 class="section-title">规格</h3>
-        <ul v-if="detail.value.specs && detail.value.specs.length" class="spec-list">
-          <li v-for="spec in detail.value.specs" :key="spec.name">
-            {{ spec.name }}：{{ spec.value }}
-          </li>
+        <p v-if="detail.loading" class="inline-loading">规格加载中…</p>
+        <template v-else-if="specTables.length">
+          <div v-for="(table, ti) in specTables" :key="ti" class="detail-spec-table">
+            <h4 v-if="table.title">{{ table.title }}</h4>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>属性</th>
+                    <th>值</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in table.rows" :key="row.name">
+                    <th scope="row">{{ row.name }}</th>
+                    <td>{{ row.value }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+        <div v-else-if="flatSpecs.length" class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>属性</th>
+                <th>值</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="spec in flatSpecs" :key="spec.name">
+                <th scope="row">{{ spec.name }}</th>
+                <td>{{ spec.value }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul v-else-if="skuSpecs.length" class="spec-list">
+          <li v-for="spec in skuSpecs" :key="spec.name">{{ spec.name }}：{{ spec.value }}</li>
         </ul>
-        <p v-else class="muted-text">暂无规格信息</p>
-        <p class="hint-text">成本价用于发货扣款，零售价是商城成交价，两者不要混用。</p>
+        <div v-else-if="specOptionChips.length" class="detail-spec-options">
+          <div v-for="option in specOptionChips" :key="option.name" class="detail-spec-options__row">
+            <span class="detail-spec-options__name">{{ option.name }}</span>
+            <span v-for="value in option.values" :key="value.value" class="detail-spec-options__chip">
+              {{ value.value }}
+            </span>
+          </div>
+        </div>
+        <p v-else class="muted-text">该商品暂无规格信息。</p>
       </template>
     </AppDrawer>
 
@@ -638,6 +772,89 @@ onMounted(async () => {
   padding-left: 18px;
   font-size: 13px;
   color: var(--ink);
+}
+
+/* 查看详情：图文区块（标题 / 子标题 / 段落 / 图片）。 */
+.detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.detail-content__section h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.detail-content__heading {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.detail-content__paragraph {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-content__images {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.detail-content__image {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #f5f5f5;
+}
+
+/* 查看详情：规格表之间留空隙，表格复用全局 data-table 样式。 */
+.detail-spec-table + .detail-spec-table {
+  margin-top: 16px;
+}
+
+.detail-spec-table h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+/* 查看详情：只有规格可选值时的 chip 展示。 */
+.detail-spec-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-spec-options__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-spec-options__name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.detail-spec-options__chip {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
 }
 
 /* 手机档商品卡：一行两个，图片、字号、内边距同步收紧；桌面布局不变。 */

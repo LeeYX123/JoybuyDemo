@@ -471,6 +471,11 @@ urlpatterns = [
         name="merchant-catalog-products",
     ),
     path(
+        "api/v1/merchant/catalog/products/<uuid:public_id>",
+        views_merchant_catalog.MerchantCatalogProductDetailView.as_view(),
+        name="merchant-catalog-product-detail",
+    ),
+    path(
         "api/v1/merchant/listings",
         views_merchant_catalog.MerchantListingsView.as_view(),
         name="merchant-listings",
