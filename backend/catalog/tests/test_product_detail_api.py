@@ -228,6 +228,69 @@ class ProductDetailApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
         _ = rebuild_search_document  # imported for parity with search flows
 
+    # --- 需求 20.1：多商家同款归属 / offer 参数 ---
+
+    def _other_merchant_offer(self, sku, price="29.99"):
+        other = Merchant.objects.create(
+            slug="other-shop",
+            display_name="Other Shop",
+            onboarding_status=Merchant.OnboardingStatus.ACTIVE,
+        )
+        offer = Offer.objects.create(
+            merchant=other,
+            sku=sku,
+            market=self.market,
+            currency=self.currency,
+            current_price=price,
+            status=Offer.Status.ACTIVE,
+        )
+        return other, offer
+
+    def _detail(self, **params):
+        return self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id}),
+            data=params,
+        )
+
+    def test_offer_payload_carries_merchant_context(self):
+        _, own_offer = self.make_sku("sku-black", "19.99")
+
+        offer = self._detail().json()["skus"][0]["offer"]
+
+        self.assertEqual(offer["public_id"], str(own_offer.public_id))
+        self.assertEqual(
+            offer["merchant"],
+            {
+                "public_id": self.merchant.public_id,
+                "display_name": self.merchant.display_name,
+                "slug": self.merchant.slug,
+                "avatar_url": self.merchant.avatar_url,
+            },
+        )
+
+    def test_offer_query_selects_that_merchants_offer_for_same_sku(self):
+        """同款多商家：?offer= 必须压过默认 `.first()`，否则从 A 进来会归 B。"""
+
+        sku, own_offer = self.make_sku("sku-black", "19.99")
+        other, other_offer = self._other_merchant_offer(sku)
+
+        offer = self._detail(offer=str(other_offer.public_id)).json()["skus"][0]["offer"]
+
+        self.assertEqual(offer["public_id"], str(other_offer.public_id))
+        self.assertNotEqual(offer["public_id"], str(own_offer.public_id))
+        self.assertEqual(offer["price"], "29.9900")
+        self.assertEqual(offer["merchant"]["slug"], other.slug)
+        self.assertEqual(offer["merchant"]["public_id"], other.public_id)
+
+    def test_invalid_or_unknown_offer_query_falls_back(self):
+        _, own_offer = self.make_sku("sku-black", "19.99")
+
+        for bad_value in ("not-a-uuid", "00000000-0000-0000-0000-000000000000"):
+            response = self._detail(offer=bad_value)
+            self.assertEqual(response.status_code, 200)
+            offer = response.json()["skus"][0]["offer"]
+            self.assertEqual(offer["public_id"], str(own_offer.public_id))
+
 
 class DetailTranslationOverlayTests(TransactionTestCase):
     """detail payload 译文覆盖（``spu_detail_translation`` 只读接入，2026-11-17）。

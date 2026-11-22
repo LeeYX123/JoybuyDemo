@@ -13,6 +13,8 @@
     </main>
     <AppFooter />
     <UiToast />
+    <!-- 需求 21：内容页同样保留全站【客服】入口。 -->
+    <SupportChatLauncher />
   </div>
 </template>
 

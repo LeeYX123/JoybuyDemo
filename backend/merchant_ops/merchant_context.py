@@ -61,10 +61,12 @@ def resolve_merchant_context(request) -> tuple[Merchant, MerchantMembership]:
         raise MerchantContextError("MERCHANT_NOT_ACCESSIBLE", "无权访问该店铺。", status_code=403)
 
     if len(memberships) > 1:
+        # 2026-11-22「一个账号只能绑定一家店」：模型已用 unique(staff) 兜底，
+        # 这里只是存量脏数据的防御性报错（不再提示用户去「选择店铺」）。
         raise MerchantContextError(
-            "MERCHANT_CONTEXT_REQUIRED",
-            "该账号属于多家店铺，请先选择要操作的店铺。",
-            status_code=400,
+            "MERCHANT_MULTIPLE_SHOPS",
+            "数据异常：该账号绑定了多家店铺，请联系平台处理。",
+            status_code=403,
         )
     return memberships[0].merchant, memberships[0]
 

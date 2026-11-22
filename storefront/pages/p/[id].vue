@@ -9,6 +9,7 @@ import { useLocale } from '../../composables/useLocale'
 import { useMarketLocale } from '../../composables/useMarketLocale'
 import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
+import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
 // title, thumb rail + 591px-class main image + buy panel (Buy now / Add to
@@ -18,9 +19,17 @@ const route = useRoute()
 const { t, categoryName } = useLocale()
 
 const publicId = computed(() => String(route.params.id || ''))
+// 需求 20.1/20.3：商家店铺页链接带 ?offer=<offer_id>&from=merchant。
+const requestedOfferId = computed(() => String(route.query.offer || ''))
+const fromMerchant = computed(() => route.query.from === 'merchant')
 const config = useRuntimeConfig()
 const { apiQuery } = useMarketLocale()
-const productQuery = computed(() => new URLSearchParams(apiQuery.value).toString())
+const productQuery = computed(() => {
+  const params = new URLSearchParams(apiQuery.value)
+  // 带上 offer 让后端返回该商家自己的 offer（同款多商家时默认 first 会串商家）。
+  if (requestedOfferId.value) params.set('offer', requestedOfferId.value)
+  return params.toString()
+})
 
 const { data, error } = await useFetch(
   () =>
@@ -36,7 +45,7 @@ const { data, error } = await useFetch(
   },
 )
 
-const { isAuthenticated, account } = useBuyerAuth()
+const { isAuthenticated, account, purchaseWhitelisted } = useBuyerAuth()
 
 const selectedSkuId = ref(null)
 const quantity = ref(1)
@@ -89,14 +98,50 @@ async function onAddToCart() {
 
 const skus = computed(() => (Array.isArray(data.value?.skus) ? data.value.skus : []))
 const purchasableSkus = computed(() => skus.value.filter((sku) => sku.offer))
-const selectedSku = computed(() => {
-  const initial = purchasableSkus.value.find((sku) => sku.public_id === selectedSkuId.value)
-  return initial || purchasableSkus.value[0] || null
-})
+// URL 带入的 offer 是否命中本商品的某个 SKU（命中即「商家上下文已确定」）。
+const requestedOfferSku = computed(() =>
+  findSkuForOffer(purchasableSkus.value, requestedOfferId.value),
+)
+const selectedSku = computed(() =>
+  resolveSelectedSku(purchasableSkus.value, selectedSkuId.value, requestedOfferId.value),
+)
+// 带 offer 进来但详情里没有该 offer（商家已下架/规格不匹配）→ 回落默认 + 明确提示。
+const offerFallbackNotice = computed(
+  () =>
+    Boolean(requestedOfferId.value) &&
+    Boolean(data.value) &&
+    !requestedOfferSku.value &&
+    purchasableSkus.value.length > 0,
+)
 
 const offer = computed(() => selectedSku.value?.offer || null)
 // Business rule: one original price only — no strikethrough list price.
 const price = computed(() => (offer.value ? formatDisplayPrice(offer.value.price) : null))
+
+// 需求 20.3：PDP 右下角【联系商家】。仅「已登录 + 白名单 + 来自商家店铺页
+// 且能从 offer 确定商家」时显示；面板必须绑定该商品 offer 的商家，不能用
+// 全局默认商家。直达 /p/<id>（无 from=merchant）一律不显示。
+const chatOpen = ref(false)
+const chatBlocked = ref(false)
+const contactMerchant = computed(() => requestedOfferSku.value?.offer?.merchant || null)
+const canContactSeller = computed(
+  () =>
+    isAuthenticated.value &&
+    purchaseWhitelisted.value &&
+    fromMerchant.value &&
+    Boolean(contactMerchant.value?.slug) &&
+    !chatBlocked.value,
+)
+const chatMerchant = computed(() => ({
+  slug: contactMerchant.value?.slug || '',
+  display_name: contactMerchant.value?.display_name || '',
+  avatar_url: contactMerchant.value?.avatar_url || '',
+}))
+
+function onChatBlocked() {
+  chatBlocked.value = true
+  chatOpen.value = false
+}
 
 const specOptions = computed(() =>
   Array.isArray(data.value?.spec_options) ? data.value.spec_options : [],
@@ -294,6 +339,30 @@ const { isFavourite, isPending, ensureLoaded, toggle } = useWishlist()
 const wishlisted = computed(() => isFavourite(publicId.value))
 const wishPending = computed(() => isPending(publicId.value))
 
+// 需求 20.3：入口与右下角 Crisp 客服启动器不重叠 → 入口显示期间隐藏 Crisp
+// 挂件（body 类 + 页面级 :global 样式），离开页面或入口消失即恢复。
+const CRISP_HIDE_CLASS = 'pdp-merchant-contact'
+watch(
+  canContactSeller,
+  (hidden) => {
+    if (typeof document === 'undefined') return
+    document.body.classList.toggle(CRISP_HIDE_CLASS, hidden)
+  },
+  { immediate: true },
+)
+
+// 需求 21（批次 Y）：底部购物条出现时 body 挂 pdp-buybar-visible，让全局
+// 【客服】按钮与【联系商家】一起上移，避免压在购物条上或彼此重叠。
+const BUYBAR_CLASS = 'pdp-buybar-visible'
+watch(
+  stickyBarVisible,
+  (visible) => {
+    if (typeof document === 'undefined') return
+    document.body.classList.toggle(BUYBAR_CLASS, visible)
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   ensureLoaded()
   nextTick(() => {
@@ -314,6 +383,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', measureGalleryHeight)
   imageResizeObserver?.disconnect()
   imageResizeObserver = null
+  if (typeof document !== 'undefined') {
+    document.body.classList.remove(CRISP_HIDE_CLASS)
+    document.body.classList.remove(BUYBAR_CLASS)
+  }
 })
 
 watch(
@@ -545,7 +618,11 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             ></div>
           </div>
 
-          <div class="detail__panel">
+          <div
+            class="detail__panel"
+            :data-offer-id="offer?.public_id || ''"
+            :data-merchant-slug="offer?.merchant?.slug || ''"
+          >
             <div v-if="offer" class="detail__price-block">
               <p class="detail__price">{{ price }}</p>
               <BaseBadge
@@ -555,6 +632,10 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
                 {{ offer.promotion_label }}
               </BaseBadge>
             </div>
+            <!-- 需求 20.1：URL 带入的商家 offer 不在此商品里 → 回落默认并明确提示。 -->
+            <p v-if="offerFallbackNotice" class="detail__offer-notice" role="status">
+              {{ t('chat.offerFallback') }}
+            </p>
             <!-- 需求文档03 11.7：真站 PDP 无库存展示行（实测 var/reco_pdp_20261119/），
                  999+/库存数据字段保留在后端响应里，仅不再渲染。 -->
             <p v-if="!offer" class="detail__inventory detail__inventory--out" role="status">
@@ -795,6 +876,35 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
           </div>
         </div>
       </div>
+
+      <!-- 需求 20.3：PDP 右下角【联系商家】（图标 + 文字，固定定位）。
+           入口显示期间 Crisp 启动器由 body 类隐藏；同时按钮定位在 Crisp 启动器
+           常规区域（底部 ~20–80px）之上，双保险避免重叠。 -->
+      <button
+        v-if="canContactSeller"
+        class="detail__contact"
+        type="button"
+        data-testid="pdp-contact-seller"
+        @click="chatOpen = true"
+      >
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+          <path
+            d="M3 4.5h14v9H8.5L5 16.5v-3H3z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <span>{{ t('chat.contactSeller') }}</span>
+      </button>
+
+      <MerchantChatPanel
+        :open="chatOpen"
+        :merchant="chatMerchant"
+        @close="chatOpen = false"
+        @blocked="onChatBlocked"
+      />
 
       <!-- Purchase gate popup (requirement 6-6): non-whitelisted accounts. -->
       <Teleport to="body">
@@ -1563,6 +1673,64 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 .detail-state {
   margin-block: var(--space-12);
   text-align: center;
+}
+
+/* 需求 20.1：商家 offer 未命中时的回落提示（浅橙底，不抢占商品主信息）。 */
+.detail__offer-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #f3c9a2;
+  border-radius: 6px;
+  background: #fff6ec;
+  color: #8a4b12;
+  font-size: var(--font-size-sm);
+}
+
+/* 需求 20.3：PDP 右下角【联系商家】浮动入口（图标 + 文字，非 Crisp 挂件）。
+   bottom 96px 位于 Crisp 启动器（约底部 20–80px）与底部购物条（68px）之上。 */
+.detail__contact {
+  position: fixed;
+  right: 24px;
+  bottom: 96px;
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--colour-accent);
+  border-radius: var(--radius-pill);
+  background: var(--colour-surface);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 16%);
+  color: var(--colour-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: bottom 160ms ease;
+}
+
+.detail__contact:hover {
+  background: var(--colour-accent-soft);
+}
+
+/* 需求 21：底部购物条出现时全局【客服】按钮上移到 84px，入口随之上移到
+   148px，两者仍纵向错开且都不压在购物条上。整段选择器一起放进 :global()，
+   否则 Vue scoped 会丢弃后代部分（只留 body 规则）。 */
+:global(body.pdp-buybar-visible .detail__contact) {
+  bottom: 148px;
+}
+
+.detail__contact:focus-visible {
+  outline: 2px solid var(--colour-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 入口显示期间隐藏 Crisp 启动器，避免与业务按钮在右下角重叠。 */
+:global(body.pdp-merchant-contact #crisp-chatbox),
+:global(body.pdp-merchant-contact .crisp-client) {
+  display: none !important;
 }
 
 /* Blocking gate popup (docs/12 §6 新增元素). */

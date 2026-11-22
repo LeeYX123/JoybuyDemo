@@ -2,6 +2,130 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bf. 批次 Y（2026-11-22 全局客服入口 + 管理端买家咨询，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 第二十一节 21.3-2、21.4。关闭 Crisp 原生挂件，全站右下角改用自研【客服】按钮/面板（所有登录买家，不要求白名单），管理端客服中心新增「买家咨询」分组。**未 commit；未改后端契约、未动商家端/mobile.html/folio。**
+- **Crisp 挂件关闭（可回滚）**
+  - `storefront/plugins/crisp.client.js`：先读 `useRuntimeConfig().public.crispWidgetEnabled`，**false 直接 return、不注入脚本**；文件保留。
+  - `storefront/nuxt.config.js`：`public.crispWidgetEnabled = process.env.NUXT_PUBLIC_CRISP_WIDGET_ENABLED === 'true'`（默认 false）。
+  - `storefront/.env.example` 与根 `.env.example` 均补注释：默认 false；回滚原生挂件设 true（后端 Crisp 镜像不受影响）。
+- **全局【客服】按钮 + 面板**（新 `storefront/components/SupportChatLauncher.vue`，独立于 `MerchantChatPanel`）
+  - 右下角图标 + 文字（`data-testid="support-chat-launcher"`，默认 bottom 24/right 24，pill 样式）；点击展开右侧浮层面板（宽 384、高 min(34rem,100vh-120px)，移动端近全宽）；含消息列表、输入框、发送、2000 字上限、Escape 关闭。
+  - 接口：`POST /account/support-chat/thread` → `GET/POST /account/support-chat/messages`；5s 轮询（`after` = 最后已确认/在发消息时间）；面板关闭、`document.hidden`、组件卸载即停轮询；乐观发送 + 服务端消息原地认领（沿用 V3 去重口径）。
+  - 未登录点击 → `navigateTo('/auth/login?next=<route.fullPath>')`；API 返回 `BUYER_AUTH_REQUIRED` 时面板内提示登录（同样带 next）。
+  - 挂到 `storefront/layouts/default.vue` 与 `storefront/layouts/footer-page.vue`（AppFooter/UiToast 之后），全站（含帮助/政策内容页）可见。
+  - 五语言新增 16 个 `support.*` 键（en/zh/de/fr/nl 键集合一致，已脚本核对 16×5）。
+- **PDP 双按钮错开**（`storefront/pages/p/[id].vue`）
+  - 客服按钮 bottom 24px（48 高），【联系商家】保持 bottom 96px（44 高），900 高视口实测 bounding box 不相交。
+  - `stickyBarVisible` 时给 `body` 挂 `pdp-buybar-visible`（卸载移除）；购物条出现时客服 84px、【联系商家】148px，均在购物条（top 452@520 高视口）之上。
+- **管理端「买家咨询」分组**（`admin-web/src/views/SupportView.vue`）
+  - 顶部 `.tabs` 新增「商家来信」（原逻辑不动）与「买家咨询」两个分组，带条数；「发起客服会话」只在商家分组显示。
+  - 买家分组：`GET /admin/support-chat/threads`（分页 20，AppPager）、买家昵称/最后消息/未读/时间；**不自动打开第一条**（避免一进组就清未读）；点击 `GET .../<uuid>/messages` 打开并清零未读；回复 `POST` 同路径。
+  - 刷新策略：**5s 轮询**（列表 + 当前会话，按最后一条 id 判断是否替换；页面隐藏/切组/卸载即停），另保留手动「刷新（每 5 秒自动）」按钮。
+- **验证（按验证纪律仅做针对性验证）**
+  - `prettier --check` 8 个改动文件 → 全过；`eslint` storefront 7 文件 + admin SupportView → 0 告警。
+  - `vitest run SupportChatLauncher.test.js MerchantChatPanel.test.js AppHeader.test.js` → **34 passed**（新增 7：打开即建会话/渲染、乐观发送替换、轮询增量、未登录跳登录带 next、Escape 停轮询、401 提示）。
+  - `admin-web` `vite build` → 成功（SupportView 12.22 kB）。
+  - Playwright（`var/_y_support_chat_20261122/e2e.mjs`，完全重启 :3000/:5173 后，EN+ZH，support-chat API 经 route 转发隔离 :8001）：**FAILURES=[]**，截图 01–09：
+    1. home/search/cart/PDP 四页 `script[src*=client.crisp.chat]`=0、`#crisp-chatbox/.crisp-client`=0、`window.$crisp===undefined`，console error 全 0。
+    2. 非白名单买家（session `purchase_whitelisted=false`）打开面板发 EN 消息 → 出现在面板；管理端「买家咨询」行显示「Y客服买家 / 摘要原文 / 未读 1」→ 打开回复 → 买家面板 3–5s 内可见（实测 waitedMs 5ms，因轮询已对齐）；刷新页面后两条消息仍在。
+    3. ZH：按钮「客服」、标题「Joybuy 客服」；ZH 消息收发与回复同链路通过。
+    4. 未登录点按钮 → `/auth/login?next=%2Fcart`。
+    5. PDP：supportBox y=828/h=48、contactBox y=760/h=44 不相交；购物条出现后 support 388–436、contact 328–372、barTop 452，互不重叠且都在购物条上方。
+  - 清理：`cleanup.py` 删除 2 买家/2 会话/16 消息/1 客服/角色/会话，`leftovers` 全 0；:8001 已 kill；:8000/:3000/:5173 正常。
+- **坑（新会话必看）**
+  1. **Vue scoped 里 `:global(body.x) .child` 会丢掉后代部分**（编译成 `body.x { ... }`，规则打到 body 上）。必须整段写 `:global(body.x .child)`。本批 buybar 错位据此修复。
+  2. Playwright 在 Nuxt dev 下点击 SSR 按钮可能早于 hydration（点击无效、等待超时）：每次 goto 后 `waitForLoadState('networkidle')` + ~600ms 再交互（`gotoReady()`）。
+  3. **隔离 :8001 必须用 `var/_y_support_chat_20261122/run8001.sh`（bash export 空 CRISP_*）**。用 PowerShell `$env:X=''` + `Start-Process` 时空变量被 Windows 环境块丢弃，`.env` 的真实 Crisp 凭据生效 → 本轮 run3 误向真实 Crisp 发送 **8 条**（`bp:cee17af7-…`，会话 `session_fe8a105a-768c-4e35-b7e2-0448dc868742`，买家/客服各 4 条，本地 `crisp_status=sent`）。**该 Crisp 会话需用户手动归档/忽略**；run4 用 bash 空 env，消息 17–20 均 `skipped`，零真实发送。
+  4. 管理端买家分组**不要自动打开第一条会话**，否则未读角标在列表里永远看不到（`GET messages` 会清零 support_unread）。
+  5. 该 PDP 商品页在 900 高视口滚到底主图仍未离屏、`.buy-bar` 不出现；验购物条错位需把视口缩到 ≤520 高（本脚本用 1440×520）。
+  6. `AppPager` 的全局 `.pager` 自带 margin/padding，直接放列表 panel 内即可，不必再加容器样式。
+- **遗留**
+  - Crisp Inbox 中该 `bp:` 会话标题「Y客服买家」（真实挂件已关闭，仅 Inbox 侧人眼验收待用户确认）；上述误发的 8 条消息需用户决定是否归档/删除。
+  - 客服面板为浮层（无全屏 backdrop），PDP 打开面板时会遮住【联系商家】按钮（关闭后恢复）；如需“面板打开时隐藏业务按钮”另立需求。
+  - 未做商家端/mobile.html 的任何入口改动（范围外）。
+
+## 0be. 批次 X（2026-11-22 买家 ↔ 平台客服会话后端，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 第二十一节 21.3-1。全站【客服】的后端：**所有登录买家**都能与平台客服会话，消息镜像 Crisp `bp:{buyer_public_id}`，管理端客服可见可回。**未 commit；未改前端（批次 Y）、未改商家端、未动 PLATFORM_SUPPORT / `bm:` / `merchant:` 线程逻辑。**
+- **模型 + 迁移**（`backend/merchant_ops/models.py` + `migrations/0005_support_chat.py`，已 apply 到开发库）
+  - `SupportChatThread`：`public_id` / `buyer` **OneToOneField**（一买家一条，related_name `support_chat_thread`）/ `status`(OPEN|CLOSED) / `buyer_unread` / `support_unread` / `last_message_at`(null) / `created_at` / `updated_at`；索引 `schat_thread_last_idx(last_message_at)`。
+  - `SupportChatMessage`：`thread` FK / `sender_kind`(buyer|support) / `body`(2000) / `created_at` / `read_at`(null) / `crisp_status`(null: sent|skipped|failed)；索引 `schat_msg_thread_idx(thread,created_at)`。
+- **买家 API**（新 `views_support_chat.py`；路由 `merchant_ops/urls.py`）
+  - `POST /api/v1/account/support-chat/thread`：登录即 get-or-create（新建 201 / 已有 200），返回 `{thread:{id,status,last_message_at,buyer_unread,created_at}}`；**不查 `purchase_whitelisted`**（显式测试固化）。
+  - `GET /api/v1/account/support-chat/messages?after=<iso>`：消息列表 + 清零 buyer_unread、回填对方消息 read_at；无线程 404 `THREAD_NOT_FOUND`；`after` 非法 400 `AFTER_INVALID`。
+  - `POST /api/v1/account/support-chat/messages` body `{"body":"..."}`：1–2000 字，落库 buyer → `last_message_at`/`support_unread+1` → `on_commit` 镜像；空/超长 400 `MESSAGE_EMPTY`/`MESSAGE_TOO_LONG`。
+  - 未登录（合法 CSRF）401 `BUYER_AUTH_REQUIRED`。**复用** `views_merchant_chat._validated_body/_parse_after`，口径不漂移。
+- **管理端 API**（`views_support.py` 末尾，权限沿用 `StaffRbacPermission` + `support.view`/`support.manage`，与现有客服中心一致）
+  - `GET /api/v1/admin/support-chat/threads`：`paginate`，`{items:[{id,buyer:{id,display_name,avatar_url,email},status,unread,last_message,last_message_kind,last_message_at,created_at}], page,page_size,total,has_next}`；最后消息用 **Subquery 预取**（`last_message_body`/`last_message_kind`），无 N+1。
+  - `GET /api/v1/admin/support-chat/threads/<uuid>/messages`：消息 + 清零 `support_unread`（不回写 buyer 未读）。
+  - `POST .../messages` body `{"body":"..."}`：`sender_kind=support`，`buyer_unread+1`，on_commit 镜像；空/超长同上。
+- **Crisp 镜像**（`crisp_mirror.py` 新增 `thread_key_for_support_chat` / `support_chat_meta_nickname` / `queue_support_chat_mirror`）
+  - `thread_key = bp:{buyer.public_id}`；买家 → `sender_kind=user` + 昵称；客服 → `sender_kind=platform`（`from=operator`，`user.nickname`=`CRISP_PLATFORM_NICKNAME`，默认「Joybuy 客服」）；**正文无前缀**。
+  - 会话 meta nickname **始终 = 买家昵称**（display_name → 邮箱前缀 → 「买家」），客服回复也不改成客服名；`session_email` 传买家邮箱。`on_commit` 才发、失败只写 `CrispMirrorLog`、`duplicate` 回写 `sent`、未配置 `skipped` 零 HTTP。
+- **验证（按验证纪律仅针对性验证）**
+  - `manage.py check` → 0 issues；`makemigrations --check --dry-run` → **No changes detected**；`migrate merchant_ops` 已 apply 0005。
+  - `manage.py test merchant_ops.tests.test_support_chat merchant_ops.tests.test_crisp_mirror merchant_ops.tests.test_merchant_chat merchant_ops.tests.test_merchant_modules --noinput --parallel 1` → **Ran 110, OK**（新增 21：未登录 401/非白名单可用/幂等/无线程 404/收发与未读/after/空超长/买家隔离/管理端 401+403/列表与已读/回复/镜像 thread_key+sender_kind+正文无前缀+meta 标题/duplicate/镜像抛错不阻塞）。
+  - `ruff check` 7 个改动 py → All checks passed；`ruff format --check` 新文件与 `views_support.py`/`models.py` → 已格式化（`crisp_mirror.py` 仅新代码按 format 调整，未动旧行）。
+  - **curl 端到端**（临时 :8001、`CRISP_*` 全置空 → 只写 skipped；脚本/响应在 `var/_support_chat_e2e_20261122/`）：非白名单买家建线程 201 → 重复 200 同 id → 发消息 201；未登录无 CSRF 403、带合法 CSRF **401**；买家 B 读 404 且无正文泄漏；管理端列表 unread=1/昵称/摘要正确 → 读后 0 → 回复 201 → 买家读到 2 条、未读清零、`after` 只回新消息；DB `crisp_status=['skipped','skipped']`、`CrispMirrorLog` 2（`bp:<buyer>`，user/platform）、`CrispMirrorSession` 0。**check.py `FAILURES=[]`**。
+  - 清理：临时 2 买家/1 客服/角色/会话/消息/镜像日志全删，`leftovers` 全 0（DB 复核 threads 0 / messages 0 / bp logs 0 / bp sessions 0）；:8001 已 kill；**:8000 已加载新路由**（`/api/v1/account/support-chat/messages` 返回 401 而非 404）。
+- **坑（新会话必看）**
+  1. 买家路由是**单数无 id**：`/support-chat/thread`、`/support-chat/messages`（一买家一条线程）；只有管理端路径带 `<uuid>`。别照抄 V2 的 `/threads/<id>/messages`。
+  2. 买家接口是 CSRF 保护的 `BuyerCsrfAPIView`：**裸 curl 无 CSRF → 403**（中间件先于鉴权）；要验「未登录 401」必须先 GET `/api/v1/auth/buyer/session` 取 `csrf_token` 再带 `X-CSRFToken`。单测默认不强制 CSRF，故单测里直接是 401。
+  3. 未白名单不是错误：`require_support_buyer` 只查登录，**不要**从 V2 抄白名单门禁；测试已显式断言 `purchase_whitelisted=False` 可收发。
+  4. `admin_thread_payload` 依赖列表视图的 Subquery 别名（`last_message_body`/`last_message_kind`）；新增列表入口时记得带上，否则会退回逐行 `messages.last()`（N+1）。
+  5. Crisp 会话标题只有买家昵称（没有「· 客服」后缀），客服回复也**不得**改 meta；区分「买家咨询」与 `bm:`/`merchant:` 靠 thread_key 前缀。
+  6. 测试库本轮用**不带 `--keepdb`** 重建（结尾已 destroy）；下轮若用 `--keepdb`，注意 0bd 坑 3 的 data-migration 种子缺失问题。
+- **遗留（批次 Y 前端）**
+  - 关闭/开关 Crisp 挂件、全局 `SupportChatLauncher.vue`（右下角按钮 + 面板 + 5s 轮询）、未登录引导登录、与 PDP【联系商家】按钮纵向错开、EN/ZH + 五语言键一致。
+  - 管理端前端「买家咨询」分组接这 3 个接口（本轮未改 admin-web）；Crisp Inbox 标题人眼验收待用户确认。
+
+## 0bd. 批次 W（2026-11-22 offer 归属 / 商家页白屏 / PDP 联系商家，✅ 完成，未 commit）
+
+- **任务**：`功能需求迭代文档03.md` 第二十节（20.1–20.4）。**未 commit**；未改商家端前端/手机版，未动 PLATFORM_SUPPORT，无新迁移。
+- **20.1 offer 归属（后端 + 商家页链接 + PDP）**
+  - `backend/catalog/detail_views.py`：`_offer_payload` 增量返回 `merchant: {public_id, display_name, slug, avatar_url}`（不破坏既有字段）；新增 `_resolve_sku_offer()`：同一 SKU 多商家时默认 `.first()` 会串商家，**`?offer=<offer public_id>` 命中则优先该 offer**（仅限 ACTIVE + 当前 market 回退链内；非法/不存在 UUID 原样回落，不 500）；`select_related("currency", "merchant")` 避免 N+1。
+  - `storefront/pages/merchants/[slug].vue` 链接改为 `/p/<spu>?offer=<offer_id>&from=merchant`（此前丢 offer_id）。
+  - `storefront/pages/p/[id].vue`：`useFetch` URL/key 均含 `offer`（key 仍是 computed，避免历史冻结坑）；新增 `storefront/utils/offerSelection.js::resolveSelectedSku()`（顺序：用户手选 → URL offer 命中 SKU → 首个可购 SKU）；带 offer 但命中不到时回落默认并显示 `chat.offerFallback`（"该商家无此规格，已为你展示其他商家"）。规格切换不锁死商家（按需求允许），首屏一定选对。
+- **20.2 商家页白屏（后端）**：`backend/merchants/public_views.py` 图片回退链 = `spu.image_urls[0]` → `MediaUsage(role=gallery)` 第一条（`sort_order,pk`）的 `/media/...` → 本地占位图 `PRODUCT_PLACEHOLDER_IMAGE=/images/categories/_placeholder.svg`；**`_gallery_paths()` 一次查询批量取最多 50 个 SPU 的首图，不再逐商品查（无 N+1）**；`image` 永不为空字符串。
+- **20.3 PDP【联系商家】（`storefront/pages/p/[id].vue`）**
+  - 显示条件（全部满足）：已登录 + `purchaseWhitelisted===true` + `from=merchant` + `?offer` 命中某 SKU 且 `offer.merchant.slug` 存在；`chatBlocked` 时隐藏。直达 `/p/<id>`、非白名单、offer 命中不到（商家上下文不确定）均不显示。
+  - 右下角**图标 + 文字**固定按钮（`data-testid="pdp-contact-seller"`），复用 `MerchantChatPanel`，绑定 `offer.merchant` 的 slug/店名/头像（非全局默认）；面板 `blocked` → 隐藏入口。
+  - 与 Crisp 二选一方案：**入口显示时在 `body` 挂 `pdp-merchant-contact`，CSS 隐藏 `#crisp-chatbox` / `.crisp-client`**（`display:none!important`）；按钮 `bottom:96px` 另位于 Crisp 常规区域（约 20–80px）之上，双保险。页面卸载/入口消失移除 body 类。
+  - 双语：新增 `chat.offerFallback`（en/zh/de/fr/nl），五语言 `chat.*` 各 18 键一致；按钮复用 `chat.contactSeller`。
+  - PDP `.detail__panel` 增 `data-offer-id` / `data-merchant-slug` 便于验收读取。
+- **验收（针对性验证，脚本/截图在 `var/_w_offer_20261122/`，EN/ZH，完全重启 :8000/:3000 后）**
+  - 后端：`ruff check` 4 个改动 py → All checks passed（**注：验收须 `--config backend/pyproject.toml`**；按此口径本批新增的 4 处 I001 已在返工清除，见下）；`makemigrations --check` → No changes detected。
+  - `manage.py test merchants.tests.test_wp42_services catalog.tests.test_product_detail_api --keepdb --noinput --parallel 1` → **Ran 31, OK**（18 + 13；新增图片回退/占位/无 N+1、offer.merchant、`?offer` 覆盖默认、非法 offer 回落）。
+  - `catalog.tests.test_product_detail_extras` → **Ran 2, OK**（需在**未 flush 的测试库**上跑，见坑 3）。
+  - 前端：`prettier --check` 5 个改动文件 → passed；`eslint` → 0；`vitest` offerSelection 6 + use-locale 3 + MerchantChatPanel 8 → **17 passed**。
+  - Playwright（`e2e.mjs`，CHiQ 店铺页 + 真实 :8000；聊天 API 经 `context.route` 转发隔离 :8001、`CRISP_*` 置空 → **零真实 Crisp**）：**failures=[]**
+    1. CHiQ 店铺页 14 卡/14 图，`broken=0 / emptySrc=0 / media 404=0`，14 条链接全部含 `?offer=&from=merchant`（截图 01；**返工后只保留 9 件可售，见下**）；另抽查 HOMCOM 首页 50 件商品：`image` 字段 0 空、去重后 35 张图逐个 GET 全 200（此前该店全部为空字符串白块）。
+    2. 点 CHiQ offer（`b02c6f9b…`，同 SKU 默认会是 MER001000 `5c735e81…`）→ PDP `data-offer-id`/`data-merchant-slug` = CHiQ → 加购后 `GET /api/v1/cart` item `offer_public_id` = CHiQ offer、`merchant_id=MER001007`。
+    3. 白名单买家：入口 EN `Contact seller` / ZH `联系商家`（图标+文字）→ 开面板 → 发 1 条 → 商家 API `unread=1`、摘要=原文，商家端 `:5174`「买家咨询」会话气泡可见（截图 02–05）。
+    4. 非白名单同链路 0 入口；白名单直达 `/p/<id>` 0 入口；伪造 offer → 回落 MER001000 并显示提示、0 入口（有意为之，商家上下文不确定）。
+    5. 多商家同款抽查 3 组（同一 SPU 3 个商家 offer）：详情 API 均返回 CHiQ offer 而非默认 MER001000。
+    6. Crisp：脚本 200 但无头 Chromium 里挂件 DOM **未初始化**（`crispPresent=false`）；已用同 id 探针验证 `body.pdp-merchant-contact` 规则 `display:none` 生效，且按钮位于 `bottom:96px`（截图 02 右下角仅业务按钮、无重叠）。console error 5 个页面均 0。
+  - 清理：删除 2 买家/2 会话、2 购物车、1 聊天线程/1 消息/1 条 `skipped` 镜像日志、临时店长+membership；`leftovers` 全 0，DB 复核全 0；隔离 :8001 已 kill；:8000/:3000 重启后 200。
+- **坑（新会话必看）**
+  1. `_listed_offers()[:50]` 按 `-listed_at` 排序；同款多商家的演示商品不一定在 HOMCOM 首屏（HOMCOM 首 50 无多商家），本轮改用 **CHiQ**（返工后 9 件可售里 3 组多商家）。验收别把商家 slug 写死成某一家的首屏假设。
+  2. 详情接口每个 SKU 只返回 1 个 offer；**多商家同 SKU 必须靠后端 `?offer=` 覆盖默认 `.first()`**，只改前端匹配无法修归属。
+  3. `--keepdb` + 含 `TransactionTestCase` 的模块（如 `test_product_detail_api`）会在结尾 **flush 测试库**，之后单跑别的模块会缺 data-migration 种子（`IMPORT_FALLBACK` 商家/Market 缺失 → 503 或 DoesNotExist）。复现时用**不带 `--keepdb`** 重建测试库再跑。
+  4. Crisp 挂件在无头 Chromium 不初始化（脚本 200、`$crisp` 队列被消费但无 DOM）；不要据此判定 CSS 失效——用 `#crisp-chatbox` 探针验证隐藏规则，真实挂件视觉仍需用户肉眼确认。
+  5. ~~商家店铺页仍会列出 SPU 为 DRAFT/INACTIVE 的 offer~~ **已在返工修复**：`_listed_offers` 只取 Offer ACTIVE + SKU ACTIVE + SPU ACTIVE，且过滤发生在 `[:50]` **之前**（先切片后过滤会把整店误判为空，见返工记录）。
+  6. 临时买家 `purchase_whitelisted` 默认 True；造非白名单必须显式 `False`。
+- **遗留**
+  - 商家页商品上限 50（现仅可售商品）；搜索结果卡片入口仍未做（沿用 0ba 口径）。
+  - 变体手动切换后不强制锁在 A 商家（需求允许）；若产品要求「切规格也锁商家」需另立需求并在后端按 offer 过滤 variants。
+  - Crisp 真实挂件在浏览器里的隐藏效果待用户肉眼确认（本地 headless 不初始化）。
+- **返工修复（2026-11-22 晚，验收 10/14 → 3 fail + 1 缺陷全部修复，仍未 commit）**
+  - **FAIL 7 白块（三店 196/1348 图片 404）**：`media_usage` 行可能指向本地已缺失文件（S3 时代遗留）。新增 `_media_file_exists()`：`MEDIA_BACKEND=local` 时用 `resolve_media_path(...).is_file()` 校验磁盘，S3 时信任 DB（不逐对象 HEAD）；`_gallery_paths()` 跳过缺失文件、按 `sort_order` 取同 SPU 下一张存在的图，全缺才落到占位图；仍是一次 `media_usage` 查询（无 N+1）。AMORAB/CIFOX/PawHut 现分别 2/16/50 件，去重后图片逐个 GET **0 个 404、0 空 src、0 断图**；占位图 `/images/categories/_placeholder.svg` 200。测试新增「DB 行在/文件缺失 → 用下一张」「全缺 → 占位」。
+  - **FAIL 13 五语言键集合**：补齐 de/fr/nl 的 `auth.handoff.*` 6 键（title/processing/success/invalid/generic/backToLogin）。`var/_w_offer_20261122/check-locales.mjs` 用 `Object.keys` 比对：**五语言各 501 键，missing=0 extra=0，KEY_SETS_EQUAL**。
+  - **FAIL 14 ruff I001**：只修本批新增的 4 处（`public_views._gallery_paths` 本地 import 块、`test_wp42_services` 3 个新增局部 import 块）。**新增 I001 = 0；既有 5 处未动**（这 4 个文件仍各 1/2/1/1 处；仓库 I001 总数 146 → 142）。`ruff check --ignore I001` 这 4 文件 → All checks passed。
+  - **缺陷 12 商家页列 DRAFT**：`_listed_offers()` 增加 `sku__status=ACTIVE, sku__spu__status=ACTIVE`，并在 DB 查询层过滤后才 `[:50]`。CHiQ 14→**9**、Samsung 58→**22**、AMORAB 98→**2**（可售数）；两店全部商品逐个请求详情 API **200 且 offer 命中**，UI 点入 `.detail__panel` 正常、无 `.detail-state` 404。`_searchable_merchants` 未改（搜索口径不变，仅列表只出可售商品）。
+  - **复验**：后端 `test_wp42_services + test_product_detail_api` → **Ran 33, OK**；前端 prettier/eslint 过，vitest **17 passed**（offerSelection 6 + use-locale 3 + MerchantChatPanel 8）；Playwright `reverify.mjs`（AMORAB/CIFOX/PawHut/CHiQ/Samsung 五店 + 白名单入口）→ **failures=[]**，console error 0（截图 `reverify-*.png`）；白名单从 CHiQ 店点商品 → 入口仍在、`data-offer-id` = CHiQ offer、面板标题 = CHiQ。清理后 buyers/threads/messages/carts/mirror 全 0；:8000/:3000 已全量重启且 200。
+  - **新坑**：①可售过滤必须放在 `[:50]` **之前**，否则「前 50 全是 DRAFT」的店会被误判为 0 商品；②本地媒体 DB 行 ≠ 磁盘文件，任何返回 `/media/...` 的列表都必须按后端校验存在性；③`ruff check` 在仓库根直接跑会漏掉 `backend/pyproject.toml`，必须 `--config backend/pyproject.toml`（或 cd backend）才是验收口径。
+
 ## 0bc. 批次 V4（2026-11-22 Crisp 名称区分与会话 meta，✅，未 commit）
 
 - **任务**：让 Crisp Inbox 里能分辨「哪位买家 / 哪家店」。调研（`var/crisp_operator_naming_20261122/research.md`，含 chatbox 截图）先认为 `from=operator` + `user.nickname` 可改显示名；**用户实测更正（重要认知，别丢）**：
@@ -251,6 +375,24 @@
   2. 改完 `.env` 必须重启 runserver（settings 启动时只读一次）；正确姿势是 kill 监听 8000 的 PID 让 keepalive 重启，**不要**再手工起一个带 env 前缀的 runserver（会与 keepalive 抢端口/双进程）。
   3. Playwright 点提交别用 `button[type=submit]`（页头搜索按钮也匹配，strict mode 报 2 个）；用 `form button.base-button[type=submit]`。
   4. 买家侧上传的 CSRF 需要同一 Cookie 头里同时带 `joybuy_buyer_session` 与 `csrftoken`；curl 同时用 `-b jar` 再手写 `Cookie:` 会被 Django 只取到一个头导致 401。
+
+## 0ss. 一个账号只能绑定一家店 + 存量多店清理（2026-11-22，✅ 完成，未 commit）
+
+- **需求**：一个账号 = 一个商家端 = 一家店（商家端不再有店铺切换）；之前多店的商家去掉多余店铺。
+- **存量只有 3 个多店账号、各多 1 店**（「一店多成员」= 0 例），处理如下（用户未逐项答复，按最保守方案执行并**先做完整备份**）：
+  1. `admin@joybuy.test` 保留 HOMCOM(MER001001)；**CHiQ(MER001007) 新建独立账号 `chiq@joybuy.test`（密码 `Chiq!2026`，staff pk=108）接管**——CHiQ 有 17 Offer/3 订单/钱包 80,464.72/保证金 5,000 及多处 PROTECT 外键，不可删，业务数据零丢失。
+  2. `123456@joybuy.com` 保留「测试商家」(MER001762)；**删除空壳「多多手机」(820)**（事前校验 0 Offer/0 订单/0 流水/0 余额），`MerchantApplication pk=26` 置 **REJECTED + merchant=NULL** + 理由「平台清理：一个账号只能绑定一家店铺，如需开店请重新申请」（保留审计、可重新申请）。
+  3. `mobile-paging-20261122@joybuy.test`（自动化测试遗留）**整体删除**：staff 86 + 821/822 两店 + 全部业务数据（售后 2、消息 2、会话 3、通知 5、订单链 26×3、钱包流水 34、Offer 40、membership 2）。
+- **备份**：`var/merchant_single_shop_20261122/backup/`（32 表 JSON + `manifest.json`，464KB，关键：offer 187、wallet_entry 63、merchant_order 40、support_conversation 7），如需回滚可按行重建。清理脚本 `cleanup.py`（`DRY_RUN` 默认 1、每个写操作前 guard、单事务）——**DRY_RUN 计划与实际计数完全一致**。
+- **代码改动（防止再长出多店）**：
+  - `backend/merchants/models.py:237-250`：约束 `(merchant, staff)` → **`UniqueConstraint(fields=['staff'], name='merchant_membership_staff_unique')`**；迁移 `merchants/0010_merchant_membership_staff_unique` 已 apply。（MySQL 不支持部分唯一索引，故用无条件 unique(staff)。）
+  - `backend/merchant_ops/views_shop_application.py`：买家提交 `:241-253` 与审批 `:619-646` 均新增 **409 `ACCOUNT_ALREADY_BOUND_SHOP`**「该邮箱已绑定其他店铺，一个账号只能绑定一家店铺。」；审批处用保存点 + `IntegrityError` 转同一 409（并发兜底），外层事务回滚保证不建店；email 查询统一 `iexact`。
+  - `backend/merchant_ops/merchant_context.py:63-70`：多店脏数据从 400 改 **403 `MERCHANT_MULTIPLE_SHOPS`**「数据异常：该账号绑定了多家店铺，请联系平台处理。」（`X-Merchant-Id` 匹配逻辑不变）。
+  - **前端零改动**：桌面 `MerchantLayout.vue:178`、手机版 `merchant-mobile.js:299` 都是 `shops.length > 1` 才渲染切换，单店自动隐藏（实测 DOM `select` 数量 = 0）。
+- **测试**：`test_merchant_domain`（多店绑定被拒 / 三 staff 覆盖三态 / unique(staff)）、`test_merchant_app`（跨店绑定被拒 + 脏数据 403 + 带 X-Merchant-Id 仍 200）、`test_merchant_application`（提交 409、审批 409 且不建店不建账号）。指定命令 **Ran 76 / failures=1**（唯一失败为既有过期 TOTP 用例，非本次回归）；新增 11 用例 **Ran 11 OK**；ruff check 全过，format 仅剩 2 个文件历史漂移。
+- **验证（针对性）**：后端重启后 health 200；数据核对全 PASS——`multi_shop_staff=[]`、admin→仅 HOMCOM、chiq→仅 CHiQ（密码可校验、余额 80,464.72 不变）、123456→仅测试商家、mobile-paging 不存在、820/821/822 不存在、app26=REJECTED/NULL、**[demo] 共享活动 2 条完好**；浏览器 IAB 桌面+手机四组实测均**无店铺切换控件**、页面数据正常、console error 0；审批 API 实测 409 且事务回滚（无新店）。截图 11 张 `var/merchant_single_shop_20261122/`。
+- **坑（不得再踩）**：①`manage.py shell -c "exec(open(...))"` 里 `__file__` 指向 Django 命令模块而非脚本本身（曾把备份写进 site-packages，已清理），一次性脚本路径写死绝对路径；②kill 8000 后可能同一秒拉起**两个 keepalive/两棵 runserver**，重启后必须确认只有一棵；③开发库有并发爬虫导入持续新建 SOURCE_VIRTUAL 商家（本轮 844–848），商家总数不能写死断言；④CHiQ 17 Offer 中 3 DRAFT + 5 个 SPU 被平台置 DRAFT → UI「本店已上架」只显示 9 件，属历史状态非本次改动；⑤IAB 截图 surface timeout 换新 tab。
+- **遗留**：`unique(staff)` 上线后**平台侧没有「换绑店铺」接口**——要把账号从 A 店换到 B 店目前只能手工改 membership；如需要应加事务内换绑接口（校验目标邮箱未绑店 + 审计）。另 `test_merchant_console_session` 有 8 个既有失败（`_submit` 只发 shop_name，被 7 字段校验拒），与本次无关未修。
 
 ## 0av. 手机版列表改服务端逐页拉取 + 翻译任务暂停（2026-11-22，✅ 分页完成 / ⏸ 翻译暂停，未 commit）
 

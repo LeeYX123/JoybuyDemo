@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import OperationalError, ProgrammingError
 from django.http import JsonResponse
 
@@ -6,6 +8,18 @@ from catalog.models import Sku, Spu, SpuDetailTranslation
 from offers.market_services import offer_market_chain, resolve_market_context
 from offers.models import Offer
 from reviews.models import Review
+
+
+def _offer_merchant_payload(offer: Offer) -> dict:
+    """归属入口用：SKU offer 所属商家（需求 20.3，增量字段不破坏既有契约）。"""
+
+    merchant = offer.merchant
+    return {
+        "public_id": str(merchant.public_id),
+        "display_name": merchant.display_name,
+        "slug": merchant.slug,
+        "avatar_url": merchant.avatar_url,
+    }
 
 
 def _offer_payload(offer: Offer, *, requested_market, price_source_market) -> dict:
@@ -24,7 +38,45 @@ def _offer_payload(offer: Offer, *, requested_market, price_source_market) -> di
             and offer.local_inventory > 0
             and offer.source_availability != Offer.SourceAvailability.UNAVAILABLE
         ),
+        "merchant": _offer_merchant_payload(offer),
     }
+
+
+def _parse_offer_id(value: str):
+    """``?offer=`` 是外部 UUID；脏参数按未提供处理（不能 500）。"""
+
+    try:
+        return uuid.UUID(str(value))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _resolve_sku_offer(sku, market, preferred_offer_id):
+    """按 market 回退链取 SKU 的 offer；带 ``offer`` 参数时优先该商家的 offer。
+
+    同一 SKU 可被多个商家上架（需求 20.1）：默认 ``.first()`` 会随机落到别的
+    商家，从商家店铺页进来时必须选中链接里那个 offer。
+    """
+
+    markets = offer_market_chain(market)
+    offers = list(
+        Offer.objects.filter(
+            sku=sku,
+            market__in=markets,
+            status=Offer.Status.ACTIVE,
+        ).select_related("currency", "merchant")
+    )
+    if preferred_offer_id is not None:
+        for offer in offers:
+            if offer.public_id == preferred_offer_id:
+                return offer, offer.market
+    by_market = {}
+    for offer in offers:
+        by_market.setdefault(offer.market_id, offer)
+    for candidate_market in markets:
+        if candidate_market.pk in by_market:
+            return by_market[candidate_market.pk], candidate_market
+    return None, market
 
 
 def _video_payload(spu) -> list[dict]:
@@ -191,6 +243,7 @@ def product_detail(request, public_id):
 
         record_view(spu, buyer_account)
     content = resolve_product_content(spu, market, locale)
+    preferred_offer_id = _parse_offer_id(request.GET.get("offer"))
     skus = []
     sku_queryset = (
         Sku.objects.filter(spu=spu, status=Sku.Status.ACTIVE)
@@ -198,21 +251,7 @@ def product_detail(request, public_id):
         .order_by("pk")
     )
     for sku in sku_queryset:
-        offer = None
-        price_source_market = market
-        for candidate_market in offer_market_chain(market):
-            offer = (
-                Offer.objects.filter(
-                    sku=sku,
-                    market=candidate_market,
-                    status=Offer.Status.ACTIVE,
-                )
-                .select_related("currency")
-                .first()
-            )
-            if offer:
-                price_source_market = candidate_market
-                break
+        offer, price_source_market = _resolve_sku_offer(sku, market, preferred_offer_id)
         display_specification, specification_translated = localized_specification(sku, locale)
         sku_entry = {
             "public_id": str(sku.public_id),

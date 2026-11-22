@@ -27,6 +27,7 @@ from merchant_ops import (
     views_service,
     views_shop_application,
     views_support,
+    views_support_chat,
     views_switch_mall,
 )
 
@@ -60,6 +61,17 @@ urlpatterns = [
         "api/v1/account/merchant-chat/threads/<uuid:public_id>/messages",
         views_merchant_chat.BuyerMerchantChatMessagesView.as_view(),
         name="buyer-merchant-chat-messages",
+    ),
+    # 需求 21：全站【客服】——买家 ↔ 平台客服（所有登录买家可用，不要求白名单）。
+    path(
+        "api/v1/account/support-chat/thread",
+        views_support_chat.BuyerSupportChatThreadView.as_view(),
+        name="buyer-support-chat-thread",
+    ),
+    path(
+        "api/v1/account/support-chat/messages",
+        views_support_chat.BuyerSupportChatMessagesView.as_view(),
+        name="buyer-support-chat-messages",
     ),
     path(
         "api/v1/admin/merchant-applications",
@@ -340,6 +352,17 @@ urlpatterns = [
         "api/v1/admin/support/conversations/<uuid:public_id>",
         views_support.AdminSupportConversationDetailView.as_view(),
         name="admin-support-conversation-detail",
+    ),
+    # 需求 21：买家 ↔ 平台客服（「买家咨询」分组，与上面的商家会话并列、不互相影响）。
+    path(
+        "api/v1/admin/support-chat/threads",
+        views_support.AdminSupportChatThreadsView.as_view(),
+        name="admin-support-chat-threads",
+    ),
+    path(
+        "api/v1/admin/support-chat/threads/<uuid:public_id>/messages",
+        views_support.AdminSupportChatMessagesView.as_view(),
+        name="admin-support-chat-messages",
     ),
     # A13 用户端管理 / A14 白名单
     path(

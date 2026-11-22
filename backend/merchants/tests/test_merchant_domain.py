@@ -59,17 +59,24 @@ class MerchantDomainTests(TestCase):
             joined_at=timezone.now() if status == MerchantMembership.Status.ACTIVE else None,
         )
 
-    def test_staff_can_hold_different_roles_in_multiple_merchants(self):
+    def test_staff_cannot_hold_memberships_in_multiple_merchants(self):
+        """一个账号只能绑定一家店（2026-11-22）：绑第二家店必须被唯一约束拒绝。"""
+
         staff = self.create_staff()
         merchant_a = self.create_merchant(slug="merchant-a", name="Merchant A")
         merchant_b = self.create_merchant(slug="merchant-b", name="Merchant B")
 
         owner_membership = self.add_membership(staff, merchant_a, "merchant_owner")
-        viewer_membership = self.add_membership(staff, merchant_b, "merchant_viewer")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            self.add_membership(staff, merchant_b, "merchant_viewer")
 
         self.assertEqual(owner_membership.role.code, "merchant_owner")
-        self.assertEqual(viewer_membership.role.code, "merchant_viewer")
-        self.assertEqual(staff.merchant_memberships.count(), 2)
+        self.assertEqual(staff.merchant_memberships.count(), 1)
+        self.assertEqual(
+            list(staff.merchant_memberships.values_list("merchant_id", flat=True)),
+            [merchant_a.pk],
+        )
         self.assertTrue(
             has_merchant_permission(
                 staff=staff,
@@ -90,7 +97,11 @@ class MerchantDomainTests(TestCase):
         )
 
     def test_membership_and_merchant_status_enforce_tenant_isolation(self):
-        staff = self.create_staff()
+        """三个不同 staff 覆盖 active / suspended / invited 三态。"""
+
+        active_staff = self.create_staff("active.staff@example.test")
+        suspended_staff = self.create_staff("suspended.staff@example.test")
+        invited_staff = self.create_staff("invited.staff@example.test")
         active_merchant = self.create_merchant(slug="active-store", name="Active Store")
         suspended_merchant = self.create_merchant(
             slug="suspended-store",
@@ -98,10 +109,10 @@ class MerchantDomainTests(TestCase):
             status=Merchant.OnboardingStatus.SUSPENDED,
         )
         invited_merchant = self.create_merchant(slug="invited-store", name="Invited Store")
-        self.add_membership(staff, active_merchant, "merchant_viewer")
-        self.add_membership(staff, suspended_merchant, "merchant_owner")
+        self.add_membership(active_staff, active_merchant, "merchant_viewer")
+        self.add_membership(suspended_staff, suspended_merchant, "merchant_owner")
         self.add_membership(
-            staff,
+            invited_staff,
             invited_merchant,
             "merchant_owner",
             status=MerchantMembership.Status.INVITED,
@@ -109,33 +120,55 @@ class MerchantDomainTests(TestCase):
 
         self.assertTrue(
             has_merchant_permission(
-                staff=staff,
+                staff=active_staff,
                 merchant=active_merchant,
                 permission_code="merchant.orders.view",
             )
         )
         self.assertFalse(
             has_merchant_permission(
-                staff=staff,
+                staff=suspended_staff,
                 merchant=suspended_merchant,
                 permission_code="merchant.members.manage",
             )
         )
         self.assertFalse(
             has_merchant_permission(
-                staff=staff,
+                staff=invited_staff,
                 merchant=invited_merchant,
                 permission_code="merchant.members.manage",
             )
         )
+        # 各账号只看得到自己那家店
+        self.assertEqual(
+            list(accessible_merchant_ids(active_staff, "merchant.orders.view")),
+            [active_merchant.pk],
+        )
+        self.assertEqual(
+            list(accessible_merchant_ids(suspended_staff, "merchant.members.manage")), []
+        )
+        self.assertEqual(
+            list(accessible_merchant_ids(invited_staff, "merchant.members.manage")), []
+        )
 
-    def test_staff_has_only_one_membership_per_merchant(self):
+    def test_staff_has_only_one_membership(self):
+        """unique(staff)：同店重复与跨店绑定都被数据库拒绝。"""
+
         staff = self.create_staff()
         merchant = self.create_merchant(slug="unique-store", name="Unique Store")
+        other_merchant = self.create_merchant(slug="other-store", name="Other Store")
         self.add_membership(staff, merchant, "merchant_owner")
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             self.add_membership(staff, merchant, "merchant_viewer")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            self.add_membership(staff, other_merchant, "merchant_viewer")
+
+        self.assertEqual(MerchantMembership.objects.filter(staff=staff).count(), 1)
+        constraint_names = {constraint.name for constraint in MerchantMembership._meta.constraints}
+        self.assertIn("merchant_membership_staff_unique", constraint_names)
+        self.assertNotIn("merchant_membership_unique", constraint_names)
 
     def test_missing_source_seller_uses_stable_import_fallback(self):
         first = resolve_import_merchant(

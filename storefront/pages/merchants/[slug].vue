@@ -100,7 +100,7 @@ useHead(() => ({
           <NuxtLink
             v-for="product in products"
             :key="product.offer_id"
-            :to="`/p/${product.product_id}`"
+            :to="`/p/${product.product_id}?offer=${product.offer_id}&from=merchant`"
             class="shop-product-card"
           >
             <span class="shop-product-card__media">

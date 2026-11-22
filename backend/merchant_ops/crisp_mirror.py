@@ -36,6 +36,8 @@ from merchant_ops.models import (
     CrispMirrorSession,
     MerchantChatMessage,
     MerchantChatThread,
+    SupportChatMessage,
+    SupportChatThread,
     SupportConversation,
     SupportMessage,
 )
@@ -619,6 +621,75 @@ def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
             logger.exception(
                 "merchant chat crisp mirror crashed",
                 extra={"event": "merchant_chat_crisp_mirror_crashed"},
+            )
+
+    transaction.on_commit(_run)
+
+
+def thread_key_for_support_chat(thread) -> str:
+    """买家 ↔ 平台客服会话的 Crisp 线程标识（需求 21.3-1）。
+
+    每个买家一条独立 Crisp 会话：``bp:{buyer_public_id}``，与 ``bm:``（买家 ↔ 商家）
+    和 ``merchant:``（商家 ↔ 平台）完全隔离。
+    """
+
+    return f"bp:{thread.buyer.public_id}"
+
+
+def support_chat_meta_nickname(thread) -> str:
+    """Inbox 会话标题 = 买家昵称（客服端只认 meta nickname，不认消息 user.nickname）。
+
+    买家 ↔ 平台没有「店名」维度，标题只放买家名；客服回复时也保持不变。
+    """
+
+    return merchant_chat_buyer_name(thread.buyer)
+
+
+def queue_support_chat_mirror(message: SupportChatMessage) -> None:
+    """买家 ↔ 平台客服消息落库后调用：事务提交后镜像，并回写 ``crisp_status``。
+
+    口径与批次 V/W 一致：买家 → ``from=user`` + 买家昵称；客服 → ``from=operator``
+    （``user.nickname`` = ``CRISP_PLATFORM_NICKNAME``）；正文无前缀；会话 meta 标题
+    始终是买家昵称（即使客服先回复也不改）。失败/未配置都不影响已落库消息。
+    """
+
+    thread = SupportChatThread.objects.select_related("buyer").filter(pk=message.thread_id).first()
+    if thread is None:
+        return
+    if message.sender_kind == SupportChatMessage.SenderKind.BUYER:
+        sender_kind = SENDER_USER
+        sender_name = merchant_chat_buyer_name(thread.buyer)
+    elif message.sender_kind == SupportChatMessage.SenderKind.SUPPORT:
+        sender_kind = SENDER_PLATFORM
+        sender_name = platform_nickname()
+    else:
+        return
+
+    payload = {
+        "thread_key": thread_key_for_support_chat(thread),
+        "sender_kind": sender_kind,
+        "sender_name": sender_name,
+        "body": message.body,
+        "occurred_at": message.created_at,
+        "message_id": str(message.pk),
+        # Inbox 会话标题：始终买家昵称（客服端只认这个）。
+        "session_nickname": support_chat_meta_nickname(thread),
+        "session_email": (thread.buyer.email or "").strip(),
+    }
+    message_pk = message.pk
+
+    def _run() -> None:
+        try:
+            result = mirror_message(**payload)
+            status = result.get("status")
+            if status == STATUS_DUPLICATE:
+                status = STATUS_SENT
+            if status in {STATUS_SENT, STATUS_SKIPPED, STATUS_FAILED}:
+                SupportChatMessage.objects.filter(pk=message_pk).update(crisp_status=status)
+        except Exception:  # noqa: BLE001 - 镜像失败绝不能让 on_commit 抛回请求
+            logger.exception(
+                "support chat crisp mirror crashed",
+                extra={"event": "support_chat_crisp_mirror_crashed"},
             )
 
     transaction.on_commit(_run)

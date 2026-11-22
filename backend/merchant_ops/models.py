@@ -609,6 +609,68 @@ class MerchantChatMessage(models.Model):
         indexes = [models.Index(fields=["thread", "created_at"], name="mchat_msg_thread_idx")]
 
 
+class SupportChatThread(models.Model):
+    """买家 ↔ 平台客服统一会话（需求 21 / 批次 X）。
+
+    **所有登录买家**都有一条（不需要白名单）：全站右下角【客服】入口即这条线程。
+    与 ``MerchantChatThread``（买家 ↔ 商家）和 ``SupportConversation``（商家 ↔ 平台
+    客服）完全独立；``buyer`` 唯一，一买家永远只有一条线程。
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "进行中"
+        CLOSED = "CLOSED", "已关闭"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    buyer = models.OneToOneField(
+        "accounts_buyers.BuyerAccount",
+        on_delete=models.CASCADE,
+        related_name="support_chat_thread",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    buyer_unread = models.PositiveIntegerField(default=0)
+    support_unread = models.PositiveIntegerField(default=0)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "support_chat_thread"
+        ordering = ["-last_message_at", "-pk"]
+        indexes = [models.Index(fields=["last_message_at"], name="schat_thread_last_idx")]
+
+
+class SupportChatMessage(models.Model):
+    """买家 ↔ 平台客服消息（``crisp_status`` 只记最近一次镜像结果）。"""
+
+    class SenderKind(models.TextChoices):
+        BUYER = "buyer", "买家"
+        SUPPORT = "support", "平台客服"
+
+    class CrispStatus(models.TextChoices):
+        SENT = "sent", "已镜像"
+        SKIPPED = "skipped", "未配置跳过"
+        FAILED = "failed", "镜像失败"
+
+    thread = models.ForeignKey(
+        SupportChatThread,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender_kind = models.CharField(max_length=8, choices=SenderKind.choices)
+    body = models.CharField(max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    crisp_status = models.CharField(
+        max_length=16, choices=CrispStatus.choices, null=True, blank=True, default=None
+    )
+
+    class Meta:
+        db_table = "support_chat_message"
+        ordering = ["created_at", "pk"]
+        indexes = [models.Index(fields=["thread", "created_at"], name="schat_msg_thread_idx")]
+
+
 class CrispMirrorSession(models.Model):
     """本地线程标识 → Crisp conversation session_id 的唯一映射。
 

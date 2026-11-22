@@ -16,7 +16,7 @@ import re
 from urllib.parse import urlparse
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.response import Response
 
@@ -237,6 +237,19 @@ class BuyerMerchantApplicationView(BuyerCsrfAPIView):
                     message="您已开通店铺。",
                     status_code=409,
                 )
+
+        # 一账号一店（2026-11-22）：该买家邮箱已打通商家端账号且已绑店时，
+        # 填表前就拒绝，避免提交后才在审批环节被拒。
+        bound_staff = StaffAccount.objects.filter(email__iexact=(buyer.email or "").strip()).first()
+        if (
+            bound_staff is not None
+            and MerchantMembership.objects.filter(staff=bound_staff).exists()
+        ):
+            raise BuyerApiError(
+                business_code="ACCOUNT_ALREADY_BOUND_SHOP",
+                message="该邮箱已绑定其他店铺，一个账号只能绑定一家店铺。",
+                status_code=409,
+            )
 
         now = timezone.now()
         with transaction.atomic():
@@ -590,7 +603,7 @@ class AdminMerchantApplicationActionsView(OpsAPIView):
             ban_after_days=ban_after_days,
         )
 
-        staff = StaffAccount.objects.filter(email=email).first()
+        staff = StaffAccount.objects.filter(email__iexact=email).first()
         staff_created = staff is None
         if staff is None:
             # 两表同套 Django hasher：直接复制哈希串，买家密码即可登录商家端。
@@ -603,16 +616,34 @@ class AdminMerchantApplicationActionsView(OpsAPIView):
             staff.save()
         # 已存在则不改其密码，只补 membership。
 
+        # 一账号一店（2026-11-22）：同一 staff 已有任意 membership 时拒绝开通第二家店。
+        # 放在 get_or_create 之前是为了给出业务 409，而不是撞唯一约束变成 500。
+        if MerchantMembership.objects.filter(staff=staff).exists():
+            raise StaffApiError(
+                business_code="ACCOUNT_ALREADY_BOUND_SHOP",
+                message="该邮箱已绑定其他店铺，一个账号只能绑定一家店铺。",
+                status_code=409,
+            )
+
         owner_role = MerchantRole.objects.get(code="merchant_owner")
-        MerchantMembership.objects.get_or_create(
-            merchant=merchant,
-            staff=staff,
-            defaults={
-                "role": owner_role,
-                "status": MerchantMembership.Status.ACTIVE,
-                "joined_at": timezone.now(),
-            },
-        )
+        try:
+            # 保存点：并发下唯一约束仍可能被撞到，转成同一个业务 409 而不是 500。
+            with transaction.atomic():
+                MerchantMembership.objects.get_or_create(
+                    merchant=merchant,
+                    staff=staff,
+                    defaults={
+                        "role": owner_role,
+                        "status": MerchantMembership.Status.ACTIVE,
+                        "joined_at": timezone.now(),
+                    },
+                )
+        except IntegrityError as exc:
+            raise StaffApiError(
+                business_code="ACCOUNT_ALREADY_BOUND_SHOP",
+                message="该邮箱已绑定其他店铺，一个账号只能绑定一家店铺。",
+                status_code=409,
+            ) from exc
 
         merchant = review_admission(
             merchant,

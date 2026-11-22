@@ -1,6 +1,10 @@
-"""A12 客服中心：商家会话列表、回复、标记已解决。"""
+"""A12 客服中心：商家会话列表、回复、标记已解决。
 
-from django.db.models import Q
+需求 21（批次 X）在此新增「买家 ↔ 平台客服」管理端接口（``/api/v1/admin/support-chat/*``），
+与既有商家会话接口并列、互不影响；权限沿用 ``support.view`` / ``support.manage``。
+"""
+
+from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 from rest_framework.response import Response
 
@@ -8,8 +12,20 @@ from accounts_staff.api_exceptions import StaffApiError
 from accounts_staff.permissions import StaffRbacPermission
 from audit.services import record_audit
 from merchant_ops.api_utils import OpsAPIView, iso, paginate, require
-from merchant_ops.crisp_mirror import queue_support_message_mirror
-from merchant_ops.models import SupportConversation, SupportMessage
+from merchant_ops.crisp_mirror import queue_support_chat_mirror, queue_support_message_mirror
+from merchant_ops.models import (
+    SupportChatMessage,
+    SupportChatThread,
+    SupportConversation,
+    SupportMessage,
+)
+from merchant_ops.views_merchant_chat import _validated_body
+from merchant_ops.views_support_chat import (
+    admin_thread_payload,
+    mark_read,
+    message_payload,
+    touch_after_send,
+)
 from merchants.models import Merchant
 
 
@@ -204,4 +220,76 @@ class AdminSupportConversationDetailView(OpsAPIView):
 
         raise StaffApiError(
             business_code="ACTION_UNSUPPORTED", message="不支持的操作。", status_code=400
+        )
+
+
+# --------------------------------------------------------------------------
+# 需求 21 / 批次 X：买家 ↔ 平台客服（与上面的商家会话完全独立）
+# --------------------------------------------------------------------------
+
+
+class AdminSupportChatThreadsView(OpsAPIView):
+    """全部买家来信列表（昵称 / 最后消息 / 未读），按最后消息时间倒序。"""
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["support.manage"]
+    view_permissions = ["support.view"]
+
+    def get(self, request):
+        last = SupportChatMessage.objects.filter(thread=OuterRef("pk")).order_by(
+            "-created_at", "-pk"
+        )
+        queryset = SupportChatThread.objects.select_related("buyer").annotate(
+            last_message_body=Subquery(last.values("body")[:1]),
+            last_message_kind=Subquery(last.values("sender_kind")[:1]),
+        )
+        rows, meta = paginate(queryset, request)
+        return Response({"items": [admin_thread_payload(row) for row in rows], **meta})
+
+
+class AdminSupportChatMessagesView(OpsAPIView):
+    """单个买家会话：GET 读消息（清零 support_unread）/ POST 客服回复。"""
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["support.manage"]
+    view_permissions = ["support.view"]
+
+    def _get(self, public_id):
+        thread = (
+            SupportChatThread.objects.select_related("buyer").filter(public_id=public_id).first()
+        )
+        if thread is None:
+            raise StaffApiError(
+                business_code="THREAD_NOT_FOUND", message="会话不存在。", status_code=404
+            )
+        return thread
+
+    def get(self, request, public_id):
+        thread = self._get(public_id)
+        messages = list(thread.messages.all())
+        mark_read(thread, side="support")
+        return Response(
+            {
+                "thread": admin_thread_payload(thread),
+                "messages": [message_payload(message) for message in messages],
+            }
+        )
+
+    def post(self, request, public_id):
+        thread = self._get(public_id)
+        body = _validated_body(request.data, StaffApiError)
+        message = SupportChatMessage.objects.create(
+            thread=thread,
+            sender_kind=SupportChatMessage.SenderKind.SUPPORT,
+            body=body,
+        )
+        touch_after_send(thread, message, side="support")
+        # 落库后镜像到 Crisp（事务提交后才发，失败不影响本接口）。
+        queue_support_chat_mirror(message)
+        return Response(
+            {
+                "message": message_payload(message),
+                "thread": admin_thread_payload(thread),
+            },
+            status=201,
         )

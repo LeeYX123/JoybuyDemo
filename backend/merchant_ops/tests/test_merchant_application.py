@@ -28,7 +28,12 @@ from accounts_staff.models import PlatformRole, StaffAccount, StaffRoleAssignmen
 from accounts_staff.services import create_staff_session
 from media.models import MediaAsset
 from media.storage import store_bytes
-from merchants.models import Merchant, MerchantApplication, MerchantMembership
+from merchants.models import (
+    Merchant,
+    MerchantApplication,
+    MerchantMembership,
+    MerchantRole,
+)
 
 BUYER_PASSWORD = "Buyer#2026pass"
 STAFF_OWN_PASSWORD = "Staff#OwnPass"
@@ -429,6 +434,69 @@ class MerchantApplicationFlowTests(TestCase):
         merchant = MerchantApplication.objects.get(buyer=buyer).merchant
         membership = MerchantMembership.objects.get(merchant=merchant, staff=staff)
         self.assertEqual(membership.role.code, "merchant_owner")
+
+    # ------------------------------------------------------------------
+    # 一个账号只能绑定一家店（2026-11-22）
+    # ------------------------------------------------------------------
+    def test_submit_rejected_when_buyer_email_already_bound(self):
+        """买家邮箱已打通商家端账号且已绑店 → 填表即 409，不落申请单。"""
+
+        bound_merchant = Merchant.objects.create(
+            slug="bound-shop",
+            display_name="已绑定的店",
+            onboarding_status=Merchant.OnboardingStatus.ACTIVE,
+        )
+        staff = StaffAccount.objects.create(
+            email="bound@joybuy.test", display_name="已绑店老板", status="ACTIVE"
+        )
+        MerchantMembership.objects.create(
+            merchant=bound_merchant,
+            staff=staff,
+            role=MerchantRole.objects.get(code="merchant_owner"),
+            status="ACTIVE",
+        )
+
+        buyer = self._make_buyer(email="bound@joybuy.test")
+        response = self._submit(buyer)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "ACCOUNT_ALREADY_BOUND_SHOP")
+        self.assertFalse(MerchantApplication.objects.filter(buyer=buyer).exists())
+
+    def test_approve_rejected_when_target_email_already_bound(self):
+        """审批时目标邮箱已绑其他店 → 409，且不创建店铺 / 账号 / membership。"""
+
+        buyer = self._make_buyer(email="second-shop@joybuy.test")
+        self.assertEqual(self._submit(buyer).status_code, 201)
+        application = MerchantApplication.objects.get(buyer=buyer)
+
+        # 提交之后（比如平台侧手工为同一邮箱开了另一家店）该邮箱被占用
+        existing_shop = Merchant.objects.create(
+            slug="already-owned-shop",
+            display_name="已经拥有的店",
+            onboarding_status=Merchant.OnboardingStatus.ACTIVE,
+        )
+        staff = StaffAccount.objects.create(
+            email="second-shop@joybuy.test", display_name="老账号", status="ACTIVE"
+        )
+        MerchantMembership.objects.create(
+            merchant=existing_shop,
+            staff=staff,
+            role=MerchantRole.objects.get(code="merchant_owner"),
+            status="ACTIVE",
+        )
+
+        merchants_before = Merchant.objects.count()
+        self._login_admin()
+        response = self._approve(application.pk)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "ACCOUNT_ALREADY_BOUND_SHOP")
+
+        self.assertEqual(Merchant.objects.count(), merchants_before)  # 事务回滚，没建新店
+        self.assertEqual(StaffAccount.objects.filter(email=buyer.email).count(), 1)
+        self.assertEqual(MerchantMembership.objects.filter(staff=staff).count(), 1)
+        application.refresh_from_db()
+        self.assertEqual(application.status, MerchantApplication.Status.PENDING)
+        self.assertIsNone(application.merchant)
 
     # ------------------------------------------------------------------
     # 管理端：reject + 重新申请

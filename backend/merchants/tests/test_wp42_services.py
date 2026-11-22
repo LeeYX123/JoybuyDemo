@@ -1,8 +1,10 @@
 """WP-42：信誉分钳制、曝光日口径、自动封店、公开商家搜索。"""
 
+import shutil
+import tempfile
 from datetime import timedelta
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from merchants.models import Merchant
@@ -152,6 +154,11 @@ class AutoSuspendTests(TestCase):
 class PublicMerchantApiTests(TestCase):
     def setUp(self):
         self.client = Client()
+        self.media_root = tempfile.mkdtemp(prefix="joybuy-merchant-media-")
+        self.addCleanup(shutil.rmtree, self.media_root, ignore_errors=True)
+        media_override = override_settings(MEDIA_ROOT=self.media_root)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
         self.merchant = Merchant.objects.create(
             slug="public-shop",
             display_name="海淘优选旗舰店",
@@ -226,3 +233,141 @@ class PublicMerchantApiTests(TestCase):
     def test_detail_404(self):
         response = self.client.get("/api/v1/merchants/missing-shop")
         self.assertEqual(response.status_code, 404)
+
+    def test_detail_hides_offers_whose_spu_is_not_sellable(self):
+        """缺陷 12：商家页只返回可售商品（Offer ACTIVE + SPU ACTIVE），DRAFT 不列。"""
+
+        from catalog.models import Spu, SpuTranslation
+
+        draft = Spu.objects.create(status=Spu.Status.DRAFT, image_urls=[])
+        SpuTranslation.objects.create(spu=draft, locale="zh-CN", title="未上架商品")
+        draft_offer = self._offer(draft)
+        Offer.objects.filter(pk=draft_offer.pk).update(
+            listed_at=timezone.now() + timedelta(days=1)
+        )
+
+        products = self.client.get("/api/v1/merchants/public-shop").json()["merchant"]["products"]
+        names = {product["name"] for product in products}
+        self.assertNotIn("未上架商品", names)
+        self.assertNotIn(str(draft_offer.public_id), {p["offer_id"] for p in products})
+        self.assertIn("默认在售商品", names)
+
+    def _media_asset(self, path):
+        from media.models import MediaAsset
+
+        now = timezone.now()
+        return MediaAsset.objects.create(
+            sha256=path.replace("/", "").ljust(64, "0")[:64],
+            kind=MediaAsset.Kind.PRODUCT,
+            relative_path=path,
+            mime_type="image/webp",
+            extension="webp",
+            byte_size=12,
+            first_seen_at=now,
+            last_seen_at=now,
+            download_status=MediaAsset.DownloadStatus.DOWNLOADED,
+        )
+
+    def _write_media_file(self, path):
+        from media.storage import resolve_media_path
+
+        target = resolve_media_path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"fake-webp-bytes")
+
+    def _gallery_usage(self, spu, path, sort_order=0, exists=True):
+        from catalog.models import Spu
+        from django.contrib.contenttypes.models import ContentType
+        from media.models import MediaUsage
+
+        if exists:
+            self._write_media_file(path)
+        MediaUsage.objects.create(
+            asset=self._media_asset(path),
+            content_type=ContentType.objects.get_for_model(Spu),
+            object_id=spu.pk,
+            role="gallery",
+            sort_order=sort_order,
+        )
+
+    def test_detail_falls_back_to_first_gallery_image(self):
+        """需求 20.2：image_urls 为空时回退到本地图库首图。"""
+
+        from catalog.models import Spu, SpuTranslation
+
+        spu = Spu.objects.create(status=Spu.Status.ACTIVE, image_urls=[])
+        SpuTranslation.objects.create(spu=spu, locale="zh-CN", title="无封面图商品")
+        self._offer(spu)
+        self._gallery_usage(spu, "products/original/bb/bb/fallback.webp", sort_order=3)
+        self._gallery_usage(spu, "products/original/aa/aa/second.webp", sort_order=9)
+
+        response = self.client.get("/api/v1/merchants/public-shop")
+        products = response.json()["merchant"]["products"]
+        product = next(item for item in products if item["name"] == "无封面图商品")
+        self.assertEqual(product["image"], "/media/products/original/bb/bb/fallback.webp")
+
+    def test_detail_skips_gallery_rows_whose_files_are_missing(self):
+        """DB 行存在但本地文件已缺失（S3 时代遗留）→ 用下一张存在的图，不返回 404 路径。"""
+
+        from catalog.models import Spu, SpuTranslation
+
+        from merchants.public_views import PRODUCT_PLACEHOLDER_IMAGE
+
+        recovered = Spu.objects.create(status=Spu.Status.ACTIVE, image_urls=[])
+        SpuTranslation.objects.create(spu=recovered, locale="zh-CN", title="缺首图商品")
+        self._offer(recovered)
+        self._gallery_usage(recovered, "products/original/dd/dd/gone.webp", sort_order=0, exists=False)
+        self._gallery_usage(recovered, "products/original/dd/dd/next.webp", sort_order=1)
+
+        gone = Spu.objects.create(status=Spu.Status.ACTIVE, image_urls=[])
+        SpuTranslation.objects.create(spu=gone, locale="zh-CN", title="图全丢失商品")
+        self._offer(gone)
+        self._gallery_usage(gone, "products/original/ee/ee/gone.webp", exists=False)
+
+        products = self.client.get("/api/v1/merchants/public-shop").json()["merchant"]["products"]
+        by_name = {item["name"]: item for item in products}
+        self.assertEqual(by_name["缺首图商品"]["image"], "/media/products/original/dd/dd/next.webp")
+        self.assertEqual(by_name["图全丢失商品"]["image"], PRODUCT_PLACEHOLDER_IMAGE)
+
+    def test_detail_uses_placeholder_when_no_image_at_all(self):
+        """需求 20.2：连图库都没有时不得返回空字符串。"""
+
+        from catalog.models import Spu, SpuTranslation
+
+        from merchants.public_views import PRODUCT_PLACEHOLDER_IMAGE
+
+        spu = Spu.objects.create(status=Spu.Status.ACTIVE, image_urls=[])
+        SpuTranslation.objects.create(spu=spu, locale="zh-CN", title="完全无图商品")
+        self._offer(spu)
+
+        response = self.client.get("/api/v1/merchants/public-shop")
+        products = response.json()["merchant"]["products"]
+        product = next(item for item in products if item["name"] == "完全无图商品")
+        self.assertEqual(product["image"], PRODUCT_PLACEHOLDER_IMAGE)
+        self.assertNotEqual(product["image"], "")
+
+    def test_detail_gallery_lookup_is_not_n_plus_one(self):
+        """图片回退只做一次批量查询：商品数增加不增加 media_usage 查询数。"""
+
+        from catalog.models import Spu, SpuTranslation
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def add_product(name):
+            spu = Spu.objects.create(status=Spu.Status.ACTIVE, image_urls=[])
+            SpuTranslation.objects.create(spu=spu, locale="zh-CN", title=name)
+            self._offer(spu)
+            self._gallery_usage(spu, f"products/original/cc/{name}.webp")
+            return spu
+
+        def media_usage_queries():
+            with CaptureQueriesContext(connection) as queries:
+                self.client.get("/api/v1/merchants/public-shop")
+            return [q["sql"] for q in queries.captured_queries if "media_usage" in q["sql"]]
+
+        add_product("one")
+        self.assertEqual(len(media_usage_queries()), 1)
+
+        for name in ("two", "three", "four"):
+            add_product(name)
+        self.assertEqual(len(media_usage_queries()), 1)

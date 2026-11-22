@@ -2,13 +2,17 @@
 
 重点：
 1. 归属隔离：只能看到自己绑定的店，跨店取数被拒；
-2. 多店必须显式指定店铺，不隐式猜；
+2. 一个账号只能绑定一家店（2026-11-22）：绑第二家店被唯一约束拒绝，
+   存量脏数据（多店）返回 403 MERCHANT_MULTIPLE_SHOPS；
 3. 角色权限：只读角色看不到写操作、缺权限直接 403；
 4. 保证金菜单/接口按 deposit_enabled 收敛。
 """
 
 import json
+from types import SimpleNamespace
+from unittest import mock
 
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -92,7 +96,9 @@ class ShopsAndContextTests(MerchantAppTestBase):
         self.assertEqual(len(response.json()["items"]), 1)
         self.assertEqual(response.json()["items"][0]["name"], "卖家店")
 
-    def test_multi_shop_requires_explicit_context(self):
+    def test_account_cannot_bind_two_shops(self):
+        """一个账号只能绑定一家店（2026-11-22）：第二家店绑定被唯一约束拒绝。"""
+
         second = Merchant.objects.create(
             slug="seller-shop-2",
             display_name="第二家店",
@@ -100,17 +106,45 @@ class ShopsAndContextTests(MerchantAppTestBase):
             admission_approved=True,
             deposit_initial_paid=True,
         )
-        MerchantMembership.objects.create(
-            merchant=second, staff=self.staff, role=self.owner_role, status="ACTIVE"
-        )
-        response = self.get("/api/v1/merchant/overview")
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "MERCHANT_CONTEXT_REQUIRED")
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            MerchantMembership.objects.create(
+                merchant=second, staff=self.staff, role=self.owner_role, status="ACTIVE"
+            )
+        self.assertEqual(MerchantMembership.objects.filter(staff=self.staff).count(), 1)
 
-        # 显式指定后即可访问
-        response = self.get(
-            "/api/v1/merchant/overview", HTTP_X_MERCHANT_ID=str(self.shop.public_id)
+        # 单店账号无需 X-Merchant-Id 头，直接解析到自己那家店。
+        response = self.get("/api/v1/merchant/overview")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["merchant"]["name"], "卖家店")
+
+    def test_dirty_multi_shop_data_is_rejected_with_403(self):
+        """存量脏数据（一账号多店）兜底：403 MERCHANT_MULTIPLE_SHOPS，不再提示选店。"""
+
+        second = Merchant.objects.create(
+            slug="dirty-shop-2",
+            display_name="脏数据第二家店",
+            onboarding_status=Merchant.OnboardingStatus.ACTIVE,
         )
+        real_memberships = list(
+            MerchantMembership.objects.select_related("merchant", "role").filter(staff=self.staff)
+        )
+        fake_membership = SimpleNamespace(merchant=second, role=self.owner_role)
+        with mock.patch(
+            "merchant_ops.merchant_context.memberships_for",
+            return_value=real_memberships + [fake_membership],
+        ):
+            response = self.get("/api/v1/merchant/overview")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "MERCHANT_MULTIPLE_SHOPS")
+
+        # 显式 X-Merchant-Id 仍可正常进入自己的店
+        with mock.patch(
+            "merchant_ops.merchant_context.memberships_for",
+            return_value=real_memberships + [fake_membership],
+        ):
+            response = self.get(
+                "/api/v1/merchant/overview", HTTP_X_MERCHANT_ID=str(self.shop.public_id)
+            )
         self.assertEqual(response.status_code, 200)
 
     def test_cannot_access_other_merchant(self):

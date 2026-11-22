@@ -237,9 +237,12 @@ class MerchantMembership(models.Model):
     class Meta:
         db_table = "merchant_membership"
         constraints = [
+            # 2026-11-22：一个账号只能绑定一家店（unique(staff) 已隐含同店不重复）。
+            # 商家端不再做店铺切换，见 merchant_ops.views_shop_application 的
+            # ACCOUNT_ALREADY_BOUND_SHOP 校验。
             models.UniqueConstraint(
-                fields=["merchant", "staff"],
-                name="merchant_membership_unique",
+                fields=["staff"],
+                name="merchant_membership_staff_unique",
             )
         ]
         indexes = [
