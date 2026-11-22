@@ -534,6 +534,81 @@ class SupportMessage(models.Model):
         indexes = [models.Index(fields=["conversation", "created_at"], name="support_msg_conv_idx")]
 
 
+class MerchantChatThread(models.Model):
+    """买家 ↔ 商家一对一会话（需求 19 / 批次 V2）。
+
+    与 ``SupportConversation`` 是两套业务：后者是商家 ↔ 平台客服（以及历史的
+    商品咨询），这里的 ``buyer`` 是真实买家账号，入口只在商城端「搜索到商家 →
+    联系商家」。``(buyer, merchant)`` 唯一：同一买家对同一商家永远只有一个会话。
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "进行中"
+        CLOSED = "CLOSED", "已关闭"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    buyer = models.ForeignKey(
+        "accounts_buyers.BuyerAccount",
+        on_delete=models.CASCADE,
+        related_name="merchant_chat_threads",
+    )
+    merchant = models.ForeignKey(
+        "merchants.Merchant",
+        on_delete=models.CASCADE,
+        related_name="chat_threads",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    buyer_unread = models.PositiveIntegerField(default=0)
+    merchant_unread = models.PositiveIntegerField(default=0)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "merchant_chat_thread"
+        ordering = ["-last_message_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["buyer", "merchant"], name="merchant_chat_thread_unique"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["buyer", "last_message_at"], name="mchat_thread_buyer_idx"),
+            models.Index(fields=["merchant", "last_message_at"], name="mchat_thread_merchant_idx"),
+        ]
+
+
+class MerchantChatMessage(models.Model):
+    """买家 ↔ 商家消息。``crisp_status`` 只记录最近一次镜像结果，便于排查。"""
+
+    class SenderKind(models.TextChoices):
+        BUYER = "buyer", "买家"
+        MERCHANT = "merchant", "商家"
+
+    class CrispStatus(models.TextChoices):
+        SENT = "sent", "已镜像"
+        SKIPPED = "skipped", "未配置跳过"
+        FAILED = "failed", "镜像失败"
+
+    thread = models.ForeignKey(
+        MerchantChatThread,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender_kind = models.CharField(max_length=8, choices=SenderKind.choices)
+    body = models.CharField(max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    crisp_status = models.CharField(
+        max_length=16, choices=CrispStatus.choices, null=True, blank=True, default=None
+    )
+
+    class Meta:
+        db_table = "merchant_chat_message"
+        ordering = ["created_at", "pk"]
+        indexes = [models.Index(fields=["thread", "created_at"], name="mchat_msg_thread_idx")]
+
+
 class CrispMirrorSession(models.Model):
     """本地线程标识 → Crisp conversation session_id 的唯一映射。
 

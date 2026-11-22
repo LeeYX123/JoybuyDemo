@@ -2,7 +2,133 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0ay. 修复商品导入 `ValueError('badly formed hexadecimal UUID string')`（2026-11-22，✅ 完成，未 commit）
+## 0bc. 批次 V4（2026-11-22 Crisp 名称区分与会话 meta，✅，未 commit）
+
+- **任务**：让 Crisp Inbox 里能分辨「哪位买家 / 哪家店」。调研（`var/crisp_operator_naming_20261122/research.md`，含 chatbox 截图）先认为 `from=operator` + `user.nickname` 可改显示名；**用户实测更正（重要认知，别丢）**：
+  - `user.nickname` **只影响访客端 chatbox**；**客服端 Inbox 的 operator 气泡仍显示席位账号（Joybuy），不认该字段**。API 回读 `user.nickname` 有值是真的，但 Inbox UI 不采用 → **这条路对「客服看 Inbox」的场景无效**。
+  - 已实测无效、**不要再走**：①把会话 routing 分配给 operator；②给每商家开席位/独立 token（website token 是 workspace 级）。
+  - 用户选定方案：**会话标题（meta nickname）带商家名，消息正文保持干净无前缀**。
+- **改动（只改后端，未改前端、未动 PLATFORM_SUPPORT 业务逻辑、无新迁移）**
+  - `backend/merchant_ops/crisp_mirror.py`
+    - `build_message_payload`：merchant → `from=operator` + `content=正文` + `user={type:website,nickname:店名}`；platform → nickname=`CRISP_PLATFORM_NICKNAME`（settings，默认「Joybuy 客服」）；user → `from=user` + `type=website` + 买家昵称。**正文不再有 `[商家] 店名:` / `[平台]:` 前缀**；`user.nickname` 保留（chatbox 加分项，**不用于客服侧区分**）。
+    - 新增 `merchant_chat_meta_nickname()`：`bm` 线程标题 = `"{买家昵称} · {商家店名}"`（买家名取 display_name → 邮箱前缀 → 「买家」；店名取 `Merchant.display_name`）。非 `bm` 线程（PLATFORM_SUPPORT）沿用调用方传入值（店名），不拼接。
+    - 新增 `patch_conversation_meta()` / `fetch_conversation_meta()` / `_http_patch` / `_http_get` / `_http_request(method,...)`：`PATCH|GET /website/{id}/conversation/{sid}/meta`，PATCH body `{nickname, email?}`，昵称截断 40 字符；失败重试 1 次后仅记 warning（`crisp_meta_patch_failed` / `crisp_meta_fetch_failed`），**不影响发消息**。
+    - `ensure_session()`：新会话 POST conversation → 落库映射 → **PATCH meta** → `from=user` 开场消息；**已存在会话**（历史 anonymous）→ `_backfill_conversation_meta()` 先 GET，meta nickname 为空才 PATCH，成功/已非空写入进程内 `_META_READY` 缓存，避免每条消息都 GET；失败不缓存、下次再试。
+    - `queue_merchant_chat_mirror` 用 `MerchantChatThread.objects.select_related("buyer","merchant").filter(pk=message.thread_id).first()` **一次查询**取买家+店名（不 N+1），传 `session_nickname=买家 · 店名`、`session_email=buyer.email`；`queue_support_message_mirror` 传 `session_nickname=merchant.display_name`。
+  - `backend/config/settings.py`：新增 `CRISP_PLATFORM_NICKNAME`（env，可空；默认「Joybuy 客服」在代码里）。
+- **payload 形态（实测回读）**：merchant 消息 `{type:text, from:operator, origin:chat, content:"V4真机验证：商家回复一句", user:{type:website,nickname:"V4探针店"}, fingerprint:<int>, timestamp}`；会话 meta `{nickname:"V4探针买家 · V4探针店", email:""}`。
+- **验证（按验证纪律仅针对性验证）**
+  - `manage.py test merchant_ops.tests.test_crisp_mirror --keepdb --noinput --parallel 1` → **Ran 32, OK**（28 + 新增 4：历史会话补写一次/已有昵称不补写/补写失败不阻塞/GET meta 失败不阻塞；另含 meta nickname、昵称截断、platform 可配置、PATCH method 等；旧前缀断言已改成新语义而非保留旧前缀）。
+  - `test_merchant_chat`（22）+ `test_merchant_modules`（35）→ **Ran 89, OK**（含 `session_nickname="小明 · 会话测试店"`、`session_email` 传参断言）。
+  - `ruff check`（crisp_mirror / 两个测试 / settings）→ All checks passed；`makemigrations --check --dry-run` → No changes detected。
+  - **真机**（临时 :8001、真实 Crisp；`var/_v4_crisp_naming_20261122/e2e.py`，只发 2 条业务消息）：`FAILURES=[]`。读回 meta `nickname='V4探针买家 · V4探针店'`；operator 消息 `content='V4真机验证：商家回复一句'`（无 `[商家]`）、`user.nickname='V4探针店'`；买家消息 nickname 正确；本地两条 `crisp_status=sent`、`CrispMirrorLog=2`。
+  - **Crisp 会话（用户手工归档）**：`session_3ce75238-2982-41fd-a57d-d52db79c8c57`（3 条：Conversation started + 买家 1 + 商家 1；列表标题应显示 `V4探针买家 · V4探针店`）。首轮（拼接前）的 `session_2e455068…` 与一个调试生成、昵称为空的旧会话均已 `DELETE`（200 deleted），Crisp 侧只留上面这一个。
+  - 清理：临时商家/店主/买家/会话/消息/镜像日志/`CrispMirrorSession` 全删，`leftovers` 全 0（复查 DB 亦全 0）；:8001 已 kill。
+- **坑 / 实测发现**
+  1. **Inbox 不认 `user.nickname`**（见上），客服侧唯一可控标识是会话 meta nickname；chatbox 侧才认消息 nickname。
+  2. Crisp 消息列表是 `GET /v1/website/{id}/conversation/{sid}/messages`（复数）；单数 `/message` 只支持 POST（GET 返回 405）。
+  3. `PATCH .../meta` 带 `email` 返回 200 `updated`，但回读 `meta.email` 仍为 `""`（访客已绑定匿名 people 档案时不写入）。仍按需求传 email，但**不要断言它一定被保存**。
+  4. 真机验证必须用新起的 :8001（`--noreload`）或重启 :8000，`:8000` 上的旧进程不会加载新代码。
+- **遗留**：`_META_READY` 只是进程内缓存（多 worker/重启后会重新 GET 一次，幂等、只多一次读）；meta 补写失败无 DB 标记（需迁移才能持久重试）；`user.avatar` 未传（气泡是默认客服图标）；**Inbox 列表标题仍需用户肉眼最终确认**（API 已读回正确 nickname）。
+
+## 0bb. 用户↔商家链路总记录（2026-11-22，批次 V2+V3 + 独立验收 + 竞态复验，✅ 13/13 全过，未 commit）
+
+- **需求**：`功能需求迭代文档03.md` 第十九节（v2.1）。触发条件 = **白名单买家 + 搜索到商家** → 【联系商家】；消息同步到 Crisp 供系统客服查看。
+- **V2 后端 ✅**（详见 `0ay`）：`MerchantChatThread`/`MerchantChatMessage`（迁移 0004）；买家 API 4 个（未登录 401 / 非白名单 403 `NOT_WHITELISTED` / 商家不存在 404 / 建会话幂等）；商家 API 3 个（权限 `merchant.messages.use`、跨店 404）；Crisp 镜像 thread_key `bm:{buyer}:{merchant}`，买家 `from=user`+昵称、商家 `from=operator`+`[商家]` 前缀；新增 22 测试 + 受影响 58 测试全过。
+- **V3 前端 ✅**（详见 `0ba`）：`MerchantChatPanel.vue` 右侧抽屉（乐观发送、5s 轮询、403 提示、2000 字上限）；`/merchants/<slug>` 仅「已登录 + 白名单」显示入口；商家端 `MessagesView.vue` 新增「买家咨询」tab（不动原客服 tab，切换不自动选中会话以免清未读）；`chat.*` 17 键五语言。
+- **独立验收 13/13**（`var/acceptance_bm_chat_20261122/acceptance-report.md`）：白名单门禁 4 接口全 403；收发/未读双向转场/越权 404/跨商家隔离全过；**Crisp 真实 sent**，读回买家（user+昵称）与商家（operator+`[商家]`）消息在同一会话；幂等重复触发不产生重复。
+- **验收发现并修复的 1 条真 bug**：首条消息在「轮询先于 POST 返回」竞态下重复渲染 2 个气泡（DB 仅 1 条）。根因：乐观气泡无 serverId、合并只按 serverId 去重、轮询游标忽略未确认消息。修复：`clientId` 原地替换 + 去重键 `serverId ?? clientId` + 游标纳入未确认消息 + 失败分支独立处理；新增竞态回归用例（连跑 4 遍无 flake）；**真实环境把 POST 延迟 7s 稳定复现原窗口，结果气泡 1、pending 0、正文 1 次**。
+- **Crisp 测试会话（待用户手动归档）**：`d8de8375…`、`9a71a9ee…`、`49636b2e…`。
+- **未做/遗留**：①搜索结果卡片入口（卡片为整块 NuxtLink，仅做了店铺页）；②**商家端手机版（mobile.html/folio）无买家会话入口**——手机版是"原码直 copy"，需另开任务且只加数据层调用、不动渲染代码；③生产环境 Crisp env 未部署（用户要求缓）。
+- **验证口径**：针对性验证（后端 22 新测试 + 58 受影响、前端 vitest 8/8 连跑 4 遍、build、Playwright 全链路、ruff/eslint/prettier），未跑全量后端测试套件。
+
+## 0ba. 批次 V3（2026-11-22 用户↔商家前端，✅ 完成，未 commit）
+
+- **任务**：需求 19.1–19.4 的前端部分（批次 V2 已交付后端，见 0ay）。**本轮未改后端、未改 mobile.html/folio、未 commit。**
+- **商城端入口**（`storefront/pages/merchants/[slug].vue`）
+  - 仅在 **已登录 + `purchase_whitelisted === true`** 时渲染【Contact seller / 联系商家】，位于店铺头右侧（`.shop-contact`，描边红字次要按钮）；未登录/非白名单**不渲染任何节点**。
+  - `useBuyerAuth` 新增 `purchaseWhitelisted`（读 session `account.purchase_whitelisted`，不额外发请求）。
+  - 点击直接打开面板；面板收到 403 `NOT_WHITELISTED` 时抛 `blocked` 事件，页面置 `chatBlocked=true` **隐藏入口**。
+  - **搜索结果卡片（`merchants/index.vue`）本轮未加入口**：卡片整块是 `NuxtLink`，塞按钮会产生嵌套交互元素/破坏现有布局，按需求「可选」只做店铺页（搜索 → 店铺页 → 联系商家）。
+- **聊天面板**（新 `storefront/components/MerchantChatPanel.vue`）
+  - 右侧抽屉（480px、移动端全宽），交互/无障碍沿用 `AddressDrawer`：backdrop、Escape 关闭、Tab 焦点闭环、锁 body 滚动、关闭后焦点还原。
+  - 打开即 `POST /api/v1/account/merchant-chat/threads`（get-or-create）→ `GET .../messages`；消息按 `sender_kind` 分左右（自己红底右对齐、商家灰底左对齐）并显示 HH:MM。
+  - 发送走乐观追加（opacity 半透明 pending）→ 接口确认后替换为服务端消息；失败气泡标红并带「未发送，点击重试」；空白不可发；上限 2000（`maxlength` + 提交前二次校验），显示 `n/2000`。
+  - 轮询每 5s：`GET .../messages?after=<最后一条服务端消息 created_at>`；抽屉关闭或 `document.hidden` 时停止轮询，页面重新可见立即补一次。加载/空态/失败可重试；401 显示登录提示+登录链接，403 显示白名单提示并隐藏输入区。
+  - 双语：`chat.*` 共 17 个键，en/zh/de/fr/nl 五语言齐备（每语言 17 个 `chat.*`）。
+- **商家端（桌面 Vue）**（`merchant-web/src/views/MessagesView.vue`）
+  - 顶部新增 `.tabs`：**客服会话**（原 PLATFORM_SUPPORT/商品咨询，行为保持：进页自动打开第一条）与**买家咨询**（新 `/merchant/chats`）并列；右侧「刷新」按钮（买家 tab 文案提示 5 秒自动）。
+  - 买家 tab：列表显示买家昵称、最后消息摘要、时间、未读角标；点击进入会话后消息列表（买家左/商家右）+ 回复框（Ctrl/Cmd+Enter 发送，2000 字上限+计数）；发送后就地更新列表摘要/未读。
+  - **买家 tab 切换时不自动选中第一条**（否则一进 tab 就 GET 详情把未读清零，角标永远看不到）；客服 tab 保留原自动选中行为。买家 tab 每 5s 静默刷新列表 + 当前会话（消息量按最后一条 id 变化才替换，避免跳动）；客服 tab 仍为手动刷新。
+- **验证（按验证纪律仅做针对性验证）**
+  - `prettier --check` 6 个改动前端文件 → **All matched files use Prettier code style!**
+  - `eslint`（`MerchantChatPanel.vue/.test.js`、`useBuyerAuth.js`、`[slug].vue`、`MessagesView.vue`）→ **0 error / 0 warning（静默通过）**。
+  - `vitest` `MerchantChatPanel.test.js` → **Ran 5, OK**（建会话+左对齐、乐观发送替换 201、403 提示+隐藏输入+emit blocked、空白/超长不发、`after=` 轮询增量）；连同 `AddressDrawer`+`use-locale` → **12 passed**。
+  - `merchant-web` `vite build` → **✓ built**（MessagesView chunk 正常）。
+  - **Playwright 端到端**（`var/_v3_merchant_chat_20261122/{setup.py,e2e.mjs,check.py,cleanup.py}`，截图 01–07）：**全部 PASS，failures=[]**
+    1. 非白名单买家：店铺页 `[data-testid=contact-seller]` **0 个**；直调 `POST threads` → **403 `NOT_WHITELISTED`**；session `purchase_whitelisted=false`。
+    2. 白名单买家：入口文案 "Contact seller" → 开面板 → 发送 `POST messages` **201** → 自己气泡右对齐；商家端 `GET /api/v1/merchant/chats` **200**、`unread=1`、摘要=原文、`last_message_kind=buyer`；商家 UI「买家咨询」tab 显示昵称/摘要/角标 `1`，点开消息在左侧（非 mine）。
+    3. 商家回复（隔离 :8001 API）**201** → 买家面板 ≤5s 轮询收到，左对齐。
+    4. 刷新页面重开面板：**2 条消息仍在**（落库）。
+    5. EN/ZH：`Contact seller` / `联系商家`、`Buyer–seller conversation` / `买家与商家会话`、placeholder、发送按钮均正确；买家与商家页 **console error 0**。
+  - **零真实 Crisp**：E2E 把页面里的聊天 API 经 Playwright `route.fetch` 转发到隔离 **:8001**（`CRISP_*= ` 置空），复用同一开发库；`check.py` 复核两条消息 `crisp_status=['skipped','skipped']`、`CrispMirrorLog` 2 条均 `skipped`、`CrispMirrorSession=0`（**没有 sent/没有真连 Crisp**）。
+  - 清理（`cleanup.py`）：threads 1 / messages 2 / mirror logs 2 / offers 1 / SPU 1 / buyers 2 / buyer sessions 2 / staff 1 / staff session 1 / merchant 1 全删；`leftovers` 全 0 → **CLEAN**；临时 :8001 已 kill（:8000 200 / :3000 200 / :5174 200 仍正常）。
+- **手机版未接入（必须知悉）**：`merchant-web/mobile.html` + `src/folio/` 是「原码直 copy」，本批**一行未改**；手机版**暂无买家会话入口/列表**，买家咨询目前只在桌面 Vue `MessagesView.vue` 可见。
+- **验收修复（2026-11-22 晚）：首发送偶发 2 个相同已确认气泡（✅ 已修，仍未 commit）**
+  - **触发**：5s 轮询在慢 `POST /messages`（真实 Crisp 首发约 2–4s）返回前触发；DB 仅 1 条，面板出现 2 个相同气泡且都不带 `--pending`。
+  - **根因**：`lastServerAt` 只认已确认消息（首发窗口为空 → 轮询拉全量）；`mergeMessages` 只按 `serverId` 去重，而乐观气泡没有 serverId；`deliver` 又原地赋值 → 同一条服务端消息被轮询 append 一次、POST 返回时再替换出第二份。
+  - **修复**（只改 `storefront/components/MerchantChatPanel.vue`，按根因修、无 setTimeout）：
+    1. 乐观气泡带 `clientId`（`crypto.randomUUID()`，无则时间+随机兜底），key `local-<clientId>`；POST 返回先按 `serverId`（轮询可能先到）→ 再按 `clientId` **原地替换**，绝不 append。
+    2. 去重键 = **`serverId ?? clientId`**（`messageIdentity`）+ `pruneDuplicateMessages()` 兜底；`applyServerMessage` 对「同为买家发出、同文、尚未确认」的乐观气泡**原地认领**（补 serverId），轮询不再多出一条。
+    3. 轮询游标 `pollCursor` = max(已确认消息, **正在发送的乐观消息** created_at)；失败的乐观气泡不推进游标（避免客户端时钟偏差吞消息）。
+    4. `deliver` 的失败/异常分支只在 `!message.serverId` 时标 failed，避免已被轮询认领的已确认消息被误标红。
+  - **回归测试**：`MerchantChatPanel.test.js` 新增 3 轮竞态用例（手动 hold POST → 轮询先返回同 id → 再 resolve POST）→ 全程气泡数 1、无 pending、正文只出现一次；**Ran 8, OK**；连跑 3 遍均 8/8；`eslint` / `prettier --check` 通过（同批 5 个旧用例也全过）。
+  - **真实环境自验**（`var/_v3_merchant_chat_20261122/e2e-real-first-send.mjs`，**真实 :8000 + 真实 Crisp，只发 1 条**，截图 `08-real-first-send.png`）：面板就绪后等 ~4.6s 再发送以命中窗口 → `POST 201`、耗时 **2252ms**、**POST 期间发生 1 次轮询**、最终气泡 **1**、pending **0**、正文出现 **1** 次、console error **0**。DB 复核：消息 1 条 `crisp_status=sent`、`CrispMirrorLog` 1 条 sent、`CrispMirrorSession=1`——即**只真实发送了这 1 条**。
+  - 复跑全量隔离 E2E（:8001、CRISP 置空）→ **failures=[] 全过**（入口/403/发送/商家未读+UI/回复/刷新持久化/EN-ZH/console 0）；两条消息均 `skipped`、mirror session 0；清理后 leftovers 全 0，:8001 已 kill。
+  - **副作用（可忽略）**：Crisp Inbox 会留下 1 条临时买家「V3验收买家」的会话（`thread_key bm:<uuid>:MER001775`），本地镜像记录已随临时数据删除；用户可自行归档该会话。
+- **遗留 / 风险**
+  1. 搜索结果卡片入口未做（见上）；商家端顶栏「消息中心」未挂买家未读总数角标（需求未要求）；买家侧无「我的会话列表」页面，只能从店铺页进入既有会话。
+  2. 商家端轮询只在「买家咨询」tab 生效；客服 tab 维持手动刷新（与改动前一致）。
+  3. 面板 403 处理有组件测试覆盖，E2E 未做「会话中途被取消白名单」的 UI 场景。
+  4. **Crisp Inbox 人眼验收**：竞态修复自验已真实发送 1 条（`sent`，临时买家「V3验收买家」），仍需用户在 Inbox 肉眼确认该会话；其余隔离 E2E 消息均 `skipped`。
+- **坑（不得再踩）**
+  1. **`/merchants/<slug>` 只返回「有 ACTIVE Offer」的商家**（`merchants/public_views.py::_searchable_merchants`）。E2E 临时商家必须挂 Spu+Sku+Offer，否则店铺页 404，入口根本不会出现。
+  2. 商家端买家 tab **不能在切换时自动打开第一条会话**：详情 GET 会把 `merchant_unread` 清零，未读角标永远不可见（首轮 E2E 即因此 timeout）。
+  3. Playwright reload 后 SSR HTML 先出现、Vue 尚未 hydrate，立即 click 可能点在没有监听器的按钮上 → 面板不打开。E2E 用 `openChatPanel()`「点一次 + 等 dialog，最多 3 次」规避。
+  4. 想零真实 Crisp 又要在真实 :3000 页面里测 UI：用 `context.route('**/api/v1/account/merchant-chat/**')` + `route.fetch({url: :8001, headers:{cookie: 合并 context.cookies()}})`；**必须带合并后的 Cookie（含 csrftoken）并删掉 host/content-length**，否则 CSRF/400。隔离实例启动命令：在 `backend/` 下 `CRISP_WEBSITE_ID= … CRISP_API_TOKEN_KEY= ../.venv/Scripts/python.exe manage.py runserver 127.0.0.1:8001 --noreload`，测完 kill。
+  5. 脚本里买家/商家 POST 的 CSRF：`GET session` 返回的 `csrf_token` 是**掩码 token**，Cookie 里的 `csrftoken` 才是密钥，二者都要带（从 `Set-Cookie` 解析），只把 `csrf_token` 当 cookie 会 403。
+  6. 五语言键集合目前本来就不完全一致：de/fr/nl 缺 `auth.handoff.*` 6 个键（0ax 遗留），本轮未动；本轮只保证 `chat.*` 17 键五语言一致。不要把它当作 V3 回归。
+
+## 0ay. 批次 V2（2026-11-22 用户↔商家会话后端，✅ 完成，未 commit）
+
+- **任务**：需求 19.1–19.4 的后端部分（原 0ay「导入 UUID 修复」已顺延为 **0az**，内容未改，避免重号）。
+- **模型 + 迁移**（`backend/merchant_ops/models.py` + `migrations/0004_merchantchatthread_merchantchatmessage_and_more.py`，已 apply 到开发库）
+  - `MerchantChatThread`：`public_id`(UUID，外部 id) / `buyer` FK / `merchant` FK / `status`(OPEN/CLOSED) / `buyer_unread` / `merchant_unread` / `last_message_at`(null) / `created_at` / `updated_at`；`UniqueConstraint(buyer, merchant)`；索引 `(buyer,last_message_at)`、`(merchant,last_message_at)`。
+  - `MerchantChatMessage`：`thread` FK / `sender_kind`(buyer|merchant) / `body`(2000) / `created_at` / `read_at`(null) / `crisp_status`(null: sent|skipped|failed)；索引 `(thread,created_at)`。
+- **API**（新 `views_merchant_chat.py`，路由在 `merchant_ops/urls.py`）
+  - 买家：`POST /api/v1/account/merchant-chat/threads`（body `{"merchant":"<slug>"}`，get-or-create：新建 201 / 已存在 200，同一 id）→ `{thread:{id,merchant:{public_id,display_name,avatar_url},status,last_message_at,unread,created_at}}`；`GET` 同路径按 `last_message_at desc` 列出；`GET .../threads/<uuid>/messages?after=<iso>`（`created_at__gt`，读后 buyer_unread=0 且对方消息回填 read_at）；`POST .../messages`（body 1–2000 字）。
+  - 商家：`GET /api/v1/merchant/chats`（`{items:[{id,buyer:{id,display_name,avatar_url:""},unread,last_message,last_message_kind,last_message_at}],total}`）；`GET/POST /api/v1/merchant/chats/<uuid>/messages`；权限 `permission_any=("merchant.messages.use",)`，`X-Merchant-Id` 店铺上下文，跨店 404 `THREAD_NOT_FOUND`。
+  - 错误码：未登录 401 `BUYER_AUTH_REQUIRED`；非白名单 403 `NOT_WHITELISTED`（买家侧**读/写/列全部**拦截，不只在建会话）；商家不存在 404 `MERCHANT_NOT_FOUND`；空/超长 400 `MESSAGE_EMPTY`/`MESSAGE_TOO_LONG`；`after` 非法 400 `AFTER_INVALID`。
+- **白名单下发**：`_account_payload` **本来就有** `purchase_whitelisted`（`accounts_buyers/views.py:102`），本轮未改代码，只补测试固化 `GET /api/v1/auth/buyer/session` 双向（true/false）且不破坏既有字段。
+- **Crisp 镜像**（`crisp_mirror.py` 新增 `queue_merchant_chat_mirror` / `thread_key_for_merchant_chat` / `merchant_chat_buyer_name`）
+  - `thread_key = bm:{buyer.public_id}:{merchant.public_id}`；买家 → `sender_kind=user` + 昵称（display_name → 邮箱前缀 → 「买家」）；商家 → `sender_kind=merchant` + display_name，`[商家] 店名: 正文` 前缀由 `build_message_payload` 内部生成。
+  - 落库后 `transaction.on_commit` 才发；返回值回写 `MerchantChatMessage.crisp_status`（`duplicate` 记 `sent`）；镜像抛错只写日志、不影响已落库消息。未配置 → `skipped` 且零 HTTP。PLATFORM_SUPPORT 逻辑未动。
+- **改动文件**：`backend/merchant_ops/models.py`、`migrations/0004_...`(新)、`crisp_mirror.py`、`views_merchant_chat.py`(新)、`urls.py`、`tests/test_merchant_chat.py`(新)。**未改前端、未 commit。**
+- **验证（按验证纪律仅做针对性验证）**
+  - `manage.py check` → 0 issues；`makemigrations --check --dry-run` → **No changes detected**；`migrate merchant_ops` 已 apply 0004 到开发库。
+  - `manage.py test merchant_ops.tests.test_merchant_chat --keepdb --noinput --parallel 1` → **Ran 22, OK**（白名单 403/未登录 401/404、幂等、收发与未读、`after` 增量、跨买家/跨商家 404、镜像 thread_key/sender_kind/sender_name/body、crisp_status=skipped/sent、镜像抛错不阻塞、session 白名单字段）。
+  - 受影响既有：`merchant_ops.tests.test_crisp_mirror` + `test_merchant_modules` → **Ran 58, OK**。
+  - `ruff check` 6 个改动 py → **All checks passed!**
+  - **curl 端到端**（临时 **:8001** 实例：同一开发库、`CRISP_*` 环境变量置空 → 只在本地写 `skipped`，**零真连 Crisp**；脚本与响应在 `var/_merchant_chat_e2e_20261122/`）：白名单买家建会话 201 → 重复 200 同 id → 发消息 201；非白名单建会话/列表 **403 NOT_WHITELISTED**；商家端列表 unread=1 → 读消息后 0 → 回复 201 → 买家列表 unread=1 → 读消息 unread=0、两条消息按序、`after` 只回新消息；DB `crisp_status=['skipped','skipped']`、`CrispMirrorLog` 2 条（`bm:<buyer>:MER001775`，sender_kind user/merchant）、`CrispMirrorSession` 0（skipped 不建会话）。**全部断言 PASS**。
+  - 清理：临时商家/店主/买家×2/会话/消息/镜像日志/会话记录全删，`leftovers` 全 0；临时 :8001 进程已 kill（现 :8000 仅 keepalive 一个，PID **38060**，已加载新代码：`/api/v1/account/merchant-chat/threads` 与 `/api/v1/merchant/chats` 均返回 401 而非 404）。
+- **坑（本轮）**
+  1. 买家侧白名单门禁必须覆盖**三个**接口（列/读/写），只在建会话拦会被已建会话绕过；本轮已统一走 `_require_chat_buyer`。
+  2. 商家侧 thread payload 的 `unread` 是**商家自己的**未读数；验证买家未读要读买家列表，别拿商家响应断言（E2E 首轮错断言即此）。
+  3. 迁移由 Django 生成后 import 顺序不合 ruff I 规则，需 `ruff check --fix`；`ruff format` 会顺手改动无关行，本轮已还原 `crisp_mirror.ensure_session` 的原有换行以保持 diff 聚焦。
+  4. 想让 E2E 不真发 Crisp：**不要改 `.env`**，另起 `runserver 127.0.0.1:8001` 并在命令前把 `CRISP_*` 置空（`load_dotenv` 默认不覆盖已存在的空值）；测完 kill。
+- **遗留（批次 V3，已由 0ba 完成；仅「搜索结果卡片入口」未做、Crisp Inbox 人眼验收仍待）**：商城端店铺页/搜索结果【联系商家】入口 + 聊天面板；商家端「消息」页接入买家会话 tab（现有 `MessagesView.vue` 只接了 PLATFORM_SUPPORT/BUYER 旧接口）；前端轮询/未读角标；EN/ZH 文案；Crisp Inbox 人眼验收。后端已具备全部 V3 所需接口。
+
+## 0az. 修复商品导入 `ValueError('badly formed hexadecimal UUID string')`（2026-11-22，✅ 完成，未 commit；原编号 0ay，临时让位给批次 V2）
 
 - **现象**：08:40 UTC 起商品导入批量失败，`failed_import`（runner 只存 `repr(exc)`，无 traceback）→ 属 TERMINAL 不会被重试。累计 **60** 条：shard1 46 / shard2 14；品类分布：电子健康检测 20、印度及南亚食品 14、冷冻肉类与家禽 7、冷冻派对食品 6、智能家居 6、冷冻素食 4、珠宝 2、韩国食品 1。失败记录特征：`skus_parsed=1, mobile_merged=True, variants=0`、`db=None media=None`（导入在创建任何对象前就抛）、`StagingProduct` 仍 PENDING。payload 里没有任何 uuid/guid 字段 → **不是源站脏数据**。
 - **真实根因（不是 payload，也不是数据竞争）**：`Merchant.public_id` 在 **2026-11-22 08:36:10 UTC** 由 `UUIDField` 改成 `CharField(16)`（0at「商家 ID 改 MER+6 位」，`backend/merchants/models.py`），迁移 `merchants.0009_merchant_public_id_mer_format` 于 **08:36:51 UTC** 落库并回填 770 行为 `MER001000…MER001769`。**08:36 之前启动的长生命周期导入进程内存里仍是旧模型元数据（`public_id=UUIDField`）**，MySQL 后端给该列挂 `convert_uuidfield_value`，直接 `uuid.UUID('MER001000')`（**Django 这个转换器没有 try/except**，与 `UUIDField.to_python` 不同，所以抛的是裸 `ValueError` 而不是 `ValidationError`）→ 异常在 `import_services.py:1062 resolve_import_merchant(...)` 处抛出，整条导入判死。

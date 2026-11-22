@@ -2,11 +2,31 @@
 // 商家主页（WP-42）：顶部商家头像/名称 + 右侧总关注/总曝光度，
 // 下方为该商家当前上架的全部商品，可直接购买。
 import { useLocale } from '../../composables/useLocale'
+import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { formatDisplayPrice } from '../../utils/display'
 const route = useRoute()
 const { t } = useLocale()
 
 const slug = computed(() => String(route.params.slug || ''))
+
+// 需求 19.1：只有「已登录 + 白名单买家」才渲染【联系商家】入口；
+// 服务端仍会 403 兜底，面板收到 NOT_WHITELISTED 后回传 blocked 隐藏入口。
+const { isAuthenticated, purchaseWhitelisted } = useBuyerAuth()
+const chatOpen = ref(false)
+const chatBlocked = ref(false)
+const canContactSeller = computed(
+  () => isAuthenticated.value && purchaseWhitelisted.value && !chatBlocked.value,
+)
+const chatMerchant = computed(() => ({
+  slug: slug.value,
+  display_name: merchant.value?.name || '',
+  avatar_url: merchant.value?.avatar || '',
+}))
+
+function onChatBlocked() {
+  chatBlocked.value = true
+  chatOpen.value = false
+}
 
 // SSR 直连后端（apiBaseInternal），客户端走 devProxy（与 useSearch 同一模式）。
 const config = useRuntimeConfig()
@@ -54,6 +74,24 @@ useHead(() => ({
               <dd>{{ merchant.exposure_total }}</dd>
             </div>
           </dl>
+          <button
+            v-if="canContactSeller"
+            class="shop-contact"
+            type="button"
+            data-testid="contact-seller"
+            @click="chatOpen = true"
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <path
+                d="M3 4.5h14v9H8.5L5 16.5v-3H3z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linejoin="round"
+              />
+            </svg>
+            {{ t('chat.contactSeller') }}
+          </button>
         </header>
 
         <h2 class="shop-products__title">{{ t('merchant.productsTitle') }}</h2>
@@ -77,6 +115,13 @@ useHead(() => ({
         </div>
       </template>
     </div>
+
+    <MerchantChatPanel
+      :open="chatOpen"
+      :merchant="chatMerchant"
+      @close="chatOpen = false"
+      @blocked="onChatBlocked"
+    />
   </div>
 </template>
 
@@ -99,6 +144,7 @@ useHead(() => ({
 .shop-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 20px;
   border: 1px solid #e5e7eb;
@@ -156,6 +202,45 @@ useHead(() => ({
   margin: 2px 0 0;
   font-size: 20px;
   font-weight: 700;
+}
+
+/* 需求 19.5：【联系商家】入口与店铺头同排，次要按钮样式（描边红字）。 */
+.shop-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 40px;
+  margin-left: auto;
+  padding: 0 16px;
+  border: 1px solid var(--colour-accent);
+  border-radius: 4px;
+  background: var(--colour-surface);
+  color: var(--colour-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shop-contact:hover {
+  background: var(--colour-accent-soft);
+}
+
+.shop-contact:focus-visible {
+  outline: 2px solid var(--colour-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 40rem) {
+  .shop-header__metrics {
+    gap: 20px;
+  }
+
+  .shop-contact {
+    margin-left: 0;
+  }
 }
 
 .shop-products__title {

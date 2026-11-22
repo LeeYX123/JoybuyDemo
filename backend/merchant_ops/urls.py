@@ -16,6 +16,7 @@ from merchant_ops import (
     views_media,
     views_merchant_app,
     views_merchant_catalog,
+    views_merchant_chat,
     views_merchant_inbox,
     views_merchant_orders,
     views_merchant_service,
@@ -48,6 +49,17 @@ urlpatterns = [
         "api/v1/account/merchant-console-session",
         views_shop_application.BuyerMerchantConsoleSessionView.as_view(),
         name="buyer-merchant-console-session",
+    ),
+    # 需求 19：用户 ↔ 商家会话（买家侧，买家会话 + 白名单门禁）。
+    path(
+        "api/v1/account/merchant-chat/threads",
+        views_merchant_chat.BuyerMerchantChatThreadsView.as_view(),
+        name="buyer-merchant-chat-threads",
+    ),
+    path(
+        "api/v1/account/merchant-chat/threads/<uuid:public_id>/messages",
+        views_merchant_chat.BuyerMerchantChatMessagesView.as_view(),
+        name="buyer-merchant-chat-messages",
     ),
     path(
         "api/v1/admin/merchant-applications",
@@ -550,6 +562,17 @@ urlpatterns = [
         "api/v1/merchant/conversations/<uuid:public_id>/messages",
         views_merchant_inbox.MerchantConversationReplyView.as_view(),
         name="merchant-conversation-reply",
+    ),
+    # 需求 19：用户 ↔ 商家会话（商家侧，与上面的平台客服会话互不影响）。
+    path(
+        "api/v1/merchant/chats",
+        views_merchant_chat.MerchantChatThreadsView.as_view(),
+        name="merchant-chats",
+    ),
+    path(
+        "api/v1/merchant/chats/<uuid:public_id>/messages",
+        views_merchant_chat.MerchantChatMessagesView.as_view(),
+        name="merchant-chat-messages",
     ),
     # ---------- 商家端 M10 通知 ----------
     path(

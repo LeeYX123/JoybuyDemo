@@ -26,6 +26,9 @@ export function useBuyerAuth() {
   const merchantApplicationStatus = computed(
     () => data.value?.account?.merchant_application_status || null,
   )
+  // 需求 19.3-4：与商家沟通的白名单标记随买家 session 下发，商城端据此决定
+  // 是否渲染【联系商家】入口（服务端仍会 403 兜底）。
+  const purchaseWhitelisted = computed(() => Boolean(data.value?.account?.purchase_whitelisted))
 
   async function post(path, body) {
     // Auth posts always happen in the browser: the CSRF cookie must live in
@@ -80,6 +83,7 @@ export function useBuyerAuth() {
     account,
     csrfToken,
     merchantApplicationStatus,
+    purchaseWhitelisted,
     refresh,
     sendVerificationCode,
     register,

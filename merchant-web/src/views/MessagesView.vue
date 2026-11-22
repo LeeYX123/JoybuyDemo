@@ -1,13 +1,26 @@
 <script setup>
-import { nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import { apiRequest, merchantWrite } from '@/lib/api'
 
+// 「消息中心」两条并列的会话线（需求 19.3-3）：
+// - support：商家 ↔ 平台客服（原 SupportConversation，行为保持不变）；
+// - buyer：买家 ↔ 商家一对一会话（批次 V2 新接口 /merchant/chats）。
+// 两条线共用同一套列表/聊天面板布局，通过 source 适配不同 payload。
+const MAX_BUYER_MESSAGE = 2000
+const POLL_INTERVAL_MS = 5000
+
+const TABS = [
+  { key: 'support', label: '客服会话' },
+  { key: 'buyer', label: '买家咨询' },
+]
+
 const state = reactive({
+  tab: 'support',
   loading: true,
   error: '',
-  notice: '',
-  conversations: [],
+  supportRows: [],
+  buyerRows: [],
   activeId: '',
   active: null,
   loadingDetail: false,
@@ -16,25 +29,91 @@ const state = reactive({
 })
 
 const listEl = ref(null)
+let pollTimer = null
+let pollInFlight = false
 
 // 移动端（≤768px）单列态：'list' 显示会话列表，'chat' 显示聊天面板；桌面档不受影响。
 const mobilePane = ref('list')
 
-function openConversation(id) {
-  mobilePane.value = 'chat'
-  selectConversation(id)
+const rows = computed(() => (state.tab === 'buyer' ? state.buyerRows : state.supportRows))
+const activeEmptyText = computed(() =>
+  state.tab === 'buyer' ? '还没有消息，等待买家发起咨询。' : '还没有消息，先打个招呼吧。',
+)
+const composePlaceholder = computed(() =>
+  state.tab === 'buyer' ? '回复买家，Ctrl + Enter 发送' : '输入消息，Ctrl + Enter 发送',
+)
+
+const tabCounts = computed(() => ({
+  support: state.supportRows.length,
+  buyer: state.buyerRows.length,
+}))
+
+function normalizeSupportRow(item) {
+  return {
+    id: item.id,
+    source: 'support',
+    kind: item.kind,
+    peerName: item.peer_name,
+    preview: item.last_message || '暂无消息',
+    time: item.last_message_at,
+    unread: item.unread || 0,
+  }
 }
 
-async function loadConversations() {
+function normalizeBuyerRow(item) {
+  return {
+    id: item.id,
+    source: 'buyer',
+    kind: 'BUYER_CHAT',
+    peerName: item.buyer?.display_name || '买家',
+    preview: item.last_message || '暂无消息',
+    time: item.last_message_at,
+    unread: item.unread || 0,
+  }
+}
+
+function buyerMessages(payload, row) {
+  return (payload.messages || []).map((message) => ({
+    id: `buyer-${message.id}`,
+    mine: message.sender_kind === 'merchant',
+    author: message.sender_kind === 'merchant' ? '我' : row?.peerName || '买家',
+    text: message.body,
+    created_at: message.created_at,
+  }))
+}
+
+function supportMessages(conversation) {
+  return (conversation.messages || []).map((message) => ({
+    id: `support-${message.id}`,
+    mine: message.sender === 'MERCHANT',
+    author: message.author || message.sender,
+    text: message.text,
+    created_at: message.created_at,
+  }))
+}
+
+async function loadRows() {
   state.loading = true
   state.error = ''
   try {
-    const payload = await apiRequest('/merchant/conversations')
-    state.conversations = payload.items || []
-    if (!state.activeId && state.conversations.length) {
-      await selectConversation(state.conversations[0].id)
-    } else if (state.activeId) {
-      await selectConversation(state.activeId, true)
+    if (state.tab === 'buyer') {
+      const payload = await apiRequest('/merchant/chats')
+      state.buyerRows = (payload.items || []).map(normalizeBuyerRow)
+    } else {
+      const payload = await apiRequest('/merchant/conversations')
+      state.supportRows = (payload.items || []).map(normalizeSupportRow)
+    }
+    const stillThere = rows.value.some((row) => row.id === state.activeId)
+    if (!stillThere) {
+      state.activeId = ''
+      state.active = null
+      // 客服会话保持原行为（进页自动打开第一条）；买家咨询不自动打开，
+      // 否则一进 tab 就会把未读清零，列表上的未读角标永远看不到。
+      if (state.tab === 'support' && rows.value.length) {
+        await selectRow(rows.value[0].id)
+      }
+    } else {
+      await selectRow(state.activeId, true)
     }
   } catch (error) {
     state.error = error.message
@@ -43,21 +122,65 @@ async function loadConversations() {
   }
 }
 
-async function selectConversation(id, silent = false) {
+async function selectRow(id, silent = false) {
   state.activeId = id
+  const row = rows.value.find((item) => item.id === id)
   state.loadingDetail = true
   if (!silent) state.active = null
   try {
-    const payload = await apiRequest(`/merchant/conversations/${id}`)
-    state.active = payload.conversation
-    const row = state.conversations.find((item) => item.id === id)
-    if (row) row.unread = 0
+    if (state.tab === 'buyer') {
+      const payload = await apiRequest(`/merchant/chats/${id}/messages`)
+      const thread = payload.thread || {}
+      state.active = {
+        id,
+        source: 'buyer',
+        peerName: thread.buyer?.display_name || row?.peerName || '买家',
+        kindLabel: '买家咨询',
+        state: '',
+        product: null,
+        messages: buyerMessages(payload, row),
+      }
+      if (row) row.unread = 0
+    } else {
+      const payload = await apiRequest(`/merchant/conversations/${id}`)
+      const conversation = payload.conversation
+      state.active = {
+        id,
+        source: 'support',
+        peerName: conversation.peer_name,
+        kindLabel: conversation.kind === 'PLATFORM_SUPPORT' ? '平台客服会话' : '买家商品咨询',
+        state: conversation.state,
+        product: conversation.product,
+        messages: supportMessages(conversation),
+      }
+      if (row) row.unread = 0
+    }
     await scrollToBottom()
   } catch (error) {
     state.error = error.message
   } finally {
     state.loadingDetail = false
   }
+}
+
+function openRow(id) {
+  mobilePane.value = 'chat'
+  selectRow(id)
+}
+
+function selectTab(tab) {
+  if (state.tab === tab) return
+  state.tab = tab
+  state.activeId = ''
+  state.active = null
+  state.draft = ''
+  state.error = ''
+  mobilePane.value = 'list'
+  loadRows()
+}
+
+async function refreshActive() {
+  await loadRows()
 }
 
 async function scrollToBottom() {
@@ -68,19 +191,48 @@ async function scrollToBottom() {
 async function send() {
   const text = state.draft.trim()
   if (!text || !state.active || state.sending) return
+  if (state.active.source === 'buyer' && text.length > MAX_BUYER_MESSAGE) {
+    state.error = `消息不能超过 ${MAX_BUYER_MESSAGE} 字。`
+    return
+  }
   state.sending = true
   state.error = ''
   try {
-    const payload = await merchantWrite(`/merchant/conversations/${state.active.id}/messages`, {
-      text,
-    })
-    state.active.messages.push(payload.message)
-    state.draft = ''
-    const row = state.conversations.find((item) => item.id === state.active.id)
-    if (row) {
-      row.last_message = payload.message.text
-      row.last_message_at = payload.message.created_at
+    if (state.active.source === 'buyer') {
+      const payload = await merchantWrite(`/merchant/chats/${state.active.id}/messages`, {
+        body: text,
+      })
+      state.active.messages.push({
+        id: `buyer-${payload.message.id}`,
+        mine: true,
+        author: '我',
+        text: payload.message.body,
+        created_at: payload.message.created_at,
+      })
+      const row = state.buyerRows.find((item) => item.id === state.active.id)
+      if (row) {
+        row.preview = payload.message.body
+        row.time = payload.message.created_at
+        row.unread = 0
+      }
+    } else {
+      const payload = await merchantWrite(`/merchant/conversations/${state.active.id}/messages`, {
+        text,
+      })
+      state.active.messages.push({
+        id: `support-${payload.message.id}`,
+        mine: true,
+        author: payload.message.author || '我',
+        text: payload.message.text,
+        created_at: payload.message.created_at,
+      })
+      const row = state.supportRows.find((item) => item.id === state.active.id)
+      if (row) {
+        row.preview = payload.message.text
+        row.time = payload.message.created_at
+      }
     }
+    state.draft = ''
     await scrollToBottom()
   } catch (error) {
     state.error = error.message
@@ -106,7 +258,49 @@ function fmtFull(value) {
   return value.slice(0, 16).replace('T', ' ')
 }
 
-onMounted(loadConversations)
+// 买家会话 5 秒轮询：列表未读/摘要 + 当前会话新消息（服务器无 after 参数，
+// 按最后一条 id 判断是否需要替换，避免无谓重渲染/跳动）。客服会话保持手动。
+async function pollBuyer() {
+  if (state.tab !== 'buyer' || pollInFlight) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  pollInFlight = true
+  try {
+    const payload = await apiRequest('/merchant/chats')
+    const nextRows = (payload.items || []).map(normalizeBuyerRow)
+    if (state.activeId) {
+      // 打开中的会话服务端已清零商家未读，轮询不应把角标又画回来。
+      const current = nextRows.find((row) => row.id === state.activeId)
+      if (current) current.unread = 0
+    }
+    state.buyerRows = nextRows
+    if (!state.activeId || state.active?.source !== 'buyer') return
+    const detail = await apiRequest(`/merchant/chats/${state.activeId}/messages`)
+    const row = state.buyerRows.find((item) => item.id === state.activeId)
+    const incoming = buyerMessages(detail, row)
+    const previous = state.active.messages
+    const lastIncoming = incoming[incoming.length - 1]?.id || ''
+    const lastPrevious = previous[previous.length - 1]?.id || ''
+    if (lastIncoming !== lastPrevious) {
+      state.active.messages = incoming
+      if (row) row.unread = 0
+      await scrollToBottom()
+    }
+  } catch {
+    // 轮询失败静默；手动「刷新」可重试。
+  } finally {
+    pollInFlight = false
+  }
+}
+
+onMounted(() => {
+  loadRows()
+  pollTimer = setInterval(pollBuyer, POLL_INTERVAL_MS)
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+})
 </script>
 
 <template>
@@ -114,8 +308,26 @@ onMounted(loadConversations)
     <div class="page-intro">
       <div>
         <h1>消息中心</h1>
-        <p>客服中心用于充值与保证金沟通，买家咨询按商品来源单独列出，两者不混在一起。</p>
+        <p>
+          客服中心用于充值与保证金沟通；买家一对一咨询在「买家咨询」中单独列出，两者不混在一起。
+        </p>
       </div>
+    </div>
+
+    <div class="tabs">
+      <button
+        v-for="tab in TABS"
+        :key="tab.key"
+        type="button"
+        :class="{ 'is-active': state.tab === tab.key }"
+        @click="selectTab(tab.key)"
+      >
+        {{ tab.label }}
+        <span class="tab-count">{{ tabCounts[tab.key] ?? 0 }}</span>
+      </button>
+      <button type="button" class="tabs__refresh" :disabled="state.loading" @click="refreshActive">
+        {{ state.tab === 'buyer' ? '刷新（每 5 秒自动）' : '刷新' }}
+      </button>
     </div>
 
     <p v-if="state.error" class="notice notice--error">{{ state.error }}</p>
@@ -124,29 +336,34 @@ onMounted(loadConversations)
       <aside class="chat-list">
         <p v-if="state.loading" class="inline-loading">加载中…</p>
         <button
-          v-for="row in state.conversations"
+          v-for="row in rows"
           :key="row.id"
           type="button"
           class="chat-list__item"
           :class="{ 'is-active': row.id === state.activeId }"
-          @click="openConversation(row.id)"
+          @click="openRow(row.id)"
         >
           <span
             class="chat-list__avatar"
-            :class="{ 'is-support': row.kind === 'PLATFORM_SUPPORT' }"
+            :class="{
+              'is-support': row.source === 'support' && row.kind === 'PLATFORM_SUPPORT',
+              'is-buyer': row.source === 'buyer',
+            }"
           >
-            {{ row.kind === 'PLATFORM_SUPPORT' ? '客' : '买' }}
+            {{ row.source === 'buyer' ? '买' : row.kind === 'PLATFORM_SUPPORT' ? '客' : '买' }}
           </span>
           <span class="chat-list__main">
             <span class="chat-list__top">
-              <b>{{ row.peer_name }}</b>
-              <small>{{ fmtTime(row.last_message_at) }}</small>
+              <b>{{ row.peerName }}</b>
+              <small>{{ fmtTime(row.time) }}</small>
             </span>
-            <span class="chat-list__preview">{{ row.last_message || '暂无消息' }}</span>
+            <span class="chat-list__preview">{{ row.preview }}</span>
           </span>
           <span v-if="row.unread" class="chat-list__badge">{{ row.unread }}</span>
         </button>
-        <p v-if="!state.loading && !state.conversations.length" class="empty-state">还没有会话。</p>
+        <p v-if="!state.loading && !rows.length" class="empty-state">
+          {{ state.tab === 'buyer' ? '还没有买家咨询。' : '还没有会话。' }}
+        </p>
       </aside>
 
       <section class="chat-panel">
@@ -161,12 +378,10 @@ onMounted(loadConversations)
               >
                 ← 返回
               </button>
-              <strong>{{ state.active.peer_name }}</strong>
+              <strong>{{ state.active.peerName }}</strong>
               <span v-if="state.active.state" class="tag">{{ state.active.state }}</span>
             </div>
-            <span class="cell-sub">{{
-              state.active.kind === 'PLATFORM_SUPPORT' ? '平台客服会话' : '买家商品咨询'
-            }}</span>
+            <span class="cell-sub">{{ state.active.kindLabel }}</span>
           </header>
 
           <div v-if="state.active.product" class="chat-product">
@@ -187,15 +402,15 @@ onMounted(loadConversations)
               v-for="message in state.active.messages"
               :key="message.id"
               class="chat-bubble"
-              :class="{ 'is-mine': message.sender === 'MERCHANT' }"
+              :class="{ 'is-mine': message.mine }"
             >
               <div class="chat-bubble__meta">
-                {{ message.author || message.sender }} · {{ fmtFull(message.created_at) }}
+                {{ message.author }} · {{ fmtFull(message.created_at) }}
               </div>
               <div class="chat-bubble__text">{{ message.text }}</div>
             </div>
             <p v-if="!state.active.messages?.length" class="empty-state">
-              还没有消息，先打个招呼吧。
+              {{ activeEmptyText }}
             </p>
           </div>
 
@@ -203,11 +418,17 @@ onMounted(loadConversations)
             <textarea
               v-model="state.draft"
               rows="3"
-              placeholder="输入消息，Ctrl + Enter 发送"
+              :maxlength="state.active.source === 'buyer' ? MAX_BUYER_MESSAGE : undefined"
+              :placeholder="composePlaceholder"
               @keydown="onKeydown"
             />
             <div class="chat-compose__actions">
-              <span class="hint-text">Ctrl + Enter 发送</span>
+              <span class="hint-text">
+                <template v-if="state.active.source === 'buyer'">
+                  {{ state.draft.length }}/{{ MAX_BUYER_MESSAGE }} · Ctrl + Enter 发送
+                </template>
+                <template v-else>Ctrl + Enter 发送</template>
+              </span>
               <button
                 type="button"
                 class="btn btn--primary"
@@ -226,12 +447,55 @@ onMounted(loadConversations)
 </template>
 
 <style scoped>
+.tab-count {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* tab 行 + 刷新按钮：一行放下，窄屏可横滚。 */
+.tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  align-items: center;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tabs__refresh {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #ffffff;
+  color: #505765;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tabs__refresh:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.tabs__refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .chat-shell {
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 16px;
-  height: calc(100vh - 210px);
+  height: calc(100vh - 250px);
   min-height: 480px;
+  margin-top: 16px;
 }
 
 .chat-list {
@@ -279,6 +543,12 @@ onMounted(loadConversations)
 .chat-list__avatar.is-support {
   background: var(--red);
   color: #fff;
+}
+
+/* 买家咨询用绿色区分平台客服（红），避免两条线混淆。 */
+.chat-list__avatar.is-buyer {
+  background: #e7f3ec;
+  color: #1f6b45;
 }
 
 .chat-list__main {
@@ -472,7 +742,7 @@ onMounted(loadConversations)
 @media (max-width: 768px) {
   .chat-shell {
     grid-template-columns: 1fr;
-    height: calc(100vh - 190px);
+    height: calc(100vh - 230px);
     min-height: 420px;
   }
 

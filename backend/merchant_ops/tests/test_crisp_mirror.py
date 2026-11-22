@@ -3,8 +3,8 @@
 全部 HTTP 一律 mock：测试只验证我们发给 Crisp 的请求体、幂等与降级行为，
 **绝不真连 Crisp**。覆盖：
 - 未配置 → skipped 且零 HTTP；
-- 首次会话 → 先建会话（from=user 首消息）再发正式消息；
-- merchant / platform / user 三种消息体；
+- 首次会话 → 先建会话 → PATCH meta（昵称/邮箱）→ from=user 首消息 → 正式消息；
+- merchant / platform / user 三种消息体（身份走 user.nickname，正文无前缀）；
 - 同一 message_id 重复调用只发一次；
 - HTTP 500 / 超时 → 不抛异常、日志 failed；
 - transaction.on_commit 语义（提交后才发、回滚不发）；
@@ -102,6 +102,18 @@ class CrispMirrorServiceTests(TestCase):
         patcher = mock.patch.object(crisp_mirror, "RETRY_DELAY_SECONDS", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # 会话 meta PATCH 默认 mock 成功：测试绝不真连 Crisp。
+        patch = mock.patch.object(crisp_mirror, "_http_patch", return_value={})
+        self.patch_http = patch.start()
+        self.addCleanup(patch.stop)
+        # 读 meta 默认返回「已有昵称」：历史会话不会被重复补写。
+        get = mock.patch.object(
+            crisp_mirror, "_http_get", return_value={"data": {"nickname": "已有昵称"}}
+        )
+        self.get_http = get.start()
+        self.addCleanup(get.stop)
+        crisp_mirror._META_READY.clear()
+        self.addCleanup(crisp_mirror._META_READY.clear)
 
     # ------------------------------------------------------------------
     # 未配置 / 降级
@@ -115,6 +127,7 @@ class CrispMirrorServiceTests(TestCase):
 
         self.assertEqual(result["status"], STATUS_SKIPPED)
         http.assert_not_called()
+        self.patch_http.assert_not_called()
         self.assertFalse(CrispMirrorSession.objects.exists())
         log = CrispMirrorLog.objects.get()
         self.assertEqual(log.status, CrispMirrorLog.Status.SKIPPED)
@@ -186,7 +199,9 @@ class CrispMirrorServiceTests(TestCase):
         body = message_call.args[1]
         self.assertEqual(body["from"], "operator")
         self.assertEqual(body["origin"], "chat")
-        self.assertEqual(body["content"], "[商家] 演示店铺: 能开票吗")
+        # 身份改由 user.nickname 表达：正文不再带 [商家] 前缀。
+        self.assertEqual(body["content"], "能开票吗")
+        self.assertEqual(body["user"], {"type": "website", "nickname": "演示店铺"})
         # Crisp 要求 fingerprint 是 number（字符串会 400 invalid_data）；同一消息稳定同值。
         self.assertIsInstance(body["fingerprint"], int)
         self.assertEqual(
@@ -194,12 +209,68 @@ class CrispMirrorServiceTests(TestCase):
         )
         self.assertLess(body["fingerprint"], 2**53)
 
+        # 建会话后先 PATCH meta（Inbox 列表显示店名而不是 anonymous）。
+        self.patch_http.assert_called_once()
+        meta_path, meta_body = self.patch_http.call_args.args
+        self.assertEqual(meta_path, "/website/website-123/conversation/session-abc/meta")
+        self.assertEqual(meta_body, {"nickname": "演示店铺"})
+
         self.assertEqual(
             CrispMirrorSession.objects.get().session_id, "session-abc"
         )
 
     @override_settings(**CONFIGURED)
-    def test_merchant_and_platform_prefixes(self):
+    def test_session_meta_patch_carries_buyer_nickname_and_email(self):
+        responses = [{"data": {"session_id": "session-abc"}}, {}, {}]
+        with mock.patch.object(crisp_mirror, "_http_post", side_effect=responses):
+            mirror_message(
+                self.thread_key,
+                "user",
+                "张三",
+                "包裹到哪了",
+                None,
+                "202",
+                session_nickname="张三",
+                session_email="zhangsan@example.com",
+            )
+
+        self.patch_http.assert_called_once()
+        meta_path, meta_body = self.patch_http.call_args.args
+        self.assertEqual(meta_path, "/website/website-123/conversation/session-abc/meta")
+        self.assertEqual(
+            meta_body, {"nickname": "张三", "email": "zhangsan@example.com"}
+        )
+
+    @override_settings(**CONFIGURED)
+    def test_meta_patch_failure_does_not_block_message(self):
+        error = CrispRequestError("PATCH /meta -> HTTP 400")
+        self.patch_http.side_effect = error
+        responses = [{"data": {"session_id": "session-abc"}}, {}, {}]
+        with mock.patch.object(crisp_mirror, "_http_post", side_effect=responses) as http:
+            result = mirror_message(
+                self.thread_key, "merchant", "演示店铺", "meta 挂了也要发", None, "203"
+            )
+
+        self.assertEqual(result["status"], STATUS_SENT)
+        # 失败重试 2 次后放弃，正式消息照常发送（建会话 + 开场 + 正文 = 3 次 POST）。
+        self.assertEqual(self.patch_http.call_count, 2)
+        self.assertEqual(http.call_count, 3)
+        self.assertEqual(http.call_args_list[-1].args[1]["content"], "meta 挂了也要发")
+
+    @override_settings(**CONFIGURED)
+    def test_meta_nickname_is_truncated_to_crisp_safe_length(self):
+        long_name = "商" * 60
+        responses = [{"data": {"session_id": "session-abc"}}, {}, {}]
+        with mock.patch.object(crisp_mirror, "_http_post", side_effect=responses):
+            mirror_message(
+                self.thread_key, "merchant", long_name, "长昵称", None, "204"
+            )
+
+        _path, meta_body = self.patch_http.call_args.args
+        self.assertEqual(len(meta_body["nickname"]), 40)
+
+    @override_settings(**CONFIGURED)
+    def test_merchant_and_platform_messages_use_user_nickname(self):
         CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-abc")
         with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
             mirror_message(self.thread_key, "merchant", "演示店铺", "第一条", None, "301")
@@ -207,12 +278,84 @@ class CrispMirrorServiceTests(TestCase):
 
         merchant_body = http.call_args_list[0].args[1]
         platform_body = http.call_args_list[1].args[1]
-        self.assertEqual(merchant_body["content"], "[商家] 演示店铺: 第一条")
-        self.assertEqual(platform_body["content"], "[平台]: 第二条")
+        self.assertEqual(merchant_body["content"], "第一条")
+        self.assertEqual(platform_body["content"], "第二条")
+        self.assertNotIn("[商家]", merchant_body["content"])
+        self.assertNotIn("[平台]", platform_body["content"])
         self.assertEqual(merchant_body["from"], "operator")
         self.assertEqual(platform_body["from"], "operator")
-        # operator 消息不带 user.nickname（Crisp 不支持按消息指定操作者）。
-        self.assertNotIn("user", platform_body)
+        # user.nickname 只影响访客端 chatbox（加分项）；客服端 Inbox 不采用，靠 meta nickname。
+        self.assertEqual(
+            merchant_body["user"], {"type": "website", "nickname": "演示店铺"}
+        )
+        self.assertEqual(
+            platform_body["user"], {"type": "website", "nickname": "Joybuy 客服"}
+        )
+        # 会话已存在且 meta 已有昵称 → 不再重复 PATCH。
+        self.patch_http.assert_not_called()
+
+    @override_settings(**CONFIGURED)
+    def test_anonymous_existing_session_is_backfilled_once(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": ""}}
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            mirror_message(self.thread_key, "merchant", "演示店铺", "历史会话", None, "311")
+            mirror_message(self.thread_key, "merchant", "演示店铺", "再发一条", None, "312")
+
+        # 历史会话（meta nickname 为空）补写一次；进程内缓存后不再 GET。
+        self.patch_http.assert_called_once()
+        meta_path, meta_body = self.patch_http.call_args.args
+        self.assertEqual(meta_path, "/website/website-123/conversation/session-old/meta")
+        self.assertEqual(meta_body["nickname"], "演示店铺")
+        self.assertEqual(self.get_http.call_count, 1)
+        self.assertEqual(http.call_count, 2)
+
+    @override_settings(**CONFIGURED)
+    def test_existing_session_with_nickname_is_not_patched(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": "小明 · 演示店铺"}}
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}):
+            mirror_message(self.thread_key, "merchant", "演示店铺", "已有昵称", None, "313")
+
+        self.patch_http.assert_not_called()
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_failure_does_not_block_message(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": ""}}
+        self.patch_http.side_effect = CrispRequestError("PATCH /meta -> HTTP 500")
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            result = mirror_message(
+                self.thread_key, "merchant", "演示店铺", "补写失败也要发", None, "314"
+            )
+
+        self.assertEqual(result["status"], STATUS_SENT)
+        self.assertEqual(http.call_count, 1)
+        self.assertEqual(http.call_args.args[1]["content"], "补写失败也要发")
+        self.assertNotIn("session-old", crisp_mirror._META_READY)
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_meta_fetch_failure_does_not_block_message(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.side_effect = CrispRequestError("GET /meta -> HTTP 500")
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            result = mirror_message(
+                self.thread_key, "merchant", "演示店铺", "读 meta 失败也要发", None, "315"
+            )
+
+        self.assertEqual(result["status"], STATUS_SENT)
+        self.assertEqual(http.call_count, 1)
+        self.patch_http.assert_not_called()
+
+    @override_settings(**{**CONFIGURED, "CRISP_PLATFORM_NICKNAME": "平台小助手"})
+    def test_platform_nickname_can_be_configured(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-abc")
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            mirror_message(self.thread_key, "platform", "客服小王", "第二条", None, "303")
+
+        self.assertEqual(
+            http.call_args.args[1]["user"], {"type": "website", "nickname": "平台小助手"}
+        )
 
     @override_settings(**CONFIGURED)
     def test_user_message_carries_nickname(self):
@@ -305,6 +448,41 @@ class CrispMirrorServiceTests(TestCase):
         self.assertEqual(request.get_header("Authorization"), f"Basic {expected}")
         self.assertEqual(request.get_header("X-crisp-tier"), "website")
         self.assertNotIn("website-token", request.get_header("Authorization"))
+
+    @override_settings(**API_CONFIGURED)
+    def test_meta_patch_uses_patch_method(self):
+        captured = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(request, timeout=None):
+            captured["request"] = request
+            return _Response()
+
+        with mock.patch(
+            "merchant_ops.crisp_mirror.urllib.request.urlopen", side_effect=fake_urlopen
+        ):
+            crisp_mirror._http_request(
+                "PATCH",
+                "/website/website-123/conversation/session-abc/meta",
+                {"nickname": "张三"},
+            )
+
+        request = captured["request"]
+        expected_url = (
+            f"{crisp_mirror.API_BASE_URL}/website/website-123/conversation/session-abc/meta"
+        )
+        self.assertEqual(request.get_method(), "PATCH")
+        self.assertEqual(request.full_url, expected_url)
+        self.assertEqual(json.loads(request.data.decode()), {"nickname": "张三"})
 
     @override_settings(**API_CONFIGURED)
     def test_http_error_body_is_included_in_error_message(self):
@@ -415,6 +593,16 @@ class CrispMirrorEndpointTests(TestCase):
         patcher = mock.patch.object(crisp_mirror, "RETRY_DELAY_SECONDS", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
+        patch = mock.patch.object(crisp_mirror, "_http_patch", return_value={})
+        self.patch_http = patch.start()
+        self.addCleanup(patch.stop)
+        get = mock.patch.object(
+            crisp_mirror, "_http_get", return_value={"data": {"nickname": "已有昵称"}}
+        )
+        self.get_http = get.start()
+        self.addCleanup(get.stop)
+        crisp_mirror._META_READY.clear()
+        self.addCleanup(crisp_mirror._META_READY.clear)
 
         self.merchant = Merchant.objects.create(
             slug="crisp-endpoint-shop",
@@ -496,7 +684,12 @@ class CrispMirrorEndpointTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(http.call_count, 3)
         final_body = http.call_args_list[-1].args[1]
-        self.assertEqual(final_body["content"], "[商家] 接口镜像店: 商家真实消息")
+        self.assertEqual(final_body["content"], "商家真实消息")
+        self.assertEqual(final_body["user"], {"type": "website", "nickname": "接口镜像店"})
+        # 线程的访客是商家 → 会话 meta 昵称用店名。
+        self.patch_http.assert_called_once()
+        _meta_path, meta_body = self.patch_http.call_args.args
+        self.assertEqual(meta_body, {"nickname": "接口镜像店"})
         self.assertEqual(CrispMirrorLog.objects.get().status, CrispMirrorLog.Status.SENT)
 
     @override_settings(**CONFIGURED)
@@ -517,7 +710,7 @@ class CrispMirrorEndpointTests(TestCase):
         self.assertEqual(CrispMirrorLog.objects.get().status, CrispMirrorLog.Status.FAILED)
 
     @override_settings(**CONFIGURED)
-    def test_admin_reply_is_mirrored_with_platform_prefix(self):
+    def test_admin_reply_is_mirrored_with_platform_nickname(self):
         self._grant("support.manage", "support.view")
         conversation = SupportConversation.objects.create(
             merchant=self.merchant,
@@ -537,8 +730,9 @@ class CrispMirrorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.content)
         body = http.call_args.args[1]
-        self.assertEqual(body["content"], "[平台]: 平台已处理")
+        self.assertEqual(body["content"], "平台已处理")
         self.assertEqual(body["from"], "operator")
+        self.assertEqual(body["user"], {"type": "website", "nickname": "Joybuy 客服"})
         # 平台回复与商家消息共用同一个 Crisp 会话。
         self.assertEqual(
             http.call_args.args[0], "/website/website-123/conversation/session-admin/message"

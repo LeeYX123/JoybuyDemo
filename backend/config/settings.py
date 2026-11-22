@@ -263,6 +263,8 @@ CRISP_PLUGIN_TOKEN = os.getenv("CRISP_PLUGIN_TOKEN", "").strip()
 CRISP_API_TOKEN_ID = os.getenv("CRISP_API_TOKEN_ID", "").strip()
 CRISP_API_TOKEN_KEY = os.getenv("CRISP_API_TOKEN_KEY", "").strip()
 CRISP_API_TIER = os.getenv("CRISP_API_TIER", "website").strip() or "website"
+# 平台客服（from=operator）消息在 Crisp 气泡上显示的昵称；留空用默认「Joybuy 客服」。
+CRISP_PLATFORM_NICKNAME = os.getenv("CRISP_PLATFORM_NICKNAME", "").strip()
 
 if APP_ENV not in {"development", "test"}:
     if VERIFICATION_CODE_TEST_MODE:
