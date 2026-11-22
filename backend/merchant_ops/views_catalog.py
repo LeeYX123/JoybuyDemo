@@ -667,11 +667,11 @@ class AdminMerchantListingsView(OpsAPIView):
         ).prefetch_related("sku__spu__translations")
         merchant_query = (request.query_params.get("merchant") or "").strip()
         if merchant_query:
-            try:
-                merchant_uuid = uuid.UUID(merchant_query)
-                queryset = queryset.filter(merchant__public_id=merchant_uuid)
-            except ValueError:
-                queryset = queryset.filter(merchant__display_name__icontains=merchant_query)
+            # 商家 ID 已改为 MER+6 位数字，不再是 UUID：ID 精确匹配或店名模糊匹配。
+            queryset = queryset.filter(
+                Q(merchant__public_id__iexact=merchant_query)
+                | Q(merchant__display_name__icontains=merchant_query)
+            )
         product_query = (request.query_params.get("product") or "").strip()
         if product_query:
             try:

@@ -26,6 +26,7 @@ from merchant_ops import (
     views_service,
     views_shop_application,
     views_support,
+    views_switch_mall,
 )
 
 urlpatterns = [
@@ -69,17 +70,17 @@ urlpatterns = [
         name="admin-merchants-export",
     ),
     path(
-        "api/v1/admin/merchants/<uuid:public_id>",
+        "api/v1/admin/merchants/<str:public_id>",
         views_merchants.AdminMerchantDetailView.as_view(),
         name="admin-merchant-detail",
     ),
     path(
-        "api/v1/admin/merchants/<uuid:public_id>/ban-check",
+        "api/v1/admin/merchants/<str:public_id>/ban-check",
         views_merchants.AdminMerchantBanCheckView.as_view(),
         name="admin-merchant-ban-check",
     ),
     path(
-        "api/v1/admin/merchants/<uuid:public_id>/actions",
+        "api/v1/admin/merchants/<str:public_id>/actions",
         views_merchants.AdminMerchantActionsView.as_view(),
         name="admin-merchant-actions",
     ),
@@ -199,12 +200,12 @@ urlpatterns = [
         name="admin-deposits",
     ),
     path(
-        "api/v1/admin/deposits/<uuid:public_id>/actions",
+        "api/v1/admin/deposits/<str:public_id>/actions",
         views_finance.AdminDepositActionsView.as_view(),
         name="admin-deposit-actions",
     ),
     path(
-        "api/v1/admin/deposits/<uuid:public_id>/entries",
+        "api/v1/admin/deposits/<str:public_id>/entries",
         views_finance.AdminDepositEntriesView.as_view(),
         name="admin-deposit-entries",
     ),
@@ -366,7 +367,7 @@ urlpatterns = [
         name="admin-growth-records",
     ),
     path(
-        "api/v1/admin/growth/<uuid:public_id>/actions",
+        "api/v1/admin/growth/<str:public_id>/actions",
         views_growth.AdminGrowthActionsView.as_view(),
         name="admin-growth-actions",
     ),
@@ -407,6 +408,11 @@ urlpatterns = [
         "api/v1/merchant/shops",
         views_merchant_app.MerchantShopsView.as_view(),
         name="merchant-shops",
+    ),
+    path(
+        "api/v1/merchant/switch-to-mall",
+        views_switch_mall.MerchantSwitchToMallView.as_view(),
+        name="merchant-switch-to-mall",
     ),
     path(
         "api/v1/merchant/overview",

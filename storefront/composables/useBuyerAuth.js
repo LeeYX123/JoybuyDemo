@@ -64,6 +64,13 @@ export function useBuyerAuth() {
     return post('/login', payload)
   }
 
+  // 商家端「切换去商城」：兑换后端签发的一次性 handoff token。同源 POST，
+  // CSRF 沿用 post() 的「先 GET session 取 csrftoken 再带 X-CSRFToken」约定；
+  // 成功后 session cookie 由后端写在 storefront 自己的 host 上（host-only）。
+  async function exchangeMerchantHandoff(token) {
+    return post('/merchant-handoff', { token })
+  }
+
   async function logout() {
     return post('/logout', {})
   }
@@ -78,6 +85,7 @@ export function useBuyerAuth() {
     register,
     registerEmail,
     login,
+    exchangeMerchantHandoff,
     logout,
   }
 }

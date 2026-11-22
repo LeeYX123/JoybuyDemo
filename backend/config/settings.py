@@ -243,6 +243,27 @@ STAFF_LOGIN_FAILURE_WINDOW_SECONDS = int(os.getenv("STAFF_LOGIN_FAILURE_WINDOW_S
 MERCHANT_WEB_URL = os.getenv("MERCHANT_WEB_URL", "").strip().rstrip("/")
 MERCHANT_WEB_PORT = int(os.getenv("MERCHANT_WEB_PORT", "5174"))
 
+# 购物端（storefront）地址：商家端「切换去商城」的 handoff 落地页由后端拼
+# （/auth/merchant-handoff?token=...），前端不再自己拼 host。开发默认
+# localhost:3000 —— storefront dev server 只绑 ::1/localhost，127.0.0.1 不通。
+STOREFRONT_BASE_URL = (
+    os.getenv("STOREFRONT_BASE_URL", "http://localhost:3000").strip().rstrip("/")
+)
+
+# Crisp 客服消息镜像（需求 18 / 批次 V）：商家端、管理端聊天消息旁路镜像到 Crisp Inbox。
+# 凭据全部留空 = 镜像直接返回 skipped（只写 CrispMirrorLog，不发任何外部请求、不报错）。
+# 优先级：workspace API token > plugin token > website token（同时配置时按此顺序取）。
+# CRISP_API_TOKEN_ID/KEY 是「设定 → 工作区 → 进阶设定 → API 令牌」生成的 identifier + key，
+# 授权头为 Basic base64(identifier:key)；CRISP_API_TIER 对应 X-Crisp-Tier（默认 website）。
+# 注意：官网 token 每日 10,000 次、plugin token 每日 5,000 次，镜像按「一条消息一次 POST」计。
+CRISP_WEBSITE_ID = os.getenv("CRISP_WEBSITE_ID", "").strip()
+CRISP_WEBSITE_TOKEN = os.getenv("CRISP_WEBSITE_TOKEN", "").strip()
+CRISP_PLUGIN_ID = os.getenv("CRISP_PLUGIN_ID", "").strip()
+CRISP_PLUGIN_TOKEN = os.getenv("CRISP_PLUGIN_TOKEN", "").strip()
+CRISP_API_TOKEN_ID = os.getenv("CRISP_API_TOKEN_ID", "").strip()
+CRISP_API_TOKEN_KEY = os.getenv("CRISP_API_TOKEN_KEY", "").strip()
+CRISP_API_TIER = os.getenv("CRISP_API_TIER", "website").strip() or "website"
+
 if APP_ENV not in {"development", "test"}:
     if VERIFICATION_CODE_TEST_MODE:
         raise ImproperlyConfigured("VERIFICATION_CODE_TEST_MODE cannot be enabled outside dev/test")

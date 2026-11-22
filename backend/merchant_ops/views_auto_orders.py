@@ -102,7 +102,13 @@ class AdminAutoOrdersView(OpsAPIView):
                 ) from exc
 
         account = BuyerAccount.objects.filter(public_id=_uuid(payload.get("account_id"), "买家")).first()
-        merchant = Merchant.objects.filter(public_id=_uuid(payload.get("merchant_id"), "商家")).first()
+        # 商家 ID 已改为 MER+6 位数字（不是 UUID），按字符串精确匹配。
+        merchant_id = str(payload.get("merchant_id") or "").strip()
+        if not merchant_id:
+            raise StaffApiError(
+                business_code="ID_INVALID", message="商家 格式不正确。", status_code=400
+            )
+        merchant = Merchant.objects.filter(public_id=merchant_id).first()
         offer = Offer.objects.select_related("sku__spu").filter(
             public_id=_uuid(payload.get("offer_id"), "商品规格")
         ).first()

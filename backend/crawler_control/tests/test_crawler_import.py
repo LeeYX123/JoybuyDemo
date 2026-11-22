@@ -311,6 +311,98 @@ class ProductImportTests(CrawlerControlTestBase):
         self.assertEqual(Merchant.objects.count(), 2)
 
 
+class ImportMerchantLegacyColumnTests(CrawlerControlTestBase):
+    """回归（2026-11-22 08:40 UTC 事故，60 条导入被记成不可重试失败）。
+
+    ``Merchant.public_id`` 由 UUIDField 迁移为 CharField（MER+6 位）后，仍在运行
+    的长生命周期导入进程内存里还是旧模型元数据（UUIDField）；MySQL 后端
+    ``get_db_converters`` 会按 ``UUIDField`` 给该列挂上
+    ``convert_uuidfield_value``，直接 ``uuid.UUID('MER001000')`` →
+    ``ValueError('badly formed hexadecimal UUID string')``，异常在
+    ``import_staging_product`` 建任何对象之前抛出，整条导入被判死。
+
+    导入链路只应 SELECT 自己用到的列：这里把真实 Merchant 模型的 public_id 字段
+    临时伪装成 UUIDField（复刻旧进程元数据），断言商家解析与整条导入都不再因为
+    可选展示列崩溃。
+    """
+
+    def setUp(self):
+        super().setUp()
+        from merchants.services import resolve_import_merchant
+
+        self.mapped = resolve_import_merchant(
+            source_system="joybuy_uk",
+            source_seller_id="seller-legacy",
+            source_name="Legacy Seller",
+        )
+        self.fallback = resolve_import_merchant(
+            source_system="joybuy_uk",
+            source_seller_id=None,
+        )
+
+    def _make_staging(self, source_id: str, seller_id: str):
+        from joybuy_crawler.ingest import ingest_product_payload
+
+        payload = {
+            "source_id": source_id,
+            "title": "Legacy UUID Merchant Probe",
+            "currency": "GBP",
+            "current_price": "9.99",
+            "brand": "Probe",
+            "source_seller_id": seller_id,
+            "source_seller_name": "Legacy Seller" if seller_id else "",
+            "skus": [
+                {
+                    "source_id": f"{source_id}-sku",
+                    "price": "9.99",
+                    "specs": [{"name": "Colour", "value": "Black"}],
+                }
+            ],
+        }
+        return ingest_product_payload(
+            None,
+            payload,
+            source_system="joybuy_uk",
+            source_url=f"https://example.test/dp/{source_id}",
+            parser_version="probe-v1",
+            structure_version=1,
+        )
+
+    def test_import_survives_legacy_uuid_public_id_column(self):
+        from unittest import mock
+
+        from merchants import services as merchant_services
+
+        staging = self._make_staging("legacy-uuid-1", "seller-legacy")
+        public_id_field = Merchant._meta.get_field("public_id")
+        with mock.patch.object(public_id_field, "get_internal_type", return_value="UUIDField"):
+            # 先证明事故机制在本次伪装下真实存在：整行读取会抛 ValueError
+            with self.assertRaises(ValueError) as ctx:
+                Merchant.objects.get(slug=merchant_services.IMPORT_FALLBACK_SLUG, is_system=True)
+            self.assertIn("badly formed hexadecimal UUID string", str(ctx.exception))
+
+            # 已存在的来源商家映射：不得 select_related 整行商家
+            resolved = merchant_services.resolve_import_merchant(
+                source_system="joybuy_uk", source_seller_id="seller-legacy"
+            )
+            self.assertEqual(resolved.pk, self.mapped.pk)
+
+            # fallback 商家（payload 无卖家）：同样只读用到的列
+            fallback = merchant_services.resolve_import_merchant(
+                source_system="joybuy_uk", source_seller_id=""
+            )
+            self.assertEqual(fallback.pk, self.fallback.pk)
+
+            # 整条导入必须成功，而不是在建任何对象前抛 ValueError
+            outcome = import_staging_product(staging, market=self.market, currency=self.currency)
+
+        self.assertTrue(outcome.created_spu)
+        self.assertEqual(len(outcome.offers), 1)
+        self.assertEqual(outcome.offers[0].merchant_id, self.mapped.pk)
+        staging.refresh_from_db()
+        self.assertEqual(staging.status, StagingProduct.Status.IMPORTED)
+
+
 @unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy (parsel) is not installed")
 class SellerNameNormalizationTests(unittest.TestCase):
     def test_store_ui_suffixes_are_stripped_in_both_locales(self):
@@ -459,7 +551,6 @@ class SaleFloorImportTests(CrawlerControlTestBase):
             structure_version=PRODUCT_STRUCTURE_VERSION,
         )
         import_staging_product(staging, market=self.market, currency=self.currency)
-
 
         spu = SpuDetail.objects.get(
             spu__source_identities__source_id="1001",

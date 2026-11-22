@@ -532,3 +532,54 @@ class SupportMessage(models.Model):
         db_table = "support_message"
         ordering = ["created_at", "pk"]
         indexes = [models.Index(fields=["conversation", "created_at"], name="support_msg_conv_idx")]
+
+
+class CrispMirrorSession(models.Model):
+    """本地线程标识 → Crisp conversation session_id 的唯一映射。
+
+    Crisp 建会话接口没有幂等键、也不允许自定义 session_id，重试会产生重复会话，
+    因此必须把首次创建结果落库：同一 ``thread_key`` 的所有消息复用同一个 session。
+    """
+
+    thread_key = models.CharField(max_length=120, unique=True)
+    session_id = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "crisp_mirror_session"
+
+
+class CrispMirrorLog(models.Model):
+    """每条待镜像消息的投递记录（可观测 + 重试入口）。
+
+    ``(thread_key, message_id)`` 唯一：本地消息主键天然幂等，重复触发只会有
+    一条记录；状态为 ``SENT`` 时不再发 HTTP，``FAILED``/``SKIPPED`` 允许重试。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待发送"
+        SKIPPED = "skipped", "未配置跳过"
+        SENT = "sent", "已镜像"
+        FAILED = "failed", "失败"
+
+    thread_key = models.CharField(max_length=120)
+    message_id = models.CharField(max_length=120)
+    sender_kind = models.CharField(max_length=16)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    error = models.TextField(blank=True, default="")
+    attempts = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "crisp_mirror_log"
+        ordering = ["-created_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["thread_key", "message_id"], name="crisp_mirror_log_thread_msg"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["status", "created_at"], name="crisp_mirror_log_status_idx")
+        ]

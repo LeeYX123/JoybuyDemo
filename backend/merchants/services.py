@@ -14,6 +14,27 @@ def get_import_fallback_merchant() -> Merchant:
     return Merchant.objects.get(slug=IMPORT_FALLBACK_SLUG, is_system=True)
 
 
+def _import_merchant_queryset():
+    """爬虫导入链路取商家的查询：只 SELECT 导入端真正用到的列。
+
+    导入端只用 ``merchant.pk``（挂 Offer 外键）和 ``display_name``（身份冲突
+    提示文案），不读 ``public_id``。但历史事故（2026-11-22 08:40 UTC，58 条商品
+    导入整条失败）证明读整行会连带解码可选列：``Merchant.public_id`` 由
+    UUIDField 迁移为 CharField（MER+6 位）后，仍在运行的导入进程内存里还是旧
+    模型元数据（UUIDField），MySQL 后端 ``convert_uuidfield_value`` 会直接
+    ``uuid.UUID('MER001000')`` → ``ValueError('badly formed hexadecimal UUID
+    string')``，异常在 ``import_staging_product`` 建任何对象之前抛出，整条导入
+    被记成不可重试的失败。收窄 SELECT 后，导入不再依赖展示列的存取：一个可选
+    字段的格式/元数据问题不再拖垮整批导入。
+    """
+
+    return Merchant.objects.only("pk", "display_name")
+
+
+def _import_merchant(pk) -> Merchant:
+    return _import_merchant_queryset().get(pk=pk)
+
+
 def _source_merchant_slug(source_system: str, source_seller_id: str) -> str:
     fingerprint = hashlib.sha256(f"{source_system}:{source_seller_id}".encode()).hexdigest()[:24]
     return f"source-{fingerprint}"
@@ -32,16 +53,14 @@ def resolve_import_merchant(
 
     normalized_seller_id = (source_seller_id or "").strip()
     if not normalized_seller_id:
-        return get_import_fallback_merchant()
+        return _import_merchant_queryset().get(slug=IMPORT_FALLBACK_SLUG, is_system=True)
 
-    existing = (
-        MerchantSourceMapping.objects.select_related("merchant")
-        .filter(
-            source_system=normalized_system,
-            source_seller_id=normalized_seller_id,
-        )
-        .first()
-    )
+    # 注意：不要 select_related("merchant")、也不要 existing.merchant——两者都会
+    # SELECT 整行商家并解码 public_id 等展示列（见 _import_merchant_queryset）。
+    existing = MerchantSourceMapping.objects.filter(
+        source_system=normalized_system,
+        source_seller_id=normalized_seller_id,
+    ).first()
     if existing:
         fields = []
         if existing.source_name != source_name.strip():
@@ -53,11 +72,11 @@ def resolve_import_merchant(
         existing.last_seen_at = timezone.now()
         fields.extend(["last_seen_at", "updated_at"])
         existing.save(update_fields=fields)
-        return existing.merchant
+        return _import_merchant(existing.merchant_id)
 
     try:
         with transaction.atomic():
-            merchant, _ = Merchant.objects.get_or_create(
+            merchant, _ = _import_merchant_queryset().get_or_create(
                 slug=_source_merchant_slug(normalized_system, normalized_seller_id),
                 defaults={
                     "display_name": source_name.strip()
@@ -78,14 +97,15 @@ def resolve_import_merchant(
             )
             return merchant
     except IntegrityError:
-        return (
-            MerchantSourceMapping.objects.select_related("merchant")
-            .get(
+        merchant_id = (
+            MerchantSourceMapping.objects.filter(
                 source_system=normalized_system,
                 source_seller_id=normalized_seller_id,
             )
-            .merchant
+            .values_list("merchant_id", flat=True)
+            .get()
         )
+        return _import_merchant(merchant_id)
 
 
 def get_active_membership(*, staff: StaffAccount, merchant: Merchant) -> MerchantMembership | None:
@@ -396,9 +416,8 @@ def touch_merchant_online(merchant: Merchant, *, now=None) -> None:
     from datetime import timedelta
 
     now = now or timezone.now()
-    if (
-        merchant.last_online_at is not None
-        and now - merchant.last_online_at < timedelta(minutes=10)
+    if merchant.last_online_at is not None and now - merchant.last_online_at < timedelta(
+        minutes=10
     ):
         return
     Merchant.objects.filter(pk=merchant.pk).update(last_online_at=now)
@@ -432,9 +451,7 @@ def add_exposure(merchant: Merchant, *, count: int) -> Merchant:
             locked.exposure_delta = 0
         locked.exposure += count
         locked.exposure_delta += count
-        locked.save(
-            update_fields=["exposure", "exposure_delta", "exposure_day", "updated_at"]
-        )
+        locked.save(update_fields=["exposure", "exposure_delta", "exposure_day", "updated_at"])
         _bump_daily_stat(locked, stat_date=today, exposure_delta=count)
         return locked
 

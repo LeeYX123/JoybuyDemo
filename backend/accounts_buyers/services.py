@@ -158,6 +158,61 @@ def create_buyer_session(
     return token, session
 
 
+# --------------------------------------------------------------------------
+# 商家端 → 购物端一次性 handoff（2026-11-22）
+# --------------------------------------------------------------------------
+# 商家端（m.localhost:5174）与购物端（localhost:3000）跨 host：Chromium 会拒绝
+# 从 m.localhost 写入的 Domain=.localhost cookie（localhost 是 public-suffix
+# 特例），所以不能靠共享 cookie 传递登录态。改为商家端换一次性 token，购物端
+# 用自己的同源域名兑换并种 host-only session cookie。
+MERCHANT_HANDOFF_CACHE_PREFIX = "merchant-handoff:"
+MERCHANT_HANDOFF_TTL_SECONDS = 60
+
+
+def issue_merchant_handoff_token(*, buyer_id: str) -> str:
+    """签发一次性 handoff token（60 秒，存 Django cache）。
+
+    只存买家 public_id，不存任何会话/密码信息；兑换成功即删除。
+    """
+
+    token = secrets.token_urlsafe(32)
+    cache.set(
+        f"{MERCHANT_HANDOFF_CACHE_PREFIX}{token}",
+        {"buyer_id": str(buyer_id)},
+        timeout=MERCHANT_HANDOFF_TTL_SECONDS,
+    )
+    return token
+
+
+def consume_merchant_handoff_token(token: str) -> BuyerAccount | None:
+    """兑换并立即删除 token（一次性）。
+
+    不存在 / 已过期 / 已被用过 / cache 不可用 → None（调用方按无效凭证处理）。
+    ``cache.delete`` 的返回值表示「本次请求是否真的删掉了 key」，并发双击时
+    只有一个请求拿到 True，其余一律按无效 token 处理。
+    """
+
+    token = (token or "").strip()
+    if not token:
+        return None
+    key = f"{MERCHANT_HANDOFF_CACHE_PREFIX}{token}"
+    try:
+        payload = cache.get(key)
+    except Exception:  # cache 不可用时降级为「无效凭证」，不把 500 抛给前端
+        return None
+    if not isinstance(payload, dict) or not payload.get("buyer_id"):
+        return None
+    try:
+        if not cache.delete(key):
+            return None
+    except Exception:
+        return None
+    return BuyerAccount.objects.filter(
+        public_id=payload["buyer_id"],
+        status=BuyerAccount.Status.ACTIVE,
+    ).first()
+
+
 def resolve_buyer_session(token: str) -> BuyerSession | None:
     now = timezone.now()
     session = (
@@ -183,6 +238,13 @@ def revoke_buyer_session(session: BuyerSession | None) -> None:
 
 
 def set_buyer_session_cookie(response, token: str) -> None:
+    """写入买家会话 cookie（host-only）。
+
+    不设 ``domain``：cookie 只在收到响应的那个 host 下生效。商家端切换去商城
+    走一次性 handoff token，购物端在自己的域名上兑换时才写 cookie，跨 host
+    共享 cookie 的写法（Domain=.localhost）已确认会被 Chromium 拒绝。
+    """
+
     response.set_cookie(
         key=settings.BUYER_SESSION_COOKIE_NAME,
         value=token,

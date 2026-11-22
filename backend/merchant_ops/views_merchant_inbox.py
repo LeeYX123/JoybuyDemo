@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
 from merchant_ops.api_utils import iso, money_str, paginate
+from merchant_ops.crisp_mirror import queue_support_message_mirror
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import SupportConversation, SupportMessage
 from merchant_ops.views_support import _spu_title
@@ -143,6 +144,8 @@ class MerchantConversationReplyView(MerchantAPIView):
             author_label=request.merchant.display_name,
             text=text,
         )
+        # 批次 V：落库后镜像到 Crisp（事务提交后才发，失败不影响本接口）。
+        queue_support_message_mirror(message)
         conversation.last_message_at = message.created_at
         if conversation.kind == SupportConversation.Kind.PLATFORM_SUPPORT:
             conversation.state = SupportConversation.State.PROCESSING

@@ -2,6 +2,254 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0ay. 修复商品导入 `ValueError('badly formed hexadecimal UUID string')`（2026-11-22，✅ 完成，未 commit）
+
+- **现象**：08:40 UTC 起商品导入批量失败，`failed_import`（runner 只存 `repr(exc)`，无 traceback）→ 属 TERMINAL 不会被重试。累计 **60** 条：shard1 46 / shard2 14；品类分布：电子健康检测 20、印度及南亚食品 14、冷冻肉类与家禽 7、冷冻派对食品 6、智能家居 6、冷冻素食 4、珠宝 2、韩国食品 1。失败记录特征：`skus_parsed=1, mobile_merged=True, variants=0`、`db=None media=None`（导入在创建任何对象前就抛）、`StagingProduct` 仍 PENDING。payload 里没有任何 uuid/guid 字段 → **不是源站脏数据**。
+- **真实根因（不是 payload，也不是数据竞争）**：`Merchant.public_id` 在 **2026-11-22 08:36:10 UTC** 由 `UUIDField` 改成 `CharField(16)`（0at「商家 ID 改 MER+6 位」，`backend/merchants/models.py`），迁移 `merchants.0009_merchant_public_id_mer_format` 于 **08:36:51 UTC** 落库并回填 770 行为 `MER001000…MER001769`。**08:36 之前启动的长生命周期导入进程内存里仍是旧模型元数据（`public_id=UUIDField`）**，MySQL 后端给该列挂 `convert_uuidfield_value`，直接 `uuid.UUID('MER001000')`（**Django 这个转换器没有 try/except**，与 `UUIDField.to_python` 不同，所以抛的是裸 `ValueError` 而不是 `ValidationError`）→ 异常在 `import_services.py:1062 resolve_import_merchant(...)` 处抛出，整条导入判死。
+- **traceback（复刻栈，见 `var/uuid_fix_20261122/repro4.log`；原始进程没存栈）**：
+  ```
+  File "backend/crawler_control/import_services.py", line 1062, in import_staging_product
+      merchant = resolve_import_merchant(
+  File "backend/merchants/services.py", line 37, in resolve_import_merchant      # 旧代码：select_related("merchant")
+      existing = (MerchantSourceMapping.objects.select_related("merchant")...first())
+  File ".../django/db/models/sql/compiler.py", line 1541, in apply_converters
+      value = converter(value, expression, connection)
+  File ".../django/db/backends/mysql/operations.py", line 327, in convert_uuidfield_value
+      value = uuid.UUID(value)
+  ValueError: badly formed hexadecimal UUID string
+  ```
+  复刻方式：把真实 `Merchant.public_id` 字段临时伪装成 `UUIDField`（`mock.patch.object(field, "get_internal_type")`），同一栈与原错误字符串 100% 复现；`DB 真实值 = 'MER001000'`（类型 str）。
+- **为什么「今天才出现」+ 为什么只有一部分商品挂**（证据链，全部来自落盘文件/进程时间，未猜）：
+  1. `backend/merchants/models.py` mtime = 2026-11-22 16:36:10 本地 = **08:36:10 UTC**；`django_migrations` 记录 `merchants.0009` applied_at = **08:36:51 UTC**；首条失败 **08:40:13 UTC**（shard2）/ 08:42:13（shard1）；此前全部 0 条。
+  2. 事故窗口内**每个 stale 进程的导入 100% 失败**（不是 payload 相关）：shard2 自 08:40:13 起直到 10:49 无一条 imported；shard1 08:42:13–09:37:04 全部 failed_import。
+  3. shard2 现进程（pid 38956/31832）**创建于 07:39:02 UTC**（早于迁移）→ 仍在失败；shard1 槽位在 **09:53:37 UTC 被 chain3 重启**（`runner.shard1of3.lock` mtime = 09:53:37 UTC），新进程读到 CharField 元数据 → 09:53:37 起连续 9 条 imported、再 0 条失败；shard0 最后一条 imported 是 08:09:23（早于迁移）→ 0 失败。
+  4. 全库 UUID 列扫描（所有 `UUIDField` 列 × `NOT REGEXP '^[0-9a-fA-F]{32}$'`）= 0 行：只有 `merchant.public_id` 被改成字符型，`MER…` 不在 UUIDField 列里，所以**只有持有旧元数据的进程**会中招。
+- **修复（≤30 行，`backend/merchants/services.py`）**：导入链路取商家时**不再 SELECT 展示列**——新增 `_import_merchant_queryset() = Merchant.objects.only("pk", "display_name")` 与 `_import_merchant(pk)`；`resolve_import_merchant` 三条路径（fallback / 已有映射 / get_or_create）全部改走它，**删掉 `select_related("merchant")` 与 `existing.merchant`**（二者都会 SELECT 整行并解码 `public_id`），`IntegrityError` 回退改 `values_list("merchant_id")`。导入端只用 `merchant.pk` + `display_name`（身份冲突提示），`_validate_offer_identity` 也只比 `merchant.pk`（`offers/services.py:59-67`）。**注意：只对 `resolve_import_merchant` 生效，`get_import_fallback_merchant()` 未改**（其他调用方要用其展示字段）。
+- **回归测试（`backend/crawler_control/tests/test_crawler_import.py::ImportMerchantLegacyColumnTests`）**：把真实 `Merchant.public_id` 字段临时伪装成 `UUIDField` 复刻旧进程元数据，先断言「整行读取必抛 `ValueError('badly formed hexadecimal UUID string')`」（证明复刻有效），再断言已有映射/fallback 两条解析路径正常、**整条 `import_staging_product` 成功**（`status=IMPORTED`）。**已验证反向有效**：把 `services.py` 还原成 HEAD 版本跑该用例 → `FAILED (errors=1)`，错误就是生产那条 ValueError；修复后通过。
+- **验证（按验证纪律仅做针对性验证）**：
+  - `py_compile` 两个改动文件 + `ruff check` / `ruff format --check` → 全过（顺带修正了这 2 个文件里 3 处 HEAD 既有的格式偏差）。
+  - `manage.py test crawler_control.tests.test_crawler_import --keepdb --noinput --parallel 1` → **Ran 16, OK**（含新回归用例）。
+  - `... crawler_control.tests.test_crawler_import_variants` → **Ran 5, OK**；`... crawler_control.tests.test_crawler_quality_gates` → **Ran 13, OK**。
+  - `... merchants.tests.test_merchant_domain` → Ran 13，**1 failure = HEAD 既有 TOTP 过期用例**（`test_merchant_totp_policy_is_enforced_during_staff_login` 断言 403 实得 200，HANDOFF 0at 已记录为既有漂移，与本改动无关）。
+- **追补（失败清单 + 重放）**：
+  - 清单：**`var/uuid_fix_20261122/failed_uuids.json`**（60 条：source_id/品类/分片/账号组/时间/skus/variants，含根因说明；生成脚本 `var/uuid_fix_20261122/collect_failures.py`，`--flip-shards` 可把已结束分片的 `failed_import` 改回合法的可重试状态）。
+  - 已做的可重试化：**shard1（非运行中）46 条** `failed_import → failed_http`（runner 的 `TERMINAL` 不含 `failed_http`，`--retry_failed` 也会重试；`stats.failed` 计数不变，因仍以 `failed` 开头）。**shard2（当时在跑）未动**，只记录清单——其进程内存态会在下次 `Progress.set()` 覆盖文件，等它退出后再处理（`chain3` 对 shard2 槽位 starts 已用尽，退出后不再重启）。
+  - 重放脚本：**`var/uuid_fix_20261122/reimport_failed.py`**（payload 已在 staging，**无需重抓源站**）：`--dry-run / --limit / --shards / --update-progress-shards / --sleep`；`--update-progress-shards N` 只在 `runner.shardNof3.lock` 未被占用时回写（防覆盖在跑进程）。结果落 `var/uuid_fix_20261122/reimport_results.json`。
+  - **实测重放：60 条全部重新导入成功**（`reimport_run.log`：本轮 ok=22 fail=0，其余 38 条在更早的试跑已 IMPORTED；`reimport_results.json` 60 条 unique、staging 全部 IMPORTED）。shard1 的 46 条 progress 已回写 imported（stats imported 369→**415**、failed 56→10）。**shard2 的 14 条 DB 已 IMPORTED、但 progress 文件仍是 failed_import**（在跑进程内存态）→ 等 shard2 进程退出后执行一次：`python var/uuid_fix_20261122/reimport_failed.py --shards 2 --update-progress-shards 2`（幂等，已 IMPORTED 会跳过，只回写 progress）。
+- **当前环境状态（勿误判）**：**shard2 的 stale 进程（07:39 UTC 启动）仍在按旧代码跑，它的新失败仍会是同一条 ValueError** —— 这是进程级问题，代码修复只对**新进程**生效；不要为救它去 kill 分片（铁律 + chain3/watchdog 在盯）。它退出后 chain3 会走阶段 2/finale。**后端 8000 未重启**（本次改的是导入服务，不影响接口；但若要让 admin 侧导入串也用新代码，重启 runserver 即可）。
+- **坑（不得再踩）**：
+  1. **改模型字段类型（尤其 UUIDField）必须意识到长生命周期导入进程持有旧元数据**：迁移后这些进程会继续按旧类型解码新列值，Django MySQL 的 `convert_uuidfield_value` 无 try/except，抛的是裸 `ValueError`。要么先停批再迁移，要么让**热路径只 SELECT 真正用到的列**（本次修法）。
+  2. 排查这类错误先看 `django_migrations.applied` 与进程创建时间：`Get-CimInstance Win32_Process` 的 CreationDate 是**本地时间（UTC+8）**，别把 15:39 当 15:39 UTC。
+  3. **导入链路上的 `select_related("merchant")` / `existing.merchant` 是事故点**，新增导入相关查询不要整行取商家。
+  4. runner 之前只存 `repr(exc)` 导致无栈可看；已在 `var/recrawl_local_20261122/recrawl_runner.py` 的 import 异常分支补 `rec["import_traceback"] = traceback.format_exc()[-4000:]`（var 脚本，不影响在跑进程，重启后生效）。
+  5. 不要用「同一个 payload 现在能导入」来否定事故：stale 进程里必然失败、新进程里必然成功，**必须按进程/时间切片看 progress**。
+
+## 0ax. 批次 V（2026-11-22 Crisp 消息镜像，✅ 代码 + 真实令牌端到端实测通过，未 commit）
+
+- **范围**：只做「商家 ↔ 系统客服」镜像（需求 18，用户拍板）。用户 ↔ 系统客服直接复用商城 Crisp 挂件（原生会话，前端未动）；用户 ↔ 商家不做。
+- **实现要点**
+  1. **服务** `backend/merchant_ops/crisp_mirror.py`：`mirror_message(thread_key, sender_kind, sender_name, body, occurred_at, message_id)` 返回 `{"status": skipped|sent|failed|duplicate, session_id, error}`。未配置 → `skipped`（仍写一条 `CrispMirrorLog`，零 HTTP、无 error 日志）。
+  2. **会话标识**：`thread_key = f"merchant:{Merchant.public_id}"`，**商家与平台两侧共用**（管理端若按 `admin:{staff_id}` 会把回复拆到另一个 Crisp 会话）。只镜像 `SupportConversation.kind=PLATFORM_SUPPORT`；`BUYER` 会话直接跳过。
+  3. **建会话**：首次 `POST /website/{id}/conversation` → 立刻落库 `CrispMirrorSession(thread_key unique → session_id)` → 发一条 `from=user` 的 "Conversation started"（先落库再发首消息，避免首消息失败后重试又建重复会话）；Crisp 无幂等/无自定义 sid。
+  4. **消息体**：`merchant` → `from=operator` + `[商家] {display_name}: {body}`；`platform` → `from=operator` + `[平台]: {body}`；`user` → `from=user` + `user.nickname`。均带 `origin=chat`、`timestamp`（毫秒）、`fingerprint = f"{thread_key}:{message_id}"`。
+  5. **幂等**：`CrispMirrorLog` 唯一约束 `(thread_key, message_id)`（message_id=本地 `SupportMessage.pk`）；已 `sent` 直接返回 `duplicate` 不发 HTTP；`skipped`/`failed` 允许重试补发。
+  6. **降级**：HTTP 用**标准库 urllib**（`requests` 不在 `backend/requirements/`），超时 5s、最多 2 次尝试（0.5s 退避）；任何失败只写 `CrispMirrorLog(status=failed, error, attempts)` + warning，不抛给接口。`transaction.on_commit` 内还有兜底 try/except。
+  7. **触发点**：`views_merchant_inbox.MerchantConversationReplyView.post`、`views_support.AdminSupportConversationDetailView.post(action=reply)` 落库后 `queue_support_message_mirror(message)`（on_commit；前端零改动）。
+  8. **配置**：settings 新增 `CRISP_WEBSITE_ID/CRISP_WEBSITE_TOKEN/CRISP_PLUGIN_ID/CRISP_PLUGIN_TOKEN`（env，默认空）；两者都配时优先 plugin token（`X-Crisp-Tier: plugin`）。
+- **改动文件**：`backend/merchant_ops/crisp_mirror.py`(新)、`backend/merchant_ops/models.py`(新增 `CrispMirrorSession`/`CrispMirrorLog`)、`backend/merchant_ops/migrations/0003_crisp_mirror.py`(新)、`backend/merchant_ops/views_merchant_inbox.py`、`backend/merchant_ops/views_support.py`、`backend/config/settings.py`、`.env.example`、`backend/merchant_ops/management/commands/crisp_mirror_check.py`(新；仓库无 `backend/management/` 包，命令放在 app 下)、`backend/merchant_ops/tests/test_crisp_mirror.py`(新)。
+- **验证（按验证纪律仅做针对性验证）**
+  - `manage.py test merchant_ops.tests.test_crisp_mirror --keepdb --noinput --parallel 1` → **Ran 18 tests, OK**（未配置零 HTTP、首建会话顺序、merchant/platform/user 消息体、同 message_id 只发一次、skipped 后补发、HTTP 500/超时降级、on_commit 提交才发/回滚不发、BUYER 不镜像、两端真实接口接线、管理端与商家共用会话、命令输出）。
+  - 受影响既有用例：`merchant_ops.tests.test_admin_round2.SupportApiTests` + `test_merchant_modules.InboxTests` → **Ran 10 tests, OK**。
+  - `ruff check` 8 个改动 py 文件 → **All checks passed!**；`makemigrations --check --dry-run` → **No changes detected**（0003 已 apply 到开发库）。
+  - `manage.py crisp_mirror_check` 无 token → 输出「未配置，跳过镜像…缺少 CRISP_WEBSITE_ID, CRISP_WEBSITE_TOKEN 或 …」。
+  - 真实 :8000 实测（临时数据脚本 `var/_crisp_mirror_20261122/{live_check.py,cleanup.py}`）：商家端 `POST /api/v1/merchant/conversations/{id}/messages` → **201**，`CrispMirrorLog` 记 `sender_kind=merchant,status=skipped,attempts=0`；管理端 `POST /api/v1/admin/support/conversations/{id}` (reply) → **201**，记 `sender_kind=platform,status=skipped`。清理后 merchant/staff/conversation/log/role **全部 0**。**未改任何前端文件，页面交互不变**。
+- **真实令牌联调结果（2026-11-22，✅ 2xx + 端到端双向已实测）**
+  - **配置**：`.env` 新增 `CRISP_API_TOKEN_ID`（前缀 `5b2a…`，36 chars）/`CRISP_API_TOKEN_KEY`/`CRISP_API_TIER=website`，并补上原先缺失的后端 `CRISP_WEBSITE_ID=4c57…`（之前只有 `NUXT_PUBLIC_CRISP_WEBSITE_ID`，后端 `is_configured()` 一直为假）。`MEDIA_BACKEND=local` 未动。**令牌明文不落任何代码/文档。**
+  - **代码**：`settings` 新增三项（tier 默认 `website`）；`crisp_config()`/`is_configured()`/`_credentials()` 支持 API token，优先级 **API token > plugin > website**；`_http_post` 的 `X-Crisp-Tier` 用 `CRISP_API_TIER`（API token 生效时）。`crisp_mirror_check` 输出新增三项且只打印 identifier 前 4 位。
+  - **实测鉴权方式**：`Authorization: Basic base64(identifier:key)` + `X-Crisp-Tier: website` → **直接可用，无 401/403**，不需要退化方案（Bearer/去 tier 均未用）。
+  - **`--send-test` 真实结果**：首次 **HTTP 400** `{"error":true,"reason":"invalid_data","data":{"namespace":"data","message":"data.fingerprint should be number"}}` —— Crisp 要求 `fingerprint` 是 **number**，原实现发 `thread_key:message_id` 字符串。已改为 `int(sha256(f"{thread_key}:{message_id}").hexdigest()[:12], 16)`（稳定 48bit，<2^53）；重跑 → `{'status': 'sent', 'session_id': 'session_ee9c19e2-b58a-4cbb-9bb8-cbda67bbf7ee'}`。
+  - **副作用修复**：开场消息「Conversation started」原先不带时间戳，落库时间晚于正式首条消息 → Inbox 预览显示开场语。现给开场消息 `timestamp = occurred_at - 1000ms`（`ensure_session(..., occurred_at=)`）。
+  - **端到端实测（真实 :8000 → 真实 Crisp）**：临时商家 `crisp-live-shop`（MER001775）商家端 `POST /api/v1/merchant/conversations/{id}/messages` → **201**，`CrispMirrorLog` `sender_kind=merchant,status=sent,attempts=1`；管理端 `POST /api/v1/admin/support/conversations/{id}` reply → **201**，`sender_kind=platform,status=sent`，**复用同一 Crisp 会话**。Crisp 侧 `GET .../conversation/{session}/messages` **HTTP 200** 读到 3 条（时间升序）：
+    1. `from=user` `Conversation started`（nickname 镜像验收店）
+    2. `from=operator` `[商家] 镜像验收店: 批次 V 真实令牌联调：请确认商家可以开专票（live-check-20261122）`
+    3. `from=operator` `[平台]: 平台已收到，稍后为你处理（live-check-20261122）`
+    Crisp `session_id = session_2c668f1d-20f3-4b9d-9c79-68e64cd4f284`（`thread_key=merchant:MER001775`）。
+  - **针对性验证（按验证纪律）**：`manage.py test merchant_ops.tests.test_crisp_mirror --keepdb --noinput --parallel 1` → **Ran 23 tests, OK**（原 18 + 5 新：API token 单独可用/优先级高于 plugin 与 website/tier 取自 settings/Authorization 为 identifier:key 的 Basic/401 响应体进 error 文案）；`ruff check` 4 个改动 py → **All checks passed!**。
+  - **清理**：`var/_crisp_live_20261122/cleanup.py` 删除临时商家/会员/客服账号/session/会话/消息/镜像日志与映射/`diag:*` 记录 → leftover 全 0。**Crisp 侧会话刻意保留**（供用户在 Inbox 肉眼确认，见下）；`session_ee9c19e2…` 为 `diag:crisp-check` 自检会话，`session_4ad093aa…` 为修复前首轮会话，均可归档/删除。
+  - **用户如何确认**：Crisp 后台 → Inbox → 找昵称「镜像验收店」的会话（session `2c668f1d…`）→ 应看到上述三条，且首条之后是 `[商家]` 与 `[平台]` 前缀；`diag:crisp-check` 会话昵称为「系统客服」。**以下需人眼确认、代码无法代验**：Inbox 列表预览、operator 显示名（当前为 token 所属账号 `Joybuy`）、通知/未读状态、免费计划是否限制会话可见。
+  - **调试坑（新）**：①`fingerprint` 必须 number，字符串 400；②`_http_post` 现在会把错误响应体截 300 字带进 `CrispMirrorError` 文案，排 401/403 直接看日志；③Windows Git Bash 里 python print 中文偶发 GBK 乱码，**不代表 DB 存错**，用 `ascii()` 核对；④后端 keepalive PID 每次 kill 后会变（当前 **5580**）。
+- **未实测/风险（2026-11-22 更新）**：`POST /conversation` 无 body 已实测 2xx；`from=operator` 在 Crisp 侧显示名为 token 所属账号 `Joybuy`（不是商家名，身份靠正文前缀）；免费/付费计划的 note/participant 差异仍未验证；真实 email 可能触发 Crisp 外发邮件（本实现不写 email，只写 nickname）；每日配额 website 1 万 / plugin 5 千次。**只做了开发库实测，生产需在部署环境配同一组 env 并重启。**
+- **坑（本轮新踩）**
+  1. 后端是 `runserver --noreload`（keepalive 托管）：改 models/settings/views 后**必须 kill 监听 8000 的 PID 让 keepalive 重启**，否则新代码不生效（曾出现接口 201 但 `CrispMirrorLog` 为空）。当前 PID 20692。
+  2. staff 会话的 POST 受 CSRF 保护：curl/脚本要同时带 `Cookie: joybuy_staff_session=…; csrftoken=<32位>` 与 `X-CSRFToken: <同值>`，否则 403「CSRF cookie not set」。
+  3. 镜像 Status 存小写 `pending/skipped/sent/failed`（与需求 18.3 的 `status=failed` 口径一致），不是大写枚举。
+  4. `CrispMirrorLog` 未配置也会写一行 `skipped`：这是可观测要求，且 `skipped` 可重试，配置补齐后同一 message_id 会补发，不要把它当终态。
+
+## 0aw. Crisp 集成技术调研（2026-11-22，✅ 调研完成，只读，未 commit）
+
+- **任务**：调研 Crisp 能否作为「用户↔商家 / 商家↔系统客服 / 用户↔系统客服」三条链路的旁路工作台。**只调研：未写业务代码、未改配置、未 commit。**
+- **产出**：`var/crisp_integration_research_20261122/research.md`（能力矩阵、三条链路可行性、架构 A/B、可复用代码清单、风险、待实测清单）。
+- **核心结论**：
+  1. Crisp **支持服务端代访客发消息**：`POST /v1/website/{id}/conversation/{sid}/message` 的 `from` 可取 `user`（并可用 `user.nickname/avatar`、`timestamp` 毫秒、`fingerprint`）；创建会话 `POST /conversation` 后必须发一条 `from=user` 才进 Inbox。官方 `crisp-import-conversations` 工具即按此模式导入，属官方路径。
+  2. **operator 身份不可按消息指定**：`from=operator` 没有 operator_id/nickname 字段，实际显示为 token 所属客服；商家回复无法显示为商家名。
+  3. Crisp 会话模型是「1 访客 + N operator」，**不是访客↔访客 IM**，因此「用户↔商家」镜像只能把商家表示为 operator（内容前缀）、付费版 note（Free 不支持 note）、或 participant（Free 最多 1 个额外 participant）。
+  4. 推荐**架构 B：自有 `SupportConversation`/`SupportMessage` 为主 + Crisp 旁路镜像**；架构 A（Crisp 为主）覆盖不了用户↔商家，除非给每个商家买 operator 席位。
+  5. 免费版：2 席位、无 AI credits、100 profiles；定价页把 Developer APIs 列在 Free，但官方未明确声明 REST API 含在 Free，**必须用真实 workspace 实测**；website token 10,000 请求/天、plugin token 5,000/天；Identity Verification 需 Mini+。
+  6. 风险：website webhook 不签名且失败不重试（plugin hook 才 HMAC 签名+重试）；创建会话无幂等/无自定义 session_id；真实 email 可能触发 Crisp 外发邮件（导入前需关闭 outgoing emails）；API 注入消息也会触发 webhook，需 fingerprint 去重。
+- **现有代码**：商家端 `MessagesView.vue` + `folio/api.js`、管理端 `SupportView.vue`、后端 `views_merchant_inbox.py`/`views_support.py`、模型 `SupportConversation/SupportMessage` 均为真实 API，可直接复用；**买家端没有任何会话 API/UI**，商城只有未接线的 CustomerServicePage“Online chat”按钮和只注入脚本的 `plugins/crisp.client.js`。
+- **验证（按验证纪律仅做针对性验证）**：本任务为文档调研，**未运行代码/测试**；Crisp 侧结论均来自官方文档与官方导入工具 README，未在真实 workspace 发请求，待实测项见 research.md 第 6 节。
+
+## 0au. 修复「申请店铺上传 logo 仍提示请上传店铺logo」（2026-11-22，✅ 完成，未 commit）
+
+- **现象**：`/account/apply-shop` 选图后 `POST /api/v1/account/merchant-application/media` 返回 500，页面提示【请上传店铺logo】。
+- **根因（不是代码 bug）**：根 `.env` 被写成 `MEDIA_BACKEND=s3`（17:06 改 Crisp 时整文件覆写遗留），后端 17:18 重启后按 s3 跑；AWS 账户仍封禁/本机凭证失效，`storage.store_file_bytes` 走 S3 分支抛未捕获异常 → 500。真实栈（`var/logs/backend.log` 09:37:49 那行 ERROR 的 `exception` 字段，关键三行）：
+  ```
+  File "backend/media/storage.py", line 215, in store_bytes
+    store_file_bytes(relative_path, data, content_type=normalized_mime)
+  File "backend/media/storage.py", line 97, in store_file_bytes
+    get_s3_client().put_object(
+  botocore.exceptions.ClientError: An error occurred (InvalidAccessKeyId) when calling the PutObject operation
+  ```
+  迷惑点：同一页面前一次上传返回过 201——内容寻址去重命中已有 sha256 时不写后端，**201 不代表 S3 正常**。
+- **改动**：只改 `.env`：`MEDIA_BACKEND=s3` → `MEDIA_BACKEND=local`（保留 `MEDIA_S3_*` 四行与 S3 凭证不动，仅加注释「AWS 封禁期间本地存储，恢复前勿改回 s3」）。`backend/media/uploads.py`、`media/storage.py`、`views_shop_application.py`、`storefront/pages/account/apply-shop.vue` **均无需改**：前端上传逻辑本来就把 `response.media.url` 写进 `logoUrl` 并清 `fieldErrors.logo`、预览用本地 blob。
+- **生效动作**：settings 只在进程启动读 env → `taskkill //F //PID 58464`，keepalive（`var/run_backend_keepalive.sh`，PID 42196）自动拉起新 runserver **PID 52556**，`:8000` 200。
+- **验证（按验证纪律仅做针对性验证）**：
+  - 进程内探针 `store_upload(purpose='shop_application')`：`MEDIA_BACKEND=local`，返回 `/media/merchants/original/89/53/....png`。
+  - curl 完整链路（临时买家 + `create_buyer_session` → GET session 取 csrftoken → multipart POST）：**201** `{"media":{"url":"/media/merchants/original/fd/ee/....png",...}}`；该 url `GET` → **200** `image/png` 185 bytes。
+  - Playwright（脚本 `var/_fix_apply_shop_20261122/e2e_apply_shop.mjs`）真实 `setInputFiles` 两图：两次 media POST **201/201**、logo 预览可见、`.shop-apply__error[role=alert]` 上传后/提交后均为 `[]`（**无「请上传店铺logo」**）、提交 `POST /api/v1/account/merchant-application` **201 PENDING**、待审面板可见、console error **0**；截图 `var/_fix_apply_shop_20261122/apply-shop-after-upload.png`。
+  - `manage.py test merchant_ops.tests.test_merchant_application --keepdb --noinput --parallel 1` → **Ran 32 tests, OK**。
+  - `ruff check backend/merchant_ops/views_shop_application.py backend/media/uploads.py backend/media/storage.py` → **All checks passed!**
+  - 清理（`var/_fix_apply_shop_20261122/cleanup_temp.py`）：MerchantApplication 1 / BuyerSession 1 / BuyerAccount 1 / MediaAsset 3（含探针图）+ 磁盘文件 3 全删；复核 buyer_left=0、assets_left=0、files_still_on_disk=0。
+- **坑（不得再踩）**：
+  1. **AWS 未恢复前根 `.env` 必须是 `MEDIA_BACKEND=local`**；`.env` 不在 git 里，其他批次改 `.env`（如加 Crisp）很容易整文件覆写把 s3 带回来。遇到上传 500 先看 `.env` 与 `var/logs/backend.log` 的 ERROR `exception`，不要先怀疑 Pillow/目录权限。
+  2. 改完 `.env` 必须重启 runserver（settings 启动时只读一次）；正确姿势是 kill 监听 8000 的 PID 让 keepalive 重启，**不要**再手工起一个带 env 前缀的 runserver（会与 keepalive 抢端口/双进程）。
+  3. Playwright 点提交别用 `button[type=submit]`（页头搜索按钮也匹配，strict mode 报 2 个）；用 `form button.base-button[type=submit]`。
+  4. 买家侧上传的 CSRF 需要同一 Cookie 头里同时带 `joybuy_buyer_session` 与 `csrftoken`；curl 同时用 `-b jar` 再手写 `Cookie:` 会被 Django 只取到一个头导致 401。
+
+## 0av. 手机版列表改服务端逐页拉取 + 翻译任务暂停（2026-11-22，✅ 分页完成 / ⏸ 翻译暂停，未 commit）
+
+- **任务**：用户两项要求——①全量英文翻译；②改造静态稿数据槽为逐页拉取。**串行执行**（文件重叠，且并行曾触发配额上限）。**②已完成，①被用户中途叫停（暂停，未完成）**。
+- **② 服务端分页（✅ 完成）**：渲染仍是静态稿原码，只改数据槽/取数/接线与必要 CSS（未改模板结构/文案/未引入 Vue）。
+  - 后端契约：所有列表共用 `merchant_ops/api_utils.paginate()`，响应统一 `items/page/page_size/total/has_next`；`catalog/products`（page/page_size/q/category）、`listings`（+status）、`orders`（+status/q/start/end，含 `counts`）、`wallet/entries`（+kind/start/end）、`after-sales`/`notifications`/`activities`/`deposit`/`withdrawals` 均支持；**`conversations` 只有 `total`**（无 page/has_next）。
+  - 改动：`api.js`（`PAGE_SIZE/ORDERS_PAGE_SIZE=8`；新增 `catalogPage/listingsPage/ordersPage/entriesPage` + `loadCatalogPage/loadListingsPage/loadOrdersPage/loadEntriesPage`（页码越界回夹、筛选下推、失败 toast、加载态禁用）；`rebuildProducts()` 重建当前页 products/orders/listed；`syncRouteData()`+render 包装（筛选变化回第 1 页、纯翻页保页码、写后 stale 补拉**跟随当前 UI 筛选**）；发货/上架/提现只刷新受影响当前页；深链订单用 `q=<id>` 定位；`allFundRows`=当前页含 WITHDRAWAL 行）；`base-3.js`（shop/catalogue 用服务端 `total` 与页码；`orderPage` 直出当前页并新增同款分页器〔**本轮唯一新增结构**，静态稿原本无〕；钱包明细改 entries 单源〔WITHDRAWAL 行=提现申请〕；`pagerClass` 4 位页码紧凑类）；`merchant-mobile.js`（店铺商品也走服务端筛选、订单徽标用 `counts.pending`、钱包页码用 `walletPages`）；`joyplay-concepts.css`（分页按钮 nowrap + `.pagination-wide`）。
+  - 实测：上架中心真实 **8353 件** → `共 8353 件`、分页器 `1 2 3 4 5 … 1045` 单行、第 3 页/末页请求与内容正确、搜索回第 1 页；店铺商品 40→41 件翻页带筛选；订单 status=PENDING 10 条 2 页、日期筛选、**发货后当前页刷新且徽标 10→9**；钱包 5 页 + kind 下推 + 提现行可开明细；筛选态上架后重拉 `page=1&category=ELECTRONICS` 且页码不跳；失败 toast + 可重试、加载中分页全禁用；console error 0。截图 `var/mobile_paging_20261122/`。
+  - **未改造**：售后/通知/活动/保证金明细（后端支持分页但静态稿无分页器，保持首屏 50 条）；会话（响应无 page 字段）；订单 CSV 导出仍只导当前页；钱包提现单明细依赖 `withdrawals?page_size=100`。
+- **① 全量英文翻译（⏸ 暂停，未接线，不可当作已完成）**：用户中途叫停。停止时的状态：
+  - 已产出 **未接线的半成品**：`src/folio/i18n.js`（227 行：localize 引擎 + MutationObserver 自动重跑 + 中英双向，语法完整）+ `src/folio/locale-en.js`（910 行/692 条中文→英文字典，结构完整含 `translateEn` 导出）。**两者没有任何文件引用**（boot.js / mobile.html / merchant-mobile.js 均未接线），因此对运行零影响；`vite build` 通过（427ms），未进 dist。
+  - 盘点产物（有复用价值）：`var/mobile_i18n_20261122/`——`coverage_before.json`、`collect_inventory.mjs`、`_labels_missing.txt`、`_static_candidates.txt`、`_static_missing.txt`、`zh_*.png` 各页中文截图。
+  - **恢复路径**：①接线（boot 启动 `startAutoLocalize()`；语言 sheet 回调 `setLang+localize`）；②补齐覆盖率到英文 UI 0 中文残留（用户数据除外）+ 中英双向校验；③英文变长后的 375/390/430 布局修正；④11 route + 全弹层截图验收。
+  - 临时数据已核：无 i18n 临时账号/买家/店铺残留（0/0/0），`merchant-2` 演示店仍在。
+
+## 0at. 商家 ID 改 MER+6 位 + 手机版第 3 轮 5 项调整（2026-11-22，✅ 完成，未 commit）
+
+- **商家 ID 格式**：`Merchant.public_id` 从 UUIDField 改为 `CharField(16)`，格式 **`MER`+6 位数字，从 001000 起顺序编号**（用户原话「随机数字」按顺序编号实现，天然唯一无碰撞）。生成在 `merchants/models.py` 的 `Merchant.save()`：事务内 `select_for_update` 取 max+1，唯一冲突重试 5 次，覆盖 create_merchant/get_or_create/直接 create 全部路径。迁移 `merchants/0009_merchant_public_id_mer_format`（临时列→按 pk 升序回填→删旧列→rename→unique，MySQL 不能直接 Alter 截断）。**dev 回填 770 条**：MER001000（pk1 自营导入）… MER001769（pk810 RONMAR）；HOMCOM=MER001001、CHiQ=MER001007、**merchant-2「测试商家」=MER001762**；COUNT(*)=COUNT(DISTINCT)=770。`MerchantMembership.public_id` 等其他 UUID 字段**未改**。
+  - **连带改动（坑）**：商家 ID 不只出现在 `/admin/merchants/*`——`/admin/deposits/{id}/*` 与 `/admin/growth/{id}/actions` 的路径参数也是商家 ID，三处 `<uuid:public_id>` 全改 `<str:public_id>`；`views_catalog` 商家筛选与 `views_auto_orders.merchant_id` 原本按 UUID 解析，改为字符串匹配。前端 `ActivitiesView.vue:216`、`MerchantsView.vue:232` 有 `slice(0,8)` 截断展示（会显示 MER00176 这类 8 字符短串，非解析、功能无碍，未改）。
+  - 测试：`merchants.tests.test_merchant_public_id`（5 例：格式/递增/直连 create/显式 ID/重复拒绝/回填算法）+ 原有商家/申请流程 83 例（1 failure 为 HEAD 既有过期 TOTP 用例）；`test_admin_commerce` 56 全过；ruff 9 文件全过。
+- **手机版第 3 轮 5 项**（`merchant-web/mobile.html` + `src/folio/`，**仍是静态稿原码直 copy 原则**，只动数据槽位/接线/点名调整）：
+  1. **头部右上角**：恢复【切换去商城】（真实接线见 0as-2）+ 【中文】语言按钮（sheet 中文/English，选中持久化 `localStorage['joybuy.merchant.language']`，**只存偏好不翻译文案**——全量 EN 翻译待用户拍板）；**删除【退出】**；多店 select 保留并收窄（96/76px）。375/390/430 单行不溢出。`openOptionSheet` 增加显式 `dismiss()`（Chromium 里 `dialog.close()` 不派发 close 事件，原逻辑会残留不可见 sheet）。
+  2. **经营面板 4 格均分一行**：`joyplay-concepts.css` 238-249 `/* JOYBUY-DEV OVERRIDE */` 覆盖 `.work-grid` 为 `repeat(4,minmax(0,1fr))`（原 folio 是 3 列+1.65fr），数字 17px nowrap、环比改单列；375/390/430 实测等宽 82.31/85.75/95.75px、零溢出。
+  3. **删除「交互原型 · 示例数据」**：全 route 壳级 bottomnote 全局删除（base-2 + base-4 补插节点）；顺带把钱包密码弹层「本地交互原型/演示密码」、客服「消息仅保存在本地」两处假文案改真实口径。
+  4. **上架中心分页窗口化**：`base-3.js:67 pageWindow()`——≤7 页全显，否则首末页 + 当前 ±2 + 省略号；69/71 两处使用（**上架中心与店铺商品共用**）；CSS 固定单行 nowrap。14 页实测 `1 2 3 4 5 … 14` / `1 … 3 4 5 6 7 … 14` / `1 … 10 11 12 13 14`。
+  5. **数据交互审计补齐**：上架中心 q/category 改走服务端 `/merchant/catalog/products?q=&category=`；恢复订单搜索+下单日期区间（原先被 improveOrders 整块删掉）；修复推荐返佣 undefined 行（映射 referrals/commissions、PENDING_PAY→待发放）；提现草稿补 frozen、todayProfit 改用 `overview.stats.shipping_profit_today`；已接真实数据的 12 类交互抽验通过；演示面板（#platform-admin 守卫内）与假凭证/假费率入口确认不可达/已移除。
+- **验证（按验证纪律仅针对性验证）**：`npx vite build`（多入口）通过；根仓 eslint 我方 3 个 JS 文件 0 error（base 原码副本不计）；移动 route 0-10 + 桌面 1366 三页回归；console error 0（临时收集器已移除）；截图 `var/mobile_copy2_20261122/`；临时数据 ALL CLEAN 且 **`[demo]` 黑五活动 count=1**（cleanup 已改为按 merchant_id 删参与、绝不按标题删活动）、123456@joybuy.com 只读。
+- **遗留**：①语言切换不翻译文案；②上架中心仍是「单次查询前 100 件+本地分页」（后端 page_size 上限 100，真正逐页服务端翻页需改数据槽）；③本地 S3 凭证无效（`/merchant/media` 500 InvalidAccessKeyId）→ 头像/售后凭证上传无法验收；④移动端钱包不展示冻结金额/今日收益统计卡（数据层已备好真实字段，仅未渲染）。
+
+## 0as-2. 商家端「切换去商城」改为一次性 handoff token（2026-11-22，✅ 完成，两 host 浏览器实测通过，未 commit）
+
+- **任务/根因**：上一版 `POST /api/v1/merchant/switch-to-mall` 直接给 `joybuy_buyer_session` 写 `Domain=.localhost`，让 storefront(localhost:3000) 共享登录态。**实测失败**：Chromium 拒绝从 `m.localhost:5174` 写入 `Domain=.localhost` 的 cookie（localhost 是 public-suffix 特例），只有从 `localhost:5174` 打开手机版才生效；用户常用 `http://m.localhost:5174/mobile.html`，必须修。
+- **新方案（已生效）**：商家端换 **60 秒一次性 handoff token** → 跳 storefront 专用接入页 → storefront 用自己的同源 host 兑换并写 **host-only** session cookie（同源写入永远可靠）。跨 host 写 cookie 的代码路径已彻底删除。
+- **改动文件（逐项）**：
+  - `backend/accounts_buyers/services.py`：新增 `MERCHANT_HANDOFF_CACHE_PREFIX` / `MERCHANT_HANDOFF_TTL_SECONDS=60`、`issue_merchant_handoff_token(buyer_id=...)`（`secrets.token_urlsafe(32)` → `cache.set("merchant-handoff:<token>", {"buyer_id": str(public_id)}, 60)`）、`consume_merchant_handoff_token(token)`（get → **`cache.delete` 返回值为 True 才算本次消费成功** → 查 ACTIVE buyer；cache 异常按无效凭证返回 None）。`set_buyer_session_cookie()` **删除 `domain` 参数**，现在只写 host-only。
+  - `backend/merchant_ops/views_switch_mall.py`：保留 staff 会话校验（401 `MERCHANT_AUTH_REQUIRED`）、空邮箱 400 `STAFF_EMAIL_REQUIRED`、按 email 查/建 BuyerAccount、复制 staff 密码哈希（并发 IntegrityError 复用）；**不再 create_buyer_session / 不再 Set-Cookie**；返回 `{"handoff_token", "redirect_url"}`，redirect_url 由后端用 `settings.STOREFRONT_BASE_URL` 拼 `/auth/merchant-handoff?token=...`。
+  - `backend/config/settings.py`：新增 `STOREFRONT_BASE_URL`（env，默认 `http://localhost:3000`，去尾部 `/`）；`.env.example` 同步说明（生产必须改成正式商城域名）。
+  - `backend/accounts_buyers/views.py` + `urls.py`：新增 `BuyerMerchantHandoffView` → `POST /api/v1/auth/buyer/merchant-handoff`。**CSRF 选择**：继承 `BuyerCsrfAPIView`（`ensure_csrf_cookie` + `csrf_protect`），与现有 buyer login/register 完全同款——storefront 先 GET `/api/v1/auth/buyer/session` 拿 csrftoken，再带 `X-CSRFToken` POST；不额外用 csrf_exempt。校验 token → 失败 400 `HANDOFF_TOKEN_INVALID`（message「登录凭证已过期，请从商家端重新进入」）→ 成功 `create_buyer_session` + host-only cookie + 返回 `{"email"}`。
+  - `backend/merchant_ops/tests/test_switch_to_mall.py`：重写为 handoff 契约（14 用例，见验证）。
+  - `storefront/pages/auth/merchant-handoff.vue`（新页，客户端 onMounted 兑换，无登录守卫）：成功 toast + `navigateTo('/account')`；失败显示双语文案 + 「返回登录」；`data-testid="merchant-handoff-error"` 便于测试。
+  - `storefront/composables/useBuyerAuth.js`：新增 `exchangeMerchantHandoff(token)`，复用 `post()` 的「先 GET session 取 CSRF → POST → refresh」链路。
+  - `storefront/locales/messages.js`：只加 en/zh 成对键 `auth.handoff.{title,processing,success,invalid,generic,backToLogin}`（de/fr/nl 自动回退英文；**用精确 Edit，未重写整文件**）。
+  - `merchant-web/src/folio/api.js`：`switchToMall` 改为 `const payload = await merchantWrite(...); window.location.href = payload.redirect_url || STOREFRONT_URL`；`STOREFRONT_URL` 只作响应缺字段时兜底，注释已更新。错误 toast 逻辑（`merchant-mobile.js`）不变。
+- **接口契约**：
+  - `POST /api/v1/merchant/switch-to-mall`（需 staff 会话；body `{}`）→ 200 `{"handoff_token": "<43 字符 urlsafe>", "redirect_url": "http://localhost:3000/auth/merchant-handoff?token=<token>"}`；401 `MERCHANT_AUTH_REQUIRED`；400 `STAFF_EMAIL_REQUIRED`。**响应不再带 Set-Cookie，也不再返回 email/created**。
+  - `POST /api/v1/auth/buyer/merchant-handoff`（无需登录；body `{"token": "..."}`）→ 200 `{"email": "..."}` + `Set-Cookie: joybuy_buyer_session=...; Path=/; HttpOnly; SameSite=Lax`（无 Domain）；400 `HANDOFF_TOKEN_INVALID`。
+  - **token 生命周期**：签发即写 redis（Django cache，KEY_PREFIX 之外的真实 key 形如 `joybuy:1:merchant-handoff:<token>`），TTL 60 秒；兑换成功或第二次兑换时删除；并发双击只有一个请求能拿到 `cache.delete()==True`；过期/不存在/buyer 非 ACTIVE/cache 不可用统一 400。
+- **验证（按验证纪律仅做针对性验证，未跑全量后端/全量组件/全部 e2e）**：
+  - `python backend/manage.py test merchant_ops.tests.test_switch_to_mall --keepdb` → **Ran 14 tests, OK**（覆盖：401、空邮箱 400、首建账号 + 密码哈希一致、二次复用不改密、redirect_url 用 `STOREFRONT_BASE_URL`、兑换 host-only cookie、兑换后 session authenticated、完整 switch→exchange 往返、token 一次性第二次 400、手动删 cache 模拟过期 400、未知/空 token 400、DISABLED buyer 400）。
+  - `python backend/manage.py test merchant_ops.tests.test_merchant_app --keepdb` → **Ran 13 tests, OK**。
+  - 额外针对性（因改了 accounts_buyers services/views）：`accounts_buyers.tests.test_auth_api --keepdb` → **Ran 15 tests, OK**。
+  - `ruff check` 6 个改动 py 文件 → **All checks passed!**
+  - storefront `node E:/code/AgentProject/Joybuy/node_modules/vitest/vitest.mjs run`（cwd=storefront）→ **26 files / 168 tests passed**。
+  - `prettier --check --end-of-line auto` 改动 storefront 文件 → 通过（Windows CRLF 需带 `--end-of-line auto`，否则全文件 EOL 报错）。`merchant-web/src/folio/api.js` 是上一轮原码直 copy 的未格式化数据层（全文件历史如此），**未做全文件 prettier --write 以避免 1200+ 行无关 diff**；其 eslint 0 error。
+  - merchant-web `npx vite build` → **✓ built in 317ms**。
+  - 后端重启：旧 PID 43564 → `taskkill //F //PID` → keepalive 拉起 **PID 58464**，`GET /api/v1/categories` = 200。`localhost:3000/api/v1/auth/buyer/merchant-handoff` 经 Nuxt devProxy 冒烟：bad token → 400 `HANDOFF_TOKEN_INVALID`（CSRF 预取正常、无 403）。
+- **浏览器端到端（IAB，390×844，截图存 `var/mobile_handoff_20261122/`）**：
+  1. `http://m.localhost:5174/mobile.html` 登录临时商家 → 点【切换去商城】→ 落到 `http://localhost:3000/account`；`GET /api/v1/auth/buyer/session` → 200 `authenticated=true`，email=`mobile-handoff-20261122@joybuy.test`。截图 `01_m_localhost_home_before_switch.png`、`02_m_localhost_landing_account.png`。**这就是上一版失败的场景，现已通过。**
+  2. `http://localhost:5174/mobile.html` 同流程 → `localhost:3000/account`，session 同样 `authenticated=true` + 同 email。截图 `03_localhost_home_before_switch.png`、`04_localhost_landing_account.png`。
+  3. 直接访问 `http://localhost:3000/auth/merchant-handoff?token=bad` → 不白屏：标题「商家账号登录」+ alert「登录凭证已过期，请从商家端重新进入。」+「返回登录」。截图 `05_bad_token_error_page.png`。
+  4. 复用同一 token：第一次 → `/account`（截图 `06_token_first_use_landing.png`）；第二次 → 错误页 alert「登录凭证已过期，请从商家端重新进入。」（截图 `07_token_reuse_rejected.png`）。事后 redis `scan *merchant-handoff*` = **0 个残留 key**。
+  - console error：账户页 reload 前注入 `console.error`/`window.error`/`unhandledrejection` 钩子，reload 后 **0 条**；两个失败页/成功页无可见错误。DB 核对：3 次兑换共产生 3 条 BuyerSession、1 个 BuyerAccount。
+- **临时数据清理核对（脚本 `var/mobile_handoff_20261122/{setup_temp_account.py,cleanup_temp_account.py}`，setup 复用 mobile_copy2 模式）**：cleanup 输出 **RESULT: ALL CLEAN** —— 临时账号/店铺/订单/钱包/保证金/提现/售后/通知/会话/Offer/每日统计/活动参与/**自动创建的买家账号 + 买家会话** 全部 0；**共享活动 `[demo] 黑五限时促销` count=1 仍存活**（只按 merchant_id 删参与记录，绝不按标题删活动）；只读演示账号 `123456@joybuy.com`（staff pk=77、1 个 membership、无 BuyerAccount 被创建）全程未动。
+- **坑（必读）**：
+  1. **不要再尝试跨 host 写 `Domain=.localhost` cookie**：Chromium 从 `*.localhost` 写入会被拒绝；同源兑换是唯一可靠路径。`m.localhost` 与 `localhost:5174` 的 staff 登录态仍然各自独立（host-only），这是既有行为。
+  2. IAB 里「登录」按钮 locator click 会超时（静态稿覆盖层）；用 `evaluate(() => button.click())`。
+  3. token TTL 只有 60 秒：手工测试时不要在「拿到 token」和「打开 redirect_url」之间停顿；后端签发与前端整页跳转是连续动作。
+  4. 测试用 redis 不是测试库，`test_switch_to_mall` 在 tearDown 里显式删除未消费的 handoff key；不要用 `cache.clear()`（会清掉开发缓存）。
+  5. `cache.delete()` 的返回值就是一次性判定，不要改成先 `get` 再无条件 `delete`（并发双击会双花）。
+  6. Windows 下 prettier 默认 `endOfLine=lf`，仓库 checkout 是 CRLF：检查改动文件要加 `--end-of-line auto`；不要把 `api.js` 全文件 reformat。
+  7. 新 storefront 页在本轮被 Nuxt 自动热加载（curl 直接 200，无需重启）；若下轮出现 404，再按既有流程重启 3000 端口单实例。
+- **遗留/生产化**：① cache 仅用 redis，**未做 DB 降级表**——redis 挂掉时 switch 签发会 500、兑换按无效凭证 400；若生产需要高可用再加 `MerchantHandoffToken` 表。② 生产部署必须设置 `STOREFRONT_BASE_URL`，并把商城正式域名加入 `DJANGO_CSRF_TRUSTED_ORIGINS`；③ 本页依赖客户端 JS（禁用 JS 会停在「正在登录…」），开发阶段可接受。④ 未 commit。
+
+## 0as. Crisp Website ID 配置 + 挂件真实加载验证（2026-11-22，✅ 完成，未 commit）
+
+- **任务**：把用户给的 Crisp Website ID `4c57c1c5-7246-46d3-b9db-b925c93eee3b` 配进开发环境，验证「配置后能加载」（批次 A 的未配置零加载路径此前已验收）。
+- **改动**：①根 `.env` 追加（原 4 行 MEDIA_* 未动，备份 `var/crisp_20261122/.env.before`）`NUXT_PUBLIC_CRISP_WEBSITE_ID=4c57...`；②根 `.env.example` 末尾补同键占位 + 注释；③**新增 `storefront/.env`（gitignored）只含该键**——Nuxt 只从 rootDir（storefront）读 `.env`，根 `.env` 是后端 `load_dotenv` 用的，对 nuxt 不生效（坑①）；`storefront/.env.example` 早前批次已有该占位，未改。业务代码零改动。
+- **重启**：先杀 storefront 看护链（`taskkill //F //T //PID 49556/48192/3052`）再杀旧 nuxt 树（`//PID 50120/23488`，旧实例只绑 `[::1]:3000`）；用 `HOST=127.0.0.1 PORT=3000 NUXT_PUBLIC_CRISP_WEBSITE_ID=... nohup bash var/run_storefront_keepalive.sh >> var/logs/storefront.log 2>&1 &` 重启。现网单实例：`127.0.0.1:3000 LISTENING`（nuxt PID 56972），keepalive 在跑。
+- **验证（按验证纪律仅针对性验证）**：`var/crisp_20261122/verify_crisp.cjs`（Playwright）首页 + `/pages/privacy-policy` 双页：head 有 `client.crisp.chat/l.js?website_id=4c57...`（src/参数均对）、`window.$crisp` 存在且 `window.CRISP_WEBSITE_ID` 正确、`#crisp-chatbox` 与 `.crisp-client` 出现（≤15s）、console 0 error / pageerror 0 / 请求失败 0；l.js→`client_default_b8befba.js`→`settings/website/<id>/prelude` 全 200（说明 website 有效且已激活）。截图 `var/crisp_20261122/home_crisp.png`、`privacy_crisp.png`；点开测试 `click_crisp.cjs` → 聊天窗弹出、显示站点真实欢迎语「请问有什么可以帮您 joybuy?」+「客服在线」，截图 `home_crisp_opened.png`。报告 `verify_report.json`。
+- **坑（必读）**：①Crisp loader v4.18.3 内置反爬 agent 列表含 **`HeadlessChrome`**，默认 Playwright headless UA 会被**静默跳过**（l.js 200 但无任何后续请求、无报错、无挂件）——验证必须把 context UA 改成普通 Chrome；真浏览器不受影响。②`#crisp-chatbox` 的 rect 高度为 0 属正常（启动器是内部 fixed 元素），DOM 存在性判断足够；③杀 nuxt 前必须连看护 shell 一起杀，否则 5s 内复活。
+- **遗留**：未 commit；生产部署需在部署环境配 `NUXT_PUBLIC_CRISP_WEBSITE_ID`（或 storefront `.env`），本地 `127.0.0.1:3000` 的 HOST 绑定是通过启动命令注入的，keepalive 脚本本身未改（下次重启若不带 HOST 会回到 `::1`，但 `http://localhost:3000` 仍可访问）。
+
+## 0ar. FB 爬虫账号扩容 +14（2026-11-22，✅ 完成：**14/14 全部 VALID**，新组 数据抓取07=10、08=4，未 commit）
+
+- **任务**：新 Excel `C:\Users\lyx\Downloads\123-已分列.xlsx`（3 列：账号/密码/TOTP seed，14 数据行）建号入组 + 半自动登录（脚本全自动、用户只过人机验证）。**新 14 个一律进新组 07/08**（与被源站风控标记的 01/02 隔离），不满足于 `crawler_account_batch_setup --create-only`（它按 Excel 行序分到 01/02，会污染）。
+- **建号**：新脚本 `var/fb_add_20261122/create_accounts.py`（dry-run 先行 → --apply）：调 `crawler_control.services.create_crawler_account` 逐个创建，label=账号列（`_cell_id` 同款 float→int 清洗，14 位纯数字），前 10 → 数据抓取07、后 4 → 数据抓取08，note=「FB 账号（Excel 批量导入 2026-11-22）」，**幂等（同 label 已存在则跳过）**。结果：pk=64–73（07）、pk=74–77（08）。Excel 体检（`var/fb_add_20261122/inspect_excel.py`）：14 行、label 全 14 位数字、seed 16/32 位 base32 全合法、无重复、密码 10–18 字符。
+- **登录**：`var/fb_manual_assist.py` 只改两处——`EXCEL_PATH` → `123-已分列.xlsx`、`ACCOUNT_PKS` → 新 pk 列表；凭据按 label 匹配（`read_credentials` 的 `_cell_id`/`_clean_secret` 天然兼容该表），`--check` 14 个全过（密码/seed 长度、TOTP 可生成，值不打印）。
+- **网络预检的关键发现（下次别再误判）**：**python 裸 socket / Git Bash curl 直连 facebook.com 全部超时 ≠ VPN 不通**——本机 VPN 是系统代理模式（`ProxyEnable=1`、`ProxyServer=127.0.0.1:7897`，Clash 系混合端口），直连探测绕过了系统代理。经代理探测 `-x http://127.0.0.1:7897` → facebook.com **HTTP 200**。启动登录脚本时用 `FB_LOGIN_PROXY=http://127.0.0.1:7897` 显式给浏览器设代理（脚本原生支持该 env var），不再依赖 Chromium 跟随系统代理。joybuy.co.uk 直连正常（307=登录墙，正常）。
+- **跑批实录（三段）**：
+  1. **首跑 14 个**（`var/logs/fb_add_20261122.log`）：9 个 VALID（pk=64/65/67/68/69/70/71/72/73，Cookie 42–44 条含 pin；pk=67 经历 1 次「退回登录页」自动重填后成功）后在**第 11 个（pk=74）中途被外部误杀**——python 脚本进程与浏览器一起消失（非脚本自身异常、无 traceback；killer 不明），剩余 pk=66/74/75/76/77。
+  2. **续跑 5 个**（`var/logs/fb_add_20261122_resume.log`，ACCOUNT_PKS=(66,74,75,76,77)）：清场确认（wmic 无 manual_assist/run_crawl、9334 空闲）后重启；4 个 VALID（pk=66 瞬态重跑成功、pk=74 中断重跑成功、pk=75/76 成功），pk=77 报 `ElementLostError`（页面刷新致元素失效，瞬态、未标不可用——与第 9 批 pk=58 同类）。
+  3. **补跑 pk=77**（`var/logs/fb_add_20261122_retry77.log`）：单账号重跑 → **VALID**（44 条含 pin）。
+- **收尾核验（DB 实查 + `load_account_session` 解密）**：新 14 个 **session_status=VALID 14/14**、无 unavailable；组分布 07=10、08=4；**pin 存在 14/14**（抽查 pk=64/70/77 解密 Cookie 43/44/44 条，只打存在性与条数不打印值）；全库账号总数 63→77。
+- **checkpoint 损耗：0**——新批 14 个没有触发 Google 帐户验证/邮箱验证码/设备通知验证（绑定非 Gmail），人机验证由用户通过，凭据错误 0。**坑**：①`ElementLostError` 瞬态失败重跑即成功（pk=58/66/77 三例），不要判不可用；②后台任务可能被外部整体误杀（本轮首跑被杀一次，killer 不明）——恢复流程=wmic 查残留 + netstat 9334 + 按剩余 pk 续跑，已落库的成功不受影响。
+- **新组可用性建议**：数据抓取07/08 是干净风控池（14/14 VALID、无源站标记记录），**可直接用于爬虫任务轮转**；建议新建 CrawlJob 时选 07/08 组，与被标记的 01/02 隔离；04 组仍待 Gmail 解封、02 组 4 个 UNKNOWN 可重试。
+- **脚本状态**：`ACCOUNT_PKS` 现值 `(77,)`（已跑完），下批照旧改 pk。日志：`var/logs/fb_add_20261122{,_resume,_retry77}.log`；状态事件 `var/logs/fb_manual_assist_status.jsonl`（--check 事件混有 11-22 全程记录）。
+- **铁律遵守**：密码/TOTP seed 只在内存（Excel 读入即用、不落盘不打印不进 HANDOFF）；TOTP 只在自动填码失败时才 print 一次性值（本轮未触发）；未 commit、未改 backend 业务代码（只动 var/ 脚本 + 本文件）、未启动 joybuy 抓取任务（DB 里 2 个 RUNNING CrawlRun 是 11-03/11-04/11-15 的已知僵尸态）。
+
+## 0aq. 商家端手机版「原码直copy」重做（2026-11-21，✅ 完成，未 commit，**当前生效方案**）
+
+- **背景**：用户先后否决 0an（手写近似）与 0ap（提取 DOM 重建 Vue 模板）两版「还是不一样」，明确要求「删除当前手机版商家端，直接复制 `商家端手机版需求/寰球优选-商家端三案预览.html` 源码，再修改对接数据接口」。**本轮渲染代码=静态稿原代码，保真由构造保证**。
+- **已删除**：`src/mobile/`（13 视图+SheetModal+ProductArt+lib/ui.js）、`src/shell.js`、`RootShell.vue`+`MobileShell.vue`、`mobile-folio.css`；`router/index.js` 还原纯桌面路由（dualShell/手机守卫/`/orders/:id` 全撤）；main.js 改为切换协议入口。
+- **新结构**：`merchant-web/mobile.html`（静态稿 948 行逐字+四处最小手术：内嵌脚本抽出/boot 入口、phone 参数烘焙 `data-phone-preview`、三 CSS 带 id 引用〔merchant-mobile.js 原换链机制改切 disabled〕、`html data-design="studio"`）+ `src/folio/`：`base-1..4.js`（4 段内嵌脚本逐段抽出，**仅 14 处数据槽位替换**〔日期/计数/图表 nums/品类饼/收件地区/商品ID/订单日期硬编码〕，渲染结构零改动）、`merchant-mobile.js`（逐字 854 行+3 处接入：`__JOYPLAY_MOBILE__/__JOYPLAY_CONCEPT__` 烘焙开关、CSS 切 disabled、头部演示工具→**店铺切换 select+退出**）、三个 CSS 逐字 0 改动、`api.js`（数据层：14 端点→静态稿全局状态同构映射+全部动作函数真实化+演示逻辑 no-op 化）、`boot.js/boot.css`（登录门/空态屏/脚本按序注入/?p= 路由映射/滞回切回）。`vite.config.js` 多入口 `{main, mobile}`。
+- **切换协议**：main.js——`m.` 主机或宽度<760 → `location.replace('/mobile.html?p='+path)`；boot.js——非 m. 主机且 >780 → 弹回桌面同路径（滞回防抖动）；`?p=` 映射 route 后 `history.replaceState` 还原干净地址；静态稿自身 pushState/popstate 历史集成原样。**本架构下切换=换文档（有 reload），vue-router 只在桌面文档里，两文档互不干扰**。
+- **数据对接**：overview/orders(+ship)/wallet(+entries/withdrawals/password)/deposit/after-sales(+actions)/activities(+join)/conversations(+send)/notifications(+read/reply)/catalog+listings/profile/media/referral 全部真实 API；删除演示逻辑（localStorage 业务持久化/OrderLifecycle 15s 轮询/PBKDF2 本地哈希/CSV Blob 导出/演示审核与预览开关/切商城语言工具）；登录门=session 检查→folio 登录屏（POST /admin/auth/login）→无绑定店空态→按序动态注入 base-1..4+merchant-mobile.js→populateGlobals→按 ?p= 落 route。
+- **保真对照**：15 张并排图 `var/mobile_copy_20261121/compare/`（左稿右应用，390×844）——结构逐页一致，差异仅三类：真实数据值（UUID 单号 vs HW 短号/真实价格）、被删演示 UI（保证金预览折叠/切商城语言）、头部改造区（店铺切换+退出）。
+- **验证（按验证纪律仅针对性验证）**：vite build 3 次（删旧/复制/收尾）全过；eslint 我方文件 0 error（base/merchant-mobile 为原码副本不计）；功能回归全过（发货真实扣款 20111.74→20067.12、提现冻结 100、8 类写操作无一 403、console 双端 0、切换协议四象限实测）；临时数据 15 项全 0（脚本 `var/mobile_copy_20261121/{setup,cleanup}_temp_account.py`）；**共享 [demo] 黑五活动再次被 cleanup 误删已重建**（下轮清理脚本要先剔除它）；123456@joybuy.com（merchant-2）全程只读。
+- **坑（必读）**：①classic 脚本才共享全局词法环境——base 脚本必须 `<script>` 注入不能 import；②populateGlobals 必须在动态注入后调用；③原稿 compactCopy 按属性顺序剔 banner 是原稿行为别"修"；④conversationOpen 是 IIFE 内部变量，判线程视图读 `.chat-shell` dataset.view；⑤会话线程详情懒加载挂 render 包装；⑥`/merchant/wallet` 自带 entries 第一页；⑦IAB evaluate 传函数要 IIFE 自调用；⑧locator click 偶发卡死用 requestSubmit 兜底。
+- **限制/生产化待办**：①base-1..4.js/merchant-mobile.js 是运行时动态注入的 classic script，**未打进 dist**——生产构建需把 6 段脚本纳入打包；②商品卡/聊天商品位沿用原稿 art() 八款 SVG（原稿本无实图位）；③商品池窗口 100/订单流水售后通知窗口 50（原稿客户端分页口径）；④bottomnote「交互原型 · 示例数据」为原稿结构文本，保真优先保留。
+
+## 0ap. 商家端手机版 folio 像素级保真重建（2026-11-21，✅ 已被 0aq 取代，仅存档）
+
+- **背景**：用户抱怨 0an 版手机壳「跟 `商家端手机版需求/寰球优选-商家端三案预览.html` 完全不一样，要一模一样」——0an 是凭探索报告手写的近似实现；本轮以**静态稿浏览器最终渲染结果为唯一保真来源**重做全部 13 个手机视图。方法：IAB 390×844 开 `Joyplay-folio.html`（本地 http 服务 8777 托管需求目录，file:// 不能 goto；清空 localStorage 取首访态），逐 route 提取 `#app` outerHTML **16 份**+截图存 `var/mobile_fidelity_20261121/draft_dom/`，13 视图按提取 DOM 1:1 重建 template（类名/嵌套/属性/内联 SVG 照抄，数据槽位映射真实 API，**script 取数提交逻辑原样保留**）。
+- **CSS**：新建 `merchant-web/src/styles/mobile-folio.css`（1885 行，替代 mobile-tokens.css 已删）：三层合并（HTML 内嵌基础样式的移动子集 → joyplay-mobile.css 原文 → joyplay-concepts.css 原文，顺序=静态稿级联），全包 `[data-merchant][data-concept]` 壳根作用域（MobileShell 根 div + **登录页根元素自带属性**——/login 是顶层路由不在壳内，否则 folio 变量全失）；`:root/body>#app` 级规则改写到壳内 `.m-app`；补齐 layer1 三处遗漏（od-* 整套/chat 全套/review·ops-history·avatar-editor）；**中和 merchant.css 五条同名类泄漏**（.tabs padding/.card+.card margin/.tag line-height/.empty-state font-size）。新增 `mobile/components/ProductArt.vue`（静态稿 art() 八款示意 SVG 1:1，无图商品按品类映射）+ `mobile/lib/ui.js`；SheetModal 重做为静态稿 `.dock-sheet` 原生 dialog 结构。**桌面视图一行未动**。
+- **逐页保真对照（14 张并排图 `var/mobile_fidelity_20261121/compare/route*.png`）**：route0-10 全部「已一致」，差异仅=真实 API 数据值 vs 演示值（如品类饼图 1 类 3 笔、上架中心 8354 件 vs 演示 33 件）、单号 UUID 前 8 位（后端无 HW 式短号）、无「↗12.3%」环比（API 无字段）。壳头右侧静态稿演示工具（切商城/语言）按既定口径替换为真实店铺切换/退出（无稿自设计）；登录页/店铺管理页/占位页无稿，按 folio 视觉自设计。
+- **坑（不得再踩）**：①IAB fullPage 截图拼接伪影——整页图用「视口分片+真实 scrollY 对齐+裁吸顶头」重拼（`scripts/stitch_and_compare.py`）；②IAB setViewportSize 不派发原生 resize/mql-change（切壳用合成事件或真浏览器验证）；③静态稿 IIFE 内部函数 evaluate 全局赋值无效，开消息线程必须 el.click() 会话按钮；④`/login` 不在壳内要自带 data-merchant/data-concept；⑤merchant.css 全局类（.tabs/.card/.tag/.empty-state）泄进手机壳，同名类逐条复位；⑥商品池 8354 件，上架中心页码必须窗口化；⑦seed_merchant_demo 在 deposit_enabled 已开时不会重设 deposit_balance（保证金要走 recharge_deposit/adjust_deposit）；⑧Overview 今日订单/品类占比按 Order.Status.PAID 统计，demo 订单需置 PAID。
+- **验证（按验证纪律仅针对性验证）**：`npx vite build` 过；根仓 eslint 0 error（merchant-web 自身无 lint 配置）；功能回归全过（**发货真实扣款 20,095.05→20,075.84 分毫不差**、消息发送、通知已读、售后/钱包/分类 sheet、多店切换、m.localhost 宽视口强制手机壳、桌面 1366 三页与上轮基线并排零回归）；console error 全程 0。
+- **临时数据已清**：mobile-folio-20261121@joybuy.test 及两店数据删除核对 15 项全 0（脚本 `var/mobile_fidelity_20261121/{setup,cleanup}_temp_account.py`，复验可重跑 setup）；**共享种子活动 [demo] 黑五限时促销曾被清理误删，已按原值重建**（参与 0 条）；123456@joybuy.com（merchant-2）全程只读未动。
+
+## 0ao. 演示商家账号（2026-11-21，✅ 完成）
+
+- 应用户要求创建商家账号：**email `123456@joybuy.com` / 密码 `123456789`**（StaffAccount pk=77，display_name「测试商家」）+ `create_merchant(display_name='测试商家', admission_approved=True, require_deposit=False)`（Merchant pk=800，slug `merchant-2`，**接单中 ACTIVE、免保证金**）+ MerchantMembership（merchant_owner, ACTIVE）。
+- 验证：`check_password` True；`POST /api/v1/admin/auth/login`（字段是 `email`+`password`，不是 identifier）200；`GET /api/v1/merchant/shops` 返回该店（ACTIVE、owner、13 项权限）。可直接在 m.localhost:5174 / 127.0.0.1:5174 登录（两 host 各登一次）。
+- 坑：`create_merchant` 的签名是 `display_name`（无 `name` kwarg），`review_admission` 首审锁定——补录 ACTIVE 店直接 `admission_approved=True` 传给 create_merchant 即可。
+
 ## 0an. 商家端手机版双壳（2026-11-20/21，✅ 完成并全量验收，未 commit）
 
 - **需求来源**：`商家端手机版需求/` 静态稿（README 明确 `Joyplay-folio.html` 为定稿入口，URL 固定 `design=studio`+`concept=folio`，即 **studio 信息架构 + folio 红色皮肤 + merchant-mobile.js 移动交互**；orbit 远洋蓝/flow 绿洲是过程稿不实现）。用户要求：静态页转 Vue+JS 成为手机版商家端，`m.*` 主机名访问手机版 + 宽度小于阈值自动切换。
@@ -1778,8 +2026,54 @@
   3. **未完成的验证**：不限变体后**尚未**在真实多规格商品上实测「32 variants 全部有价」；也未按新口径（超时 360 分钟、熔断不计超时、spawn 显式 limit=0）重跑。下次继续时先做这两步再做批次。
   4. 昨晚 8 个超时 FAILED 的真因是 150 分钟上限（RISK_FB 全 ≤1，非风控）；队列调度曾出现同一 run 双执行器，下次启动前务必先 `wmic process where "name='python.exe'" get ProcessId,CommandLine | grep run_crawl_run` 清场。
 
+- **全部暂停确认（2026-11-21）**：缺口重爬的 shard1 重试进程（38260/37724）已按用户指示 kill，残留进程 0、RUNNING run 仅剩 2 个历史 demo 僵尸。当前没有任何抓取活动。**待办清单（等用户指示）**：①259 个壳页商品重试（等风控缓解——换节点/深夜时段，账号已是爬虫任务同一批，成因是 IP/频率级风控）②阶段 2 的 20 个品类任务未开始 ③剩余 READY 89 个 + 男装等半成品续跑 ④变体完整性的新口径实测已通过（32/32 全有价）⑤媒体按用户要求暂用 local（S3 不可用）。
+
+- **壳页重试完成（2026-11-21 晚，重试被风控自停两次后的最终账）**：286 尝试 → **56 导入** / 143 `source_not_found`（**源站商品已 404 下架**——重跑 /dp/x/ 直接 not found，属商品失效非我们的问题，这部分从缺口中除名）/ 0 仍壳页 / 9 其它失败 / 风控中断 5（自停保护生效：连续 3 商品全风控即停）。`risk_detail` 23 个只补了 2 个（20 个未尝试）。**DB 无价 SKU：1488 → 1022**（净减 466）。06 组消耗大（pk56-61 共 12+ 次 risk parks），03 组 7 个账号 6.8-8.2h 前标记（已过 6h 冷却）。**剩余缺口 ≈1022 个无价 SKU**：构成 = 未尝试 71（51 壳页 + 20 risk_detail）+ 源站仍无价的部分 + 昨晚各批次其它遗留。**下一步**：等冷却过期（03 组约 6h）+ 换时段重跑剩余 71 个 + `skip_imported=False` 全量补价刷新（或对 staging `offers_skipped_no_price>0` 的 492 行定向刷新）。
+
+- **源站下架商品同步下架 + 标记（2026-11-21，用户要求）**：壳页重试发现 143 个「source_not_found」商品源站已 404 下架 → 本地同步下架：`var/gap_recrawl_20261121/delist_source_removed.py`（DRY_RUN 默认 → --apply）。**执行结果**：143 个 SPU 全部为 DRAFT（从未上架，无状态变化）；**563 个 ACTIVE Offer 全部转 INACTIVE + `removed_by_platform=True` + `removed_at` 留痕**（沿用 merchant_ops unpublish 的既有机制，历史行保留）；搜索文档已刷新（这些 SPU 本就 0 文档）。**后续删除入口**：清单固化在 `var/gap_recrawl_20261121/delisted_source_removed.json`（spu_pk + source_id + 下架 Offer 数），用户说「不要了」时按此清单删除。验证：ACTIVE Offer 0、INACTIVE+removed_by_platform 563。
+- **首页「Popular right now」无图商品已替换（2026-11-21，用户报「模块下商品图片没有」）**：排查结论——**与 143 个下架商品无关**（它们从未被任何 CMS 模块引用、本地画廊文件 1129 个全在）；无图根因是首页 `page1/pos3 product_pool` 的 4 个条目是**demo 种子数据**（public_id `01926c1e-…-0001..0004`，Spu 表里不存在，payload 也没 image_path 字段）。**替换**：从搜索文档挑 4 个有图（本地文件存在）+有价+跨类目的真实商品（扫地机器人 999.00 / 自动伞 19.99 / 越南粉套装 4.25 / 标签打印机 12.99）写入模块 payload；原 payload 备份在 `var/popular_right_now_backup.json`，候选池 `var/replacement_candidates.json`。验证：4 条 image 本地存在、public_id 在 Spu 表存在。**注意**：若用户后续在其它模块再发现无图，按同法排查（image_path 空 = demo 数据或源站无图，与下架无关）。
+- **「模块商品图片没有」根因修正（2026-11-21，用户按家用电器频道举例）**：之前只修了首页 demo 条目——但用户实指的是**频道楼层图片文件 404**。全频道扫描：后端返回的 `image_path` 都有值，但 **138 条楼层条目的本地文件缺失**（`var/media` 下不存在）——这些商品是 S3 时代（MEDIA_BACKEND=s3）导入的，文件只写进了桶、本地没有；S3 停用后前端 `/media/...` 全 404 裂图。分布：Beauty Best sellers/New in（美妆大牌为主）、家用电器频道 Large appliances 第 2 个（TCL 酒柜）等。首页「Popular right now」的 4 个 demo 条目是另一处（已替换为真实商品）。**修复方向（待用户确认）**：①把 S3 桶里对应对象拉回本地（aws s3 cp --recursive，桶 joybuy-media-fra 的对象都在）；②或对这些楼层条目换本地有图的替换品；③或恢复 S3 后端。143 下架商品的文件本地也在（已核对 0 缺失），与裂图无关。
+- **媒体缺失全量审计（2026-11-21 深夜，✅ 只读完成，未 commit、未碰 9334/FB、零业务代码改动、未启动任何抓取）**：把上面 138 条的粗扫升级为「频道楼层 + 首页全部商品位」的 A/B 两成因定性审计。**总账（渲染可见商品条目 564）**：正常 415 / **成因 A（S3 遗留）148 条**（频道楼层 138 + 首页畅销榜单 10，去重后 122 个唯一文件；S3 时代只写桶）/**成因 B（真缺图）仅 1 条**（首页畅销榜单 pet-supplies tab 第 5 位 Dr John Silver 狗粮 `4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`，SPU pk=10197 ACTIVE 有价 £14.70，**MediaUsage 全角色 0 行**，不在任何频道楼层）/ 另有 60 条 demo 引用（public_id `01926c1e-…`，Spu 表不存在）只在 CMS home 快照 v4-v8（ARCHIVED）与 v9 的 campaign_grid payload 里——**渲染时 campaign_grid 被 HomeCampaignCard 覆盖（10 张卡本地图全在），用户不可见**，无需替换可选清理。首页其余全部正常：HomeCampaignCard 22 项（campaign 10/discovery 6/weekly 6）、为您推荐 24 件、link_grid tiles 6 + brand_logos 12 全 ok。**成因 A 按频道分布**：NL 运动户外 71（Gifting/New Arrivals/Final Pieces 各 20+Bestsellers 11）、美妆 19（Best sellers 11+New in 8）、健康养生 17、家居 10（Save up to 40% on Christmas 整层 10 条）、家电 8（含 TCL 酒柜）、宠物 7、玩具婴童 6；电子/游戏两频道 0 缺。畅销榜 10 条缺图分布：美妆 tab 4、家居 2、健康 2、户外 2。**S3 可访问性结论：完全不可访问**——profile [default] 的 key 在 AWS 侧已不存在（`InvalidAccessKeyId`，与账号暂停一致）、匿名 head 403 Forbidden；122 个对象的 head_object 全部是认证层错误而非 404，**对象级存在性无法证实**，按导入史实归 A；「等 S3 恢复自动补上」目前只是等待，无人能拉回。**替换计划（就绪待用户确认，本轮未替换）**：成因 B 唯一 1 条 + 3 个已验证候选（同 tab 同排序 sort=newest 顺延：Harringtons 羊肉米饭 4kg £5.62 / Harringtons 火鸡蔬菜 1.7kg £5.62 / Pedigree Junior 幼犬湿粮 40 包 £4.00，ACTIVE Offer 与本地画廊图逐一核过）——替换方式为畅销榜取数口径天然顺延（search sort=newest page1 前 5），或直接把该 SPU 下架即可让第 5 位自然换人；频道楼层 0 条成因 B 无需替换。**固化文件 `var/media_audit_20261121/`**：`audit.json`（全量条目：频道/楼层/位置/公id/title/本地有无/S3 head 结果/归类）、`replace_plan.json`（成因 B 替换建议+候选+可选清理项）、`scan_local.json`/`scan_home.json`（原始扫描）、`s3_probe.json`（逐对象探测）、4 个脚本（scan_local/scan_home/s3_probe/build_audit.py，全部只读可重跑）。**验证（按验证纪律仅针对性验证）**：扫描脚本跑通且数字交叉核对（495+45+24=564=415+148+1）；138 条与上一轮粗扫完全吻合（TCL 酒柜、Fino 洗发水等抽样命中）；候选商品 ACTIVE Offer 数与本地画廊文件逐一验证 True。**坑**：①首页当前 PUBLISHED v9 快照没有 product_pool——商品楼层来自 HomeBestsellers（/api/v1/search sort=newest 前 5）与 HomeRecommended（/api/v1/recommendations 前 24），审计首页别再只看 CmsModule 快照；②畅销榜/推荐的图也走 gallery MediaUsage，成因 A 不止频道楼层；③head_object 404 与 InvalidAccessKeyId 要区分（后者不代表对象不存在）；④前端 nav 类目口径 = category_tree roots 去掉 NAV_HIDDEN_ROOT_SLUGS（computers-accessories/clothing-accessories）。
+- **媒体缺失成因 B 已替换（2026-11-21，✅ 完成，未 commit、未碰 9334/FB、未启动任何抓取、未打印 Cookie）**：上面审计确认的唯一真缺图商品——首页畅销榜 pet-supplies tab 第 5 位 Dr John Silver（SPU pk=10197，`4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`）——已按平台下架机制换掉，SPU/Sku/Offer 数据全部保留（只下架不删除）。**方式（复用 merchant_ops unpublish 同款口径，Django shell 执行，脚本 `var/tmp_takedown_10197.py`）**：① Spu 10197 status ACTIVE→INACTIVE（save update_fields=["status","updated_at"]）；② 该 SPU 全库仅 1 个 Offer（pk=12734，current_price £14.70）级联下架：ACTIVE→INACTIVE + removed_by_platform=True + removed_at=2026-11-21 15:16:01 UTC，update 影响 1 行，改后该 SPU ACTIVE Offer=0、全 INACTIVE；③ `refresh_spu_search_documents(spu)` 返回 1——其唯一 ProductSearchDocument 被删（改后 0 行），没有手工改搜索文档表数据（文档是派生的）。**验证（按验证纪律仅针对性验证，以下全部真实跑过，未跑的不存在）**：① DB 复核：SPU status=INACTIVE；Offer pk=12734 INACTIVE/removed_by_platform=True/removed_at 已写；ProductSearchDocument 0 行；② 搜索接口 `q=Dr John Silver` → total=0（该商品已不可搜）；③ 畅销榜 pet-supplies tab（`/api/v1/search?category=pet-supplies&sort=newest&page=1` 前 5）：4962bdf2 已掉出，**第 5 位换成 `692cb504` Harringtons Dog GF Superfoods Puppy Chick 10kg（£39.29）**，前 5（6035a87c/70d374f9/4df70820/a484069a/692cb504）image_path 非空且 `var/media` 本地文件逐一存在；④ **全 tab 交叉复查**：nav 可见 tab 共 **9 个**（home-living/electronics/beauty-personal-care/small-home-appliances/health-wellness/outdoor-sports/pet-supplies/baby-toddler/games-accessories，各取前 5）：electronics、small-home-appliances、pet-supplies、baby-toddler、games-accessories 5 个 tab 前 5 全部本地图 OK；成因 B（image_path 完全为空）畅销榜全站清零；剩余 10 条「有 image_path 但本地文件缺失」与审计成因 A（S3 遗留，等待 S3、不可拉回）数量与分布**完全吻合**——美妆 4 / 家居 2 / 健康 2 / 户外 2，按本次范围边界未动。校验脚本（只读可重跑）：`var/tmp_verify_bestsellers.py`、`var/tmp_precheck_10197.py`。**坑**：①畅销榜 tab 是 9 个不是 5 个——「5」指的是每 tab 取前 5 张卡（HomeBestsellers.vue slice(0,5)），别再按 5 个 tab 复查；②Windows 控制台默认 GBK，UTF-8 输出含 `®`/中文会 UnicodeEncodeError，校验脚本开头要 `sys.stdout.reconfigure(encoding="utf-8")`；③搜索接口 query 参数名是 `q` 不是 `query`（传错=静默全量返回 8353 条，看似正常实则没过滤）；④`manage.py shell < file` 按交互逐行解析会把缩进块打断（IndentationError），多行脚本要用 `manage.py shell -c "exec(open(path, encoding='utf-8').read())"`；⑤Django shell 里 `-I`（isolated）会砍掉 cwd 导入路径导致 ModuleNotFoundError: config，本项目自建脚本不要加 -I。
 ## 1. 我们在做什么
 
+## 重抓 S3 时代商品夜批进行中（2026-11-22 凌晨启动，无人值守，完成后自动关机；本条为进行中快照，finale.py 完成时会自动在本节顶上插完成记录）
+
+- **任务**：用户夜批指令——用 MEDIA_BACKEND=local 重抓 S3 时代（媒体只写进已失效 S3 桶、本地全缺）导入的商品，媒体/数据完整落本地；完成后跑 5 个新品类任务；完成自动关机。不 commit、不碰 9334/FB、风控纪律沿用。
+- **清单口径（DB 实查修正任务书两处）**：主清单=cutoff（created_at>=2026-11-19 17:54 UTC）的 **1,443** 个 joybuy_uk source_id（类目分布与任务书吻合：冷冻肉类与家禽 199、智能家居 196、泰国及东南亚食品 189、冷冻素食与纯素 184、珠宝 139、烟草 93、宠物 92、手表 87、电子健康检测 81、印度及南亚食品 78、冷冻派对食品 43、韩国食品 23、美发工具 20、清洁用品 14、平板电脑 5；±1 差异=归因口径）。**修正 ①**：任务书称「其中 143 个已下架需跳过」不成立——delisted_source_removed.json 的 143 个是 2026-11-16 时代商品，与 cutoff 清单**零交集**（防御性过滤为 no-op）。**修正 ②**：媒体审计成因 A（频道楼层/畅销榜缺图 148 条/129 SPU）也不在 cutoff 内（staging 显示 2026-11-19 上午经脚本导入，同为 S3 时代媒体缺失）→ 把其中有 joybuy_uk 身份的 **62 个置顶并入**（另 67 个无 joybuy_uk 身份，无法走 source_id 管线，未纳入）。**总目标 1,505**，固化 `var/recrawl_local_20261122/recrawl_list.json`。
+- **关键机制发现（本轮最重的坑，下次直接复用）**：S3 时代商品 MediaAsset 行已存在但本地无文件，`store_bytes` sha256 去重命中即返回**不会补写本地文件**（0u 坑②），且 `ensure_image_variants` 读不到文件抛 FileNotFoundError → 重抓导入会把画廊图整张丢掉。**处置**：`recrawl_runner.py` 内对 `media.storage.store_bytes`+`media.pipeline.store_bytes` 两命名空间打物化包装（命中已有行且本地缺文件→先写文件再走原逻辑），不改业务代码。探针 PROBE PASS（`var/recrawl_local_20261122/probe_media.log`：local 基线+遗留行物化+清场）。
+- **试水**：shard0 --limit 5（均为成因 A 置顶）**5/5 imported**、媒体 missing_local=0、变体价 6/6、原地更新（identity.spu==imported.spu）5/5（`trial_shard0.log`）。
+- **阶段 1（运行中）**：3 分片 detach（各自独立账号池防互踩；01/02 未用）；串行+间隔 2-3s+变体补价不限（CRAWL_VARIANT_PRICE_LIMIT=0）；连续 2 商品风控→停 10 分钟换号一次再中即停；进度每商品落盘 progress.shard{0,1,2}of3.json 可断点续跑。**编排修正（19:33 UTC）**：shard2（数据抓取06）18:53 UTC 首轮 4 分钟即连续命中风控、20:03 换号重试仍连中→按纪律自停（06 组疑似源站侧标记，493 项标 not_attempted 断点保留）；改用干净池 **数据抓取05** 重启 shard2（shard2_babysitter.py 独立看护，死线 00:20 UTC）；原 chain.py 只监控自己拉起的进程、存在「shard1 提前自停+shard0 提前跑完 → 阶段 2 与替换分片并发重叠」缺口 → 已杀 chain 监控进程（保留分片进程），换 **chain2.py**（chain pid=2312 已终止；chain2 监控 shard0=53236(07)/shard1=28320(03)/shard2=14104(05)；统一死线 00:20 UTC 到点 kill 存活分片；shard0 自然跑完后若子集有剩余会用干净池 数据抓取08 启 shard0b 消化）。
+- **runner 增强（19:29 UTC，仅 var/ 脚本）**：recrawl_runner 风控命中点（detail/变体全风控/park）现在会调 mark_account_risk_cooldown 写 6h DB 冷却（与 spider 同口径），使阶段 2 动态选组的 usable 统计反映真实源站标记；已运行中的 shard0/1 不受影响（旧代码内存态），shard0b 与晨后续跑生效。
+- **阶段 2（自动接续）**：chain 在分片全部退出或死线后，按当时账号池现状从 03/05/06 的 READY 动态挑 5 个（排除 01/02/04/default；优先 skip_imported=True；配额按 usable 账号数 2/2/1）写 `phase2/task_list.json` → phase2_queue.py（run 超时 55min，同组串行最坏 110min；spawn env 显式 MEDIA_BACKEND=local + CRAWL_VARIANT_PRICE_LIMIT=0）。
+- **收尾（自动）**：finale.py = 清理 RUNNING run → 汇总 → DB 媒体全量核对 + 每类目抽查 2 商品变体完整性 → `var/recrawl_local_20261122/MORNING_REPORT.md` + recrawl_remaining.json → HANDOFF 自动插完成记录（锚点「重抓 S3 时代商品已完成」）→ shutdown /s /t 120。**watchdog pid 独立**（watchdog.log），硬死线 2026-11-22 03:46 UTC（11:46 本地）兜底强制收尾+关机。
+- **⭐用户口径更新 2（2026-11-22 ~16:10 本地，最新，覆盖 1 号口径的关机部分）**：**取消关机**——剩余分片 + 5 任务批全部跑完后保持开机，不执行 shutdown。finale.py 已改为只写晨报/HANDOFF/finale_done 后正常退出（并 `shutdown /a` 保险撤销遗留排程）；watchdog v2 16:05 UTC 兜底死线保留（防挂死），触发动作=截断分片→补跑 5 任务→文档→不关机。早前 1 号口径原文（关机部分已被本条覆盖）：3 分片全终态→5 任务批终态→晨报→HANDOFF→关机；shard1 慢可接受，不许为赶时间跳过变体补价。
+- **编排按新口径重做（23:51-23:56 UTC）**：①杀 chain2（其 00:20 UTC phase1 死线会强杀健康分片）、杀 watchdog v1（其 03:46 UTC 死线同样违反新口径）、杀 shard2_babysitter（其 00:20 死线会杀 shard2'）；②新 **chain3.py**：无 phase1 死线、等分片终态、分片退出且有剩余→5 分钟后同/备组自动重启（每槽最多 3 次启动：shard0=07→08→07、shard1=03×3、shard2=05×3）、全终态→阶段 2（run 超时按剩余窗口动态写入 task_list.json，phase2_queue 读取；预算夹 [60,360]min）→ finale（含 shutdown）；心跳 heartbeat.json 供看门狗判挂死；③新 **watchdog v2**：+16h 兜底死线（2026-11-22 15:55 UTC）+ 心跳 45 分钟过期判挂死，触发时才 kill+finale+关机，**不会在分片健康运行时提前关机**。
+- **⚠️看门狗误杀事故（23:53 UTC，已完全恢复，教训在位）**：watchdog v2 首轮循环在 chain3 首次心跳落盘前（启动 2 秒内）检查 heartbeat.json→「缺失」→立即 FORCE FINALE：按 pids.json 杀了 shard0(53236)/shard1(28320)（shard2'=14104 因不在 shards[] 键下幸免）、杀了新 chain3，并拉起一个过早的 finale.py。**止损动作**：发现 finale 尚未写出任何产物（晨报/recrawl_remaining/finale_done/关机调度均无）→ taskkill finale 进程（PID 58780）→ 精确验证 HANDOFF 无过早完成记录（grep 锚点命中是进行中快照里的提示文字）→ 修复根因（chain3 启动即写心跳；watchdog 对心跳缺失给 10 分钟启动宽限）→ chain3 重启后按重启流程 5 分钟宽限自动拉回 shard0（**数据抓取08 组**，start#2）与 shard1（03 组，start#2），分片进度文件零丢失（todo=361/477 续跑）。**教训：凡「文件缺失即触发毁灭动作」的看护，必须给启动宽限窗口；毁灭性动作前先核对目标 PID 存活。**
+- **网络退化事件（19:52 UTC 起，已查明并决策）**：代理链路从 ~2-5s/请求恶化到**恒定 ~42.7s/请求**（cloudflare/google/joybuy 全网皆慢、固定延迟像限速，joybuy.com 一度 242s）→ 判定 VPN 节点限速/拥塞，非源站封锁。换节点不可行：verge-mihomo 核心无 external-controller 监听（仅 1053/7897）、无桌面 GUI 自动化工具，不安全动用户 VPN 客户端 → **决策=维持龟速爬取**（42.7s<45s 超时线，请求仍完成；质量抽查：近期导入媒体 missing_local=0、变体价全齐，慢但正确）。吞吐预估：00:20 UTC 死线前阶段 1 约再 +60-150 件，剩余断点续跑。若明早网络已恢复，续跑效率会正常。
+- **明早先看晨报再动手**；本次零业务代码改动（全部 var/ 下，py_compile+ruff 过，未 commit）；后端 8000 未动。
+
+
+- **风控试水 5 品类（2026-11-21 11:47-14:10 本地，✅ 完成，判定=中间态；未 commit、未关机、未碰 9334/FB、未打印 Cookie、媒体 local、零业务代码改动）**：5 个 READY 品类任务（分属 01/02/03/05/06 各 1）并发 5 探测风控，为放量前的决策提供依据。启动方式与 night_queue 派发口径完全一致（start_run + run_crawl_run，MEDIA_BACKEND=local、CRAWL_VARIANT_PRICE_LIMIT=0）。
+  - **任务与终态**（run id 前 8 位 / 状态 / 导入/发现（已请求） / RISK_CONTROL_FALLBACK / 烧号）：
+    01 组 job 200 冷冻派对食品 `075302fa` FAILED(主动停) 43/199(61 请求) risk_fb=12 烧 9/9；02 组 job 153 美发工具 `d2cd2a9b` FAILED(主动停) 20/191(35 请求) risk_fb=16 烧 6/6；03 组 job 148 珠宝 `30909966` SUCCEEDED(自然跑完) 140/200(200 请求) risk_fb=11 烧 10/10(尾部耗尽后仍排空队列)；05 组 job 144 手表 `b7bc885f` SUCCEEDED 88/109 risk_fb=2 烧 2/8；06 组 job 157 电子健康检测 `916c0f83` SUCCEEDED 82/92 risk_fb=0 烧 0/8。
+  - **风控时间线（UTC）**：03:47:43 五 run 同 IP 同刻启动 → **03:47:50（+7 秒）01/02 各首中**（详情页 307 → `/user/risk/pic?redirectReason=risk605_pic`，每次命中=账号移出本轮池+写 6h 冷却）→ 01 前 6 分钟烧 5 号、04:08:02 `ACCOUNT_POOL_EXHAUSTED`；02 前 44 秒烧 2 号、04:04:23 耗尽 → 04:09 按中间态纪律 taskkill 两 run 进程树并 `complete_run_failed`（注明风控原因）→ 03 首中 04:22、05 首中 ~04:50（各零星 ≤2 次）→ 03 后段 05:52-06:06 加速 3 连烧至池耗尽，但排空队列于 06:10 自然 SUCCEEDED → 06 全程零风控（51 分钟完跑）。
+  - **核心结论：风控=源站账号级标记+速率混合，当前 IP 层干净**。同 IP 同时窗：06 全程 0 风控、05 仅 2 次、03 中段零星，而 01/02 开局秒弹——01/02 组账号昨晚 17:33-21:09 被风控波标记过，我方 6h 冷却早已过期，**但源站侧账号记忆仍在**（换号无效）。03/05 的中段零星命中与持续请求速率相关。**放量铁律：01/02 组在源站标记衰减前（时长未知，≥24h 观察后议）任何放量都会秒烧账号；06/05 可正常放量。**
+  - **按组结论与下一步**：06 组安全可放量（0/8）；05 组基本安全（2/8，剩余 6 账号可用）；03 组待 20:06 本地冷却过期后先单任务试再放量（本次尾部被打穿但完跑，导入 140）；01/02 组**不要放量**（池已全烧且源站标记未消）。可选路径：04 组解封 Google 验证后启用（32 READY）；给 01/02 补新账号；或换出口 IP 后对 01/02 单任务试水。
+  - **规格完整性（fullcheck.py 对全部 IMPORTED 行全量核对）**：有价 Offer 覆盖=01 46/46、02 20/20、03 375/378、05 161/161、06 90/90（99-100%）；DB Sku 行数**从不小于** payload.skus（多出行=历史变体合并保留，零丢失）；03 缺价的 3 行=旧 limit 时代变体从未抓价的历史存量（归 492 SPU 缺价清单，非本次缺陷）。单 SKU 为主是这些品类常态（昨晚 job 121=93/112=199/120=196 全部单 SKU 同分布），多规格家族重跑表现为身份冲突 PENDING（03=51、05=19、06=7、01=9，良性、按设计不改绑）。导入质量：gallery≥1 100%、gallery≥3 72-98%、评分/图文段数依赖源站 payload（手表/健康检测类源站多数无评分）。
+  - **池现状（探针后）**：6h 冷却 01=9/9、02=6/6、03=10/10、05=2/8、06=0/8（status 仍 ACTIVE；01/02 冷却 ~17:48-18:08 本地过期，03 ~20:06 本地过期）。
+  - **环境处置（启动前发现夜批残留，超出简报「全部暂停」认知，已按本次铁律处置并逐条记录）**：①`var/night_crawl_20261121/shutdown_guard.py` 仍武装且死线 12:30 本地无条件晨报+关机，与「不要关机」冲突 → 11:44 taskkill 进程树（PID 38868/34736），`shutdown //a` 确认无挂起关机（1116）；②`var/gap_recrawl_20261121/` 分片 1 仍活跃抓源站（剩 30 项、正密集吃风控页）→ 11:44 taskkill（PID 23652/51944；进度落盘可断点续跑，msvcrt 锁随进程死亡自动释放）；③夜批收尾手动补跑（=guard finish() 去掉关机）：`re_import_pending.py`（17 PENDING→17 确定性身份冲突 fixed=0 属预期）+ `morning_watcher.py`（晨报+完成记录已写入）。**注意：下一条夜批完成记录中「已自动关机」不成立**（关机被本次拦截），且缺口重爬分片 1 尚有 30 项未跑完。
+  - 其余：DB 存在 run pk 1/2 两条 2026-11-03/04 的陈年僵尸 RUNNING 行（无进程对应，未动、仅记录，不影响 start_run）；证据目录 `var/probe_5cats_20261121/`（runs.json/samples.jsonl 每 5 分钟采样/spotcheck.json/fullcheck.json/launch5.py/sampler.py/fullcheck.py/spotcheck.py）+ `var/logs/crawl_runs/<run_id>.log`。
+- **夜间两段任务已自动完成（2026-11-21，关机前自动生成）**：①缺口商品重爬（478 目标=492 缺口 SPU-14 身份冲突，limit=0 不限变体补价，媒体 local）：processed=18 imported=10 skipped=0 failed=8，无价 SKU 前后对比看晨报表格；②20 个 READY 品类任务（01=6 全取、02=3、03=4、05=3、06=4；04/default 排除）跑完并已自动关机。总账 succeeded=9 failed=0 skipped=11，熔断=False（口径：超时不计坏 run）。近 12h 风控标记账号 41 个。剩余 READY 81（按组 {'default': 2, '数据抓取04': 32, '数据抓取03': 10, '数据抓取02': 11, '数据抓取05': 11, '数据抓取06': 10, '数据抓取01': 5}）。晨报 `var/night_crawl_20261121/MORNING_REPORT.md`，原始汇总 `final_summary.json`、`progress.json`；缺口重爬明细 `var/gap_recrawl_20261121/`（progress.json/final_gap_summary.json/baseline.json）。详见晨报。
+- **本次踩坑（不得再踩）**：①**源站 2026-11-20/21 改版**：详情页 JSON-LD 平铺 offers.price 挪进 priceSpecification、CSS crossOffPrice/mainPrice 节点不渲染、flight 产品块缺失——主价解析断了；已给 `parsers/joybuy_uk.py` 加 serverProduct floors 兜底（productPriceFloor.crossOffPrice/mainPrice，与 extract_variant_price 同规则；py_compile+ruff+定向测试 27/27 过，未 commit）。阶段 2 的 spider 有列表卡片兜底所以没暴露，独立脚本没有。②试水时曾出现**同一脚本双进程并发**（后台任务通知延迟导致误判上一个已退出）——现 gap_recrawl.py 有 runner.lock 单实例锁；队列启动前 chain 脚本做 run_crawl_run 清场检查。③store_bytes 内容寻址去重：重爬导入大多命中已有资产，MediaAsset 不新增行属预期（last_seen_at 刷新）；媒体落盘用唯一 PNG 探针验证过。- **下一步**：①晨报里 failed_source_shell/failed_source_no_price 的商品是源站侧无价/下架，不是抓取缺口；②身份冲突行（14 个在缺口清单内被排除）仍需产品拍板合并/改绑；③AWS 恢复后 `aws s3 sync` 本地增量媒体；④04 组需先解封 Google 帐户验证；⑤本次改动（parser 修复）未 commit，待用户确认后提交。
+
+- **夜间两段任务进行中（2026-11-21 深夜启动，无人值守，完成后自动关机；本条为进行中快照，完成记录会自动插到本节最顶上）**：任务=①缺口商品重爬（492 个旧 limit=10 时代多规格 SPU 缺价 → 实查后 478 个目标=492-14 行身份冲突，身份冲突不处理）②然后 20 个 READY 品类任务。媒体全程 MEDIA_BACKEND=local 显式覆盖（S3 仍不可用）；变体补价 limit=0（不限）。
+  - 阶段 0（已完成）：清场确认无残留 run_crawl_run；DB 实查缺口=492 SPU/2331 无价 SKU（多 SKU SPU 1586），排除 14 个身份冲突行 → var/gap_recrawl_20261121/gap_list.json 固化 478 个 source_id；基线固化 baseline.json；池 VALID：01=9、02=6、03=10、05=8、06=8（04=0 排除），READY：01=6、02=12、03=12、05=13、06=13。
+  - 试水（5 个，通过）：2 个完美导入（36/36、16/16 全 Sku 有价，DB 实查 still_unpriced=0）、2 个源站侧失败（壳页/主价缺失，归因见下）、1 个瞬时超时；唯一 PNG 探针验证媒体落 var/media/（store_bytes 内容寻址去重属预期，重爬大多命中已有资产不新增行）。
+  - **发现并修复源站改版导致的解析断点（≤15 行，py_compile+ruff+定向测试 27/27 过，未 commit）**：源站 2026-11-20/21 把详情页 JSON-LD 平铺 offers.price 挪进 priceSpecification、CSS crossOffPrice/mainPrice 节点不再渲染、flight 产品块缺失——parse_uk_product_detail 主价链断了（变体页价格不受影响，走 serverProduct floors）。修复=crawler/joybuy_crawler/parsers/joybuy_uk.py current_price 链加 productPriceFloor.crossOffPrice/mainPrice 兜底（与 extract_variant_price 同字段同规则）。spider 有列表卡片兜底所以队列夜间没暴露，独立脚本会。
+  - 阶段 1（运行中）：var/gap_recrawl_20261121/gap_recrawl.py（verify.py 已验证管线改造：详情+移动 merge+变体逐页补价不限+ingest+import 原地更新+每商品 DB 实查+进度落盘断点续跑；请求间隔 2-3s；41 个 VALID 账号轮换；连续 2 商品风控→暂停 10 分钟换号重试一次再中就停；runner.lock 单实例锁；因单流实测 ~1.6 分钟/件全量要 ~12h、会晚于队列关机，18:03 起**改为 3 分片并行**（每片独立锁/进度文件 progress.shard{k}of3.json，从旧 progress.json seed 终态，池 35=41-6 个刚被队列 run 风控标记的账号自动排除），预计 ~4h 完成）。日志 var/gap_recrawl_20261121/full_run_shard{0,1,2}.log。**19:35 更新**：队列 run 触发源站风控波（2h 内 20+ 账号被写 6h 冷却，02/01 组池烧穿→该组后续任务被 start_run 组冷却守卫优雅跳过，02=135/141 已跳过），3 个重爬分片全部按「暂停 10 分钟换号重试一次再中就停」纪律自停（不烧穿组池）。当前 478 中已处理 137（imported 38，其中 30 个 still_unpriced=0；源站侧 shell/无价占比 ~62%）。已部署shutdown_guard.py：截获队列 final_summary 的关机（shutdown /a）→ 等分片全部 completed+TOPUP_DONE（top_up.py 对部分导入商品补齐）→ 再晨报+关机；12h→9h 兜底。分片重启时机=队列终态后（站点负载归零、且 17:33 起的 6h 冷却 23:33 起陆续过期），重启时池会自动滤掉仍冷却账号。03/05/06 组队列 run 仍在跑并持续产出（120 已 196 导入成功）。
+  - 阶段 2（已备好未启动）：var/night_crawl_20261121/（night_queue.py 改造：spawn 显式 MEDIA_BACKEND=local、CRAWL_VARIANT_PRICE_LIMIT=0（去掉 setdefault 3）、单 run 超时 360 分钟、熔断口径=仅 FAILED 且带 RISK_CONTROL_FALLBACK/ACCOUNT_POOL_EXHAUSTED/CONNECTIVITY_PREFLIGHT_FAILED、超时不计；pick_tasks.py 已固化 task_list.json=20 个：01=6 全取（pk 194/200/220/221/223/224）、02=3（129/135/141）、03=4（112/118/130/142）、05=3（120/126/138）、06=4（109/121/127/139））。chain_phase2.py 已后台挂起：等阶段 1 终态→清场检查→自动起队列+晨报看护（若重爬因风控停止则先冷却 30 分钟）。完成后队列写 final_summary→shutdown /s /t 120，看护在缓冲期写晨报+DB 实查（缺口前后对比）+本文件完成记录。
+  - 明早先看晨报再动手；本次改动未 commit（parser 修复 1 处 + var/ 下脚本）；9334/FB 未碰。
 - **变体完整性实测（2026-11-20，`var/verify_variants_20261120/`，✅ 完成，纯验证、未改业务代码、未 commit）**：验证用户最高优先级「商品规格必须一比一完整抓取」在真实商品上是否成立。**未启动队列/批次、未关机、未碰 9334/FB、未打印 Cookie/密钥、未做任何 S3 操作。**
   - **环境实况**：当前 shell `CRAWL_VARIANT_PRICE_LIMIT` 未设置；根 `.env` 只有 `MEDIA_BACKEND=s3` 等 4 个键、**无** `CRAWL_VARIANT_PRICE_LIMIT`；`settings.py` 默认已是 0，spider `DEFAULT_VARIANT_PRICE_LIMIT=10` 但被 setting 0 覆盖。验证脚本仍显式 `os.environ["CRAWL_VARIANT_PRICE_LIMIT"]="0"`。`.env` 的 `MEDIA_BACKEND=s3` 与批次 J 结论（AWS 账户暂停、数据先存本地）冲突，**脚本内强制 `MEDIA_BACKEND=local`**，因此本次零 S3 调用；图片本地化结果不影响 SKU/Offer 断言。
   - **方法（与 spider 同链路）**：`verify.py <source_id>` = `/dp/x/<id>` → `parse_uk_product_detail` → `/dg/` merge → 逐个非主变体 `/dp/x/<sku>` + `extract_variant_price`（间隔 2s）→ `to_payload` → `ingest_product_payload` → `import_staging_product` → DB 实查。风控/HTTP 失败与「源站无价」分开计数；风控连续 3 条即止轮，冷却 90s 换 VALID 账号重试（`--resume-json` 可复用已得价格只补剩余，避免重复请求）。
@@ -3169,6 +3463,7 @@
 - **2026-11-20 15:53 再次开机启动（专用启动会话，无代码改动；首次两个前端服务都走看护）**：开机后 Docker 引擎未运行、四端口全空 → Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端看护循环 + **storefront 看护循环（首次用于日常启动）** + 两个 vite。验证：四端口各一行 LISTENING（8000=24044、3000=5368、5173=32656、5174=28804）；runserver 一对进程、两条看护循环各一条链、nuxt 1、vite 2；health ok；三端首页 200。排查备注：`Get-CimInstance` 列 bash 时会把**检查命令自身的临时 shell** 也算进去（同宿主派生、即起即灭），别误判成重复看护循环——以端口 LISTENING 行数 + 服务健康为准。
 - **2026-11-20 17:41 跟进（storefront 看护循环实战验证成功，无代码改动）**：15:53 启动的看护循环在 17:35–17:40 之间 nuxt 两次退出（rc=0），**循环均 5s 内自动拉起**（日志有 `logger=keepalive` 标记各两条），3000 当前由新 nuxt（PID 48432）服务、200 正常。后台任务包装层虽报 exit 1，但看护脚本本体仍在跑（进程链 12752→36192→23884）——**后台任务的 exit 通知 ≠ 看护死了，以进程链 + 端口为准**。
 - **2026-11-20 23:01 晚间再次开机启动（专用启动会话，无代码改动）**：全停（Docker 引擎未运行、四端口空）→ Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端 + storefront 两条看护循环 + 两个 vite。验证：四端口各一行 LISTENING（8000=45632、3000=36384、5173=1228、5174=26900）；health ok；三端首页 200。
+- **2026-11-21 11:08 每日检查（专用启动会话，无代码改动；本次无需启动）**：昨晚 23:01 起的服务整夜存活，机器未重启（容器 Up 12h）。**两条看护循环夜间各自完成一次自愈**：后端 runserver 00:04（UTC 16:04）退出 → 5s 拉起（8000 现 PID 14592）；nuxt 01:02 退出 → 01:15 拉起（3000 现 PID 22544）；5173/5174 原进程未动。验证：health ok；三端首页 200。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
@@ -4284,9 +4579,16 @@
 5. 证据闭合后，把国际化改造拆成独立小工作包：MarketLocale、市场本地化内容与字段语言元数据、API 上下文切换、搜索索引、购物端自动刷新和管理端来源对比。
 6. 再使用已保存的 Joybuy 中文会话重新分析类目；不直接复用英文名称生成最终 seed。
 7. 中文类目完成后，再回到 `docs/09-crawler-category-task-redesign.md` 第 10 节的四个品类口径和配额页面实现。
-8. 任何后续任务结束前，继续按 `AGENTS.md` 更新本文档。
+8. **（2026-11-22 新增）shard2 进程退出后**：`python var/uuid_fix_20261122/reimport_failed.py --shards 2 --update-progress-shards 2` 回写那 14 条已重放成功的 progress（DB 已是 IMPORTED）；并在下一批导入前确认没有「迁移与在跑导入进程并存」的情况（见 0ay 坑①）。
+9. 任何后续任务结束前，继续按 `AGENTS.md` 更新本文档。
 
 ## 5. 已踩过且绝对不能再踩的坑
+
+### 2026-11-22 商品导入 UUID 事故（详见 0ay）
+
+- **模型字段改类型（尤其 `UUIDField`）不能与长周期导入进程并存**：迁移落库后，迁移前启动的进程仍按旧元数据解码新列值；Django MySQL 的 `convert_uuidfield_value`（`django/db/backends/mysql/operations.py:327`）**没有 try/except**，抛裸 `ValueError('badly formed hexadecimal UUID string')`，不是 `ValidationError`。先停批再迁移，或让热路径 `only()` 到真正用到的列。
+- **导入链路禁止整行取商家**：`MerchantSourceMapping.objects.select_related("merchant")` / `existing.merchant` 会解码 `Merchant.public_id`；统一走 `merchants.services._import_merchant_queryset()`。
+- **判断批量失败必须按「进程 + 时间」切片**：同一 payload 在新进程成功、在旧进程必失败；工具有 `Get-CimInstance Win32_Process`（CreationDate 是本地时间 UTC+8）、`django_migrations.applied`、progress 每条的 `started_at`。
 
 ### 2026-11-05 爬虫重建（第 1 轮）
 

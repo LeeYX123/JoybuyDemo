@@ -10,6 +10,15 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      // 多页入口：index.html = 桌面 Vue 壳；mobile.html = folio 静态稿手机版。
+      input: {
+        main: 'index.html',
+        mobile: 'mobile.html',
+      },
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: 5174,

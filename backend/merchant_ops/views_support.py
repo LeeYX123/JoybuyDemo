@@ -8,6 +8,7 @@ from accounts_staff.api_exceptions import StaffApiError
 from accounts_staff.permissions import StaffRbacPermission
 from audit.services import record_audit
 from merchant_ops.api_utils import OpsAPIView, iso, paginate, require
+from merchant_ops.crisp_mirror import queue_support_message_mirror
 from merchant_ops.models import SupportConversation, SupportMessage
 from merchants.models import Merchant
 
@@ -164,6 +165,8 @@ class AdminSupportConversationDetailView(OpsAPIView):
                 author_label=request.staff_account.display_name,
                 text=text,
             )
+            # 批次 V：落库后镜像到 Crisp（事务提交后才发，失败不影响本接口）。
+            queue_support_message_mirror(message)
             conversation.last_message_at = message.created_at
             if conversation.state == SupportConversation.State.PENDING:
                 conversation.state = SupportConversation.State.PROCESSING

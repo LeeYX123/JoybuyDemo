@@ -27,6 +27,7 @@ from accounts_buyers.serializers import (
 )
 from accounts_buyers.services import (
     clear_rate_limit,
+    consume_merchant_handoff_token,
     consume_verification_code,
     create_buyer_session,
     delete_buyer_session_cookie,
@@ -350,3 +351,31 @@ class BuyerSessionView(BuyerCsrfAPIView):
                 "csrf_token": get_token(request),
             }
         )
+
+
+class BuyerMerchantHandoffView(BuyerCsrfAPIView):
+    """POST /api/v1/auth/buyer/merchant-handoff：兑换商家端一次性 token。
+
+    无需登录（这是登录入口）。与其它买家写接口一致走 ``BuyerCsrfAPIView``：
+    storefront 先 GET /auth/buyer/session 拿 csrftoken，再带 X-CSRFToken POST。
+    兑换成功后在**购物端自己的 host** 上写 host-only session cookie。
+    """
+
+    def post(self, request):
+        token = str((request.data or {}).get("token") or "").strip()
+        account = consume_merchant_handoff_token(token)
+        if account is None:
+            raise BuyerApiError(
+                business_code="HANDOFF_TOKEN_INVALID",
+                message="登录凭证已过期，请从商家端重新进入",
+                status_code=400,
+            )
+
+        session_token, _session = create_buyer_session(
+            account=account,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        response = Response({"email": account.email})
+        set_buyer_session_cookie(response, session_token)
+        return response

@@ -1,8 +1,20 @@
 import uuid
 from decimal import Decimal
 
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.db.models import Q
+
+# 商家对外展示 ID：固定 `MER` + 6 位数字，从 001000 起顺序分配。
+# 需求原话是「MER+6位数字（随机数字），数字起点 001000」；这里按顺序编号
+# 实现（天然唯一、可读、避免随机碰撞），格式与起点完全一致。
+MERCHANT_ID_PREFIX = "MER"
+MERCHANT_ID_START = 1000
+MERCHANT_ID_DIGITS = 6
+MERCHANT_ID_MAX_ATTEMPTS = 5
+
+
+def format_merchant_public_id(number: int) -> str:
+    return f"{MERCHANT_ID_PREFIX}{number:0{MERCHANT_ID_DIGITS}d}"
 
 
 class Merchant(models.Model):
@@ -19,7 +31,7 @@ class Merchant(models.Model):
         REJECTED = "REJECTED", "Rejected"
         SUSPENDED = "SUSPENDED", "Suspended"
 
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    public_id = models.CharField(max_length=16, unique=True, editable=False)
     slug = models.SlugField(max_length=100, unique=True)
     display_name = models.CharField(max_length=160)
     legal_name = models.CharField(max_length=200, blank=True, default="")
@@ -95,6 +107,43 @@ class Merchant(models.Model):
                 name="merchant_status_created_idx",
             )
         ]
+
+    def save(self, *args, **kwargs):
+        """新建商家时自动生成 MER+6 位 public_id（任何创建路径都覆盖）。"""
+
+        if self.public_id:
+            return super().save(*args, **kwargs)
+
+        # 并发保护分两层：事务内 select_for_update 锁住现有号段后再取 max+1；
+        # 极端并发下仍撞唯一约束时，回滚保存点、重算最大号重试。
+        for attempt in range(MERCHANT_ID_MAX_ATTEMPTS):
+            try:
+                with transaction.atomic():
+                    self.public_id = self._next_public_id()
+                    return super().save(*args, **kwargs)
+            except IntegrityError as exc:
+                # 只吞 public_id 冲突；slug 等其他唯一键冲突原样抛出。
+                if "public_id" not in str(exc):
+                    raise
+                self.public_id = ""
+                if attempt == MERCHANT_ID_MAX_ATTEMPTS - 1:
+                    raise
+
+    @classmethod
+    def _next_public_id(cls) -> str:
+        """取当前最大号 +1（需在调用方事务内执行，锁随事务释放）。"""
+
+        values = (
+            cls.objects.select_for_update()
+            .filter(public_id__startswith=MERCHANT_ID_PREFIX)
+            .values_list("public_id", flat=True)
+        )
+        numbers = []
+        for value in values:
+            suffix = value[len(MERCHANT_ID_PREFIX) :]
+            if suffix.isdigit():
+                numbers.append(int(suffix))
+        return format_merchant_public_id(max(numbers, default=MERCHANT_ID_START - 1) + 1)
 
     @property
     def is_active(self) -> bool:

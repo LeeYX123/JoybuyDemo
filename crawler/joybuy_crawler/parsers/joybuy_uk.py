@@ -1605,7 +1605,15 @@ def parse_uk_product_detail(html: str, *, source_url: str = "") -> UkProduct:
     if isinstance(offers, list):
         offers = offers[0] if offers else {}
     json_ld_price = _price(str(offers.get("price") or "")) if offers else None
-    current_price = cross_price or json_ld_price or main_price
+    # 2026-11-21 源站改版：详情页 JSON-LD 不再带平铺 offers.price（挪进
+    # priceSpecification），CSS crossOffPrice/mainPrice 节点也不渲染，
+    # flight 产品块缺失 —— 补 serverProduct floors 兜底，字段与业务规则
+    # 与 extract_variant_price 完全一致（crossOffPrice 原价优先于 mainPrice）。
+    price_floor = floors.get("productPriceFloor") or {}
+    floor_price = _price(price_floor.get("crossOffPrice")) or _price(
+        price_floor.get("mainPrice")
+    )
+    current_price = cross_price or json_ld_price or main_price or floor_price
     list_price = None  # discounts are never kept (business rule)
     currency = str(offers.get("priceCurrency") or "").strip().upper() or (
         "GBP" if "£" in (html[:20000] or "") else ""
