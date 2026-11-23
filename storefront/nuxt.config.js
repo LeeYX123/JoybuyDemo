@@ -18,16 +18,40 @@ export default defineNuxtConfig({
       // （生产用 MERCHANT_WEB_URL 覆盖），前端不再保存第二份 host 配置。
     },
   },
+  // 全局请求超时兜底（2026-11-23）：useFetch 默认会无限等待——后端宕机或
+  // devProxy 卡死时页面会永久转圈。这里给所有 useFetch 一个默认 timeout，
+  // 超时后由页面已有的 error 分支接管，用户看到"加载失败"而不是转圈。
+  // 页面显式传 timeout 时仍以页面为准。
+  experimental: {
+    defaults: {
+      useFetch: {
+        timeout: 15_000,
+      },
+    },
+  },
   nitro: {
+    // 开发代理（仅 dev 生效；生产由 Nginx 处理）。
+    //
+    // 2026-11-23 事故：后端宕机/重启后，代理的 keep-alive 连接池会残留死连接，
+    // 之后每个 /api 请求都无限挂起（页面永久转圈），只有重启 nuxt 才能恢复。
+    // 因此这里显式关掉连接复用（agent: false = 每次请求新建连接）并加超时：
+    // 后端不可用时快速失败而不是挂死，后端恢复后也无需重启 dev server。
     devProxy: {
       '/api': {
         target: 'http://127.0.0.1:8000/api',
         changeOrigin: true,
+        agent: false,
+        // 8s 内无响应就断开，避免用户长时间干等（本地接口正常 <200ms）。
+        timeout: 8_000,
+        proxyTimeout: 8_000,
       },
       // Django serves /media in development; Nginx takes over in production.
       '/media': {
         target: 'http://127.0.0.1:8000/media',
         changeOrigin: true,
+        agent: false,
+        timeout: 20_000,
+        proxyTimeout: 20_000,
       },
     },
   },

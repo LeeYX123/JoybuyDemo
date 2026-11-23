@@ -117,6 +117,23 @@ class S3StoreBytesTests(S3BackendTestCase):
         self.assertEqual(MediaAsset.objects.count(), 1)
         self.assertEqual(len(self.fake.put_calls), 1, "Dedup must not put_object again.")
 
+    def test_dedup_hit_reuploads_missing_object(self):
+        """A row whose object vanished from the bucket is re-put on the sha hit."""
+        payload = make_png(color=(11, 12, 13))
+        asset, _ = store_bytes(payload, kind="PRODUCT", mime_type="image/png")
+        key = f"media/{asset.relative_path}"
+        del self.fake.objects[key]
+        self.assertEqual(len(self.fake.put_calls), 1)
+
+        again, created = store_bytes(payload, kind="PRODUCT", mime_type="image/png")
+
+        self.assertFalse(created)
+        self.assertEqual(again.pk, asset.pk)
+        self.assertEqual(len(self.fake.put_calls), 2)
+        self.assertEqual(self.fake.objects[key]["body"], payload)
+        self.assertEqual(self.fake.objects[key]["content_type"], "image/png")
+        self.assertEqual(MediaAsset.objects.count(), 1)
+
     def test_read_stored_bytes_returns_uploaded_payload(self):
         payload = make_png(color=(9, 8, 7))
         asset, _ = store_bytes(payload, kind="PRODUCT", mime_type="image/png")

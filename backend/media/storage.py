@@ -140,6 +140,17 @@ def stored_file_exists(relative_path: str) -> bool:
         return False
 
 
+def _object_exists(relative_path: str) -> bool:
+    """Existence of the stored **bytes** in the active backend.
+
+    Alias of :func:`stored_file_exists`, kept as a private name to make the
+    dedup contract explicit: a ``MediaAsset`` row is metadata only, and a row
+    surviving says nothing about the object (S3-era rows have no local file).
+    """
+
+    return stored_file_exists(relative_path)
+
+
 def media_url(relative_path: str) -> str:
     """Build the public URL for a stored file; Nginx serves ``/media/``."""
 
@@ -187,8 +198,11 @@ def store_bytes(
     Returns ``(asset, created)``. Only relative paths are persisted; the
     physical location is ``<MEDIA_ROOT>/<kind prefix>/original/<aa>/<bb>/<sha256>.<ext>``
     on the local backend, or the same relative path as an object key under
-    ``MEDIA_S3_PREFIX`` in the S3 bucket. A sha256 hit in the database skips
-    all writes (no object upload) and only refreshes ``last_seen_at``.
+    ``MEDIA_S3_PREFIX`` in the S3 bucket. A sha256 hit in the database refreshes
+    ``last_seen_at`` and **verifies the physical object still exists in the
+    active backend**, re-writing it from ``data`` when it is missing: dedup is
+    keyed on the DB row, but the bytes can be gone (rows created while
+    ``MEDIA_BACKEND=s3`` have no local file after switching back to local).
     """
 
     if kind not in KIND_PATH_PREFIX:
@@ -201,6 +215,14 @@ def store_bytes(
 
     existing = MediaAsset.objects.filter(sha256=digest).first()
     if existing:
+        # Backfill before touching metadata: a dedup hit must never leave the
+        # asset pointing at bytes that the active backend does not have.
+        if not _object_exists(existing.relative_path):
+            store_file_bytes(
+                existing.relative_path,
+                data,
+                content_type=normalized_mime or existing.mime_type,
+            )
         fields = ["last_seen_at", "updated_at"]
         existing.last_seen_at = observed_at
         if source_url and source_url != existing.source_url:

@@ -1,6 +1,7 @@
 import io
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.conf import settings
 from django.test import TestCase, override_settings
@@ -57,6 +58,40 @@ class MediaStorageTests(IsolatedMediaRootMixin, TestCase):
         self.assertEqual(first.download_status, MediaAsset.DownloadStatus.DOWNLOADED)
         physical = Path(settings.MEDIA_ROOT) / first.relative_path
         self.assertTrue(physical.is_file())
+
+    def test_sha_hit_rewrites_missing_physical_file(self):
+        """A DB row without bytes (S3-era asset) must be re-materialized on dedup."""
+        payload = make_png(color=(4, 5, 6))
+        first, created = store_bytes(payload, kind=MediaAsset.Kind.PRODUCT, mime_type="image/png")
+        self.assertTrue(created)
+        physical = Path(settings.MEDIA_ROOT) / first.relative_path
+        physical.unlink()
+        self.assertFalse(physical.exists())
+
+        again, again_created = store_bytes(
+            payload, kind=MediaAsset.Kind.PRODUCT, mime_type="image/png"
+        )
+
+        self.assertFalse(again_created)
+        self.assertEqual(again.pk, first.pk)
+        self.assertEqual(MediaAsset.objects.count(), 1)
+        self.assertEqual(physical.read_bytes(), payload)
+
+    def test_sha_hit_does_not_rewrite_existing_file(self):
+        payload = make_png(color=(7, 8, 9))
+        asset, _ = store_bytes(payload, kind=MediaAsset.Kind.PRODUCT, mime_type="image/png")
+        physical = Path(settings.MEDIA_ROOT) / asset.relative_path
+        before = physical.stat().st_mtime_ns
+
+        with patch("media.storage.store_file_bytes") as store_file_bytes:
+            again, created = store_bytes(
+                payload, kind=MediaAsset.Kind.PRODUCT, mime_type="image/png"
+            )
+
+        self.assertFalse(created)
+        self.assertEqual(again.pk, asset.pk)
+        store_file_bytes.assert_not_called()
+        self.assertEqual(physical.stat().st_mtime_ns, before)
 
     def test_database_paths_are_relative_and_urls_are_local(self):
         asset, _ = self.store_sample()
