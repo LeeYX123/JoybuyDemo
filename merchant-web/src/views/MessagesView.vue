@@ -76,7 +76,14 @@ function buyerMessages(payload, row) {
   return (payload.messages || []).map((message) => ({
     id: `buyer-${message.id}`,
     mine: message.sender_kind === 'merchant',
-    author: message.sender_kind === 'merchant' ? '我' : row?.peerName || '买家',
+    // 批次 AA：Crisp 人工回复回传为 sender_kind=support —— 既不是"我"也不是买家。
+    support: message.sender_kind === 'support',
+    author:
+      message.sender_kind === 'merchant'
+        ? '我'
+        : message.sender_kind === 'support'
+          ? '平台客服'
+          : row?.peerName || '买家',
     text: message.body,
     created_at: message.created_at,
   }))
@@ -258,8 +265,10 @@ function fmtFull(value) {
   return value.slice(0, 16).replace('T', ' ')
 }
 
-// 买家会话 5 秒轮询：列表未读/摘要 + 当前会话新消息（服务器无 after 参数，
-// 按最后一条 id 判断是否需要替换，避免无谓重渲染/跳动）。客服会话保持手动。
+// 5 秒轮询（两个 tab 都轮）：列表未读/摘要 + 当前会话新消息（服务器无 after 参数，
+// 按最后一条 id 判断是否需要替换，避免无谓重渲染/跳动）。
+// 批次 AA：客服会话 tab 也轮询 —— 后端在打开会话时顺带拉取 Crisp 人工回复
+// （线程节流 20s），因此平台客服在 Crisp Inbox 的回复 5s 内即可出现在商家端。
 async function pollBuyer() {
   if (state.tab !== 'buyer' || pollInFlight) return
   if (typeof document !== 'undefined' && document.hidden) return
@@ -292,9 +301,48 @@ async function pollBuyer() {
   }
 }
 
+async function pollSupport() {
+  if (state.tab !== 'support' || pollInFlight) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  pollInFlight = true
+  try {
+    const payload = await apiRequest('/merchant/conversations')
+    const nextRows = (payload.items || []).map(normalizeSupportRow)
+    if (state.activeId) {
+      const current = nextRows.find((row) => row.id === state.activeId)
+      if (current) current.unread = 0
+    }
+    state.supportRows = nextRows
+    if (!state.activeId || state.active?.source !== 'support') return
+    // GET 详情同时触发后端拉取 Crisp 人工回复（线程节流 20s），因此每轮都请求。
+    const detail = await apiRequest(`/merchant/conversations/${state.activeId}`)
+    const incoming = supportMessages(detail.conversation || {})
+    const lastIncoming = incoming[incoming.length - 1]?.id || ''
+    const lastPrevious = state.active.messages[state.active.messages.length - 1]?.id || ''
+    if (lastIncoming !== lastPrevious) {
+      state.active.messages = incoming
+      const row = state.supportRows.find((item) => item.id === state.activeId)
+      if (row) row.unread = 0
+      await scrollToBottom()
+    }
+  } catch {
+    // 轮询失败静默；手动「刷新」可重试。
+  } finally {
+    pollInFlight = false
+  }
+}
+
+function pollActiveTab() {
+  if (state.tab === 'support') {
+    pollSupport()
+  } else {
+    pollBuyer()
+  }
+}
+
 onMounted(() => {
   loadRows()
-  pollTimer = setInterval(pollBuyer, POLL_INTERVAL_MS)
+  pollTimer = setInterval(pollActiveTab, POLL_INTERVAL_MS)
 })
 
 onBeforeUnmount(() => {
@@ -402,7 +450,7 @@ onBeforeUnmount(() => {
               v-for="message in state.active.messages"
               :key="message.id"
               class="chat-bubble"
-              :class="{ 'is-mine': message.mine }"
+              :class="{ 'is-mine': message.mine, 'is-support': message.support }"
             >
               <div class="chat-bubble__meta">
                 {{ message.author }} · {{ fmtFull(message.created_at) }}
@@ -701,6 +749,17 @@ onBeforeUnmount(() => {
 .chat-bubble.is-mine .chat-bubble__text {
   background: var(--red);
   color: #fff;
+}
+
+/* 批次 AA：平台客服（Crisp 人工回复）气泡——浅红底 + 左侧色条，区别于「我」和买家。 */
+.chat-bubble.is-support .chat-bubble__text {
+  background: #fff5f4;
+  border-left: 3px solid var(--red);
+}
+
+.chat-bubble.is-support .chat-bubble__meta {
+  color: var(--red);
+  font-weight: 600;
 }
 
 .chat-compose {

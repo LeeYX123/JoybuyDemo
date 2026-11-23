@@ -53,6 +53,11 @@ RETRY_DELAY_SECONDS = 0.5
 SENDER_MERCHANT = "merchant"
 SENDER_PLATFORM = "platform"
 SENDER_USER = "user"
+# 批次 AA（需求 23.2 / Q8）：``merchant:``（商家 ↔ 平台）线程里商家消息改成
+# ``from=user`` + 昵称=店名 —— 该线程的 Crisp 访客本来就是商家，语义正确；
+# ``bm:``（买家 ↔ 商家）线程的访客是买家，商家仍用 ``SENDER_MERCHANT``（operator），
+# 否则商家会顶替买家的访客身份。
+SENDER_MERCHANT_VISITOR = "merchant_visitor"
 
 STATUS_SKIPPED = "skipped"
 STATUS_SENT = "sent"
@@ -135,10 +140,13 @@ def _error_detail(exc: urllib.error.HTTPError, limit: int = 300) -> str:
     return f" body={text[:limit]}"
 
 
-def _http_request(method: str, path: str, payload: dict | None) -> dict:
+def _http_request(
+    method: str, path: str, payload: dict | None, timeout: float | None = None
+) -> dict:
     """向 Crisp 发一次 REST 请求；所有网络/协议错误统一抛 CrispRequestError。
 
-    抽成单一函数便于测试 mock（测试绝不真连 Crisp）。
+    抽成单一函数便于测试 mock（测试绝不真连 Crisp）。``timeout`` 供入站同步
+    （``crisp_inbound``）按请求线程预算收紧，默认仍用 ``REQUEST_TIMEOUT_SECONDS``。
     """
 
     identifier, key, tier = _credentials()
@@ -151,7 +159,9 @@ def _http_request(method: str, path: str, payload: dict | None) -> dict:
     request.add_header("Accept", "application/json")
 
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=timeout or REQUEST_TIMEOUT_SECONDS
+        ) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
         # 把 Crisp 返回的错误体摘要带进异常：排查 401/403 时必须看到 reason。
@@ -175,7 +185,11 @@ def _http_patch(path: str, payload: dict | None) -> dict:
     return _http_request("PATCH", path, payload)
 
 
-def _http_get(path: str) -> dict:
+def _http_get(path: str, payload: dict | None = None) -> dict:
+    # ``payload`` 只是为了满足 ``_request_with_retry`` 的统一调用约定 ``send(path, payload)``。
+    # 批次 AA 修：这个签名以前只有 ``path``，``_get_with_retry`` 传两个参数会抛 TypeError，
+    # 导致"已存在会话"的补写 meta 分支一进来就崩，后续消息全部不再镜像（只在真机才复现，
+    # 测试里 ``_http_get`` 一直被 mock，所以没暴露）。
     return _http_request("GET", path, None)
 
 
@@ -385,6 +399,11 @@ def build_message_payload(
         payload["from"] = "operator"
         payload["content"] = body
         payload["user"] = {"type": "website", "nickname": sender_name or "商家"}
+    elif sender_kind == SENDER_MERCHANT_VISITOR:
+        # ``merchant:`` 线程：商家就是该 Crisp 会话的访客（Q8），平台客服仍是 operator。
+        payload["from"] = SENDER_USER
+        payload["content"] = body
+        payload["user"] = {"type": "website", "nickname": sender_name or "商家"}
     elif sender_kind == SENDER_PLATFORM:
         payload["from"] = "operator"
         payload["content"] = body
@@ -480,7 +499,7 @@ def mirror_message(
 
 
 def _opening_nickname(sender_kind: str, sender_name: str) -> str:
-    if sender_kind == SENDER_MERCHANT:
+    if sender_kind in {SENDER_MERCHANT, SENDER_MERCHANT_VISITOR}:
         return sender_name or "商家"
     if sender_kind == SENDER_PLATFORM:
         # 与平台消息气泡上的昵称保持一致。
@@ -505,7 +524,8 @@ def queue_support_message_mirror(message: SupportMessage) -> None:
     if conversation.kind != SupportConversation.Kind.PLATFORM_SUPPORT:
         return
     if message.sender == SupportMessage.Sender.MERCHANT:
-        sender_kind = SENDER_MERCHANT
+        # 批次 AA（Q8）：merchant: 线程的访客是商家 → from=user + 昵称=店名。
+        sender_kind = SENDER_MERCHANT_VISITOR
         sender_name = conversation.merchant.display_name
     elif message.sender == SupportMessage.Sender.PLATFORM:
         sender_kind = SENDER_PLATFORM

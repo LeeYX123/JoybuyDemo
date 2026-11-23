@@ -149,6 +149,30 @@ describe('MerchantChatPanel', () => {
     expect(wrapper.find('.merchant-chat__send').attributes('disabled')).toBeDefined()
   })
 
+  it('renders a platform support reply with its own label and style', async () => {
+    // 批次 AA：Crisp 人工回复回传为 sender_kind=support，不能当成商家本人。
+    fetchMock = createFetchMock({
+      [`GET ${MESSAGES_URL}`]: () => ({
+        thread: { id: 'thread-1' },
+        messages: [
+          message(1, 'merchant', 'Hello from the shop', '2026-11-22T10:00:00+00:00'),
+          message(2, 'support', 'Support here, we are on it', '2026-11-22T10:02:00+00:00'),
+        ],
+      }),
+    })
+    globalThis.$fetch = fetchMock
+    await mountPanel()
+
+    const bubbles = wrapper.findAll('.merchant-chat__bubble')
+    expect(bubbles).toHaveLength(2)
+    const support = bubbles[1]
+    expect(support.text()).toContain('Support here')
+    expect(support.classes()).toContain('merchant-chat__bubble--support')
+    expect(support.classes()).not.toContain('merchant-chat__bubble--mine')
+    expect(support.find('.merchant-chat__tag').text()).toBe('Support')
+    expect(bubbles[0].find('.merchant-chat__tag').exists()).toBe(false)
+  })
+
   it('polls with the last server timestamp and appends the seller reply', async () => {
     await mountPanel()
 

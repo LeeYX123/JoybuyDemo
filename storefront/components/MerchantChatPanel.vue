@@ -138,6 +138,8 @@ function serverMessage(raw, clientId = '') {
     clientId,
     serverId: raw.id,
     mine: raw.sender_kind === 'buyer',
+    // 批次 AA：平台客服在 Crisp 的人工回复回传为 sender_kind=support，单独标记。
+    support: raw.sender_kind === 'support',
     body: raw.body || '',
     created_at: raw.created_at || '',
     pending: false,
@@ -560,10 +562,14 @@ onBeforeUnmount(() => {
                 class="merchant-chat__bubble"
                 :class="{
                   'merchant-chat__bubble--mine': message.mine,
+                  'merchant-chat__bubble--support': message.support,
                   'merchant-chat__bubble--pending': message.pending,
                   'merchant-chat__bubble--failed': message.failed,
                 }"
               >
+                <p v-if="message.support" class="merchant-chat__tag">
+                  {{ t('chat.supportLabel') }}
+                </p>
                 <p class="merchant-chat__text">{{ message.body }}</p>
                 <p class="merchant-chat__meta">
                   <span>{{ formatTime(message.created_at) }}</span>
@@ -796,6 +802,21 @@ onBeforeUnmount(() => {
   border-radius: 12px 12px 4px;
   background: var(--colour-accent);
   color: var(--colour-white);
+}
+
+/* 批次 AA：平台客服（Crisp 人工回复）气泡——与"商家本人"区分开，浅底 + 左侧色条。 */
+.merchant-chat__bubble--support {
+  background: var(--colour-surface);
+  border-left: 3px solid var(--colour-accent);
+  color: var(--colour-text);
+}
+
+.merchant-chat__tag {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--colour-accent);
 }
 
 .merchant-chat__bubble--pending {

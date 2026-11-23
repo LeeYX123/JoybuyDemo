@@ -1,13 +1,21 @@
 <script setup>
-// 全站【客服】入口（需求 21 / 批次 Y，2026-11-22）。
+// 全站【客服】入口（需求 21 / 批次 Y；需求 23.3 / 批次 AB 按真站重做）。
 //
-// 右下角图标 + 文字按钮，点击展开浮层面板：买家 ↔ 平台客服会话
-// （/api/v1/account/support-chat/*）。所有登录买家可用（不要求白名单）；
-// 未登录点击先去登录页并带回跳（?next=）。打开后每 5s 轮询增量，关闭面板、
-// 页面隐藏或组件卸载时停止。
+// 右下角图标 + 文字按钮，点击展开浮层面板：先看到会话列表（现阶段只有一条
+// 【客户服务】），点进去是会话视图 —— 居中客服头像 + 欢迎语 + 三条常见问题
+// （点击即作为消息发送）+【发送订单】+ 输入框（发送图标在框内右侧）。
 //
-// 与 MerchantChatPanel（用户 ↔ 商家）保持独立：两者接口/权限/文案都不同，
-// 只借鉴其乐观发送 + 服务端认领的交互细节，不共享状态。
+// 真站实测（var/cs_sync_panel_20261123/findings.md C2/C3）：面板 375 宽、
+// 80% 高（max 720）、right 84 / bottom 104.5、#F5F6FA 底、8px 圆角、
+// #F0F1F2 边框、0 2px 16px rgba(0,0,0,.078)、z-index 1200；header 60px 白底，
+// 左【清除】16 / 中【客服】24px700 / 右【×】16；列表项 padding 12×16、头像 60
+// 圆、标题 16/600 #1A1A1A、时间 12 #505259、摘要 14/500 两行截断、
+// 未读 16px #E1251B、hover rgba(0,16,71,.102)。
+// 会话内首屏真站未实测（需登录），按需求 23.3 + 用户描述实现（推定）。
+//
+// 数据仍走买家 ↔ 平台客服接口 /api/v1/account/support-chat/*（批次 X）；
+// 订单来自 /api/v1/orders。保留未登录引导、5s 轮询（进入会话视图才启用）、
+// 2000 字上限、乐观发送、失败重试、发送中禁用。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { navigateTo, useRoute } from '#imports'
 
@@ -15,16 +23,29 @@ import { useBuyerAuth } from '../composables/useBuyerAuth'
 import { useLocale } from '../composables/useLocale'
 
 const MAX_LENGTH = 2000
+const MAX_ORDERS = 3
 const POLL_INTERVAL_MS = 5000
 const TITLE_ID = 'support-chat-title'
+const ORDER_TITLE_ID = 'support-chat-order-title'
 const INPUT_ID = 'support-chat-input'
 const BASE = '/api/v1/account/support-chat'
+const ORDERS_URL = '/api/v1/orders'
+
+const ORDER_STATUS_KEYS = {
+  PENDING_PAYMENT: 'orders.statusPendingPayment',
+  PROCESSING: 'orders.statusProcessing',
+  SHIPPED: 'orders.statusShipped',
+  COMPLETED: 'orders.statusCompleted',
+  CANCELED: 'orders.statusCanceled',
+}
 
 const { t, localeCode } = useLocale()
 const { isAuthenticated } = useBuyerAuth()
 const route = useRoute()
 
 const open = ref(false)
+// 'list' = 会话列表（默认首屏），'conversation' = 会话视图。
+const view = ref('list')
 const threadId = ref('')
 const messages = ref([])
 const loading = ref(false)
@@ -34,12 +55,41 @@ const sending = ref(false)
 const composeError = ref('')
 const draft = ref('')
 
+// 列表卡片元信息：最后一条正文/时间、未读数（来自 POST /thread 的 payload）。
+const lastPreview = ref('')
+const lastMessageAt = ref('')
+const unreadCount = ref(0)
+// 轮询游标独立于 messages：点【清除】清屏后游标不回退，否则下一轮又会把
+// 后端历史拉回来。
+const cursor = ref('')
+const cleared = ref(false)
+
+// 【发送订单】弹层。
+const ordersOpen = ref(false)
+const ordersLoading = ref(false)
+const ordersError = ref(false)
+const orders = ref([])
+const selectedOrders = ref([])
+
 const listEl = ref(null)
 const closeButton = ref(null)
 const inputEl = ref(null)
 
 let pollTimer = null
 let pollInFlight = false
+
+const faqs = computed(() => [t('support.faq1'), t('support.faq2'), t('support.faq3')])
+
+const showFaq = computed(
+  () =>
+    view.value === 'conversation' &&
+    !messages.value.length &&
+    !loading.value &&
+    !loadError.value &&
+    !authRequired.value,
+)
+
+const canClear = computed(() => view.value === 'conversation' && messages.value.length > 0)
 
 const canSend = computed(
   () =>
@@ -52,23 +102,7 @@ const canSend = computed(
     Boolean(threadId.value),
 )
 
-// 轮询游标 = 最后一条「已确认服务端消息」或「正在发送的乐观消息」的时间；
-// 未发送成功的乐观气泡不推进游标，避免时钟偏差吞掉客服回复。
-const pollCursor = computed(() => {
-  let bestTs = 0
-  let bestValue = ''
-  for (const message of messages.value) {
-    if (!message.created_at) continue
-    if (!message.serverId && !message.pending) continue
-    const ts = Date.parse(message.created_at)
-    if (Number.isNaN(ts)) continue
-    if (ts >= bestTs) {
-      bestTs = ts
-      bestValue = message.created_at
-    }
-  }
-  return bestValue
-})
+const listPreview = computed(() => lastPreview.value || t('support.listPreview'))
 
 function loginUrl() {
   const next = route.fullPath || '/'
@@ -183,9 +217,57 @@ function mergeMessages(incoming) {
   return changed
 }
 
+function bumpCursor(value) {
+  if (!value) return
+  const next = Date.parse(value)
+  if (Number.isNaN(next)) return
+  const current = Date.parse(cursor.value)
+  if (!cursor.value || Number.isNaN(current) || next >= current) cursor.value = value
+}
+
+function syncCursor() {
+  let bestTs = 0
+  let bestValue = ''
+  for (const message of messages.value) {
+    if (!message.created_at) continue
+    const ts = Date.parse(message.created_at)
+    if (Number.isNaN(ts)) continue
+    if (ts >= bestTs) {
+      bestTs = ts
+      bestValue = message.created_at
+    }
+  }
+  if (bestValue) cursor.value = bestValue
+}
+
+// 未读数只取 POST /thread（get-or-create）那一刻的值：GET /messages 会顺手
+// 把买家未读清零，用它的 payload 覆盖会把列表红点抹掉。
+function applyThreadMeta(thread, { withUnread = false } = {}) {
+  if (!thread) return
+  if (thread.last_message_at) lastMessageAt.value = thread.last_message_at
+  if (withUnread && Number.isFinite(Number(thread.buyer_unread))) {
+    unreadCount.value = Number(thread.buyer_unread) || 0
+  }
+}
+
+function applyPreviewFromMessages() {
+  const last = [...messages.value]
+    .reverse()
+    .find((message) => message.created_at && !message.pending && !message.failed)
+  if (last) {
+    lastPreview.value = last.body
+    lastMessageAt.value = last.created_at
+  }
+}
+
 async function init() {
   threadId.value = ''
   messages.value = []
+  cursor.value = ''
+  cleared.value = false
+  lastPreview.value = ''
+  lastMessageAt.value = ''
+  unreadCount.value = 0
   loading.value = true
   loadError.value = false
   authRequired.value = false
@@ -203,20 +285,38 @@ async function init() {
       return
     }
     threadId.value = id
+    applyThreadMeta(created.thread, { withUnread: true })
     const payload = await getJson('/messages')
     if (payload?.error) {
       if (!handleAccessError(payload)) loadError.value = true
       return
     }
     messages.value = (payload?.messages || []).map((raw) => serverMessage(raw))
-    startPolling()
-    await scrollToBottom()
-    await nextTick()
-    if (!authRequired.value) inputEl.value?.focus?.()
+    applyThreadMeta(payload?.thread)
+    applyPreviewFromMessages()
+    syncCursor()
   } catch {
     loadError.value = true
   } finally {
     loading.value = false
+  }
+}
+
+// 重新拉整段历史（【清除】后从列表再次进入会话时用，Q4：只清显示不删库）。
+async function reloadHistory() {
+  if (!threadId.value) return
+  try {
+    const payload = await getJson('/messages')
+    if (payload?.error) {
+      handleAccessError(payload)
+      return
+    }
+    messages.value = (payload?.messages || []).map((raw) => serverMessage(raw))
+    applyThreadMeta(payload?.thread)
+    applyPreviewFromMessages()
+    syncCursor()
+  } catch {
+    // 拉取失败保持当前视图，下一次轮询/重进再试。
   }
 }
 
@@ -246,6 +346,9 @@ async function deliver(message) {
         Object.assign(target, serverMessage(raw, target.clientId))
       }
       pruneDuplicateMessages()
+      bumpCursor(raw.created_at || message.created_at)
+      lastPreview.value = message.body
+      lastMessageAt.value = raw.created_at || message.created_at || lastMessageAt.value
     } else if (!message.serverId) {
       message.pending = false
     }
@@ -258,8 +361,9 @@ async function deliver(message) {
   }
 }
 
-async function send() {
-  const body = draft.value.trim()
+// FAQ / 订单文本都走这里：与手动输入完全同一条发送链路（乐观气泡 + 失败重试）。
+async function sendText(rawBody) {
+  const body = String(rawBody || '').trim()
   if (!body || !threadId.value || sending.value) return
   if (body.length > MAX_LENGTH) {
     composeError.value = t('support.tooLong', { max: MAX_LENGTH })
@@ -278,13 +382,19 @@ async function send() {
     failed: false,
   }
   messages.value.push(optimistic)
-  draft.value = ''
   await scrollToBottom()
   try {
     await deliver(optimistic)
   } finally {
     sending.value = false
   }
+}
+
+async function send() {
+  if (!canSend.value) return
+  const body = draft.value.trim()
+  draft.value = ''
+  await sendText(body)
 }
 
 async function retry(message) {
@@ -301,14 +411,26 @@ async function poll() {
   if (!threadId.value || pollInFlight || typeof document === 'undefined' || document.hidden) return
   pollInFlight = true
   try {
-    const after = pollCursor.value
+    const after = cursor.value
     const query = after ? `?after=${encodeURIComponent(after)}` : ''
     const payload = await getJson(`/messages${query}`)
     if (payload?.error) {
       handleAccessError(payload)
       return
     }
-    if (mergeMessages(payload?.messages || [])) await scrollToBottom()
+    const incoming = payload?.messages || []
+    if (mergeMessages(incoming)) {
+      const last = incoming[incoming.length - 1]
+      if (last) {
+        bumpCursor(last.created_at)
+        lastPreview.value = last.body || lastPreview.value
+        lastMessageAt.value = last.created_at || lastMessageAt.value
+      }
+      await scrollToBottom()
+    } else if (incoming.length) {
+      bumpCursor(incoming[incoming.length - 1].created_at)
+    }
+    if (payload?.thread) applyThreadMeta(payload.thread)
   } catch {
     // 轮询失败静默，下一轮再试。
   } finally {
@@ -347,6 +469,120 @@ function formatTime(value) {
   }
 }
 
+// ---------------------------- 视图切换 ----------------------------
+
+async function enterConversation() {
+  if (authRequired.value || loadError.value) return
+  view.value = 'conversation'
+  composeError.value = ''
+  if (cleared.value) await reloadHistory()
+  cleared.value = false
+  startPolling()
+  await scrollToBottom()
+  await nextTick()
+  inputEl.value?.focus?.()
+}
+
+function backToList() {
+  stopPolling()
+  applyPreviewFromMessages()
+  view.value = 'list'
+}
+
+// Q4：【清除】只清用户侧显示——本地把已渲染消息清空，游标不回退（轮询不会
+// 把历史重新拉回来）；不调后端、不删数据库。后端当前没有买家侧清除接口。
+// 从列表再次进入会话时会重新拉历史。
+function clearConversation() {
+  if (!canClear.value) return
+  messages.value = []
+  lastPreview.value = ''
+  composeError.value = ''
+  cleared.value = true
+}
+
+// ---------------------------- 发送订单 ----------------------------
+
+function shortOrderId(value) {
+  return String(value || '')
+    .slice(0, 8)
+    .toUpperCase()
+}
+
+function orderAmount(order) {
+  const numeric = Number(order?.total)
+  if (!Number.isFinite(numeric)) return ''
+  const currency = String(order?.currency || 'GBP').toUpperCase()
+  try {
+    return new Intl.NumberFormat('en-GB', { style: 'currency', currency }).format(numeric)
+  } catch {
+    return String(order?.total ?? '')
+  }
+}
+
+function orderStateLabel(order) {
+  return t(ORDER_STATUS_KEYS[order?.state] || 'orders.statusProcessing')
+}
+
+function orderLine(order) {
+  return t('support.orderMessage', {
+    id: order.public_id,
+    amount: orderAmount(order),
+    status: orderStateLabel(order),
+  })
+}
+
+async function loadOrders() {
+  ordersLoading.value = true
+  ordersError.value = false
+  try {
+    const payload = await $fetch(ORDERS_URL, {
+      credentials: 'include',
+      ignoreResponseError: true,
+    })
+    if (payload?.error || !Array.isArray(payload?.orders)) {
+      ordersError.value = true
+      return
+    }
+    orders.value = payload.orders.slice(0, MAX_ORDERS)
+  } catch {
+    ordersError.value = true
+  } finally {
+    ordersLoading.value = false
+  }
+}
+
+function openOrders() {
+  if (!threadId.value || sending.value) return
+  ordersOpen.value = true
+  selectedOrders.value = []
+  ordersError.value = false
+  if (!orders.value.length) loadOrders()
+}
+
+function closeOrders() {
+  ordersOpen.value = false
+  selectedOrders.value = []
+}
+
+function toggleOrder(publicId) {
+  if (selectedOrders.value.includes(publicId)) {
+    selectedOrders.value = selectedOrders.value.filter((id) => id !== publicId)
+    return
+  }
+  selectedOrders.value = [...selectedOrders.value, publicId]
+}
+
+async function confirmOrders() {
+  if (!selectedOrders.value.length || sending.value) return
+  const chosen = orders.value.filter((order) => selectedOrders.value.includes(order.public_id))
+  if (!chosen.length) return
+  const body = chosen.map(orderLine).join('\n')
+  closeOrders()
+  await sendText(body)
+}
+
+// ---------------------------- 开关与键盘 ----------------------------
+
 // 未登录：先去登录页，成功后由 AuthForm 的 ?next= 约定回到当前页。
 function toggle() {
   if (!isAuthenticated.value) {
@@ -362,7 +598,13 @@ function close() {
 }
 
 function onKeydown(event) {
-  if (event.key === 'Escape' && open.value) {
+  if (event.key !== 'Escape') return
+  if (ordersOpen.value) {
+    event.preventDefault()
+    closeOrders()
+    return
+  }
+  if (open.value) {
     event.preventDefault()
     close()
   }
@@ -376,12 +618,15 @@ function onComposerKeydown(event) {
 }
 
 function onVisibilityChange() {
-  if (typeof document !== 'undefined' && !document.hidden && open.value) poll()
+  if (typeof document !== 'undefined' && !document.hidden && open.value) {
+    if (view.value === 'conversation') poll()
+  }
 }
 
 watch(open, async (isOpen) => {
   if (typeof document === 'undefined') return
   if (isOpen) {
+    view.value = 'list'
     await nextTick()
     closeButton.value?.focus?.()
     init()
@@ -390,11 +635,22 @@ watch(open, async (isOpen) => {
   stopPolling()
   threadId.value = ''
   messages.value = []
+  cursor.value = ''
+  cleared.value = false
+  lastPreview.value = ''
+  lastMessageAt.value = ''
+  unreadCount.value = 0
   loading.value = false
   loadError.value = false
   authRequired.value = false
   composeError.value = ''
   draft.value = ''
+  ordersOpen.value = false
+  orders.value = []
+  selectedOrders.value = []
+  ordersError.value = false
+  ordersLoading.value = false
+  view.value = 'list'
 })
 
 onMounted(() => {
@@ -454,50 +710,51 @@ onBeforeUnmount(() => {
         :aria-labelledby="TITLE_ID"
         data-testid="support-chat-panel"
       >
+        <!-- 真站 header：60px 白底，左【清除】/ 中【客服】24px700 / 右【×】。 -->
         <header class="support-chat__head">
-          <span class="support-chat__avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="20" height="20">
+          <button
+            class="support-chat__icon-btn support-chat__icon-btn--left"
+            type="button"
+            data-testid="support-chat-clear"
+            :disabled="!canClear"
+            :aria-label="t('support.clear')"
+            :title="t('support.clear')"
+            @click="clearConversation"
+          >
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
               <path
-                d="M4 13a8 8 0 0 1 16 0v3.5A2.5 2.5 0 0 1 17.5 19H16v-6h4M4 13v3.5A2.5 2.5 0 0 0 6.5 19H8v-6H4"
+                d="M4.6 15.2 13.1 6.7a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8l-8.5 8.5H4.6v-4.2Z"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="1.6"
-                stroke-linecap="round"
                 stroke-linejoin="round"
               />
+              <path d="M13 20h6.4" fill="none" stroke="currentColor" stroke-width="1.6" />
             </svg>
-          </span>
-          <div class="support-chat__head-text">
-            <h2 :id="TITLE_ID">{{ t('support.title') }}</h2>
-            <p>{{ t('support.subtitle') }}</p>
-          </div>
+          </button>
+          <h2 :id="TITLE_ID" class="support-chat__title">{{ t('support.headerTitle') }}</h2>
           <button
             ref="closeButton"
-            class="support-chat__close"
+            class="support-chat__icon-btn support-chat__icon-btn--right"
             type="button"
             data-testid="support-chat-close"
             :aria-label="t('support.close')"
             @click="close"
           >
-            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
               <path
-                d="m5.832 5.833 8.333 8.334m-8.333 0 8.333-8.334"
+                d="m6 6 12 12M18 6 6 18"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="1.5"
+                stroke-width="1.6"
                 stroke-linecap="round"
               />
             </svg>
           </button>
         </header>
 
-        <div
-          ref="listEl"
-          class="support-chat__messages"
-          role="log"
-          aria-live="polite"
-          :aria-label="t('support.messagesAria')"
-        >
+        <!-- 会话列表：现阶段只有一条【客户服务】，结构预留多会话。 -->
+        <div v-if="view === 'list'" class="support-chat__body" data-testid="support-chat-list">
           <p v-if="loading" class="support-chat__status" role="status">
             {{ t('support.loading') }}
           </p>
@@ -513,10 +770,102 @@ onBeforeUnmount(() => {
               {{ t('support.retry') }}
             </button>
           </div>
-          <template v-else>
-            <p v-if="!messages.length" class="support-chat__status" role="status">
-              {{ t('support.empty') }}
-            </p>
+          <ul v-else class="support-chat__list" :aria-label="t('support.listAria')">
+            <li class="support-chat__item-box">
+              <button
+                class="support-chat__item"
+                type="button"
+                data-testid="support-chat-list-item"
+                @click="enterConversation"
+              >
+                <span class="support-chat__item-avatar" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="32" height="32">
+                    <path
+                      d="M4 13a8 8 0 0 1 16 0v3.5A2.5 2.5 0 0 1 17.5 19H16v-6h4M4 13v3.5A2.5 2.5 0 0 0 6.5 19H8v-6H4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span class="support-chat__item-main">
+                  <span class="support-chat__item-head">
+                    <span class="support-chat__item-title">{{ t('support.listTitle') }}</span>
+                    <span
+                      v-if="unreadCount"
+                      class="support-chat__unread"
+                      :aria-label="t('support.unreadAria', { count: unreadCount })"
+                    >
+                      {{ unreadCount > 99 ? '99+' : unreadCount }}
+                    </span>
+                    <span class="support-chat__item-time">{{ formatTime(lastMessageAt) }}</span>
+                  </span>
+                  <span class="support-chat__item-summary">{{ listPreview }}</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 会话视图：居中头像 + 欢迎语 + 三条 FAQ（点击即发送）+ 发送订单 + 输入框。 -->
+        <div v-else class="support-chat__conversation" data-testid="support-chat-conversation">
+          <button
+            class="support-chat__back"
+            type="button"
+            data-testid="support-chat-back"
+            @click="backToList"
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path
+                d="M10 3 5 8l5 5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{{ t('support.back') }}</span>
+          </button>
+
+          <div
+            ref="listEl"
+            class="support-chat__messages"
+            role="log"
+            aria-live="polite"
+            :aria-label="t('support.messagesAria')"
+          >
+            <div class="support-chat__welcome" data-testid="support-chat-welcome">
+              <span class="support-chat__welcome-avatar" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="34" height="34">
+                  <path
+                    d="M4 13a8 8 0 0 1 16 0v3.5A2.5 2.5 0 0 1 17.5 19H16v-6h4M4 13v3.5A2.5 2.5 0 0 0 6.5 19H8v-6H4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <p class="support-chat__welcome-text">{{ t('support.welcome') }}</p>
+              <div v-if="showFaq" class="support-chat__faqs">
+                <button
+                  v-for="faq in faqs"
+                  :key="faq"
+                  class="support-chat__faq"
+                  type="button"
+                  data-testid="support-chat-faq"
+                  :disabled="sending"
+                  @click="sendText(faq)"
+                >
+                  {{ faq }}
+                </button>
+              </div>
+            </div>
+
             <div
               v-for="message in messages"
               :key="message.key"
@@ -545,36 +894,142 @@ onBeforeUnmount(() => {
                 </p>
               </div>
             </div>
-          </template>
+          </div>
+
+          <footer class="support-chat__compose">
+            <div class="support-chat__toolbar">
+              <button
+                class="support-chat__order-btn"
+                type="button"
+                data-testid="support-chat-order-open"
+                :disabled="loading || sending || !threadId"
+                @click="openOrders"
+              >
+                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                  <path
+                    d="M3 1.5h10v13l-2.5-1.6L8 14.5 5.5 12.9 3 14.5v-13Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.3"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M5.5 5h5M5.5 7.8h5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.3"
+                  />
+                </svg>
+                <span>{{ t('support.sendOrder') }}</span>
+              </button>
+            </div>
+            <label class="visually-hidden" :for="INPUT_ID">{{ t('support.messageAria') }}</label>
+            <div class="support-chat__field">
+              <textarea
+                :id="INPUT_ID"
+                ref="inputEl"
+                v-model="draft"
+                class="support-chat__input"
+                data-testid="support-chat-input"
+                rows="1"
+                :maxlength="MAX_LENGTH"
+                :placeholder="t('support.placeholder')"
+                @keydown="onComposerKeydown"
+              ></textarea>
+              <!-- 发送图标在输入框内右侧（需求 23.3）。 -->
+              <button
+                class="support-chat__send"
+                type="button"
+                data-testid="support-chat-send"
+                :aria-label="t('support.send')"
+                :title="t('support.send')"
+                :disabled="!canSend"
+                @click="send"
+              >
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                  <path
+                    d="M3 10 17 3l-4.2 14-3.1-5.1L3 10Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <p v-if="draft.length > MAX_LENGTH - 200" class="support-chat__count">
+              {{ draft.length }}/{{ MAX_LENGTH }}
+            </p>
+            <p v-if="composeError" class="support-chat__error" role="alert">{{ composeError }}</p>
+          </footer>
         </div>
 
-        <footer v-if="!authRequired" class="support-chat__compose">
-          <label class="visually-hidden" :for="INPUT_ID">{{ t('support.messageAria') }}</label>
-          <textarea
-            :id="INPUT_ID"
-            ref="inputEl"
-            v-model="draft"
-            class="support-chat__input"
-            data-testid="support-chat-input"
-            rows="2"
-            :maxlength="MAX_LENGTH"
-            :placeholder="t('support.placeholder')"
-            @keydown="onComposerKeydown"
-          ></textarea>
-          <div class="support-chat__compose-row">
-            <span class="support-chat__count">{{ draft.length }}/{{ MAX_LENGTH }}</span>
-            <button
-              class="support-chat__send"
-              type="button"
-              data-testid="support-chat-send"
-              :disabled="!canSend"
-              @click="send"
-            >
-              {{ sending ? t('support.sending') : t('support.send') }}
-            </button>
+        <!-- 【发送订单】弹层：最近 3 笔订单，可多选，拼成一条文本消息发送。 -->
+        <div
+          v-if="ordersOpen"
+          class="support-chat__overlay"
+          data-testid="support-chat-order-dialog"
+          role="dialog"
+          aria-modal="true"
+          :aria-labelledby="ORDER_TITLE_ID"
+          @click.self="closeOrders"
+        >
+          <div class="support-chat__sheet">
+            <h3 :id="ORDER_TITLE_ID" class="support-chat__sheet-title">
+              {{ t('support.orderDialogTitle') }}
+            </h3>
+            <p class="support-chat__sheet-desc">{{ t('support.orderDialogDesc') }}</p>
+            <p v-if="ordersLoading" class="support-chat__status" role="status">
+              {{ t('support.loading') }}
+            </p>
+            <div v-else-if="ordersError" class="support-chat__sheet-error" role="alert">
+              <p>{{ t('support.orderFailed') }}</p>
+              <button class="support-chat__retry" type="button" @click="loadOrders">
+                {{ t('support.retry') }}
+              </button>
+            </div>
+            <p v-else-if="!orders.length" class="support-chat__status" role="status">
+              {{ t('support.orderEmpty') }}
+            </p>
+            <ul v-else class="support-chat__orders">
+              <li v-for="order in orders" :key="order.public_id">
+                <label class="support-chat__order-item">
+                  <input
+                    type="checkbox"
+                    data-testid="support-chat-order-checkbox"
+                    :checked="selectedOrders.includes(order.public_id)"
+                    @change="toggleOrder(order.public_id)"
+                  />
+                  <span class="support-chat__order-main">
+                    <span class="support-chat__order-id">#{{ shortOrderId(order.public_id) }}</span>
+                    <span class="support-chat__order-meta">
+                      {{ orderAmount(order) }} · {{ orderStateLabel(order) }}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            </ul>
+            <div class="support-chat__sheet-actions">
+              <button
+                class="support-chat__sheet-btn"
+                type="button"
+                data-testid="support-chat-order-cancel"
+                @click="closeOrders"
+              >
+                {{ t('support.cancel') }}
+              </button>
+              <button
+                class="support-chat__sheet-btn support-chat__sheet-btn--primary"
+                type="button"
+                data-testid="support-chat-order-confirm"
+                :disabled="!selectedOrders.length || sending"
+                @click="confirmOrders"
+              >
+                {{ t('support.orderConfirm', { count: selectedOrders.length }) }}
+              </button>
+            </div>
           </div>
-          <p v-if="composeError" class="support-chat__error" role="alert">{{ composeError }}</p>
-        </footer>
+        </div>
       </section>
     </Transition>
   </div>
@@ -641,108 +1096,202 @@ onBeforeUnmount(() => {
   bottom: 212px;
 }
 
-/* 真站客服面板：375 宽、右侧让开 toolbar（right 84）、底边贴按钮（104）、
-   顶边落在站头下方（AppHeader 会把实际高度写到 --site-header-height）。 */
+/* 真站客服面板（findings C2）：375 宽、80% 高（max 720）、right 84 /
+   bottom 104.5、#F5F6FA 底、8px 圆角、#F0F1F2 边框、
+   0 2px 16px rgba(0,0,0,.078)、z-index 1200。 */
 .support-chat__panel {
   position: fixed;
-  top: calc(var(--site-header-height, 180px) + 16px);
   right: 84px;
-  bottom: 104px;
+  bottom: 104.5px;
   z-index: 1200;
   display: flex;
-  width: min(23.4375rem, calc(100vw - 96px));
+  box-sizing: border-box;
+  width: 375px;
+  height: 80%;
+  max-height: 720px;
   flex-direction: column;
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
-  box-shadow:
-    rgb(0 0 0 / 20%) 0 8px 10px -5px,
-    rgb(0 0 0 / 14%) 0 16px 24px 2px,
-    rgb(0 0 0 / 12%) 0 6px 30px 5px;
+  border: 1px solid #f0f1f2;
+  border-radius: 8px;
+  background: #f5f6fa;
+  box-shadow: 0 2px 16px 0 rgb(0 0 0 / 7.8%);
   overflow: hidden;
 }
 
-/* 面板底边跟随按钮上移，避免遮住客服入口本身。 */
+/* 面板底边跟随按钮上移，避免遮住【联系商家】；高度同步收窄防止顶出视口。 */
 :global(body.pdp-merchant-contact .support-chat__panel) {
   bottom: 228px;
+  max-height: min(720px, calc(100vh - 260px));
 }
 
 :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
   bottom: 284px;
+  max-height: min(720px, calc(100vh - 316px));
 }
 
+/* header：60px 白底，标题 24px/700 #1a1a1a，左右图标 24px 距边 16px。 */
 .support-chat__head {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-  padding: 14px 10px 14px 16px;
-  border-bottom: 1px solid var(--colour-surface-soft);
-}
-
-.support-chat__avatar {
-  display: inline-flex;
+  height: 60px;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--colour-accent-soft);
-  color: var(--colour-accent);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  background: #fff;
 }
 
-.support-chat__head-text {
+.support-chat__title {
+  margin: 0;
+  color: #1a1a1a;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+  text-align: center;
+}
+
+.support-chat__icon-btn {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1a1a1a;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.support-chat__icon-btn--left {
+  left: 16px;
+}
+
+.support-chat__icon-btn--right {
+  right: 16px;
+}
+
+.support-chat__icon-btn:disabled {
+  color: #c4c6cc;
+  cursor: not-allowed;
+}
+
+.support-chat__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+  background: #f5f6fa;
+}
+
+.support-chat__list {
+  margin: 0;
+  padding: 8px 0 0;
+  list-style: none;
+}
+
+.support-chat__item-box {
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.support-chat__item {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  border: 0;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.support-chat__item:hover {
+  background: rgb(0 16 71 / 10.2%);
+}
+
+.support-chat__item-avatar {
+  display: inline-flex;
+  width: 60px;
+  height: 60px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin: 3px 8px 0 0;
+  border-radius: 100%;
+  background: #eef0f6;
+  color: #1a1a1a;
+  overflow: hidden;
+}
+
+.support-chat__item-main {
+  display: block;
   flex: 1;
   min-width: 0;
 }
 
-.support-chat__head-text h2 {
-  margin: 0;
-  color: var(--colour-text);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1.3;
-}
-
-.support-chat__head-text p {
-  margin: 2px 0 0;
-  color: var(--colour-muted);
-  font-size: var(--font-size-xs);
-}
-
-.support-chat__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--colour-text);
-  cursor: pointer;
-}
-
-.support-chat__close:hover {
-  background: var(--colour-hover);
-}
-
-.support-chat__messages {
+.support-chat__item-head {
   display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.support-chat__item-title {
   flex: 1;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  padding: 16px;
+  min-width: 0;
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.support-chat__item-time {
+  flex: none;
+  color: #505259;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.support-chat__unread {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border-radius: 100%;
+  background: #e1251b;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.support-chat__item-summary {
+  display: -webkit-box;
+  min-height: 40px;
+  margin: 4px 0;
+  color: #505259;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .support-chat__status {
   margin: 16px 0;
-  color: var(--colour-muted);
-  font-size: var(--font-size-md);
+  color: #505259;
+  font-size: 14px;
   text-align: center;
 }
 
@@ -751,12 +1300,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  margin: auto 0;
+  margin: 16px;
   padding: 20px 12px;
-  border-radius: var(--radius-md);
-  background: var(--colour-surface-soft);
-  color: var(--colour-text-secondary);
-  font-size: var(--font-size-md);
+  border-radius: 8px;
+  background: #fff;
+  color: #505259;
+  font-size: 14px;
   text-align: center;
 }
 
@@ -766,7 +1315,7 @@ onBeforeUnmount(() => {
 
 .support-chat__link {
   color: var(--colour-accent);
-  font-weight: var(--font-weight-medium);
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -776,12 +1325,12 @@ onBeforeUnmount(() => {
 
 .support-chat__retry {
   padding: 6px 16px;
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-sm);
-  background: var(--colour-surface);
-  color: var(--colour-text);
+  border: 1px solid #d9dee5;
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a1a;
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -795,8 +1344,106 @@ onBeforeUnmount(() => {
   border: 0;
   background: transparent;
   color: var(--colour-error);
-  font-size: var(--font-size-xs);
+  font-size: 11px;
   text-decoration: underline;
+}
+
+/* 会话视图：白底（真站 .style_wrapper-type-0 实测 #fff）。 */
+.support-chat__conversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+
+.support-chat__back {
+  display: inline-flex;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-bottom: 1px solid #f5f6fa;
+  background: #fff;
+  color: #505259;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.support-chat__back:hover {
+  color: #1a1a1a;
+}
+
+.support-chat__messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* 首屏：客服头像居中靠上 + 欢迎语 + 三条常见问题（推定，真站未实测）。 */
+.support-chat__welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.support-chat__welcome-avatar {
+  display: inline-flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 100%;
+  background: #eef0f6;
+  color: #1a1a1a;
+}
+
+.support-chat__welcome-text {
+  max-width: 300px;
+  margin: 0;
+  color: #505259;
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.support-chat__faqs {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.support-chat__faq {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid #e7e8ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.support-chat__faq:hover:not(:disabled) {
+  background: rgb(0 16 71 / 6%);
+}
+
+.support-chat__faq:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .support-chat__row {
@@ -812,14 +1459,14 @@ onBeforeUnmount(() => {
   max-width: 82%;
   padding: 9px 12px;
   border-radius: 12px 12px 12px 4px;
-  background: var(--colour-surface-soft);
-  color: var(--colour-text);
+  background: #f5f6fa;
+  color: #1a1a1a;
 }
 
 .support-chat__bubble--mine {
   border-radius: 12px 12px 4px;
   background: var(--colour-accent);
-  color: var(--colour-white);
+  color: #fff;
 }
 
 .support-chat__bubble--pending {
@@ -828,12 +1475,12 @@ onBeforeUnmount(() => {
 
 .support-chat__bubble--failed {
   background: var(--colour-error-soft);
-  color: var(--colour-text);
+  color: #1a1a1a;
 }
 
 .support-chat__text {
   margin: 0;
-  font-size: var(--font-size-md);
+  font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -845,7 +1492,7 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 6px;
   margin: 4px 0 0;
-  color: var(--colour-muted);
+  color: #8a8d94;
   font-size: 11px;
 }
 
@@ -854,58 +1501,91 @@ onBeforeUnmount(() => {
 }
 
 .support-chat__bubble--failed .support-chat__meta {
-  color: var(--colour-muted);
+  color: #8a8d94;
 }
 
 .support-chat__compose {
   flex-shrink: 0;
-  padding: 10px 16px 14px;
-  border-top: 1px solid var(--colour-surface-soft);
+  padding: 8px 12px 12px;
+  border-top: 1px solid #f0f1f2;
+  background: #fff;
+}
+
+.support-chat__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.support-chat__order-btn {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid #e7e8ea;
+  border-radius: 16px;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.support-chat__order-btn:hover:not(:disabled) {
+  border-color: #1a1a1a;
+}
+
+.support-chat__order-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 输入框：单行圆角框，发送图标在框内右侧。 */
+.support-chat__field {
+  position: relative;
+  display: flex;
 }
 
 .support-chat__input {
   box-sizing: border-box;
   width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--colour-border);
-  border-radius: var(--radius-sm);
+  min-height: 40px;
+  max-height: 92px;
+  padding: 10px 46px 10px 14px;
+  border: 1px solid #e7e8ea;
+  border-radius: 20px;
+  background: #f5f6fa;
   resize: none;
-  color: var(--colour-text);
+  color: #1a1a1a;
   font: inherit;
-  font-size: var(--font-size-md);
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .support-chat__input:focus {
-  border-color: var(--colour-text);
+  border-color: #1a1a1a;
+  background: #fff;
   outline: none;
 }
 
-.support-chat__compose-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.support-chat__count {
-  color: var(--colour-muted);
-  font-size: var(--font-size-xs);
-}
-
 .support-chat__send {
-  min-width: 88px;
-  height: 34px;
-  padding: 0 18px;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   background: var(--colour-accent);
-  color: var(--colour-white);
-  font: inherit;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
+  color: #fff;
   cursor: pointer;
+  transform: translateY(-50%);
 }
 
 .support-chat__send:hover:not(:disabled) {
@@ -913,22 +1593,170 @@ onBeforeUnmount(() => {
 }
 
 .support-chat__send:disabled {
+  background: #d5d7dc;
+  cursor: not-allowed;
+}
+
+.support-chat__count {
+  margin: 4px 0 0;
+  color: #8a8d94;
+  font-size: 11px;
+  text-align: right;
+}
+
+.support-chat__error {
+  margin: 6px 0 0;
+  color: var(--colour-error);
+  font-size: 13px;
+}
+
+/* 【发送订单】弹层：覆盖在面板内，白底卡片。 */
+.support-chat__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 45%);
+}
+
+.support-chat__sheet {
+  display: flex;
+  width: 100%;
+  max-height: 100%;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  overflow-y: auto;
+}
+
+.support-chat__sheet-title {
+  margin: 0;
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.support-chat__sheet-desc {
+  margin: 4px 0 12px;
+  color: #505259;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.support-chat__sheet-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #505259;
+  font-size: 13px;
+}
+
+.support-chat__sheet-error p {
+  margin: 0;
+}
+
+.support-chat__orders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.support-chat__order-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e7e8ea;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.support-chat__order-item:hover {
+  background: #f5f6fa;
+}
+
+.support-chat__order-item input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--colour-accent);
+}
+
+.support-chat__order-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.support-chat__order-id {
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.support-chat__order-meta {
+  color: #505259;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.support-chat__sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.support-chat__sheet-btn {
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid #d9dee5;
+  border-radius: 17px;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.support-chat__sheet-btn--primary {
+  border-color: var(--colour-accent);
+  background: var(--colour-accent);
+  color: #fff;
+}
+
+.support-chat__sheet-btn--primary:hover:not(:disabled) {
+  background: var(--colour-accent-dark);
+}
+
+.support-chat__sheet-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.support-chat__error {
-  margin: 8px 0 0;
-  color: var(--colour-error);
-  font-size: var(--font-size-sm);
-}
-
 .support-chat__launcher:focus-visible,
-.support-chat__close:focus-visible,
+.support-chat__icon-btn:focus-visible,
+.support-chat__item:focus-visible,
+.support-chat__back:focus-visible,
+.support-chat__faq:focus-visible,
+.support-chat__order-btn:focus-visible,
+.support-chat__send:focus-visible,
 .support-chat__retry:focus-visible,
 .support-chat__link:focus-visible,
 .support-chat__input:focus-visible,
-.support-chat__send:focus-visible {
+.support-chat__sheet-btn:focus-visible {
   outline: 2px solid var(--colour-focus-ring);
   outline-offset: 2px;
 }
@@ -954,10 +1782,11 @@ onBeforeUnmount(() => {
   }
 
   .support-chat__panel {
-    top: calc(var(--site-header-height, 180px) + 8px);
     right: 8px;
     bottom: 152px;
     width: calc(100vw - 16px);
+    height: calc(100vh - 240px);
+    max-height: none;
   }
 
   :global(body.pdp-merchant-contact .support-chat__launcher) {
@@ -970,10 +1799,14 @@ onBeforeUnmount(() => {
 
   :global(body.pdp-merchant-contact .support-chat__panel) {
     bottom: 228px;
+    height: calc(100vh - 316px);
+    max-height: none;
   }
 
   :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
     bottom: 284px;
+    height: calc(100vh - 372px);
+    max-height: none;
   }
 }
 

@@ -12,7 +12,7 @@ import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
 import { categoryHref } from '../../utils/categoryLinks'
 import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
 import { resolveProductCategoryCrumbs } from '../../utils/pdpBreadcrumb'
-import { ratingAverageLabel, ratingCountLabel, soldCountLabel } from '../../utils/pdpDisplay'
+import { ratingAverageLabel, soldCountLabel } from '../../utils/pdpDisplay'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
 // title, thumb rail + 591px-class main image + buy panel (Buy now / Add to
@@ -445,13 +445,14 @@ const breadcrumbNodes = computed(() => {
   return resolveProductCategoryCrumbs(crumbs, categories.value, categoryName)
 })
 
-// 需求 22.1-5：商品名下方「评分 + 已售 x 件」。评分用 review_summary（本地
-// 评价优先、爬虫快照兜底）；销量用后端已落库的 sale_amount，接口返回 null
-// 时才用确定性展示占位值（见 utils/pdpDisplay.js）。
+// 需求 22.1-5 / 23.1-2：商品名下方「评分 | 已售 x+ 件」，评价条数不展示。
+// 评分用 review_summary（本地评价优先、爬虫快照兜底）；销量用后端已落库的
+// sale_amount，接口返回 null 时才用确定性展示占位值（见 utils/pdpDisplay.js）。
 const reviewSummary = computed(() => data.value?.review_summary || null)
 const ratingAverage = computed(() => ratingAverageLabel(reviewSummary.value))
-const ratingCount = computed(() => ratingCountLabel(reviewSummary.value))
 const soldCount = computed(() => soldCountLabel(publicId.value, data.value?.sale_amount))
+// 需求 23.1-3：已售图标 tooltip，hover 与键盘 focus 都显示。
+const soldTipOpen = ref(false)
 
 // Hover zoom: the real site shows an enlarged detail view to the right of
 // the main image while the cursor moves over it.
@@ -562,7 +563,8 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
         <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
         <h1 class="detail__title">{{ data?.title }}</h1>
 
-        <!-- 需求 22.1-5：商品名下方评分 + 已售（真站 16px，与标题同宽左对齐）。 -->
+        <!-- 需求 22.1-5 / 23.1-2：商品名下方「评分 | 已售 x+ 件」。评价条数
+             按 23.1-2 不展示；评分与已售之间的灰色竖线按用户口径保留。 -->
         <div v-if="data" class="detail__rating" data-testid="pdp-rating">
           <svg class="detail__rating-star" viewBox="0 0 20 20" aria-hidden="true">
             <path
@@ -571,13 +573,50 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             />
           </svg>
           <span class="detail__rating-average">{{ ratingAverage }}</span>
-          <span class="detail__rating-count"
-            >({{ ratingCount }} {{ t('reviews.countSuffix') }})</span
-          >
           <span class="detail__rating-divider" aria-hidden="true"></span>
-          <span class="detail__sold" data-testid="pdp-sold">{{
-            t('pdp.soldCount', { count: soldCount })
-          }}</span>
+          <span
+            class="detail__sold-block"
+            @mouseenter="soldTipOpen = true"
+            @mouseleave="soldTipOpen = false"
+          >
+            <span class="detail__sold" data-testid="pdp-sold">{{
+              t('pdp.soldCount', { count: soldCount })
+            }}</span>
+            <!-- 需求 23.1-3：已售右侧图标，hover / 键盘 focus 显示「销量解读」。
+                 真站同位置是 20px 图标按钮，弹层标题「销量解读」（英文站
+                 Sales Details），链接 /help/salesdetails。 -->
+            <button
+              type="button"
+              class="detail__sold-tip"
+              data-testid="pdp-sold-tip"
+              :aria-label="t('pdp.soldTooltipTitle')"
+              :aria-describedby="soldTipOpen ? 'pdp-sold-tooltip' : undefined"
+              @focus="soldTipOpen = true"
+              @blur="soldTipOpen = false"
+              @click="soldTipOpen = !soldTipOpen"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" />
+                <path
+                  d="M10 8.6v5.1"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+                <circle cx="10" cy="6.1" r="1" fill="currentColor" />
+              </svg>
+            </button>
+            <span
+              v-if="soldTipOpen"
+              id="pdp-sold-tooltip"
+              class="detail__sold-tooltip"
+              role="tooltip"
+            >
+              <strong>{{ t('pdp.soldTooltipTitle') }}</strong>
+              <span>{{ t('pdp.soldTooltip') }}</span>
+            </span>
+          </span>
         </div>
 
         <div class="detail__main">
@@ -1094,7 +1133,8 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   line-height: var(--line-height-tight);
 }
 
-/* 需求 22.1-5：商品名下方评分 + 已售，真站 16px/400 黑字、行高 38px。 */
+/* 需求 22.1-5 / 23.1-2：商品名下方「评分 | 已售」，真站 16px/400 黑字、
+   行高 38px；不再显示评价条数。 */
 .detail__rating {
   display: flex;
   align-items: center;
@@ -1116,11 +1156,77 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   margin-right: 8px;
 }
 
+/* 用户口径：评分与已售之间保留灰色竖线（真站同位置也有 divisionLine）。 */
 .detail__rating-divider {
+  flex: none;
   width: 1px;
   height: 14px;
   margin: 0 8px 0 0;
-  background: #e5e7eb;
+  background: #e0e1e5;
+}
+
+/* 需求 23.1-3：已售文案 + 右侧 20px 图标 + hover/focus tooltip。 */
+.detail__sold-block {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.detail__sold-tip {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #757a82;
+  cursor: pointer;
+}
+
+.detail__sold-tip svg {
+  width: 18px;
+  height: 18px;
+}
+
+.detail__sold-tip:hover,
+.detail__sold-tip:focus-visible {
+  color: #1a1a1a;
+}
+
+.detail__sold-tip:focus-visible {
+  outline: 2px solid #1a1a1a;
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+
+.detail__sold-tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid #e0e1e5;
+  border-radius: 6px;
+  background: var(--colour-white, #ffffff);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  color: #505259;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  z-index: 30;
+}
+
+.detail__sold-tooltip strong {
+  color: #1a1a1a;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* Real layout: 56px thumb rail, fluid main image, 671px buy panel. */
@@ -1513,11 +1619,15 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   cursor: not-allowed;
 }
 
-/* 需求 22.1-4：配送与服务承诺。真站 section padding 8px 0、标题 24px/600
-   line-height 48，销售方行 16px/500 line-height 22。 */
+/* 需求 22.1-4 / 23.1-1：配送与服务承诺。真站 section padding 8px 0、标题
+   24px/600 line-height 48，销售方行 16px/500 line-height 22。
+   横线按 23.1-1：只在【配送与服务承诺】顶部一条（真站独立分隔元素
+   0.5px #E0E1E5 margin 12px 0；这里用等价的 1px border + 12px 上下留白，
+   见 HANDOFF 0bp）。 */
 .detail__promise {
-  padding: 8px 0 0;
-  border-top: 1px solid var(--colour-border);
+  margin-top: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid #e0e1e5;
 }
 
 .detail__promise-title {
@@ -1545,17 +1655,13 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   height: 18px;
 }
 
-/* 需求 22.1-3：服务承诺 accordion。真站行高 54、16px/600、右内边距 16，
-   展开正文 14px/400 line-height 20、底部留白 20，chevron 展开旋转 180°。 */
+/* 需求 22.1-3 / 23.1-1：服务承诺 accordion。真站行高 54、16px/600、右内边距
+   16，展开正文 14px/400 line-height 20、底部留白 20，chevron 展开旋转 180°。
+   23.1-1：承诺行之间、列表上下都不画横线（真站承诺行本身无 border）。 */
 .detail__guarantees {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-bottom: 1px solid var(--colour-border);
-}
-
-.detail__guarantee {
-  border-top: 1px solid var(--colour-border);
 }
 
 .detail__guarantee-summary {
@@ -1597,13 +1703,17 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 
 /* 需求 22.1-1：我们支持 + 支付图标（真站 footer_footerPay 实测：标题
    14px/400 #505259 margin-right 16px，图标各 32x20），现位于右栏购买区下方。 */
+/* 需求 22.1-1 / 23.1-1：我们支持 + 支付图标（真站 footer_footerPay 实测：
+   标题 14px/400 #505259 margin-right 16px，图标各 32x20）。横线按 23.1-1
+   只在这一块顶部一条（与【配送与服务承诺】顶部同规格）。 */
 .detail__support {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 12px 0;
-  padding: 16px 0 0;
-  border-top: 1px solid var(--colour-border);
+  margin-top: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid #e0e1e5;
 }
 
 .detail__support-title {

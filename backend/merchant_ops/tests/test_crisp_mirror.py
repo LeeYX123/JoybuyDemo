@@ -167,6 +167,45 @@ class CrispMirrorServiceTests(TestCase):
             with self.assertRaises(CrispRequestError):
                 crisp_mirror._http_post("/website/w/conversation", None)
 
+    @override_settings(**CONFIGURED)
+    def test_get_with_retry_accepts_the_uniform_send_signature(self):
+        """回归：``_get_with_retry`` 用 ``send(path, payload)`` 调用，``_http_get`` 必须收两个参数。
+
+        真实环境里「已存在会话 → 补写 meta」分支走的就是这条路径，签名不对会抛
+        TypeError，导致所有后续消息都不再镜像（测试里 ``_http_get`` 一直被 mock，曾漏掉）。
+        """
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def read(self):
+                return '{"data": {"nickname": "已有昵称"}}'.encode()
+
+        with mock.patch(
+            "merchant_ops.crisp_mirror.urllib.request.urlopen", return_value=_Response()
+        ):
+            meta = crisp_mirror.fetch_conversation_meta("session-abc")
+
+        self.assertEqual(meta, {"nickname": "已有昵称"})
+
+    @override_settings(**CONFIGURED)
+    def test_existing_session_still_mirrors_when_meta_is_filled(self):
+        """回归：已有会话（meta 为空需补写）时，消息照常发出，不会卡在 pending。"""
+
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": ""}}
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            result = mirror_message(
+                self.thread_key, "merchant_visitor", "演示店铺", "补写后仍要发", None, "321"
+            )
+
+        self.assertEqual(result["status"], STATUS_SENT)
+        self.assertEqual(http.call_args.args[1]["content"], "补写后仍要发")
+
     # ------------------------------------------------------------------
     # 会话创建 + 消息体
     # ------------------------------------------------------------------
@@ -551,7 +590,8 @@ class CrispMirrorServiceTests(TestCase):
         mirror.assert_called_once()
         kwargs = mirror.call_args.kwargs
         self.assertEqual(kwargs["thread_key"], f"merchant:{merchant.public_id}")
-        self.assertEqual(kwargs["sender_kind"], "merchant")
+        # 批次 AA（Q8）：本线程的访客是商家 → 走 merchant_visitor（payload from=user）。
+        self.assertEqual(kwargs["sender_kind"], "merchant_visitor")
         self.assertEqual(kwargs["message_id"], str(message.pk))
 
     def test_buyer_conversation_is_not_mirrored(self):
@@ -663,7 +703,7 @@ class CrispMirrorEndpointTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         log = CrispMirrorLog.objects.get()
         self.assertEqual(log.status, CrispMirrorLog.Status.SKIPPED)
-        self.assertEqual(log.sender_kind, "merchant")
+        self.assertEqual(log.sender_kind, "merchant_visitor")
         self.assertEqual(log.thread_key, f"merchant:{self.merchant.public_id}")
 
     @override_settings(**CONFIGURED)
@@ -685,6 +725,8 @@ class CrispMirrorEndpointTests(TestCase):
         self.assertEqual(http.call_count, 3)
         final_body = http.call_args_list[-1].args[1]
         self.assertEqual(final_body["content"], "商家真实消息")
+        # 批次 AA（Q8）：merchant: 线程里商家是访客身份（from=user），不再是 operator。
+        self.assertEqual(final_body["from"], "user")
         self.assertEqual(final_body["user"], {"type": "website", "nickname": "接口镜像店"})
         # 线程的访客是商家 → 会话 meta 昵称用店名。
         self.patch_http.assert_called_once()

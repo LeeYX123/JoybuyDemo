@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from accounts_buyers.api_exceptions import BuyerApiError
 from accounts_buyers.views import BuyerCsrfAPIView
 from merchant_ops.api_utils import iso
+from merchant_ops.crisp_inbound import pull_support_chat
 from merchant_ops.crisp_mirror import merchant_chat_buyer_name, queue_support_chat_mirror
 from merchant_ops.models import SupportChatMessage, SupportChatThread
 from merchant_ops.views_merchant_chat import _parse_after, _validated_body
@@ -162,6 +163,9 @@ class BuyerSupportChatMessagesView(BuyerCsrfAPIView):
     def get(self, request):
         require_support_buyer(request)
         thread = buyer_thread(request)
+        # 批次 AA（Q7(a)）：买家轮询顺带拉取 Crisp 里的人工回复 —— 线程节流 20s、
+        # 限时 2s，失败静默，绝不影响本接口返回。
+        pull_support_chat(thread)
         after = _parse_after(request.query_params.get("after"), BuyerApiError)
         queryset = thread.messages.all()
         if after is not None:

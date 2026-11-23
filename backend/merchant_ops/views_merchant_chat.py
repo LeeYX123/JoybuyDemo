@@ -22,6 +22,7 @@ from accounts_buyers.models import BuyerAccount
 from accounts_buyers.views import BuyerCsrfAPIView
 from accounts_staff.api_exceptions import StaffApiError
 from merchant_ops.api_utils import iso
+from merchant_ops.crisp_inbound import pull_merchant_chat
 from merchant_ops.crisp_mirror import merchant_chat_buyer_name, queue_merchant_chat_mirror
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import MerchantChatMessage, MerchantChatThread
@@ -243,6 +244,9 @@ class BuyerMerchantChatMessagesView(BuyerCsrfAPIView):
     def get(self, request, public_id):
         _require_chat_buyer(request)
         thread = _buyer_thread(request, public_id)
+        # 批次 AA：买家轮询顺带拉取 Crisp 人工回复（落成 sender_kind=support，节流 5s、
+        # 限时 2s、失败静默），因此"客服回复"≤10s 出现在买家面板。
+        pull_merchant_chat(thread)
         after = _parse_after(request.query_params.get("after"), BuyerApiError)
         queryset = thread.messages.all()
         if after is not None:
@@ -298,6 +302,8 @@ class MerchantChatMessagesView(MerchantAPIView):
 
     def get(self, request, public_id):
         thread = _merchant_thread(request, public_id)
+        # 批次 AA：商家端打开买家会话同样顺带拉一次（节流 5s），客服回复两端同步。
+        pull_merchant_chat(thread)
         messages = list(thread.messages.all())
         _mark_read(thread, side="merchant")
         return Response(

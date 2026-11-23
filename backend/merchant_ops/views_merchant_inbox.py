@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
 from merchant_ops.api_utils import iso, money_str, paginate
+from merchant_ops.crisp_inbound import pull_conversation
 from merchant_ops.crisp_mirror import queue_support_message_mirror
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import SupportConversation, SupportMessage
@@ -118,6 +119,9 @@ class MerchantConversationDetailView(MerchantAPIView):
 
     def get(self, request, public_id):
         conversation = _resolve_conversation(request, public_id)
+        # 批次 AA（Q7(a)）：商家打开客服会话时顺带拉取 Crisp 里的人工回复（节流 20s、
+        # 限时 2s、失败静默），商家端 5s 轮询即可看到。
+        pull_conversation(conversation)
         # 打开会话即标记已读，未读数归零。
         conversation.merchant_last_read_at = timezone.now()
         conversation.save(update_fields=["merchant_last_read_at", "updated_at"])

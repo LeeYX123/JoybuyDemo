@@ -500,6 +500,12 @@ class SupportConversation(models.Model):
     merchant_last_read_at = models.DateTimeField(null=True, blank=True)
     platform_last_read_at = models.DateTimeField(null=True, blank=True)
     last_message_at = models.DateTimeField(null=True, blank=True)
+    # 批次 AA：Crisp 入站同步的节流时间与毫秒游标（见 ``crisp_inbound``）。
+    last_inbound_at = models.DateTimeField(null=True, blank=True)
+    inbound_cursor_ms = models.BigIntegerField(null=True, blank=True)
+    # 批次 AA 验收修正：每线程每分钟请求上限的计数窗口（5s 节流之外的兜底）。
+    inbound_window_start = models.DateTimeField(null=True, blank=True)
+    inbound_window_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -526,11 +532,21 @@ class SupportMessage(models.Model):
     sender = models.CharField(max_length=16, choices=Sender.choices)
     author_label = models.CharField(max_length=120, blank=True, default="")
     text = models.TextField()
+    # 批次 AA：``source`` 区分本地产生（local）与 Crisp 回传（crisp）；
+    # ``crisp_fingerprint`` 是 Crisp 消息的 number 指纹，用于入站去重（线程内唯一）。
+    crisp_fingerprint = models.BigIntegerField(null=True, blank=True, db_index=True)
+    source = models.CharField(max_length=8, default="local")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "support_message"
         ordering = ["created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "crisp_fingerprint"],
+                name="support_msg_conv_fp_unique",
+            )
+        ]
         indexes = [models.Index(fields=["conversation", "created_at"], name="support_msg_conv_idx")]
 
 
@@ -561,6 +577,12 @@ class MerchantChatThread(models.Model):
     buyer_unread = models.PositiveIntegerField(default=0)
     merchant_unread = models.PositiveIntegerField(default=0)
     last_message_at = models.DateTimeField(null=True, blank=True)
+    # 批次 AA：Crisp 入站同步的节流时间与毫秒游标（见 ``crisp_inbound``）。
+    last_inbound_at = models.DateTimeField(null=True, blank=True)
+    inbound_cursor_ms = models.BigIntegerField(null=True, blank=True)
+    # 批次 AA 验收修正：每线程每分钟请求上限的计数窗口（5s 节流之外的兜底）。
+    inbound_window_start = models.DateTimeField(null=True, blank=True)
+    inbound_window_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -579,11 +601,16 @@ class MerchantChatThread(models.Model):
 
 
 class MerchantChatMessage(models.Model):
-    """买家 ↔ 商家消息。``crisp_status`` 只记录最近一次镜像结果，便于排查。"""
+    """买家 ↔ 商家消息。``crisp_status`` 只记录最近一次镜像结果，便于排查。
+
+    ``sender_kind=support`` 是批次 AA 新增的"平台客服"发言：Crisp Inbox 里人工客服在
+    ``bm:`` 线程的回复会回传到这条会话，买家/商家两端都按"客服回复"渲染。
+    """
 
     class SenderKind(models.TextChoices):
         BUYER = "buyer", "买家"
         MERCHANT = "merchant", "商家"
+        SUPPORT = "support", "平台客服"
 
     class CrispStatus(models.TextChoices):
         SENT = "sent", "已镜像"
@@ -597,6 +624,9 @@ class MerchantChatMessage(models.Model):
     )
     sender_kind = models.CharField(max_length=8, choices=SenderKind.choices)
     body = models.CharField(max_length=2000)
+    # 批次 AA：入站（Crisp 回传）来源与指纹；``bm:`` 线程目前只出站，字段留着备用。
+    crisp_fingerprint = models.BigIntegerField(null=True, blank=True, db_index=True)
+    source = models.CharField(max_length=8, default="local")
     created_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True, blank=True)
     crisp_status = models.CharField(
@@ -606,6 +636,11 @@ class MerchantChatMessage(models.Model):
     class Meta:
         db_table = "merchant_chat_message"
         ordering = ["created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["thread", "crisp_fingerprint"], name="mchat_msg_thread_fp_unique"
+            )
+        ]
         indexes = [models.Index(fields=["thread", "created_at"], name="mchat_msg_thread_idx")]
 
 
@@ -631,6 +666,12 @@ class SupportChatThread(models.Model):
     buyer_unread = models.PositiveIntegerField(default=0)
     support_unread = models.PositiveIntegerField(default=0)
     last_message_at = models.DateTimeField(null=True, blank=True)
+    # 批次 AA：Crisp 入站同步的节流时间与毫秒游标（见 ``crisp_inbound``）。
+    last_inbound_at = models.DateTimeField(null=True, blank=True)
+    inbound_cursor_ms = models.BigIntegerField(null=True, blank=True)
+    # 批次 AA 验收修正：每线程每分钟请求上限的计数窗口（5s 节流之外的兜底）。
+    inbound_window_start = models.DateTimeField(null=True, blank=True)
+    inbound_window_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -659,6 +700,9 @@ class SupportChatMessage(models.Model):
     )
     sender_kind = models.CharField(max_length=8, choices=SenderKind.choices)
     body = models.CharField(max_length=2000)
+    # 批次 AA：Crisp 回传消息的来源与指纹（``(thread, crisp_fingerprint)`` 唯一去重）。
+    crisp_fingerprint = models.BigIntegerField(null=True, blank=True, db_index=True)
+    source = models.CharField(max_length=8, default="local")
     created_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True, blank=True)
     crisp_status = models.CharField(
@@ -668,6 +712,11 @@ class SupportChatMessage(models.Model):
     class Meta:
         db_table = "support_chat_message"
         ordering = ["created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["thread", "crisp_fingerprint"], name="schat_msg_thread_fp_unique"
+            )
+        ]
         indexes = [models.Index(fields=["thread", "created_at"], name="schat_msg_thread_idx")]
 
 

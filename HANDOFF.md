@@ -2,6 +2,200 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bs. 批次 AA 复验（2026-11-23，#5/#6 修复后，3/3 PASS，仅验收未改代码）
+
+- **范围**：#5 商家端时延、#6 bm 入站闭环、每线程每分钟配额；报告见 `var/acceptance_aa_20261123/acceptance-report.md` 的「复验」节。**未改源码/配置**。
+- **环境**：后端进程 18:54:32 启动 > `.env` 18:33:05，本轮**未重启**；开发方修复自测的 4 条回复已 `source=crisp` 入库，证明读的是真实 `.env`。
+- **#5 PASS**：真实商家端 UI 连测 3 次 → **6.165s / 7.590s / 2.419s**（DB 入库 5.627 / 7.306 / 2.237s），全部 ≤10s。采样相位不同，最高 7.59s 仍有余量。
+- **#6 PASS**：bm 会话 Crisp 人工回复 → 买家面板 **4.939s**；`sender_kind=support`、`source=crisp`；气泡 `merchant-chat__bubble--support` + 标签 `Support`（zh「客服」）、白底+左侧色条，与我方红底气泡区分；商家端 `GET /merchant/chats/{id}/messages` 返回同一条 support，UI 买家咨询 tab 作者「平台客服」+ `is-support`（`#fff5f4`）。
+- **配额 PASS**：bm 线程 1s×58 轮询 = 43 次后端请求 → **11 次真实 Crisp 拉取**，`inbound_window_count=11`，最小间隔 **5.031s**（其余零 HTTP）。
+- **回归**：`test_crisp_inbound+test_crisp_mirror+test_support_chat+test_merchant_chat` → **110 OK**；check/makemigrations OK，0006/0007 已应用；`ruff check` 过；vitest `MerchantChatPanel` **9 passed**；prettier 过；五语言 **531** 键一致。
+- **minor（与 0bo §7 声明不符）**：`ruff format --check` 仍对 `crisp_inbound.py`（`_store_merchant_chat_reply` 签名换行、`Q(...)` 换行）与 `tests/test_crisp_inbound.py`（`pull_thread("bm:…")` 超长行）报需格式化，是本次修复新引入的；不影响运行，提交前 `ruff format` 一下。
+- **清理**：MirrorLog 1 / MirrorSession 1 / MerchantChatMessage 2 / MerchantChatThread 1 / StaffSession 4 / BuyerSession 2 / BuyerAccount 1 / SupportMessage 3；HOMCOM 会话保留开发方 9 条、`last_message_at=2026-11-23 10:55:57`。
+- **本轮 Crisp 会话（未删）**：新增 `session_bbfdbc6d-259a-4102-8ffe-6eb982c636ed`（bm）；复用 `session_b572cd2f-8ecb-4e73-a679-3bae32d64ad0`（merchant:HOMCOM）。
+- **坑**：复验前必须核对「后端进程创建时间 > `.env` mtime」，否则会重演 0br 的静默 skipped；本轮未重启后端所以无此问题。
+
+## 0br. 批次 AA 独立验收（2026-11-23，9/11 PASS，仅验收未改代码）
+
+- **任务**：黑盒验收 `功能需求迭代文档03.md` 23.2（见 §0bo）。真连 Crisp，每方向 ≤2 条消息；报告与全部证据在 `var/acceptance_aa_20261123/`（`acceptance-report.md`）。**未改任何源码/配置**。
+- **三条用户问题**：① 买家→Crisp→客服回复→买家面板 **闭环**（落库 2.488s、面板 2.743s）；② 商家消息在 Crisp 已变 `from=user` + `nickname=HOMCOM`（**闭环**）；③ Crisp→商家端**能收到**，但持续 5s 轮询时实测 **18.32s** 才可见（**不达 ≤10s 验收口径**）。
+- **FAIL 清单**
+  1. **#5 商家端时延**：`INBOUND_THROTTLE_SECONDS=20` 与商家端每 5s 的会话详情 GET 叠加，轮询持续占用节流窗口 → 最坏 ≈25s。离开消息页 >25s 再打开为 15ms。若 20s 节流不打算改，应把验收口径改成 ≤25s，或只对"当前打开中的会话"放宽窗口。
+  2. **#6 bm 入站缺失（非回归）**：`bm:` 的 Crisp 人工回复不会回买家面板（`pull_thread` 对 bm 返回 unsupported，DB `source=crisp` 0 行）；bm 出站身份未变坏（operator + 店名）。语义上 bm 的 operator 就是商家，可落 `MerchantChatMessage(sender=merchant, source=crisp)`，需单独立项。
+- **PASS 要点**：镜像 `CrispMirrorLog.status=sent`；判定只认 `user.user_id`（真实 payload 4 条无 id 全 False / 6 条有 id 全 True，`type=website` 不可作判据）；节流第二次 GET 0.064s 且 `last_inbound_at` 不变；游标回拨重拉不产生重复行；`_http_get` 两条回归用例 OK 且真实"已有会话"路径 message 70/45 正常 sent；管理端两 tab 回复 201 且镜像 operator +「Joybuy 客服」；首页/PDP/购物车 200 + console 0；五语言各 530 键一致；`check`/`makemigrations --check`/`ruff check` 干净。
+- **minor**：`ruff format --check` 对新增迁移 `merchant_ops/migrations/0006_…py` 报 1 处空行（`crisp_mirror.py` / `test_crisp_mirror.py` 的 format 偏差在 HEAD 上就存在，非本批）。
+- **踩坑（必看）**：验收中途 :8000 进程在 `.env` 被重写的瞬间启动（18:33:01 启动 / 18:33:05 写入），进程内 Crisp 配置为空 → 镜像静默 `skipped`、入站不拉取。**重启后端后必须确认 `.env` 已就绪**（本次 18:35:09 的买家消息因此未进 Crisp，18:35:32 的回复 124s 后才入库）。建议后端启动时对 Crisp 配置加健康检查。
+- **Crisp 会话（未删）**：`session_fbf7f6f6-10b1-48c8-a1f5-ab2fe41fc2d1`（bp）、`session_b572cd2f-8ecb-4e73-a679-3bae32d64ad0`（merchant:HOMCOM，复用）、`session_ec38261a-85c7-4039-b29b-e8c3dc7415df`（bm）。
+- **数据清理**：按 FK 顺序删除 MirrorLog 7、MirrorSession 2、MerchantChatMessage 2、MerchantChatThread 1、SupportChatMessage 5、SupportChatThread 1、StaffSession 3、BuyerSession 4、BuyerAccount 1、SupportMessage 4；HOMCOM 会话已恢复为 5 条历史消息、`last_message_at=2026-11-23 10:24:18`。
+- **后续**：以上两条 FAIL 已在 `0bo` §10 修完并重验（5s 节流 + 12 次/分钟上限 → 商家端最坏 5.90s；bm 入站落 `sender_kind=support` → 买家最坏 6.15s、商家端可见）。本节保留作验收基线。
+
+## 0bo. 批次 AA（2026-11-23 客服双向同步后端 + 商家端轮询，✅ 含验收修正 #5/#6，未 commit）
+
+> 需求：`功能需求迭代文档03.md` 23.2（Q3/Q4/Q7(a)/Q8）；事实依据：`var/cs_sync_panel_20261123/findings.md`；独立验收结论见上面 `0br`（首轮 9/11）。**未 commit**、`MEDIA_BACKEND=local` 未动、未做 AWS。
+
+- **范围**：Crisp → 我们的入站同步（买家 `bp:`、商家 `merchant:`、**买家↔商家 `bm:`**）、`merchant:` 出站改访客身份、去重/游标/节流、商家端平台客服 tab 轮询。**首轮验收的 #5（商家端 18.3s）与 #6（bm 不回传）已在 §10 修完重验。**
+
+### 1. 模型与迁移（`backend/merchant_ops/models.py` + `migrations/0006_merchantchatmessage_crisp_fingerprint_and_more.py`、`0007_merchantchatthread_inbound_window_count_and_more.py`，**均已 migrate 到本机 MySQL**）
+- `SupportChatMessage`（bp）、`MerchantChatMessage`（bm）、`SupportMessage`（merchant:）各加：`crisp_fingerprint`（BigInteger, null, db_index）、`source`（CharField(8), 默认 `local`，入站写 `crisp`）。
+- 唯一约束允许 null 多行：`(thread, crisp_fingerprint)` → `schat_msg_thread_fp_unique` / `mchat_msg_thread_fp_unique`；`(conversation, crisp_fingerprint)` → `support_msg_conv_fp_unique`。
+- 线程表 `SupportChatThread` / `MerchantChatThread` / `SupportConversation` 各加 `last_inbound_at`（DateTime, null）+ `inbound_cursor_ms`（BigInteger, null）+（0007）`inbound_window_start`（DateTime, null）/ `inbound_window_count`（PositiveInteger, 默认 0）。
+- 0007 还给 `MerchantChatMessage.SenderKind` 加了 **`SUPPORT="support"`（"平台客服"）**，用于 bm 线程的 Crisp 人工回复。
+- **消息 `created_at` 仍用 `auto_now_add`（不按 Crisp timestamp 回填）**：买家/商家端增量都是 `?after=<最后一条 created_at>`，回填到过去会让新消息永远查不出来。
+
+### 2. 入站同步 `backend/merchant_ops/crisp_inbound.py`（新文件）
+- `pull_thread(thread_key, now=None, budget_seconds=2.0)` → `{status: pulled|throttled|skipped|unsupported|failed, imported, requested, error[, reason]}`；`pull_support_chat(thread)` / `pull_conversation(conversation)` / `pull_merchant_chat(thread)` 是视图用包装。
+- **节流（验收修正后）**：先原子 `UPDATE ... WHERE last_inbound_at IS NULL OR <= now-5s` 占窗口，抢不到直接 `throttled`（**零 HTTP**，`reason=window`）；失败/超时也占窗口，恢复后也不会打爆配额。**窗口 5s**（与前端 5s 轮询对齐，端到端 ≤10s），再叠**每线程每分钟 12 次**上限（`inbound_window_start`/`inbound_window_count` 计数窗口，超限 `throttled`、`reason=minute_cap`）防多标签页/脚本滥用。
+- **每次拉取只发 1 个 HTTP**（不"连拉到空批"）：翻批会让配额外推 2 倍；游标推进保证下一轮补齐。
+- **游标**：`inbound_cursor_ms` 直接当 `timestamp_after`（毫秒）；首次为空 → 只回看 72h；每批成功后写 `max(timestamp)`。
+- **过滤 `is_operator_reply`**：`from=operator` + `type=text` + **`user.user_id` 存在且 != session_id**。**不要**用 `user.type=="website"` 排除 —— 实测（2026-11-23）用 website API 以 operator 身份发消息时 Crisp 会把 `user.type` 补成 `website`，真实 Inbox 回复没有该字段；唯一可靠判据是 `user_id` 有无（我方镜像恒无）。
+- **落库**：bp → `SupportChatMessage(sender_kind=support, source=crisp)` + `buyer_unread+1`；merchant: → `SupportMessage(sender=PLATFORM, author_label=<operator 昵称>, source=crisp)`；**bm → `MerchantChatMessage(sender_kind=support, source=crisp)` + `buyer_unread+1`**；三者都更新 `last_message_at`。`IntegrityError` 视为已同步（并发去重）；`fingerprint` 缺失用 `sha256(session:timestamp:body)` 前 48bit 兜底。
+- **失败降级**：任何异常只写一条 `CrispMirrorLog(thread_key, message_id="inbound_pull", sender_kind="inbound", status=failed)`（每线程复用一行、`attempts` 累加），绝不抛回请求。
+- **触发点（Q7(a)，无 cron）**：`BuyerSupportChatMessagesView.get`、`MerchantConversationDetailView.get`（仅 `PLATFORM_SUPPORT`）、`BuyerMerchantChatMessagesView.get` 与 `MerchantChatMessagesView.get`（bm 两侧）在返回前调用。
+
+### 3. `merchant:` 出站改访客身份（Q8）—— `crisp_mirror.py`
+- 新增 `SENDER_MERCHANT_VISITOR="merchant_visitor"`：`from=user` + `user={type:website,nickname:店名}`；`queue_support_message_mirror` 的商家分支改用它。平台客服仍是 `SENDER_PLATFORM`（operator + `CRISP_PLATFORM_NICKNAME`）。
+- `bm:` 保持 `SENDER_MERCHANT`（operator + 店名），`test_merchant_chat` 未改一字仍全过。
+- **已知可接受代价**：同一条 `merchant:` 线程历史消息身份前后不一致（旧 operator / 新 user），实测 Crisp 里已出现混排；新会话无此问题。
+
+### 4. 管理端 → Crisp 双写（Q3）
+- 核对结论：**已齐，无需新增**。`/admin/support/conversations/{id}` reply → `queue_support_message_mirror`；`/admin/support-chat/threads/{id}/messages` reply → `queue_support_chat_mirror`；都走 `transaction.on_commit`，失败不影响 201。
+- 仍缺（**有意不动**）：商家端 `kind=BUYER`（买家商品咨询）不镜像 —— 它没有对应的买家端线程，属历史数据。
+
+### 5. 商家端轮询（`merchant-web/src/views/MessagesView.vue`）
+- 原来只有 `pollBuyer`（买家咨询 tab）。新增 `pollSupport`（5s、`document.hidden` 时跳过、`pollInFlight` 防重入）：刷新 `/merchant/conversations` 列表未读 + 打开中会话的 `/merchant/conversations/{id}`；按"最后一条 id 是否变化"决定替换消息，避免跳动。`onMounted` 改为 `setInterval(pollActiveTab)`（按 tab 分发）。
+- 不改 `mobile.html`/`folio`；管理端 `SupportView.vue` 不动。
+
+### 6. **顺手修掉的既有 bug（重要）**
+- `crisp_mirror._http_get(path)` 只收 1 个参数，但 `_request_with_retry` 统一用 `send(path, payload)` 调 → **只要命中"已有会话 → 补写 meta"分支就 TypeError**，消息卡在 `CrispMirrorLog.status=pending`、永远不再镜像（测试里 `_http_get` 一直被 mock 所以从没暴露；线上 2026-11-22 的日志有同一条崩溃）。已改成 `_http_get(path, payload=None)` 并加 2 条回归用例。
+
+### 7. 验证（按验证纪律仅做了针对性验证；未跑全量）
+- `manage.py check` → **no issues**；`makemigrations --check --dry-run` → **No changes detected**；`migrate merchant_ops` → **OK**（本机 MySQL，0006+0007 均已应用）。
+- `test merchant_ops.tests.test_crisp_inbound` → **Ran 33, OK**（5s 节流内零 HTTP / 6s 后可拉 / 每分钟 12 次上限且跨分钟重置 / 只认 user_id / fingerprint 去重 / 游标推进 / 首次 72h / 每次 1 个 HTTP / 超时降级且占窗口 / 失败不影响 200 / bp、merchant:、bm 三种落库 / bm 买家 GET 接线 / 模型唯一约束）。
+- `test merchant_ops.tests.test_crisp_mirror` → **Ran 34, OK**（+2 回归：`fetch_conversation_meta` 走真实签名、已有会话仍发消息；merchant: 断言改为 `from=user`）。
+- `test test_support_chat test_merchant_chat test_crisp_mirror` → **77, OK**。
+- `test merchant_ops` 全包 → **Ran 359, failures=3 errors=8**；这 **11 个失败在 HEAD worktree 上逐字相同**（`test_merchant_console_session` 9 个 + `test_admin_round2.NotificationApiTests` 2 个，均与客服无关），**不是本批引入**，不要去修。
+- 前端：`vitest components/MerchantChatPanel.test.js` → **9 passed**（+1：support 气泡带 `merchant-chat__bubble--support` + `客服/Support` 标签、不带 `--mine`）；五语言键 **531×5 一致**。`vitest` 全量跑时 **4 个 `components/SupportChatLauncher.test.js` 失败是批次 AB 正在重写该组件造成的**（`SupportChatLauncher.vue` 有 1200+ 行未提交改动、AB 另建了 `tests/supportChatLauncher.test.js`），与 AA 无关。
+- ruff：`ruff check backend/merchant_ops/` 全过；`crisp_inbound.py` / `test_crisp_inbound.py` / `0006` / `0007` `format --check` 过（**验收提的 0006 空行已 format 修掉**；`0003_crisp_mirror.py` 的 format 偏差是 HEAD 既有，不碰）；`eslint`/`prettier --check` 对 `MessagesView.vue`、`MerchantChatPanel.vue(.test)`、`messages.js` 全过。
+- **端到端（真连 Crisp）**，脚本 `var/cs_sync_aa_e2e_20261123/e2e_check.py`（`state.json` 含会话 token，收尾已删；重跑先 `setup`）：
+  - 买家（首轮）：`POST /api/v1/account/support-chat/messages` 201 → Crisp 新会话 `session_7f6c994e-…` 出现 `from=user` 镜像 → 用 website API 以 operator 身份发 `user.user_id=61b9b8df…` 的回复（Crisp 原样保留）→ 买家 `GET .../messages` **同一次请求内 0.79s** 返回 `[('buyer',…),('support',…)]`，DB `source=crisp`。
+  - 商家（首轮）：`POST /merchant/conversations/{id}/messages` 201 → Crisp 新增消息 **`from=user` + nickname=HOMCOM**（旧消息仍 operator，混排符合预期）→ 人工回复 → `GET /merchant/conversations/{id}` **0.79s** 返回 `PLATFORM / Joy / …`。
+  - **#5 时延重测（5s 节流后，模拟前端 5s 轮询）**：商家端三次 **≈0s / 5.00s / 5.00s**；最坏场景（先打一次占满窗口再发回复）**5.90s**。买家 bm 侧最坏 **6.15s**。全部 ≤10s。
+  - **#6 bm 闭环**：`bm:` 会话（买家 vs MER001001）→ Crisp 人工回复 → 买家面板 **同一次轮询可见**（最坏 6.15s），`sender_kind=support`、`source=crisp`；商家端 `GET /merchant/chats/{id}/messages` 同样返回 `('support', …)`。
+  - 配额：实测同一分钟内商家线程/ bm 线程 `inbound_window_count` 均为 **4**（上限 12）；重复 GET 不产生重复行；`throttled` 时零 HTTP。
+
+### 8. 坑 / 新会话必看
+1. **`user.type=="website"` 不能作为"我方镜像"判据**（见 §2）：Crisp 会给 API 注入的 operator 消息补 `type=website`，真实回复无该字段。唯一判据是 `user.user_id`。
+2. `_http_get` 签名 bug 已修；**任何新的 `_request_with_retry` send 函数都必须接受 `(path, payload)` 两个参数**，否则线上静默 pending。
+3. 入站消息**不要**用 Crisp timestamp 回填 `created_at`（会让 `?after=` 增量永远漏消息）。
+4. 节流用条件 UPDATE 抢窗口（不是先读后写），并发轮询不会双发；失败也占窗口，别改成"失败不占"。
+5. 本机开发库是 **MySQL**（`DJANGO_DATABASE_ENGINE` 默认 mysql，`.env` 在根目录由 settings 加载）；迁移已应用，别再用 sqlite 路径验证。
+6. 后端 :8000 由 `var/run_backend_keepalive.sh` 守护（`--noreload`）：改完 py 必须 `taskkill` 掉监听进程，keepalive 会在 ~5-15s 内自动拉起；`taskkill` 需 `MSYS_NO_PATHCONV=1`。
+7. e2e 里买家/商家会话是用 `create_buyer_session` / `create_staff_session` 直接签发的（等价于登录），**POST 必须带 `X-CSRFToken` 且 Cookie 里要有 `csrftoken`**（先 GET `/api/v1/auth/buyer/session`、`/api/v1/admin/auth/session`）；商家接口还要 `X-Merchant-Id`。
+8. `test merchant_ops` 有 11 个与客服无关的历史失败（见 §7），跑之前先对齐这个基线，别误判成回归。`components/SupportChatLauncher.test.js` 的 4 个失败属批次 AB 未完成的改造。
+9. **`bm:` 入站已接**（§10，落 `sender_kind=support`）；前端必须同时按 support 渲染，否则买家会把客服回复当成商家本人。新增的 sender_kind 是**枚举变更**，改 `MerchantChatMessage.SenderKind` 时别忘了迁移与商家端/买家端两处映射。
+10. Crisp 里"商家消息改 from=user"只对新消息生效；存量会话历史混排不可逆。
+11. **5s 节流 + 5s 前端轮询是"掐点"关系**：一次拉取耗时会顺移窗口，最坏 2 个轮询周期（实测 5.9s/6.15s）。要提高稳定性别再压窗口，而是让前端"一次轮询只打一个接口"或把 `INBOUND_THROTTLE_SECONDS` 设成 4.5s（会略超 12 次/分钟上限，需同步调 `INBOUND_MAX_PER_MINUTE`）。
+
+### 9. 遗留
+- **webhook 未确认**：website hook 是否在当前 Free 计划可用、是否签名/重试，代码无法代验（需在 Crisp 后台肉眼确认）；本批不依赖它。
+- **真站客服面板内页未实测**（点击会话整页跳 `/login`，见 findings C4）——与 AB 批次相关，不影响本批后端。
+- 商家端轮询只在"打开的消息中心页"生效；若商家离线，Crisp 回复要等下次打开会话才入库（Q7(a) 已拍板的取舍）。
+- bm 线程的客服回复只累加 `buyer_unread`，**不累加 `merchant_unread`**（商家列表看不到"客服回复"红点，但消息本体、预览与详情都正常）。若产品要求商家也提醒，需要新增 `merchant_unread+1` 并区分角标来源。
+
+### 10. 验收修正（2026-11-23 晚，闭 #5 / #6）
+1. **#5 商家端 18.3s → 实测 ≤6.15s**：`INBOUND_THROTTLE_SECONDS` 20 → **5**（与前端 5s 轮询对齐）；新增 `INBOUND_MAX_PER_MINUTE=12` 与计数窗口（迁移 `0007` 的 `inbound_window_start`/`inbound_window_count`），超限 `throttled(reason=minute_cap)`；游标与 `last_inbound_at` 语义不变。
+2. **#6 bm 入站**：`_resolve_target` 支持 `bm:{buyer}:{merchant}`；`pull_merchant_chat(thread)` 为视图包装；`MerchantChatMessage.SenderKind` 新增 **`support`**（迁移 `0007`）；落库 `sender_kind=support` + `buyer_unread+1`；`BuyerMerchantChatMessagesView.get` 与 `MerchantChatMessagesView.get` 都触发拉取。
+3. **前端**：`storefront/components/MerchantChatPanel.vue` 对 `sender_kind=support` 加 `merchant-chat__bubble--support` 浅底+左色条与 `chat.supportLabel` 小标签（五语言：Support/客服/Support/Assistance/Klantenservice）；`merchant-web MessagesView.vue` 的买家会话对 support 显示作者「平台客服」+ `.chat-bubble.is-support` 样式。
+4. 迁移 `0006` 的 ruff format 空行已修。
+
+
+## 0bq. 批次 AB（2026-11-23 客服面板重做，✅，未 commit）
+
+- **任务**：需求文档03 **23.3** 客服面板按真站重做（header / 会话列表 / 会话首屏 / FAQ / 发送订单 / 输入框内发送）。**未 commit；只改前端客服面板与 support.* 文案；未动后端（AA）、未动 `pages/p/[id].vue`（AC）、`AppHeader.vue`、`pages/account/*`、`merchant-web/`、`MEDIA_BACKEND`（仍 local）。**
+- **改动文件**
+  - `storefront/components/SupportChatLauncher.vue`：整体重写 UI 结构，保留原逻辑（未登录引导、5s 轮询、2000 字上限、乐观发送/失败重试/发送中禁用、轮询游标去重）。新增 `view: 'list' | 'conversation'`、订单弹层、`support.*` 新文案引用。
+  - `storefront/locales/messages.js`：`support.*` 新增 **19 个键 ×5 语言**（本批结束时全库 **531/语言**：511 原基线 + 本批 19 + AA 并行 `chat.*` 1，五语言键集合一致，missing/extra 0）；`support.placeholder` 改为「请输入你的问题」/「Type your question」等。旧键 `support.title/subtitle/empty` 保留未删（暂无引用）。
+  - `storefront/tests/supportChatLauncher.test.js`（新）：8 个组件测试。
+  - `storefront/components/SupportChatLauncher.test.js`（批次 Y 旧文件，2026-11-23 按新双视图结构同步）：10 个测试（header 三元素 / 会话卡片 / 首屏欢迎语+3 FAQ+输入框 / 乐观发送 / FAQ 点击即发送并收起 / 清除后重进拉回 / 订单弹层多选两行 / 5s 轮询增量 / 未登录跳转 / 会话过期提示）。
+  - 验收产物 `var/ab_support_panel_20261123/`（fixtures/setup_fixture.py、verify_panel.mjs、check_db.py、screens/*.png、e2e-result.json、db-check.json、backend8001.log、storefront-dev.log）。
+- **真站实测值（直接采用，来自 `var/cs_sync_panel_20261123/findings.md` C2/C3）**
+  - 面板：**375 宽 × 80% 高（max 720）**、`right:84` / `bottom:104.5`、背景 `#F5F6FA`、radius 8、border `#F0F1F2`、`0 2px 16px rgba(0,0,0,.078)`、z-index 1200；e2e 实测盒子 `375×720 @ (981,175.5)`（1440×1000 视口，与真站完全一致）。
+  - header 60px 白底：左【清除】距边 16（24×24）、中【客服】24px/700、右【×】距边 16（24×24）。实测相对面板左边 17px（含 1px 面板边框，等价真站 981→998）。
+  - 列表项：`padding:12px 16px`、头像 60 圆、标题 16/600 `#1A1A1A`、时间 12 `#505259`、摘要 14/500 两行截断、未读 16px `#E1251B`、hover `rgba(0,16,71,.102)`、列表 `padding-top:8px` + 卡片 `margin-bottom:8px`。
+  - 清除图标为**自绘 24px 橡皮擦图标**（真站只测到 `clean-up-icon` 24×24，图标本身未取到）。真站 `delChatSession` 语义是删会话，但我们按 Q4 只清显示。
+- **推定项（真站未实测，按需求 23.3 + 用户描述实现）**
+  1. 会话内首屏**全部为推定**：居中客服头像（64 圆，本地内联耳机 SVG，非真站图）、欢迎语（用户提供的黑五大促文案 ×5 语言）、三条 FAQ 按钮（白底 8px 圆角、`min-height:40px`、文案居中、hover `rgba(0,16,71,.06)`）、【发送订单】药丸按钮、输入框（圆角 20、发送图标在框内右侧）。
+  2. 欢迎语以**本地渲染的欢迎卡片**呈现（不写库、不伪造 support 消息）；FAQ 与订单按钮的显隐规则：FAQ 仅在**会话为空**时展示（发送任一消息后收起回到普通消息流），【发送订单】在输入框上方工具条**常驻**（否则聊天中途无法再发订单）。
+  3. 会话视图**返回列表**用正文顶部的小返回条（`‹ 返回会话列表`）；真站 header 只测到清除/客服/×，没有返回控件，故返回入口放正文。
+  4. 订单金额用**订单自身币种**（`Intl.NumberFormat('en-GB', {currency})` → `£12.34`），与任务书示例 `£xx` 一致；注意这与站点展示层「所有价格一律 `$`」的 2026-11-03 规则**不同**（订单消息属内容而非页面价格标签）。若要改回 `$` 只需改组件 `orderAmount()`。
+  5. 订单号用**完整 UUID**（弹层里展示前 8 位大写 `#XXXXXXXX`，与订单页一致；消息正文用完整号便于客服查单）。
+- **订单消息格式（Q5，按语言本地化，实测原文）**
+  - zh：`【订单查询】订单号：<uuid>，金额：£7.99，状态：已取消`，多笔 `\n` 拼接成**一条**文本消息。
+  - en：`Order enquiry — Order no.: <uuid>, amount: £7.99, status: Canceled`；de/fr/nl 对应翻译（`support.orderMessage`）。状态文案复用 `orders.status*`。
+  - 数据源 `GET /api/v1/orders`（现有接口，`-created_at` 最新在前），取前 3 笔；弹层可多选（checkbox），确认按钮显示 `Send selected (N)`。
+- **清除语义（Q4）**
+  - **纯前端清屏**：点【清除】把已渲染消息清空、回到首屏（欢迎语 + FAQ 重新出现），**不调后端、不删库**；买家侧后端没有清除接口（只有管理端/网关侧 `delChatSession`，未接）。
+  - 轮询游标**独立于 messages**，清除后不回退，所以 5s 轮询不会把历史重新拉回来；从列表**再次进入会话**会重新 `GET /messages` 拉回完整历史（e2e 实测 3 条清空后重进仍是 3 条）。
+  - 清除按钮在会话列表视图或无消息时禁用（`#c4c6cc`）。
+- **验证（按验证纪律仅做了针对性验证，未跑全量）**
+  - 组件测试：`node node_modules/vitest/vitest.mjs run --root storefront components/SupportChatLauncher.test.js tests/supportChatLauncher.test.js` → **18 passed / 2 files**（旧文件 10 + 新文件 8）。旧文件 4 个失败的根因是**旧断言对应旧单视图 DOM**：打开面板后停在会话列表，bubble/input/FAQ 都在会话视图里；轮询也改成进会话才启动，旧测试直接取 `setInterval` 回调拿不到。已按新实现更新断言而不是改组件，并补齐 header 三元素/列表卡片/首屏（欢迎语+FAQ+输入框）/FAQ 点击发送/清除/订单弹层用例。`$fetch` 用 `globalThis.$fetch` 打桩，`useBuyerAuth` mock 固定已登录。
+  - `npx eslint` 改动的 3 个文件 → 0 告警；`npx prettier --check` 同 3 文件 → 通过（已先 `--write`）。
+  - 五语言键集合：en/zh/de/fr/nl 各 **531**（本批 +19；另 AA 并行新增 1 个 `chat.*` 键），missing/extra 均 0。
+  - Playwright `var/ab_support_panel_20261123/verify_panel.mjs`（**EN + ZH 各自独立买家**，:3000 完全重启后跑，1440×1000）→ **36 checks / FAILURES=0**：
+    - 面板尺寸/底色/边框/圆角/阴影/z-index、header 60px/清除左 16/标题 24-700 居中/关闭右 16 全部与实测量一致；列表卡片 padding/头像/标题/时间/摘要样式逐项断言通过。
+    - 打开先显示**会话列表**（一条【客户服务】，摘要 `7*24小时在线支持。`）；点进会话后首屏头像中心 = 面板中心（1168.5）、欢迎语、3 条 FAQ、发送订单、placeholder、发送图标在输入框右半区。
+    - 点 FAQ「我的包裹送到哪里了？」/`Where is my parcel?` → POST **201**，消息流出现该句；随后 FAQ 收起。
+    - 【发送订单】弹层 3 笔订单（订单号/金额/状态），勾 2 笔 → 发送 201 → 消息流为两行订单文本，含完整订单号 + `£7.99/£45.60` + 状态。
+    - 【清除】→ 已渲染消息 0 条、FAQ 重新出现；返回列表（时间 `18:13`、摘要更新时间）再进入 → 历史 3 条全部拉回。
+    - 输入框右侧发送按钮：空值禁用、有内容可点、点击后 201 且输入框清空；进入会话后 5s 轮询 +1 次；Esc 关闭面板、打开时焦点落在面板内【×】；未登录点客服 → `/auth/login?next=%2F`。
+    - PDP：客服按钮 `(1360,784,80,60)` 与【联系商家】`(1268,860,…)` 不重叠；面板打开时底边 228px、顶边 y=52，不遮【联系商家】；console error 0（en/zh/anon/pdp 全 0）。
+    - 截图：`var/ab_support_panel_20261123/screens/panel-{list,first-screen,faq-sent,order-dialog,order-sent,cleared}-{en,zh}.png`、`anon-login-redirect.png`、`pdp-dual-buttons.png`、`pdp-panel-open.png`。
+  - 落库核对 `var/ab_support_panel_20261123/check_db.py` → **DB CHECK OK**：en/zh 两个买家各 3 条 `SupportChatMessage`，FAQ 句与两行订单文本（订单号可回查夹具）都在库里；`CrispMirrorSession` 对这两个买家 **0 条**（e2e 走隔离 `:8001` + CRISP_* 全空，**没有真连 Crisp 发送**）。
+- **坑/结论（新会话必看）**
+  1. **会话首屏都是推定**，真站需登录才拉会话 JS（findings C4）；若之后拿到真站截图，先核对欢迎卡片/FAQ 形状/返回入口。
+  2. 未读数只能取 `POST /thread`（get-or-create）那一刻的 `buyer_unread`；`GET /messages` 会顺手清零未读，用它的 payload 覆盖会把红点抹掉（组件里 `applyThreadMeta(..., {withUnread})` 已按此区分）。
+  3. 清除后**必须保持轮询游标**，否则下一轮 `?after=` 会回退成全量把历史拉回来；组件用独立 `cursor` ref，不依赖 messages。
+  4. 发消息的 `$fetch` 第二个参数 `body` 是**对象**（Nuxt 自动序列化）；单测打桩要同时兼容 string/object，否则 `JSON.parse` 抛错被 `deliver` 静默吞掉。
+  5. FAQ 只在**空会话**显示；e2e 每个语言必须用**独立新买家**（setup_fixture.py 每个语言建一个），否则上一轮历史会占掉首屏。
+  6. 订单列表按 `-created_at`，弹层行序与夹具创建顺序相反；断言要按弹层实际行序（读 `.support-chat__order-id`）而非夹具数组顺序。
+  7. `:3000` 本批**完全重启**为 `npx nuxt dev --host 127.0.0.1 --port 3000`（e2e 用 `http://127.0.0.1:3000`，cookie domain 写 `127.0.0.1`）；若该进程随会话结束，重启后用同一 host/port。`:8001` 隔离后端验收后已停。
+  8. 重跑 e2e 前先跑 `./.venv/Scripts/python.exe var/ab_support_panel_20261123/setup_fixture.py`（会删掉 `ab-panel-*` 买家的订单/会话/消息，相当于重置现场）；`ab-panel-en/zh@joybuy.test` 是测试号，**不要**当真实数据清理。
+  9. 面板 `max-height` 在 PDP 环境收窄为 `min(720px, calc(100vh - 260px))`（bottom 上移到 228），平时仍是真站的 `80% / max 720`；改高度务必同时看 PDP 不重叠回归。
+  10. AA 新增 `sender_kind='support'`（客服回复）与 `bm:` 入站对本面板**无影响**：`SupportChatLauncher` 只按 `sender_kind === 'buyer'` 区分自己的气泡，`support` 一律渲染成左侧气泡（组件测试已断言非 `--mine`）；`bm:` 是买家 ↔ 商家线程，走 `MerchantChatPanel`，不在本组件范围。
+
+## 0bp. 批次 AC（2026-11-23 PDP 横线 / 评价数 / 已售，✅，未 commit）
+
+- **任务**：需求文档03 **23.1**（PDP 三点）；批次 AC。**未 commit；只改 PDP 前端；未动客服面板（AB）、未动后端（AA）、未动 `MEDIA_BACKEND`。**
+- **改动文件**
+  - `storefront/pages/p/[id].vue`：横线重排（只留 `.detail__promise` 与 `.detail__support` 的 `border-top`，删 `.detail__guarantees` 的 `border-bottom` 与 `.detail__guarantee` 的 3 条 `border-top`）；删除顶部行评价条数渲染与 `ratingCount` computed / `ratingCountLabel` import；已售右侧新增 20px 本地内联 SVG 信息图标 + `role="tooltip"` 弹层（hover 整块 / hover 图标 / 键盘 focus / 点击均可显示）；评分与已售之间的灰竖线保留（`#e0e1e5`，1×14px）。
+  - `storefront/utils/pdpDisplay.js`：`soldCountLabel` 归一化保证 `+`；删除不再使用的 `ratingCountLabel`。
+  - `storefront/locales/messages.js`：新增 `pdp.soldTooltipTitle`、`pdp.soldTooltip` ×5 语言。
+  - `storefront/tests/pdpDisplay.test.js`：覆盖 `40→40+`、`461→461+`、`12000→12k+`、`1500→1.5k+`、`1.2k` 补 `+`、`1.5K+→1.5k+`、空值确定性占位带 `+`；删除 `ratingCountLabel` 用例。
+- **真站值 vs 用户口径（重要）**
+  - 横线：真站是独立 `div.MuiDivider-root`，**0.5px `rgb(224,225,229)`、`margin:12px 0`**；按 23.1-1 只保留【配送与服务承诺】顶部与【我们支持/支付】顶部两条。实现用 **1px `#e0e1e5` + `margin-top:12px` + `padding-top:12px`**（等价 12px 上下留白）。选 1px 原因：0.5px CSS border 在 DPR1 浏览器会被舍入成 0 或 1，1px 在 DPR1/2 下视觉最接近真站且可稳定断言；与用户认可的 1px 口径一致。
+  - 评价条数：23.1-2 只要求顶部评分行不显示；**评价区 `ProductReviews.vue` 的「X 条评价」仍保留**（真站评价区同样有，属另一 surface，故意未动）。验收断言限定在 `[data-testid="pdp-rating"]` 内无 `条评价/reviews/(N)`；若日后要全页删除需另立需求。
+  - 已售 `+`：根因不是模板吞掉（zh `已售{count}件` 正常），而是 **`soldCountLabel` 对源站串原样透出**：库内 `SpuDetail.sale_amount` 实测 **13,691 条带 `+`、2,920 条是纯数字（1~999，如 `198`）、111 条为空**，纯数字商品就显示成「已售198件」。现统一归一化：已带单位/`+` 保留（`1.5k+`/`12k`→补 `+`）、纯数字 ≥1000 缩写为 k（12000→`12k+`、1500→`1.5k+`）、<1000 原数（`198+`）；空值仍走确定性占位 `10k+~30k+`（本来带 `+`）。
+  - 文案空格：zh 仍为 `已售{count}件`（真站实测 `已售1k+件` 无空格），未按任务书示例在数字两侧加空格；`+` 由 count 保证。
+  - 竖线：用户明确要求保留；**真站实测其实也有**（`skuReviewFloor_divisionLine`，见 crawler_debug_output 原始 HTML），修正 findings D12「真站无竖线」的说法。
+  - tooltip：真站同位置是 20px 图标按钮，弹层 `saleAmountTip.popTitle = 销量解读`（英文站同页 `/help/salesdetails` 为 **Sales Details**），说明文案「涵盖 Joybuy 欧洲各站点（含本站、其他欧洲站点及 ochama）的历史成交数据」。标题与英文文案为真站实测；de/fr/nl 为对应翻译（推定，非真站实测）。
+- **验证（按验证纪律仅做了针对性验证，未跑全量）**
+  - `npx vitest run --config storefront/vitest.config.js storefront/tests/pdpDisplay.test.js storefront/tests/pdpBreadcrumb.test.js` → **15 passed / 2 files**。
+  - `npx eslint` 改动 4 文件 → 0 告警；`npx prettier --check` 同 4 文件 → 通过。
+  - 五语言键集合：en/zh/de/fr/nl 各 **511**，missing/extra 均 0（原 509 + 2）。
+  - Playwright `var/pdp_ac_20261123/verify_pdp_detail.cjs`（EN+ZH × 4 商品，`http://localhost:3000`）→ **FAILURES=0**：
+    - 横线：`.detail__promise` 与 `.detail__support` 各 1 条 `border-top:1px`；`.detail__guarantees` 与 3 个 `.detail__guarantee` 上下 border 全 0（断言「恰好 2 条且位置正确」）。
+    - 顶部行 `innerText` 无 `条评价/reviews/(N)`；竖线 `1×14px #e0e1e5` 且 x 位于评分与已售之间。
+    - 已售：`a41c9b79`（源串 3.8k+）→ `已售3.8k+件` / `3.8k+ sold`；`4286608d`（源串纯数字 198）→ `已售198+件`；`6f2493a3`（sale 空）→ `已售26k+件`；`467c7755`（无评分无 detail）→ 评分 `—` + `已售22k+件`。EN/ZH 全部带 `+`。
+    - tooltip：hover 图标出现 `#pdp-sold-tooltip`（标题 `销量解读` / `Sales Details`）；移开鼠标关闭；键盘 `focus()` 也显示。
+    - 每页 console error 0、404 0；截图 `var/pdp_ac_20261123/pdp_{en,zh}_{8位id}.png`、`rating_tooltip_{en,zh}.png`。
+- **坑/结论（新会话必看）**
+  1. 已售不要再直接透出 `sale_amount`：库里 2,920 条纯数字 + 111 条空，必须走 `soldCountLabel` 归一化；`+` 只加在数字/单位后，不要写成 `198++`。
+  2. 0.5px 横线不要照抄：Chrome DPR1 下可能消失；本批用 1px `#e0e1e5`。
+  3. 评价区 `ProductReviews.vue` 的「X 条评价」**未删**（不在 23.1-2 范围）；页面级 grep 仍会命中，别误判回归。
+  4. tooltip 的显示条件挂在 `.detail__sold-block` 的 `mouseenter/mouseleave` + 图标 `focus/blur`，不要只挂 button 的 hover，否则鼠标放在「已售xx件」文字上不出提示。
+  5. 本批并行存在 AA/AB 的未提交改动（`backend/merchant_ops/*`、`merchant-web/.../MessagesView.vue`）；本批只改上面 4 个前端文件，**不要**把这些一起 commit。
+  6. `:3000` 仍仅监听 `[::1]`，Playwright 必须用 `http://localhost:3000`；Nuxt dev 热更新即可，本批未重启前后端。
+
 ## 0bn. 批次 A：面包屑 local_slug + 类目映射回填 + 导入校验（2026-11-23，✅，未 commit）
 
 > 任务书写的编号 `0bl` 已被上面「无评分商品随机生成评分」占用、`0bm` 已被并行批次 B 占用，本批取 `0bn`。
@@ -4045,6 +4239,11 @@
 - **2026-11-20 23:01 晚间再次开机启动（专用启动会话，无代码改动）**：全停（Docker 引擎未运行、四端口空）→ Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端 + storefront 两条看护循环 + 两个 vite。验证：四端口各一行 LISTENING（8000=45632、3000=36384、5173=1228、5174=26900）；health ok；三端首页 200。
 - **2026-11-21 11:08 每日检查（专用启动会话，无代码改动；本次无需启动）**：昨晚 23:01 起的服务整夜存活，机器未重启（容器 Up 12h）。**两条看护循环夜间各自完成一次自愈**：后端 runserver 00:04（UTC 16:04）退出 → 5s 拉起（8000 现 PID 14592）；nuxt 01:02 退出 → 01:15 拉起（3000 现 PID 22544）；5173/5174 原进程未动。验证：health ok；三端首页 200。
 - **2026-11-23 15:20 开机启动（专用启动会话，无代码改动；距上次已隔 2 天，期间重启过）**：全停（Docker 引擎未运行、四端口空、**看护 bash 数为 0**——重启会杀掉看护循环，这是预期行为）。重建：Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端看护 + storefront 看护 + 两个 vite。验证：四端口各一行 LISTENING（8000=35216、3000=35736、5173=1116、5174=34268）；health ok；三端首页 200。
+- **2026-11-23 18:17 跟进（后端 keepalive 循环自身挂了，已重启，无代码改动）**：18:17 发现 8000 无监听、`bash` 看护进程数 **0**——**这次不是 runserver 死，而是看护循环本体消失**（日志显示循环 10:16:49 还拉起过一次，之后随后台任务被清理而终止）。已重启 `bash var/run_backend_keepalive.sh`，3s 内后端恢复（PID 38500，runserver 一对进程），health ok。其余服务全程未受影响：3000=29236（storefront 看护 bash 仍在，count=1）、5173=1116、5174=34268 均 200，容器 Up 3h。**教训：判断「有没有人在看护」必须数 `bash` 进程，光看 8000 是否 LISTENING 不够——循环挂了端口也会一直空着。**
+- **2026-11-23 18:36 看护循环改为「脱管启动」（新增 `var/start_keepalives_detached.sh`，无代码改动）**：18:32 重启的看护循环**又被后台任务清理连带杀掉**（8000 空、bash 计数 0），证明 `run_in_background` 起的 bash 循环活不过任务回收。改为 `cmd //c start "" "C:\Program Files\Git\bin\bash.exe" var/run_<svc>_keepalive.sh`，让循环挂在 Windows 自己的进程树下：**实测脱离后稳定存活**（90s 复验 backend=2 / storefront=2 条 bash 链，8000=36144、3000=29236、5173=1116、5174=34268 全部 LISTENING，三端 200）。
+  - **以后启动看护一律走**：`cd /e/code/AgentProject/Joybuy && bash var/start_keepalives_detached.sh`（一次拉起后端 + storefront 两条脱管循环；端口在监听时只是提示，不会重复起服务）。
+  - 收尾时发现有 7 条残留循环（每次重启叠加）——已全部 taskkill 后各留一条；**多份循环靠端口守护不会双绑，但会导致端口释放时抢启动，仍应保持每个服务只有一条**（`Get-CimInstance Win32_Process -Filter "Name='bash.exe'" | Where CommandLine -like '*keepalive*'` 数链）。
+  - 5173/5174 的 vite 仍是普通后台任务（数周来一直稳定），如需同样加固可照此模板加看护。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
