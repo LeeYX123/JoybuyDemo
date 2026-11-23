@@ -69,12 +69,18 @@ def channel_page_cards(request):
     """频道页品类卡下方的活动卡片（no auth, read-only，13.2）。
 
     契约：``GET /api/v1/cms/channel-page-cards?channel=<channel_code>``
-    → ``{"items":[{id,image_url,link_url,sort_order}]}``（sort_order 升序，
+    → ``{"channel":..., "layout":"row3|row3_scroll|grid2x2",
+        "items":[{id,image_url,link_url,sort_order,layout}]}``（sort_order 升序，
     空配置或未知频道返回 ``{"items": []}``；``link_url`` 按 13.8 存原值）。
-    缺少 ``channel`` 参数才报 400（调用方 bug，不是「没配置」）。
+    ``layout`` 是频道级展示布局，顶层给当前生效值、每个 item 也带一份
+    （购物端不依赖取哪一层）。缺少 ``channel`` 参数才报 400（调用方 bug）。
     """
 
-    from content.channel_page_card_services import ChannelPageCardError, public_cards
+    from content.channel_page_card_services import (
+        ChannelPageCardError,
+        channel_layout,
+        public_cards,
+    )
 
     channel_code = str(request.GET.get("channel") or "").strip()
     try:
@@ -93,10 +99,18 @@ def channel_page_cards(request):
             "image_url": row.image_url,
             "link_url": row.link_url,
             "sort_order": row.sort_order,
+            "layout": row.layout,
         }
         for row in rows
     ]
-    return JsonResponse({"channel": channel_code, "items": items, "total": len(items)})
+    return JsonResponse(
+        {
+            "channel": channel_code,
+            "layout": channel_layout(channel_code),
+            "items": items,
+            "total": len(items),
+        }
+    )
 
 
 def channel_banners(request):

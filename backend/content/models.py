@@ -179,7 +179,19 @@ class ChannelPageCard(models.Model):
     单条开关 + 排序，不进 CMS 版本快照。跳转链接 ``link_url`` 按 13.8
     链接规则**存原值不限制不改写**：以 ``http(s)://``、``//``、``www.``
     开头视为外链原样跳转，否则视为站内路径（判定在消费端 helper）。
+
+    ``layout`` 是**频道级**展示布局（同一 ``channel_code`` 下所有卡片共用
+    同一个值，写入时由服务层同步全频道），不是单卡属性：
+
+    - ``row3``：一行 3 张（多数频道）
+    - ``row3_scroll``：一屏 3 张、共 6 张，可左右滑动（健康保健）
+    - ``grid2x2``：2 列 × 2 行共 4 张（母婴童玩）
     """
+
+    class Layout(models.TextChoices):
+        ROW3 = "row3", "一行三张"
+        ROW3_SCROLL = "row3_scroll", "一屏三张可滑动"
+        GRID2X2 = "grid2x2", "两列两行"
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     channel_code = models.CharField(max_length=64)
@@ -187,6 +199,7 @@ class ChannelPageCard(models.Model):
     link_url = models.CharField(max_length=1000, blank=True, default="")
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    layout = models.CharField(max_length=20, default="row3", choices=Layout.choices)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -7,6 +7,10 @@
 跳转链接 ``link_url`` 按 13.8 链接规则**存原值、不限制、不改写**：管理端
 保存什么就存什么（只去首尾空白），外链/站内路径的判定由购物端消费 helper
 （``storefront/utils/cmsLink.js::resolveCmsLink()``，批次 I）负责。
+
+``layout`` 是**频道级**展示布局（`row3` / `row3_scroll` / `grid2x2`）：同一
+``channel_code`` 下所有卡片共用一个值。任何写入传入 ``layout`` 时，服务层
+在同一事务里把该频道全部卡片同步成同一个值（不是单卡属性）。
 """
 
 from django.db import transaction
@@ -14,6 +18,8 @@ from django.db import transaction
 from content.models import ChannelPageCard
 
 MAX_SORT_ORDER = 9999
+
+DEFAULT_LAYOUT = ChannelPageCard.Layout.ROW3
 
 
 class ChannelPageCardError(Exception):
@@ -66,6 +72,35 @@ def validate_link_url(value) -> str:
     return link
 
 
+def validate_layout(value) -> str:
+    """布局枚举校验：只接受 model 里 ``ChannelPageCard.Layout`` 的三个值。"""
+
+    layout = str(value or "").strip()
+    if layout not in ChannelPageCard.Layout.values:
+        allowed = " / ".join(ChannelPageCard.Layout.values)
+        raise ChannelPageCardError("LAYOUT_INVALID", f"布局只能是 {allowed}。")
+    return layout
+
+
+def channel_layout(channel_code: str) -> str:
+    """该频道当前生效的布局（频道级）；频道还没有卡片时回落到默认 ``row3``。"""
+
+    layout = (
+        ChannelPageCard.objects.filter(channel_code=channel_code)
+        .values_list("layout", flat=True)
+        .first()
+    )
+    return layout or DEFAULT_LAYOUT
+
+
+def _sync_channel_layout(channel_code: str, layout: str) -> None:
+    """把整个频道的卡片布局同步为同一个值（频道级语义，调用方需在事务内）。"""
+
+    ChannelPageCard.objects.filter(channel_code=channel_code).exclude(layout=layout).update(
+        layout=layout
+    )
+
+
 def _parse_sort(value) -> int:
     try:
         sort_order = int(value)
@@ -84,6 +119,7 @@ def serialize_card(card: ChannelPageCard) -> dict:
         "link_url": card.link_url,
         "sort_order": card.sort_order,
         "is_active": card.is_active,
+        "layout": card.layout,
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),
     }
@@ -107,6 +143,8 @@ def create_card(*, payload: dict) -> ChannelPageCard:
     image_url = validate_image_url(payload.get("image_url"))
     link_url = validate_link_url(payload.get("link_url"))
     is_active = bool(payload.get("is_active", payload.get("enabled", True)))
+    provided_layout = str(payload.get("layout") or "").strip()
+    layout = validate_layout(provided_layout) if provided_layout else None
     with transaction.atomic():
         if payload.get("sort_order") in (None, ""):
             # 未指定排序时追加到该频道末尾，避免插队打乱现有顺序。
@@ -119,20 +157,27 @@ def create_card(*, payload: dict) -> ChannelPageCard:
             sort_order = (last or 0) + 1
         else:
             sort_order = _parse_sort(payload.get("sort_order"))
-        return ChannelPageCard.objects.create(
+        # 布局是频道级属性：没显式传就沿用该频道现有布局，避免同频道混用。
+        card = ChannelPageCard.objects.create(
             channel_code=channel_code,
             image_url=image_url,
             link_url=link_url,
             sort_order=sort_order,
             is_active=is_active,
+            layout=layout or channel_layout(channel_code),
         )
+        if layout is not None:
+            _sync_channel_layout(channel_code, layout)
+        return card
 
 
 def update_card(card: ChannelPageCard, *, payload: dict) -> ChannelPageCard:
     fields = []
+    channel_changed = False
     if "channel_code" in payload and payload.get("channel_code") != card.channel_code:
         card.channel_code = validate_channel_code(payload.get("channel_code"))
         fields.append("channel_code")
+        channel_changed = True
     if "image_url" in payload:
         card.image_url = validate_image_url(payload.get("image_url"))
         fields.append("image_url")
@@ -146,8 +191,20 @@ def update_card(card: ChannelPageCard, *, payload: dict) -> ChannelPageCard:
         raw = payload.get("is_active", payload.get("enabled"))
         card.is_active = bool(raw)
         fields.append("is_active")
-    if fields:
-        card.save(update_fields=[*fields, "updated_at"])
+    provided_layout = str(payload.get("layout") or "").strip()
+    layout = validate_layout(provided_layout) if provided_layout else None
+    if layout is not None:
+        card.layout = layout
+        fields.append("layout")
+    elif channel_changed:
+        # 换频道但没指定布局：跟随目标频道，保持「同一频道共用一个布局」。
+        card.layout = channel_layout(card.channel_code)
+        fields.append("layout")
+    with transaction.atomic():
+        if fields:
+            card.save(update_fields=[*fields, "updated_at"])
+        if layout is not None:
+            _sync_channel_layout(card.channel_code, layout)
     return card
 
 

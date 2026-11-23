@@ -6,11 +6,15 @@
 3. ``link_url`` 按 13.8 存原值不限制不改写（外链/站内路径/空都原样保存）；
 4. 公开接口 ``GET /api/v1/cms/channel-page-cards?channel=<code>`` 只返回该频道
    is_active 且按 sort_order 升序的条目，契约固定为
-   ``{items:[{id,image_url,link_url,sort_order}]}``；没配置返回空数组。
+   ``{channel,layout,items:[{id,image_url,link_url,sort_order,layout}],total}``；
+   没配置返回空数组。
+5. ``layout`` 是**频道级**属性：任意一张卡写入 layout 后，该频道所有卡片同步为同一值。
 """
 
+import importlib
 import json
 
+from django.apps import apps
 from django.test import TestCase
 from django.utils import timezone
 
@@ -102,6 +106,7 @@ class ChannelPageCardTestBase(TestCase):
             link_url=kwargs.get("link_url", "/c/kitchen"),
             sort_order=sort_order,
             is_active=is_active,
+            layout=kwargs.get("layout", "row3"),
         )
 
 
@@ -267,6 +272,132 @@ class ChannelPageCardAdminCrudTests(ChannelPageCardTestBase):
         self.assertEqual(anon.status_code, 401)
 
 
+class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
+    """``layout`` 是频道级属性（13.2 布局能力）：非法值拒绝 + 全频道同步。"""
+
+    def test_rejects_invalid_layout_on_create_and_update(self):
+        bad = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {
+                "channel_code": HOME_CODE,
+                "image_url": "/media/cms/a.webp",
+                "layout": "carousel",
+            },
+        )
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.json()["error"]["code"], "LAYOUT_INVALID")
+        self.assertFalse(ChannelPageCard.objects.exists())
+
+        card = self.make_card()
+        patched = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card.public_id}", {"layout": "grid3"}
+        )
+        self.assertEqual(patched.status_code, 400)
+        self.assertEqual(patched.json()["error"]["code"], "LAYOUT_INVALID")
+        card.refresh_from_db()
+        self.assertEqual(card.layout, "row3")
+
+    def test_update_layout_syncs_every_card_of_that_channel_only(self):
+        self.make_card(sort_order=1)
+        second = self.make_card(sort_order=2)
+        self.make_card(sort_order=3)
+        other = self.make_card(channel_code=BEAUTY_CODE, sort_order=1)
+
+        patched = self.patch(
+            f"/api/v1/admin/channel-page-cards/{second.public_id}",
+            {"layout": "row3_scroll"},
+        )
+        self.assertEqual(patched.status_code, 200, patched.content)
+        self.assertEqual(patched.json()["card"]["layout"], "row3_scroll")
+        layouts = set(
+            ChannelPageCard.objects.filter(channel_code=HOME_CODE).values_list("layout", flat=True)
+        )
+        self.assertEqual(layouts, {"row3_scroll"})
+        other.refresh_from_db()
+        self.assertEqual(other.layout, "row3")
+
+        listing = self.client.get(
+            "/api/v1/admin/channel-page-cards?channel_code=" + HOME_CODE
+        ).json()
+        self.assertEqual({item["layout"] for item in listing["items"]}, {"row3_scroll"})
+        detail = self.client.get(f"/api/v1/admin/channel-page-cards/{second.public_id}")
+        self.assertEqual(detail.json()["card"]["layout"], "row3_scroll")
+
+    def test_create_with_layout_syncs_existing_cards(self):
+        self.make_card(sort_order=1)
+        self.make_card(sort_order=2)
+
+        created = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {
+                "channel_code": HOME_CODE,
+                "image_url": "/media/cms/new.webp",
+                "layout": "grid2x2",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["card"]["layout"], "grid2x2")
+        layouts = set(
+            ChannelPageCard.objects.filter(channel_code=HOME_CODE).values_list("layout", flat=True)
+        )
+        self.assertEqual(layouts, {"grid2x2"})
+
+    def test_new_card_without_layout_inherits_channel_layout(self):
+        self.make_card(sort_order=1, layout="row3_scroll")
+        created = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {"channel_code": HOME_CODE, "image_url": "/media/cms/new.webp"},
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["card"]["layout"], "row3_scroll")
+
+    def test_card_moved_to_another_channel_adopts_target_layout(self):
+        self.make_card(channel_code=BEAUTY_CODE, sort_order=1, layout="grid2x2")
+        card = self.make_card(sort_order=1, layout="row3")
+
+        patched = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card.public_id}",
+            {"channel_code": BEAUTY_CODE},
+        )
+        self.assertEqual(patched.status_code, 200, patched.content)
+        card.refresh_from_db()
+        self.assertEqual(card.layout, "grid2x2")
+        self.assertEqual(patched.json()["card"]["layout"], "grid2x2")
+
+    def test_data_migration_writes_channel_defaults_idempotently(self):
+        health = "UK-Mini-HP-Health-and-Wellness"
+        baby = "UK-Mini-HP-Toys-Baby-and-Kids"
+        for position in range(1, 7):
+            self.make_card(channel_code=health, sort_order=position)
+        for position in range(1, 5):
+            self.make_card(channel_code=baby, sort_order=position)
+        self.make_card(channel_code=HOME_CODE, sort_order=1)
+
+        migration = importlib.import_module(
+            "content.migrations.0016_seed_channel_page_card_layouts"
+        )
+
+        def layouts(channel_code):
+            return set(
+                ChannelPageCard.objects.filter(channel_code=channel_code).values_list(
+                    "layout", flat=True
+                )
+            )
+
+        migration.apply_channel_layouts(apps, None)
+        self.assertEqual(layouts(health), {"row3_scroll"})
+        self.assertEqual(layouts(baby), {"grid2x2"})
+        self.assertEqual(layouts(HOME_CODE), {"row3"})
+
+        total = ChannelPageCard.objects.count()
+        migration.apply_channel_layouts(apps, None)  # 重复跑不炸、不新增行
+        self.assertEqual(ChannelPageCard.objects.count(), total)
+        self.assertEqual(layouts(health), {"row3_scroll"})
+
+        migration.revert_channel_layouts(apps, None)
+        self.assertEqual(set(ChannelPageCard.objects.values_list("layout", flat=True)), {"row3"})
+
+
 class ChannelPageCardPublicTests(ChannelPageCardTestBase):
     def test_public_contract_sorted_ascending_active_only(self):
         self.make_card(sort_order=2, image_url="/media/cms/second.webp", link_url="/c/b")
@@ -281,10 +412,25 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
         self.assertEqual(payload["total"], 2)
         self.assertEqual([item["sort_order"] for item in payload["items"]], [1, 2])
         self.assertEqual([item["link_url"] for item in payload["items"]], ["/c/a", "/c/b"])
-        # 契约字段固定：id/image_url/link_url/sort_order，不混入其他键
+        # 契约字段固定：id/image_url/link_url/sort_order/layout，不混入其他键
         self.assertEqual(
-            set(payload["items"][0].keys()), {"id", "image_url", "link_url", "sort_order"}
+            set(payload["items"][0].keys()),
+            {"id", "image_url", "link_url", "sort_order", "layout"},
         )
+        self.assertEqual(payload["layout"], "row3")
+
+    def test_public_returns_channel_level_layout(self):
+        self.make_card(sort_order=1, layout="row3_scroll")
+        self.make_card(sort_order=2, layout="row3_scroll")
+        self.make_card(sort_order=3, is_active=False, layout="row3_scroll")
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["layout"], "row3_scroll")
+        self.assertEqual([item["layout"] for item in payload["items"]], ["row3_scroll"] * 2)
+
+    def test_public_layout_defaults_to_row3_when_channel_unconfigured(self):
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["layout"], "row3")
 
     def test_public_returns_empty_list_when_unconfigured(self):
         response = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}")

@@ -14,6 +14,14 @@ import { apiRequest } from '@/lib/api'
 const LINK_RULE_HINT =
   '以 http(s):// 或 www. 开头按外链原样跳转，否则视为站内路径（如 /c/electronics）。'
 
+// 布局是**频道级**属性（后端 layout 字段）：同一频道所有卡片共用一个值。
+const LAYOUT_OPTIONS = [
+  { value: 'row3', label: '一行三张' },
+  { value: 'row3_scroll', label: '一屏三张可滑动' },
+  { value: 'grid2x2', label: '两列两行' },
+]
+const DEFAULT_LAYOUT = 'row3'
+
 const state = reactive({
   channels: [],
   channelCode: '',
@@ -32,6 +40,7 @@ const editor = reactive({
   linkUrl: '',
   sortOrder: '',
   isActive: true,
+  layout: DEFAULT_LAYOUT,
 })
 
 const removeTarget = ref(null)
@@ -46,6 +55,12 @@ const channelLabel = computed(() => {
   if (!channel) return ''
   return channel.name_zh ? `${channel.name_zh}（${channel.name}）` : channel.name
 })
+// 频道布局取自任意一张卡片（后端保证同频道一致）；空频道回落到默认「一行三张」。
+const currentLayout = computed(() => state.items[0]?.layout || DEFAULT_LAYOUT)
+const currentLayoutLabel = computed(
+  () =>
+    LAYOUT_OPTIONS.find((item) => item.value === currentLayout.value)?.label || currentLayout.value,
+)
 
 async function loadChannels() {
   state.error = ''
@@ -91,6 +106,8 @@ function openCreate() {
   editor.linkUrl = ''
   editor.sortOrder = ''
   editor.isActive = true
+  // 新增时沿用该频道现有布局（频道级属性，不在这里改频道布局）。
+  editor.layout = currentLayout.value
   editorError.value = ''
   editorOpen.value = true
 }
@@ -101,6 +118,7 @@ function openEdit(row) {
   editor.linkUrl = row.link_url || ''
   editor.sortOrder = String(row.sort_order ?? '')
   editor.isActive = Boolean(row.is_active)
+  editor.layout = row.layout || DEFAULT_LAYOUT
   editorError.value = ''
   editorOpen.value = true
 }
@@ -118,6 +136,7 @@ async function saveCard() {
     image_url: editor.image,
     link_url: editor.linkUrl,
     is_active: editor.isActive,
+    layout: editor.layout,
   }
   // 新增时留空 = 后端追加到该频道末尾；编辑时必须带上当前值。
   if (editorId.value || editor.sortOrder !== '') {
@@ -126,7 +145,7 @@ async function saveCard() {
   try {
     if (editorId.value) {
       await adminWrite(`/channel-page-cards/${editorId.value}`, body, 'PATCH')
-      state.notice = '活动卡片已更新，购物端频道页即时生效。'
+      state.notice = '活动卡片已更新（布局同步到该频道所有卡片），购物端频道页即时生效。'
     } else {
       await adminWrite('/channel-page-cards', body)
       state.notice = '活动卡片已新增。'
@@ -224,6 +243,7 @@ onMounted(async () => {
             </select>
           </label>
           <div class="channel-toolbar__actions">
+            <span class="tag">布局：{{ currentLayoutLabel }}</span>
             <span class="tag">{{ state.items.length }} 张</span>
             <button
               type="button"
@@ -321,6 +341,15 @@ onMounted(async () => {
       />
 
       <div class="form-grid" style="margin-top: 12px">
+        <label class="field">
+          <span class="field__label">布局</span>
+          <select v-model="editor.layout">
+            <option v-for="option in LAYOUT_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <span class="field__hint">频道级设置：保存后该频道所有卡片统一使用此布局。</span>
+        </label>
         <label class="field">
           <span class="field__label">跳转链接（选填）</span>
           <input v-model="editor.linkUrl" type="text" placeholder="/c/electronics 或 https://…" />

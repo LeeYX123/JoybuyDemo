@@ -69,6 +69,7 @@ class AdminChannelPageCardsView(OpsAPIView):
                 "channel_code": card.channel_code,
                 "image_url": card.image_url,
                 "link_url": card.link_url,
+                "layout": card.layout,
             },
         )
         return Response({"card": serialize_card(card)}, status=201)

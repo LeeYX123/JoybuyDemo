@@ -2,6 +2,38 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bt. 商品图片本地缺文件（2026-11-23，`store_bytes` 去重补写 ✅ / 补抓 8,651 张 ✅ 0 失败 / 复扫缺失 0，未 commit）
+
+- **任务**：用户报「商品图片本地缺文件导致网站裂图」，抽查十几个有七八个裂。实测 gallery 资产去重 **90,484**、本地缺文件 **8,651（9.56%）**，全部有 `source_url`；受影响 SPU **1,582**。前端读 `MediaUsage.role='gallery'` → `/media/<relative_path>`（dev 由 Django serve，文件不在就裂）。与 `0bk` 占位回退的关系：现在缺失图返回 200 SVG 占位而非 404，所以用户看到的是「图不对/占位」；补抓后占位不再命中。
+- **根因（有代码证据，勿重复排查）**：`backend/media/storage.py::store_bytes` 命中 sha256 时只更新 `last_seen_at/updated_at`（必要时 `source_url`）就返回，**从不检查物理对象**。S3 时代（`MEDIA_BACKEND=s3`）创建的行字节只进了桶；切回本地后端后重抓同一张图被去重跳过 → 本地**永远不补写**，越重抓越缺。**DB 行存在 ≠ 文件存在。**
+- **已完成 1：堵住源头**（源码只改 `backend/media/storage.py`）
+  - 新增 `_object_exists(relative_path)`：`s3_enabled()` 时 `head_object`（`ClientError` → False），否则 `resolve_media_path(...).is_file()`；实现委托已有 `stored_file_exists()`，避免两份逻辑。
+  - 去重命中分支改为：`if not _object_exists(existing.relative_path): store_file_bytes(existing.relative_path, data, content_type=normalized_mime or existing.mime_type)`，然后照旧更新 `last_seen_at` 等字段。**零额外网络**（`data` 就在手上），命中仍返回 `created=False`。
+  - 测试：`backend/media/tests/test_media_storage.py` +2（①DB 有行但文件被删 → 同字节再存 → 文件被补写、`created=False`、`MediaAsset` 行数仍 1；②文件存在 → `patch("media.storage.store_file_bytes")` 断言未调用且 mtime 不变）、`test_media_storage_s3.py` +1（S3 模式对象被删 → 命中后重新 `put_object`，content_type/bytes 正确、行数 1）。
+  - 验证：`MEDIA_BACKEND=local ./.venv/Scripts/python.exe backend/manage.py test media.tests.test_media_storage media.tests.test_media_storage_s3 --keepdb --noinput --parallel 1` → **Ran 29 tests, OK**；`ruff check` + `ruff format --check` 三个文件 → **All checks passed / 3 files already formatted**。按验证纪律只跑受影响的媒体测试，未跑全量。
+- **已完成 2：补抓脚本** `var/media_materialize_20261123/materialize.py`（DRY_RUN 时目录里只有脚本本身；apply 后新增 `progress.json` / `report.json` / `apply.log`，另有 `verify.py` / `compare_source.py` 两个只读核验脚本）
+  - 目标运行时重算：`MediaUsage.role='gallery'` 引用且 `stored_file_exists()` 为 False 的 `MediaAsset`（本次 8,651）。
+  - **默认 DRY_RUN**：只统计 + 抽 5 个**不同 SPU** 打印（spu_public_id/title/relative_path/source_url 前 80 字符/该 SPU 缺失张数），不写任何文件；`--apply` 才下载。
+  - apply 行为：`requests` 下载（连接 10s、读 60s）、失败重试 2 次（404 不重试）、并发 `--workers 8`（可调）、每 200 个原子落 `progress.json`、**已存在文件跳过**（断点续跑/幂等）、`sha256` 与 `asset.sha256` 不一致只报告不覆盖、直接 `store_file_bytes(relative_path, data)` **不走 `store_bytes`**（避免再撞去重）。
+  - 失败分类：`dns / timeout / connection / ssl / http_404 / http_<code> / sha_mismatch / no_source_url / bad_url / write_error / unexpected`；`report.json` 含 `ok / skipped_existing / failure_breakdown / http_404_list / failures`（逐条带 SPU public_id）。
+  - 安全：脚本文件内强制 `MEDIA_BACKEND=local` 语义，s3 下**拒绝启动**（除 `--allow-s3`，本批不用）；不碰 9334/FB、不 kill 任何进程、不删/不覆盖已有文件。
+  - DRY_RUN 实测 `./.venv/Scripts/python.exe -I var/media_materialize_20261123/materialize.py`：`gallery_assets_total=90484 / gallery_assets_missing=8651 / missing_pct=9.56 / affected_spu_count=1582 / missing_without_source_url=0`；样例（不同 SPU）：`a24fca4e-6e9a-4360-bec1-5783b9122393` ochama 400W 离心榨汁机（该 SPU 缺 7 张）、`bee9c3f1-6c64-425d-a387-8f59bc6cdbe0` 硼硅玻璃茶壶（7 张）、`f2ac69a9-ee35-4143-99c9-23b0f1eefee5` ROVSUN 铸铁压汁器（9 张）、`e8d355fd-39d8-4c90-aa80-4121037e3d35` 不锈钢柠檬压汁器（1 张）、`d9386341-0d97-410f-a102-d0edbccf313a` KOMORE 咖啡机（6 张）。
+  - 只读联通性验证（同一 `download()`，不写盘）：抽 4 个源站 URL 实抓 → **4/4 `status=ok` 且 sha256 与 asset 全部一致**（31/72/91/69 KB），host 均为 `images4.joy-sourcing.com`；当前网络可达（未出现 DNS 失败）。
+- **用户报的 4 个 SPU apply 前复核**：`6bea71ac-9015-4517-8f88-0e8b88f5da46` gallery 9 / 缺 8；`13d74c05-0f2b-4c46-9fd2-a51be714ca59` 10/10；`b46f5247-2f45-47b8-8e8d-a162b636f825` 1/1；`154e81e0-99ef-4ed7-a124-9614f96be592` 5/5 —— 与用户抽查完全一致。
+- **已完成 3：apply 实测（用户确认后执行）** `./.venv/Scripts/python.exe -I var/media_materialize_20261123/materialize.py --apply`
+  - 结果：**8,651 / 8,651 成功（ok=8651），已存在跳过 0，失败 0**；`failure_breakdown={}`、`http_404_list=[]`、`failures=[]`；耗时 **2,529.3s ≈ 42.2 分钟**（8 并发，作业窗口 11:21:09→12:02:58 UTC）。源站全程未出现 DNS/超时/404/sha 不一致，说明这批 S3 时代资产在 `images4.joy-sourcing.com` 上仍完好。
+  - 产物：`var/media_materialize_20261123/report.json`（分类计数 + `http_404_list` + `failures`）、`progress.json`、`apply.log`。**真 404 清单：空**（0 条，无需换图或兜底）。
+  - 关闭 4 个用户 SPU 复核（`verify.py`，Django test client 走 dev `/media/` 路由，逐张比对响应字节 sha256，避免把 200 的 SVG 占位当成功）：`6bea71ac-9015-4517-8f88-0e8b88f5da46` 9/9、`13d74c05-0f2b-4c46-9fd2-a51be714ca59` 10/10、`b46f5247-2f45-47b8-8e8d-a162b636f825` 1/1、`154e81e0-99ef-4ed7-a124-9614f96be592` 5/5 —— **files_present / served_200_non_placeholder / served_sha256_match 三项全部等于 gallery 数，`all_ok=true`，failures=[]**（共 25 张）。
+  - 同口径复扫（`verify.py` 复用 `materialize.load_missing_targets`）：`gallery_assets_total=90,484 / gallery_assets_missing=**0** / affected_spu_count=**0** / missing_without_source_url=0`。即 gallery 缺失从 8,651（9.56%）降到 **0**，没有残留非 404 缺失。
+  - 与源站数量对比（`compare_source.py`；源站详情页需登录/风控，普通 HTTP 抓不到商品数据，故用爬虫 dataset 的最近一份 `product.json.image_urls` 作源站快照，导入时 gallery usage 就是逐条按它写的）：
+    - 用户 4 个 SPU：DB 9/10/1/5 vs 源站 9/10/1/5，**全部 count_match**；`13d74c05` 有 5 条 URL 与快照不同（尺寸 token/换图导致字符串不同，**数量相同**）。
+    - 另抽 6 个「本次刚补写」的商品（随机命中 apply 窗口内 mtime 的资产，再反查 SPU）：`a24fca4e…`（7/7）、`0d753697…`（10/10）、`c8ea9517…`（10/10）、`05c4eea9…`（5/5）、`6d5b0236…`（3/3）、`b7b0a4bd…`（5/5），全部 count_match，URL 集合同样仅个别尺寸 token 差异。
+    - 结论：**数量本来就与源站一致**，之前的裂图纯属本地字节缺失，不是导入时少抓。
+  - 复现命令（全部已实跑）：`./.venv/Scripts/python.exe -I var/media_materialize_20261123/materialize.py --apply`（补抓）→ `... verify.py`（复扫 + 4 个 SPU 逐字节 serve 校验 + 随机抽样出本次补写的 6 个 SPU）→ `... compare_source.py <spu 公id...>`（对源站快照比数量）。`verify.py` 抽到的 6 个 SPU 与上表一致（seed 固定 20261123，可复现）。
+- **坑（不得再踩）**：①**任何「内容寻址去重」都必须校验物理对象存在**——DB 行存在 ≠ 文件在（这 8,651 张就是这么攒出来的）；②做媒体写入的脚本必须 `MEDIA_BACKEND=local` 覆盖启动（本脚本已内置强制并在 s3 下拒绝运行）；③`source_url` 前 80 字符几乎都一样（CDN 长公共前缀），要区分得看完整 URL 尾部；④DRY_RUN「零写盘」要当真验（跑完 `ls var/media_materialize_20261123/` 只有脚本）；⑤Windows 控制台 GBK 会因标题里的 U+2011 抛 `UnicodeEncodeError`，脚本已 `reconfigure(encoding="utf-8", errors="replace")`，自写脚本照做；⑥**核验 `serve` 不能只看 200**：`media.views` 对缺失文件返回 200 + SVG 占位（0bk），必须断言 content-type 非 `image/svg` 且字节 sha256 与 asset 一致；⑦别用 `find var/media -newermt` 找「本次写入的文件」（70 万文件在 NTFS 上跑 >10 分钟），改成随机抽 30~40 个 `MediaAsset` 查 mtime 命中更快。
+- **遗留**：①gallery 已 0 缺失，但**其它 role 未在本次范围内**（review_image / cms_banner 等如有 S3 时代资产仍可能缺；需要时按同一脚本口径扩展 role 重跑）；②`0bk` 的占位回退保留不动——将来再有缺图仍应可见占位而不是 404；③真实浏览器抽验未做（本次用 Django test client 逐字节核验 `/media/`），若要视觉确认可拿 4 个用户 SPU 的 PDP 截图。
+- **未 commit**：`backend/media/storage.py` + 两个测试文件；`var/media_materialize_20261123/{materialize.py,verify.py,compare_source.py}`（report/progress/日志也在该目录）。未动 `.env`、未动 AWS/S3。
+
 ## 0bs. 批次 AA 复验（2026-11-23，#5/#6 修复后，3/3 PASS，仅验收未改代码）
 
 - **范围**：#5 商家端时延、#6 bm 入站闭环、每线程每分钟配额；报告见 `var/acceptance_aa_20261123/acceptance-report.md` 的「复验」节。**未改源码/配置**。
@@ -4244,6 +4276,26 @@
   - **以后启动看护一律走**：`cd /e/code/AgentProject/Joybuy && bash var/start_keepalives_detached.sh`（一次拉起后端 + storefront 两条脱管循环；端口在监听时只是提示，不会重复起服务）。
   - 收尾时发现有 7 条残留循环（每次重启叠加）——已全部 taskkill 后各留一条；**多份循环靠端口守护不会双绑，但会导致端口释放时抢启动，仍应保持每个服务只有一条**（`Get-CimInstance Win32_Process -Filter "Name='bash.exe'" | Where CommandLine -like '*keepalive*'` 数链）。
   - 5173/5174 的 vite 仍是普通后台任务（数周来一直稳定），如需同样加固可照此模板加看护。
+- **2026-11-23 20:15 用户报「服务崩了」的全面体检（结论：当前无故障，无代码改动）**：用户反馈服务出错。逐项实测结果：
+  - **现状全部正常**：四端口各一行 LISTENING（8000=37956、3000=29236、5173=1116、5174=34268）；`/api/v1/health` ok；三端首页 200；**接口实测全绿**：categories 200、storefront/home 200、search?q=iphone 200（24 条）、cart 200、admin/auth/session 200（未登录正常返回 csrf）、merchant/overview 401（未登录正常）；PDP `/p/5b9538d0-…` 200（标题正确、9 张图）且 `/media/...webp` 200（37KB）；磁盘 C 79G / E 111G 可用；MySQL INNODB_TRX=0、非 Sleep 连接 2；最近 60 分钟 **0 个 5xx**。
+  - **两端所有视图逐个 vite 编译探针（admin 全部 `views/*.vue` + merchant 全部 `views/*.vue`）→ 0 个编译错误**（日志里 16:49 的 `Unexpected character '（'`、`@/mobile/MobileNotificationsView.vue` 解析失败均已不存在，属当时并发编辑的瞬时错误）。
+  - **用户看到「崩」的最可能窗口**：18:17–18:33 后端 keepalive 循环自身被回收导致 8000 空了 16 分钟（见上一条），期间页面/接口会报错；18:36 改为脱管启动后已恢复。另外 storefront 今日被看护循环重启数次（日志 `nuxt exited rc=0` ×多次），每次有数秒不可用。
+  - **发现但未处理的潜在故障（历史日志，非当前）**：①11-22 `/api/v1/merchant/media`、`/account/merchant-application/media` 500 = `botocore ClientError InvalidAccessKeyId`（当时 `MEDIA_BACKEND=s3` 而 AWS key 失效；**现在 `.env` 已是 `MEDIA_BACKEND=local`，本机上传走本地磁盘**，云端上传问题只在生产机复现）；②11-22 `/api/v1/merchant/overview` 500 = `MySQL 1205 Lock wait timeout`（50s 超时）；③`crisp_mirror.py` 报 `TypeError: _http_get() takes 1 positional argument but 2 were given`（11-22、11-23 各一次）——**前两条是环境/并发问题，第三条是真代码 bug，需另派任务修**。
+- **2026-11-23 20:20 真因找到：storefront devProxy 连接池卡死 → 浏览器一直转圈（已修，无代码改动）**：用户报 `http://localhost:3000/` 打不开、一直转圈。逐层实测：
+  - SSR 正常（`curl` 首页 200 / 166KB / 0.45s），页面引用的 `/_nuxt/*` 模块也全部 200 且毫秒级 → **不是 SSR、不是静态资源**；
+  - **通过 Nuxt 代理访问接口全部挂死**：`curl http://localhost:3000/api/v1/{cart,auth/buyer/session,categories,storefront/home}` 全部 **45s 超时 http=000**，而直连 `http://127.0.0.1:8000/api/v1/*` 全部 200 → 锁定 **devProxy（nitro）**；
+  - 根因：当前 nuxt 实例启动于 **18:17:36**，正是后端 keepalive 死掉、8000 空着的那 16 分钟内 → 代理的 keep-alive 连接池留下坏连接后再也不恢复；日志里另有 `WebSocket server error: Port 24678 is already in use`（HMR 端口自争）。
+  - **修复**：`taskkill //F //PID 29236`（停掉卡死 nuxt，看护循环 12s 自动拉起新实例 37012）→ 实测 `/api/v1/cart` 80ms、`/api/v1/categories` 32ms、首页 0.34s、搜索页 0.30s，全部 200；nuxt 实例数 1。
+  - **踩坑（勿再踩）**：①**后端宕机/重启后，storefront 的 devProxy 可能永久卡死，必须重启 nuxt**——不是前端代码问题，别去查 Vue/路由；②**判断"页面转圈"要先把 SSR（curl 首页）和 devProxy（curl :3000/api/v1/...）分开测**，SSR 200 + 代理超时 = 代理问题；③看 `var/logs/storefront.log` 里的 `Port 24678 is already in use` 可快速识别 nuxt 实例竞争。
+- **2026-11-23 20:35 根治「永久转圈」：devProxy 关连接复用 + 全站请求超时（代码改动 1 文件）**：20:20 的处置只是重启 nuxt，会复发；本轮改成机制上不可能再卡死。改动 `storefront/nuxt.config.js`（+24 行，prettier 通过，未跑构建）：
+  1. **devProxy `/api` 与 `/media` 均设 `agent: false`** —— 关掉 keep-alive 连接复用，每次请求新建连接；后端重启后不可能再复用到死连接。
+  2. **代理超时**：`/api` 8s（本地接口正常 <200ms）、`/media` 20s（大图/视频流留余量），`timeout` + `proxyTimeout` 双设。
+  3. **`experimental.defaults.useFetch.timeout = 15_000`** —— 给全站 27 处 `useFetch` 一个默认超时兜底，客户端不会无限等；页面显式传 timeout 仍以页面为准。
+- **验证（按验证纪律仅做针对性验证，未跑全量）**：
+  - 后端正常时：首页 200/0.42s、`/api/v1/cart` 200/40ms、搜索页 200/0.20s、三端首页 200。
+  - **杀后端实测**（脚本停掉 keepalive + runserver，确认 8000 零监听）：首页 SSR **0.02s 返回错误页**（不再挂）、代理 `/api/v1/cart` **8.0s 有界失败**（原来 45s 无响应乃至无限）。
+  - **恢复后端实测**：`bash var/start_keepalives_detached.sh` → 后端 3s 起来，**nuxt 进程 PID 不变（37880）**的前提下 `/api/v1/cart` 50ms、`categories` 50ms、`storefront/home` 33ms 全部 200 → **确认「后端重启后必须重启 nuxt」这个坑已被消除**。
+  - 现状：四端口 LISTENING（8000=38900、3000=37880、5173=1116、5174=34268），health ok，三端 200。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
