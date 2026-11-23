@@ -17,6 +17,7 @@ from catalog.models import (  # noqa: E402
     ProductCategory,
     SourceCategory,
 )
+
 from crawler_control.import_services import (  # noqa: E402
     StagingImportRejected,
     _parse_rating_summary,
@@ -339,6 +340,151 @@ class LocalCategoryFromJobSelectionTests(CrawlerControlTestBase):
 
         self.assertTrue(outcome.spu.is_activity)
         self.assertIsNone(outcome.spu.local_category_id)
+
+
+@unittest.skipUnless(PARSER_AVAILABLE, "parsel is not installed")
+class AccessoryParentValidationTests(CrawlerControlTestBase):
+    """配件类目导入时校验父级（2026-11-23 批次 A，Q2）。
+
+    「配件」在电子产品（electronics-accessories）与服装与配饰
+    （fashion-accessories，0 商品）下同名。导入解析时若库内节点的父级与
+    源面包屑父级不一致，必须拒绝自动归类（保留库内父级）并记录
+    ``PRODUCT_CATEGORY_PARENT_MISMATCH``；父级一致时正常导入、无误报。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.make_account()
+        self.job = self.make_job(name="Accessory parent job")
+        self.run = start_run(self.job)
+        self.electronics = ProductCategory.objects.create(
+            catalog=self.catalog, source_id="1849", name="电子产品", depth=0, path="/1849/"
+        )
+        self.clothing = ProductCategory.objects.create(
+            catalog=self.catalog, source_id="13101", name="服装与配饰", depth=0, path="/13101/"
+        )
+
+    def _payload(self, source_id, path):
+        return {
+            "source_id": source_id,
+            "title": "Phone case",
+            "currency": "GBP",
+            "current_price": "9.99",
+            "skus": [
+                {
+                    "source_id": source_id,
+                    "price": "9.99",
+                    "availability": "IN_STOCK",
+                    "specs": [],
+                }
+            ],
+            "image_urls": [],
+            "product_category_path": path,
+        }
+
+    def _import(self, payload):
+        from joybuy_crawler.ingest import ingest_product_payload
+
+        staging = ingest_product_payload(
+            self.run,
+            payload,
+            source_system="joybuy",
+            source_url="https://www.joybuy.co.uk/dp/case/1",
+            parser_version="joybuy_uk.v3",
+            structure_version=2,
+        )
+        return import_staging_product(staging, market=self.market, currency=self.currency)
+
+    def _events(self):
+        from crawler_control.models import CrawlRunEvent
+
+        return CrawlRunEvent.objects.filter(run=self.run, code="PRODUCT_CATEGORY_PARENT_MISMATCH")
+
+    def test_matching_parent_imports_without_warning(self):
+        ProductCategory.objects.create(
+            catalog=self.catalog,
+            source_id="1801",
+            name="Accessories",
+            depth=1,
+            path="/1849/1801/",
+            parent=self.electronics,
+        )
+        payload = self._payload(
+            "case-ok",
+            [{"id": "1849", "name": "Electronics"}, {"id": "1801", "name": "Accessories"}],
+        )
+
+        outcome = self._import(payload)
+
+        self.assertEqual(outcome.spu.product_category.source_id, "1801")
+        self.assertEqual(outcome.spu.product_category.parent_id, self.electronics.pk)
+        self.assertFalse(self._events().exists())
+
+    def test_parent_mismatch_keeps_existing_parent_and_records_event(self):
+        accessory = ProductCategory.objects.create(
+            catalog=self.catalog,
+            source_id="1801",
+            name="Accessories",
+            depth=1,
+            path="/13101/1801/",
+            parent=self.clothing,
+        )
+        payload = self._payload(
+            "case-mismatch",
+            [{"id": "1849", "name": "Electronics"}, {"id": "1801", "name": "Accessories"}],
+        )
+
+        outcome = self._import(payload)
+
+        accessory.refresh_from_db()
+        # 不静默改挂到电子产品下：仍属服装与配饰，商品也归该节点。
+        self.assertEqual(accessory.parent_id, self.clothing.pk)
+        self.assertEqual(
+            ProductCategory.objects.get(source_id="1801", catalog=self.catalog).path,
+            "/13101/1801/",
+        )
+        self.assertEqual(outcome.spu.product_category_id, accessory.pk)
+        event = self._events().get()
+        self.assertEqual(event.level, "WARNING")
+        self.assertIn("1849", event.message)
+
+    def test_missing_parent_in_payload_is_treated_as_mismatch(self):
+        accessory = ProductCategory.objects.create(
+            catalog=self.catalog,
+            source_id="1801",
+            name="配件",
+            depth=1,
+            path="/1849/1801/",
+            parent=self.electronics,
+        )
+        payload = self._payload("case-leaf-only", [{"id": "1801", "name": "配件"}])
+
+        outcome = self._import(payload)
+
+        accessory.refresh_from_db()
+        self.assertEqual(accessory.parent_id, self.electronics.pk)
+        self.assertEqual(outcome.spu.product_category_id, accessory.pk)
+        self.assertEqual(self._events().count(), 1)
+
+    def test_non_accessory_categories_still_follow_the_payload_path(self):
+        cookware = ProductCategory.objects.create(
+            catalog=self.catalog,
+            source_id="361",
+            name="锅具",
+            depth=1,
+            path="/13101/361/",
+            parent=self.clothing,
+        )
+        payload = self._payload(
+            "wok-1",
+            [{"id": "1849", "name": "电子产品"}, {"id": "361", "name": "锅具"}],
+        )
+
+        self._import(payload)
+
+        cookware.refresh_from_db()
+        self.assertEqual(cookware.parent_id, self.electronics.pk)
+        self.assertFalse(self._events().exists())
 
 
 class ParseSpuRetailPriceTests(unittest.TestCase):

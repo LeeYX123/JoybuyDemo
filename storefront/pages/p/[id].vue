@@ -11,6 +11,7 @@ import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
 import { categoryHref } from '../../utils/categoryLinks'
 import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
+import { resolveProductCategoryCrumbs } from '../../utils/pdpBreadcrumb'
 import { ratingAverageLabel, ratingCountLabel, soldCountLabel } from '../../utils/pdpDisplay'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
@@ -427,29 +428,11 @@ const productCategoryCrumb = computed(() =>
 )
 
 // 需求 22.1-6：面包屑每一级都可点击。商品类目（product_category）只有源站
-// 数字 id，没有 slug/channel_code；按名称匹配本地类目树拿到落地页：
-// L1 → /minihome/<channel_code>（无频道码时 /c/<slug>），L2 → /c/<slug>。
-// 类目名优先显示本地化名称（源站面包屑是英文原名）。
-function normalizeCategoryName(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
-}
-
-function findTreeCategory(node) {
-  const target = normalizeCategoryName(node?.name)
-  if (!target) return null
-  const pool =
-    node.depth === 0 ? categories.value : categories.value.flatMap((root) => root.children || [])
-  return (
-    pool.find((candidate) =>
-      [candidate.name, candidate.name_en, candidate.name_zh].some(
-        (name) => normalizeCategoryName(name) === target,
-      ),
-    ) || null
-  )
-}
-
+// 数字 id；链接优先用后端增量返回的 ``local_slug``（ProductCategory →
+// LocalCategory 映射），没有映射时按「父级 + 名称」在本地类目树里定位
+// （见 utils/pdpBreadcrumb.js），链接口径 L1 → /minihome/<code>、
+// L2 → /c/<slug>（复用 utils/categoryLinks）。类目名优先显示本地化名称
+// （源站面包屑是中文原名）。
 const breadcrumbNodes = computed(() => {
   const crumbs = productCategoryCrumb.value
   if (!crumbs.length) {
@@ -459,14 +442,7 @@ const breadcrumbNodes = computed(() => {
       to: categoryHref(node),
     }))
   }
-  return crumbs.map((node, index) => {
-    const treeNode = findTreeCategory(node) || categoryTrail.value[index] || null
-    return {
-      key: `crumb-${node.id}`,
-      label: treeNode ? categoryName(treeNode) : node.name,
-      to: treeNode ? categoryHref(treeNode) : '',
-    }
-  })
+  return resolveProductCategoryCrumbs(crumbs, categories.value, categoryName)
 })
 
 // 需求 22.1-5：商品名下方「评分 + 已售 x 件」。评分用 review_summary（本地

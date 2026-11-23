@@ -142,6 +142,15 @@ def rebuild_search_document(
     review_stats = Review.objects.filter(spu=spu, status=Review.Status.ACTIVE).aggregate(
         average=Avg("rating"), count=Count("pk")
     )
+    rating_average = review_stats["average"]
+    rating_count = review_stats["count"] or 0
+    # 评分回退：本地没有 ACTIVE 评价时用源站快照（SpuDetail.rating_*），与
+    # catalog/detail_views.py 的 review_summary 同口径（2026-11-23）。
+    if not rating_count:
+        detail = getattr(spu, "detail", None)
+        if detail is not None and detail.rating_count:
+            rating_average = detail.rating_average
+            rating_count = detail.rating_count
     has_offer = bool(active_offers)
     prices = [offer.current_price for offer in active_offers] or [None]
     document, _ = ProductSearchDocument.objects.update_or_create(
@@ -155,8 +164,8 @@ def rebuild_search_document(
             "min_price": min(prices),
             "max_price": max(prices),
             "currency_code": active_offers[0].currency.code if active_offers else "",
-            "rating_average": review_stats["average"],
-            "rating_count": review_stats["count"] or 0,
+            "rating_average": rating_average,
+            "rating_count": rating_count,
             "is_searchable": has_offer and spu.status == Spu.Status.ACTIVE,
             "published_at": timezone.now() if has_offer else None,
         },

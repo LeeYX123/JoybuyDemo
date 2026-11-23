@@ -215,6 +215,8 @@ def product_detail(request, public_id):
             "local_category",
             "product_category",
             "product_category__parent",
+            "product_category__local_category",
+            "product_category__parent__local_category",
             "detail",
         )
         .prefetch_related(
@@ -296,10 +298,21 @@ def product_detail(request, public_id):
 
         gallery.append(asset_urls(usage.asset))
 
+    # 面包屑每级增量返回 ``local_slug``（2026-11-23 批次 A）：来源是
+    # ``ProductCategory.local_category`` 的回填映射。前端优先用它拼落地页，
+    # 解决「配件」按名称全局匹配误落到 fashion-accessories 的问题；没有映射
+    # 时返回 null，前端按「父级 + 名称」回退。
     category_breadcrumb = []
     node = spu.product_category
     while node is not None and len(category_breadcrumb) < 2:
-        category_breadcrumb.append({"id": node.source_id, "name": node.name, "depth": node.depth})
+        category_breadcrumb.append(
+            {
+                "id": node.source_id,
+                "name": node.name,
+                "depth": node.depth,
+                "local_slug": node.local_category.slug if node.local_category_id else None,
+            }
+        )
         node = node.parent
     category_breadcrumb.reverse()
 

@@ -2,6 +2,139 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bn. 批次 A：面包屑 local_slug + 类目映射回填 + 导入校验（2026-11-23，✅，未 commit）
+
+> 任务书写的编号 `0bl` 已被上面「无评分商品随机生成评分」占用、`0bm` 已被并行批次 B 占用，本批取 `0bn`。
+
+- **任务**：修 PDP 面包屑「配件」误落到 `fashion-accessories`（服装与配饰>配件，0 商品）的显示/链接 bug；把 `ProductCategory.local_category`（原 0/242）按 2026-11-23 分析回填；在导入解析侧加配件类目父级校验。**未 commit；未改 `Spu.local_category`（批次 B）、未重建搜索文档、未动 `merchant-web/`、未做 AWS；`MEDIA_BACKEND=local` 未改。**
+- **根因**：前端 `pages/p/[id].vue` 面包屑按类目名在**全树**找第一个同名节点（本地树 `fashion-accessories` 的 name_en 就是 `Accessories`），而电子类正确节点叫 `Electronics Accessories`（name_zh 电子配件），所以永远匹配到服装配件。后端 `category_breadcrumb` 只有 `{id,name,depth}`，与本地类目没有公共键；`ProductCategory.local_category` 字段存在但从未回填。
+- **实现**
+  1. 后端 `backend/catalog/detail_views.py::product_detail`：`category_breadcrumb` 每级**增量**返回 `local_slug`（`node.local_category.slug if node.local_category_id else None`），并 `select_related` 两级 `local_category`；既有字段不变。
+  2. 前端新增 `storefront/utils/pdpBreadcrumb.js`（纯函数，可单测）：`resolveProductCategoryCrumbs(crumbs, categories, labelFor)`。有 `local_slug` → 按 slug 在本地树取节点再走 `utils/categoryLinks.categoryHref`（L1 有 channel_code → `/minihome/<code>`，否则 `/c/<slug>`；L2 恒 `/c/<slug>`）；没有 `local_slug` → **父级 + 名称**（一级只在根里找，二级只在已解析父级的 children 里找同名），**不再全树取首个**；树里没有该 slug 时降级 `/c/<local_slug>`；相邻两级解析到同一类目时去重（139 条「归父级」映射否则会出现「家居生活 / 家居生活 / 商品名」）。`pages/p/[id].vue` 删除旧 `normalizeCategoryName/findTreeCategory`，改为调用该 util；显示文案仍用本地化名称、回退接口 `name`。
+  3. 映射数据 `backend/catalog/product_category_mapping_data.py`（由报告生成：206 条映射 + 34 条待确认说明）。
+  4. 新管理命令 `backend/catalog/management/commands/backfill_product_category_local_category.py`：**DRY_RUN 默认**，`--apply` 才写库；只动 `catalog=joybuy_uk`（`joybuy` 下 2 条孤儿不碰）；已填且相同 = `unchanged`，已填但不同 = `conflict`（视为人工值，不覆盖）；`--apply` 先写 `backup_pc_mapping.json`（240 行 before），DRY_RUN 与 --apply 都写 `review_needed.csv`（34 行）。
+  5. 导入校验 `backend/crawler_control/import_services.py::_sync_product_categories`（新增可选 `staging` 参数）：类目名含「配件 / Accessory / Accessories」且库内节点已有父级时，若与本次源面包屑父级不一致（或 payload 缺父级）→ **不重新归类/不重挂父级**（保留库内现值，并作为后续层级的父级继续解析），记录 `PRODUCT_CATEGORY_PARENT_MISMATCH`（`logger.warning` + `CrawlRunEvent` WARNING，含两边 source_id）；非配件类目行为完全不变。
+- **脚本用法**
+  - 预览：`cd backend && ../.venv/Scripts/python.exe manage.py backfill_product_category_local_category`
+  - 写库：`... backfill_product_category_local_category --apply`（可选 `--output-dir`，默认 `var/category_misclass_20261123`）
+  - 幂等：实测第二次 `--apply` → `to_fill=0 unchanged=206`（日志 `var/category_misclass_20261123/idempotent_reapply.log`）。
+- **回填数量（已执行 --apply）**
+  - `catalog=joybuy_uk` 共 **240** 行：已填 **206**（67 高置信 + 139 归父级）、未填 **34**；全库 `ProductCategory` 已填 **206/242**，`catalog=joybuy` 的 2 条孤儿（4909/4945）仍为空。
+  - **口径修正（重要）**：任务书写「剩余 33 条（22 词包含/跨父级 + 11 无法映射）」，实际分析结果是 **34 条 = 22 词集合包含 + 1 跨父级 + 11 无法映射**（240 = 206 + 34；只跳 33 会漏 1 条）。本批按事实处理 34 条，全部只出清单不填。
+  - 清单：`var/category_misclass_20261123/review_needed.csv`（列 source_id / name / path / parent_name / suggested_local_slug / reason / spu_count；11 条汽车+摩托为「无法映射：本地无对应根」，suggested 为空）。
+  - 备份：`var/category_misclass_20261123/backup_pc_mapping.json`（240 行，`local_category_slug_before` 全 null）。
+- **验证（按验证纪律仅做了针对性验证，未跑全量）**
+  - 后端：`test catalog.tests.test_product_detail_api` → **Ran 17, OK**（原 15 + 2：映射存在返回正确 slug / 只有一级映射时二级 null；原面包屑断言补 `local_slug: None`）；`test catalog.tests.test_backfill_product_category_local_category` → **Ran 3, OK**（DRY_RUN 不写库 / --apply 写入+备份+清单 / 重跑幂等且保留人工 conflict）；`test crawler_control.tests.test_crawler_product_category` → **Ran 28, OK**（+4：父级匹配无告警、父级不匹配保留原父级并记事件、payload 缺父级视为不一致、非配件类目照旧）；`test crawler_control.tests` → **Ran 281, OK**；`test catalog.tests.test_product_detail_api test_product_detail_extras test_standard_categories test_backfill_...` → **31, OK**；`makemigrations --check --dry-run` → **No changes detected**。
+  - ruff：本批 7 个 py 文件 `ruff check` 全过；3 个新文件已 `ruff format`。**`import_services.py` 的 I001 是 HEAD 既有问题**（`git show HEAD:` 单独 check 同样报），不要 `--fix`。
+  - 前端：`vitest run --config storefront/vitest.config.js` → **204 passed / 31 files**（新增 `storefront/tests/pdpBreadcrumb.test.js` 10 例：local_slug 优先、无 channel_code、slug 不在树、父级内同名、同名但不跨父级、孤儿层级、归父级去重、空输入、名称归一化）；`eslint` 3 个改动文件 0 告警；`prettier --check` 通过；五语言键集合 **509×5** 一致（本批未新增 i18n 键）。
+  - Playwright（`var/category_misclass_20261123/verify_breadcrumb.cjs`，EN+ZH，5 个不同品类商品）→ **FAILURES=0**：
+    - `a41c9b79-6ff9-4782-96d5-3ca5a6a76b84`：EN `Electronics → /minihome/UK-Mini-HP-Electronics`、`Electronics Accessories → /c/electronics-accessories`；ZH `电子产品 / 电子配件`，**不是** `/c/fashion-accessories`；点击二级实际落地 `/c/electronics-accessories`。
+    - `3e75a502…`（Phones / 手机 → `/c/mobile-phones`）、`7ae528ce…`（Beauty / 美妆 → `/minihome/UK-Mini-HP-Beauty` + Makeup / 彩妆 → `/c/makeup`）、`f999a29f…`（归父级去重成 1 级 Home & Living / 家居生活 → `/minihome/UK-Mini-HP-Home-Living`）、`c4ebaa87…`（Gaming / 游戏 + Consoles / 游戏机 → `/c/consoles`）全部与 DB 推导值一致；每页 console error 0、404 0；截图 `breadcrumb_{en,zh}_{8位id}.png`。
+    - 无映射样例 `ba4f35d8…`（Automobiles > Auto Accessories）：SSR 面包屑为纯文本、无链接、无异常。
+- **坑/结论（新会话必看）**
+  1. 任务书的「33 条」是笔误，实际 **34 条**（22+1+11），必须凑满 240。
+  2. 类目名归一化**不能只保留 `[a-z0-9]`**：`ProductCategory.name` 有中文（「配件」「电子产品」），旧的 `[^a-z0-9]+` 会把汉字整段删掉变成空串；新 util 用 `[^\p{L}\p{N}]+`。
+  3. `ProductCategory.name` 本批样本库内是英文（Electronics/Accessories），但有中文历史数据，两种都要能按名称回退。
+  4. 本批 e2e 发现 **:3000 只监听 `[::1]`**，`http://127.0.0.1:3000` 返回 000；Playwright/curl 必须用 `http://localhost:3000`（cookie domain 写 `localhost`）。
+  5. 改后端后必须重启 :8000（`--noreload`）；本批已重启，只有 1 个 LISTENING（pid 36252，日志 `var/category_misclass_20261123/runserver_8000.log`）；:3000 未重启（Nuxt dev 热更新即可）。
+  6. 再跑 `--apply` 会用当前（已填）值覆盖 `backup_pc_mapping.json`；复测幂等请加 `--output-dir var/category_misclass_20261123/idempotent_check`，不要冲掉原始 before 备份。
+  7. 导入校验只对名字含「配件 / Accessory / Accessories」的类目生效；旧 payload 只有一级面包屑（父级缺失）会触发告警并保留库内父级——有意行为，不是回归。
+  8. 「归父级」映射会让两级指向同一本地类目，前端已去重；若要显示源站二级名（如「生鲜>肉禽」）需另做文案层，不要退回去按名字全树匹配。
+  9. `backend/catalog/search_services.py` 与 `backend/catalog/tests/test_generated_rating_shape.py` 属上一批（0bl 评分），本批未碰。
+
+## 0bm. 批次 B（2026-11-23 614 商品归类修正，✅ apply + 定向回滚 137 完成并核对，未 commit）
+
+- **任务**：614 个源站 `Accessories` 商品的 `Spu.local_category` 归置 + 搜索文档重建。用户拍板：只自动改高置信；301 个手机壳从 `mobile-phones` → `electronics-accessories`；Computing 137 条先按关键词细分、分不进去归 `computers-accessories` 根；美妆 5 条不动；`fashion-accessories` 必须保持 0。
+- **2026-11-23 二次决定（已执行）**：**Computing 137 条全部回滚到原分类**。原因：①关键词命中 0 条，137 条全落进顶部导航隐藏的 `computers-accessories` 根，用户从导航进不去；②它抽干了本来正确的桶（batteries 150→71、laptops 132→103、gaming-gear 71→44）。**净变更 351 条**。**未 commit；未改业务代码；`MEDIA_BACKEND=local` 未动；未做 AWS。**
+- **产物**（全部在 `var/category_misclass_20261123/`）
+  - `apply_recategorize.py`（新）：清单生成 + 备份 + DRY_RUN/APPLY + 每 500 一批事务写库 + 逐个重建搜索文档 + 前后核对。默认 DRY_RUN，`--apply` 才写；Computing 关键词细分规则与人工修正表都写在脚本内可审计。
+  - `apply_plan.csv`（595 行 = 459 高置信 + 137 Computing 细分；其中 488 行曾变更、107 行 no-op）
+  - `backup_spu_category.json`（**488 行**原始备份）+ `backup_spu_category_computing137.json`（137 条子集，定向回滚用）
+  - `rollback_spu_category.py`（回滚，默认 DRY_RUN；`--backup` 可指定子集）+ `rollback_computing137.log`
+  - `build_review_needed.py` + `review_needed_batch_b.csv`（167 行）+ `review_null_batch_b.csv`（137 行回滚清单）
+  - `verify_after_recategorize.py` + `verify_result.json`、`verify_c_pages.py` + `verify_c_pages_result.json`
+  - `apply.log`、`apply_result.json`、`search_refresh_failures.json`（failures=[]）
+- **执行结果（先 apply 488 条，再定向回滚 137 条 → 净 351 条）**
+  - 首次 apply（`--apply --batch 500`，exit 0）：488 条，按目标 `electronics-accessories` 322 / `computers-accessories` 137 / `peripherals` 26 / `networking-devices` 1 / `headphones` 1 / `shaving-hair-removal` 1；搜索文档重建成功 443、无 ACTIVE Offer 跳过 45、失败 0。
+  - **定向回滚 137 条**（`rollback_spu_category.py --backup backup_spu_category_computing137.json --apply`，exit 0）：137/137 提交，分布 batteries 79 / laptops 22 / school-office-accessories 15 / headphones 9 / electronics-accessories 5 / mobile-phones 4 / controllers 2 / gaming-gear 1；搜索文档重建 **137/137、失败 0**；落库与文档类目 mismatch=0。
+  - Computing 137 关键词细分实测：**0 条命中 3 个专用桶**（`printer-accessories` / `gaming-pc-components` 本次变更数均为 0），这正是回滚的直接触发点。
+  - **人工修正 6 条**（plan 的「高置信」关键词误命中，脚本 `MANUAL_CORRECTIONS`，均在保留的 351 条内）：2 个播客麦克风被 "Headphone Jack" 误判耳机、1 个绕线器被 "Earphones" 误判耳机 → 改归电子配件；2 个游戏耳机被 "Nintendo Switch" 误判网络设备 → 改归 `headphones`；1 个 Rokid AR 终端被 "5000mAh Battery" 误判电池 → **不自动改、转 review**。
+  - 最终 351 条按目标：`electronics-accessories` 322 / `peripherals` 26 / `networking-devices` 1 / `headphones` 1 / `shaving-hair-removal` 1。
+- **分类数量（直属 SPU / 可搜文档）：原始 → apply 488 后 → 回滚 137 后（最终）**
+  | 分类 | 原始 | apply 后 | **最终** |
+  |---|---|---|---|
+  | `mobile-phones` | 453 / 327 | 156 / 58 | **160 / 60** |
+  | `electronics-accessories` | 89 / 32 | 406 / 323 | **411 / 323** |
+  | `peripherals` | 27 / 8 | 53 / 30 | **53 / 30** |
+  | `computers-accessories`（根） | 2 / 2 | 139 / 118 | **2 / 2**（子树页仍有 336 个可搜） |
+  | `batteries` | 150 | 71 | **150 / 150** |
+  | `laptops` | 132 | 103 | **125 / 32**（7 条保留：6→peripherals、1→电子配件） |
+  | `gaming-gear` | 71 | 44 | **45 / 17**（26 条保留：20→peripherals、4→电子配件、1→headphones、1→networking） |
+  | `school-office-accessories` | 200 | 185 | **200 / 200** |
+  | `headphones` | 199 | 191 | **200 / 199** |
+  | `printer-accessories` | 12 / 12 | 12 / 12 | **12 / 12** |
+  | `gaming-pc-components` | 79 / 79 | 79 / 79 | **79 / 79** |
+  | `fashion-accessories` | 0 / 0 | 0 / 0 | **0 / 0** |
+  - 注：`laptops` 125、`gaming-gear` 45 与用户预估的「~132 / ~71」差异，正是保留的 7 + 26 条正收益变更（鼠标垫/扩展坞/耳机/网线），不是回滚遗漏。
+- **验证（按验证纪律仅针对性验证；未跑全量测试）**
+  - `manage.py check` → no issues；`makemigrations --check --dry-run` → No changes detected（本批无迁移；回滚前后各跑一次）。
+  - API（回滚后重跑）：10 个被改商品 `GET /api/v1/search?category=<目标>` 全部命中（5 个电子配件 + 4 个 peripherals + 1 个 shaving）；DB `local_category`、搜索文档 `local_category` 一致，mismatch=0。
+  - **137 回滚核对**：备份 137 行 → 未恢复 0、仍在 `computers-accessories` 根 0、文档类目不一致 0。
+  - 页面（:3000 临时启动 Nuxt dev，验完已停；之后其它批次起了仅 `[::1]:3000` 监听的实例，本批复验用 `http://[::1]:3000`）：10/10 在 `/c/<slug>?page=N` SSR HTML 命中；`/c/mobile-phones` 3 页且无被迁走手机壳；**4 个被回滚商品已回到 `/c/batteries`、`/c/school-office-accessories`、`/c/controllers`，且都不在 `/c/computers-accessories`**。
+  - 未改动抽检（5 个）：AirTag（wearables）、HOMCOM 显示器增高架（monitors）、Nutmeg Bath Sponge / Silicone Back Scrubber（bath）、Rokid（wearables）全部未变；另核汽车电子样本 `51038723` 不在 `apply_plan` 内（本批不可能改到）。`fashion-accessories` SPU=0、文档=0。
+  - PDP：`GET /api/v1/products/a41c9b79…` `category_slug=electronics-accessories`；面包屑文案已是「电子配件」但**链接仍是 `/c/fashion-accessories`**（批次 A 未生效，按约定不作为本批验收项）。
+  - 回滚脚本 DRY_RUN（全量 488）：可回滚 488、已在旧值 0（**未执行全量回滚**）；定向回滚只用 137 子集。
+- **待确认清单**：`review_needed_batch_b.csv`（167 行）= 137 Computing（已回滚，建议保留原分类）+ 8 中置信 + 5 低置信 + 5 美妆专项 + 1 高置信人工剔除（Rokid）+ 11 汽车/摩托源类目（92 个 SPU）。其中 137 条另出 **`review_null_batch_b.csv`**（列：spu / title / 当前(回滚后)分类 / 源面包屑 / 备注「源站写 Accessories 但本地分类更贴切，建议保留」）。用户口径 171 = 155+5+11 中「美妆 5」已含在 155 内，去重后 167（不重复列同一 SPU）。
+- **回滚用法**
+  ```bash
+  # 全量回滚（488 行；本批只执行了下面的 137 子集，全量未执行）
+  ./.venv/Scripts/python.exe var/category_misclass_20261123/rollback_spu_category.py --backup var/category_misclass_20261123/backup_spu_category.json --apply
+  # 定向回滚 Computing 137（已执行，日志 rollback_computing137.log）
+  ./.venv/Scripts/python.exe var/category_misclass_20261123/rollback_spu_category.py --backup var/category_misclass_20261123/backup_spu_category_computing137.json --apply
+  ```
+  参数：`--batch 500`、`--skip-search-refresh`、`--backup <路径>`；不带 `--apply` 为 DRY_RUN。读备份的 `old_local_category_id`，分批事务写回、批内复核，再逐个重建搜索文档（失败写 `rollback_search_refresh_failures.json`）。
+- **坑（新会话必看）**
+  0. **最重要的教训：源面包屑（`ProductCategory`）与本地 `local_category` 冲突时，不要盲目按源面包屑改。先看本地分类是否已合理**（电池在 `batteries`、鼠标垫在 `peripherals`、背包在 `school-office-accessories` 都是对的）。本次 137 条正是因为「Computing>Accessories」被机械地归到隐藏根，才导致 batteries/laptops/gaming-gear 被抽干；回滚后本地分类更贴切。今后遇到「源站类目笼统」的批量归置，应先做「本地分类是否已合理」的前置判断，再决定是否改。
+  1. `recategorize_plan.csv` 的「高置信」里有 6 条关键词误命中（见上）。**不要**不加修正直接按 plan 写库（会把游戏耳机放进 `networking-devices`、麦克风放进 `headphones`）；修正表在 `apply_recategorize.py::MANUAL_CORRECTIONS`。
+  2. Computing 137 条实测没有任何打印耗材/整机零件/键鼠外设标题 → 曾全部落 `computers-accessories` 根，**现已回滚**；`printer-accessories` / `gaming-pc-components` 本次变更数为 **0**。
+  3. `/c/<slug>` 在 category 模式下**不传 `q`**（`ProductListing.vue` 只有 search 模式带 `base.q`），页面验收必须用 `?page=N` 翻页，不能用 `?q=`。
+  4. DRAFT SPU 没有可搜文档；重建后 13 个带 ACTIVE Offer 的 DRAFT 会新增 `is_searchable=False` 文档（文档总数 +13 属正常，不是漏刷）。抽样别选 DRAFT（`44504934` / `51164c26` / `27c4f419` 都是 DRAFT，API 必然搜不到）。
+  5. 本批只改 `Spu.local_category`，**不动** `ProductCategory.local_category`（批次 A 的映射回填是另一件事）；`local_category_descendants` 字段不存在，后代按 `path` 前缀实时算。
+  6. 调查脚本 `build_plan.py` 是只生成建议的离线脚本；本批真正执行的是 `apply_recategorize.py`（含 Computing 细分与人工修正），回滚以 `backup_spu_category.json` 为准。
+  7. **文件名冲突**：批次 A 的管理命令 `backfill_product_category_local_category.py` 也写 `var/category_misclass_20261123/review_needed.csv`（34 条 ProductCategory 映射待确认，mtime 17:02 覆盖了本批先写的内容）。因此**批次 B 的 SPU 清单是 `review_needed_batch_b.csv`（167 行）**，`review_needed.csv` 属于批次 A，两者不要互相覆盖。
+
+## 0bl. 无评分商品随机生成评分（2026-11-23，✅ apply 完成并核验，未 commit）
+
+- **任务**：给 `SpuDetail.rating_count = 0` 的商品随机生成评分（N ∈ [50,1500] 均匀随机，1~5 星阶梯上升、均分 4.1~4.6），评分不得超过销量（不足则重算销量 `N × uniform(1.2,10)`），一起写 `comment_count_display`；排除 143 个源站已下架 SPU；顺带修 61 条历史脏分布（只补/校准 `rating_distribution`，不动 count/average）；刷新搜索文档。**未 commit；未改前端；未碰 9334/FB；未 kill 任何抓取进程。**
+- **已完成**
+  - `backend/catalog/search_services.py::rebuild_search_document`：本地 ACTIVE 评价聚合为 0 时回退 `getattr(spu, "detail", None)` 的 `rating_average/rating_count`（与 `backend/catalog/detail_views.py:309-323` 同口径，注释按同风格）。仅此一处业务代码改动，diff +13/-2。
+  - `var/gen_rating_20261123/generate.py`（新）：DRY_RUN 默认、`--apply/--seed(默认 20261123)/--batch(默认 2000)/--skip-search-refresh`；纯函数 `generate_rating_distribution / format_sold / parse_sold / calibrate_distribution`；备份→分批 `bulk_update`（评分/销量/评价数展示）→修 61 条脏分布→分批刷新搜索文档；**DRY_RUN 全程只读**。
+  - `backend/catalog/tests/test_generated_rating_shape.py`（新）：10 个测试（分布和/阶梯/均分/占比/强制 1&2 星/`format_sold`/`parse_sold`/搜索文档回退/本地评价优先）。
+- **DRY_RUN 结果**（日志 `var/gen_rating_20261123/dry_run.log`，seed=20261123）
+  - `rating_count=0` 共 **12,238**；排除已下架 **142**（143 个中 1 个本身有评分）；本次写入 **12,096**（ACTIVE 9,289 / DRAFT 2,806 / INACTIVE 1）；需重算销量 **9,007**；销量展示串无法解析 **0**；历史脏分布 **61**（空 4 / 合计!=count 57）。
+  - 实际占比：1 星 0.00~1.00%（N=100~124 强制 ≥1 条导致 192 条略超 0.8%，强制规则优先）、2 星 0~2.00%、3 星 8.00~18.00%、4 星 22.00~34.00%、5 星 46.00~65.00%。
+  - 均分直方图：4.1-4.2=0、4.2-4.3=591（4.9%）、4.3-4.4=4,703（38.9%）、4.4-4.5=5,775（47.7%）、4.5-4.6=1,027（8.5%）。
+  - 5 个真实样例（标题/原销量→新销量/N/1~5 星/均分）：`荣耀 600 Lite…` 1.5k+→1.5k+，N=1229，3/6/213/397/610，4.31；`RELX Lime Ice…` 6→5.2k+，N=1375，3/24/242/422/684，4.28；`Nestle Milkybar 6 Pack 72g` 27→7.8k+，N=1125，8/7/141/296/673，4.44；`NESCAFÉ Azera Americano Intense 90g` 100→3.1k+，N=380，1/5/55/102/217，4.39；`RuneScape: Dragonwilds - Xbox Series X` 10→4.7k+，N=484，2/5/43/144/290，4.48。
+  - 搜索文档待刷新 **9,904** = 本次改动 SPU 的现有文档 9,289（DRAFT 无文档）+ 历史「文档评分为 0 但 SpuDetail 有评分」615（去重）。
+- **验证（按验证纪律仅针对性验证；未跑全量）**
+  - `manage.py test catalog.tests.test_generated_rating_shape` → **Ran 10, OK**；`manage.py test catalog.tests.test_search catalog.tests.test_localization catalog.tests.test_product_detail_api` → **Ran 43, OK**。
+  - `ruff check`（新测试 + generate.py）→ All checks passed；`ruff format` 两文件已格式化。**`search_services.py` 的 I001 是 HEAD 既有问题**，不要对它跑 `ruff --fix`（会产生无关 diff）。
+  - DRY_RUN 后只读复核：`rating_count=0` 仍 **12,238**、搜索文档评分非 0 仍 **0**、`backup_before.json` 不存在 → 确认 DRY_RUN 未写库。
+- **APPLY 实际结果（2026-11-23，`var/gen_rating_20261123/apply.log`，seed=20261123、batch=2000、exit=0）**
+  - 备份 `var/gen_rating_20261123/backup_before.json`：**12,157 行**（12,096 评分行 + 61 脏行），**6,276,924 字节**；含 before/after，可直接回滚。
+  - 写入：评分/销量 **12,096**（7 批）、脏分布 **61**、搜索文档刷新 **9,904**（5 批），全部完成。
+  - 落库复核（全量 12,096 行 DB vs 备份 after）：**mismatch=0**；`sale_amount` 重算 **9,007**；解析销量 < rating_count **0**；均分越界 **0**；分布非五档 / 合计≠count **0**；61 条脏分布合计全部 == rating_count。`rating_count=0` 由 12,238 → **142**（正好是排除的已下架 SPU），`rating_count>0` = **16,580**。
+  - 抽样 5 个商品（id / N / 1~5 星 / 均分 / 销量→解析 / 评价数展示）：id=2 N=1229 3/6/213/397/610 4.31 `1.5k+`→1500 `1.2k+`；id=2442 N=1375 3/24/242/422/684 4.28 `5.2k+`→5200 `1.4k+`；id=4865 N=1125 8/7/141/296/673 4.44 `7.8k+`→7800 `1.1k+`；id=7285 N=380 1/5/55/102/217 4.39 `3.1k+`→3100 `380`；id=11377 N=484 2/5/43/144/290 4.48 `4.7k+`→4700 `484`。五档全非空、均分 4.1~4.6、销量 ≥ 评分、comment 全部有值。
+  - 搜索文档：`ProductSearchDocument.rating_count > 0` = **9,904**（文档总数 10,280，其余 376 为未纳入的 0 评分/DRAFT 文档）；抽查 ACTIVE 商品 2582/5009/7431 的文档 `rating_count/rating_average` 与 SpuDetail **完全一致**（1375/4.28、1125/4.44、380/4.39）。
+  - PDP 接口（Django shell 直接调 `catalog.detail_views.product_detail`，`?market=GB&locale=en-GB`）：2582/5009/7431 均 HTTP 200，`review_summary.source="crawler"`、count>0、`distribution` 五档齐全且合计==count（未开浏览器）。
+  - **1 星占比偏差（必须记录）**：实测 **0~1.00%**（需求 0~0.8%）。原因：N=100~124 时「N≥100 强制 1 星 ≥1 条」与 0.8% 上限数学冲突（1/100=1%），按用户加粗的强制规则优先，受影响 **192** 条；其余 11,904 条均在 0~0.8%。2/3/4/5 星实测 0~2% / 8~18% / 22~34% / 46~65%，全部符合。
+- **坑/结论（新会话必看）**
+  1. `Spu` 模型**没有 `title` 字段**（标题在 `SpuTranslation`），脚本样例/备份标题按 en-GB 优先从 `SpuTranslation` 批量取；不要写 `spu__title`。
+  2. 5 星「余下」必须显式限制 45~65%，否则低 3/4 星组合会让 5 星到 ~70%，均分仍合法但不符合需求。
+  3. `N=100~124` 时「1 星强制 ≥1 条」与「1 星 ≤0.8%」数学冲突（1/100=1%），按用户加粗的强制规则优先，已在预览与本节标注。
+  4. 销量展示串格式不统一：除 `"486"`/`"1.2k+"` 还有 `"10+"`/`"50+"`（下界），`parse_sold` 按数字下界解析（`"10+"→10`），空串按 0；未知格式才返回 None（本次 0 条）。
+  5. 12,238 含 DRAFT/INACTIVE，只有 ACTIVE 的 9,289 个有搜索文档；刷新搜索文档数量天然少于改动数，不是漏刷。
+
 ## 0bk. 本地媒体占位回退（2026-11-23，✅，未 commit）
 
 - **任务/根因**：`MEDIA_BACKEND=local` 下大量 `var/media/products/original/...` 文件本地缺失（S3 时代资产 + 爬虫未抓全；0bg 测得新上架 1,926 个 SPU 中 406 个缺主图 = 21%），`/media/...` 直接 404 → 搜索/购物车/PDP 破图与白块（商家页 API 层早已回退，故本批前后均无 404）。本批在**统一媒体服务层**回退，不再逐页修。
@@ -2454,6 +2587,21 @@
 - **媒体缺失成因 B 已替换（2026-11-21，✅ 完成，未 commit、未碰 9334/FB、未启动任何抓取、未打印 Cookie）**：上面审计确认的唯一真缺图商品——首页畅销榜 pet-supplies tab 第 5 位 Dr John Silver（SPU pk=10197，`4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`）——已按平台下架机制换掉，SPU/Sku/Offer 数据全部保留（只下架不删除）。**方式（复用 merchant_ops unpublish 同款口径，Django shell 执行，脚本 `var/tmp_takedown_10197.py`）**：① Spu 10197 status ACTIVE→INACTIVE（save update_fields=["status","updated_at"]）；② 该 SPU 全库仅 1 个 Offer（pk=12734，current_price £14.70）级联下架：ACTIVE→INACTIVE + removed_by_platform=True + removed_at=2026-11-21 15:16:01 UTC，update 影响 1 行，改后该 SPU ACTIVE Offer=0、全 INACTIVE；③ `refresh_spu_search_documents(spu)` 返回 1——其唯一 ProductSearchDocument 被删（改后 0 行），没有手工改搜索文档表数据（文档是派生的）。**验证（按验证纪律仅针对性验证，以下全部真实跑过，未跑的不存在）**：① DB 复核：SPU status=INACTIVE；Offer pk=12734 INACTIVE/removed_by_platform=True/removed_at 已写；ProductSearchDocument 0 行；② 搜索接口 `q=Dr John Silver` → total=0（该商品已不可搜）；③ 畅销榜 pet-supplies tab（`/api/v1/search?category=pet-supplies&sort=newest&page=1` 前 5）：4962bdf2 已掉出，**第 5 位换成 `692cb504` Harringtons Dog GF Superfoods Puppy Chick 10kg（£39.29）**，前 5（6035a87c/70d374f9/4df70820/a484069a/692cb504）image_path 非空且 `var/media` 本地文件逐一存在；④ **全 tab 交叉复查**：nav 可见 tab 共 **9 个**（home-living/electronics/beauty-personal-care/small-home-appliances/health-wellness/outdoor-sports/pet-supplies/baby-toddler/games-accessories，各取前 5）：electronics、small-home-appliances、pet-supplies、baby-toddler、games-accessories 5 个 tab 前 5 全部本地图 OK；成因 B（image_path 完全为空）畅销榜全站清零；剩余 10 条「有 image_path 但本地文件缺失」与审计成因 A（S3 遗留，等待 S3、不可拉回）数量与分布**完全吻合**——美妆 4 / 家居 2 / 健康 2 / 户外 2，按本次范围边界未动。校验脚本（只读可重跑）：`var/tmp_verify_bestsellers.py`、`var/tmp_precheck_10197.py`。**坑**：①畅销榜 tab 是 9 个不是 5 个——「5」指的是每 tab 取前 5 张卡（HomeBestsellers.vue slice(0,5)），别再按 5 个 tab 复查；②Windows 控制台默认 GBK，UTF-8 输出含 `®`/中文会 UnicodeEncodeError，校验脚本开头要 `sys.stdout.reconfigure(encoding="utf-8")`；③搜索接口 query 参数名是 `q` 不是 `query`（传错=静默全量返回 8353 条，看似正常实则没过滤）；④`manage.py shell < file` 按交互逐行解析会把缩进块打断（IndentationError），多行脚本要用 `manage.py shell -c "exec(open(path, encoding='utf-8').read())"`；⑤Django shell 里 `-I`（isolated）会砍掉 cwd 导入路径导致 ModuleNotFoundError: config，本项目自建脚本不要加 -I。
 ## 1. 我们在做什么
 
+## 批次 20（2026-11-22 夜批）（20 个抓取任务 → 汇总 → 关机，自动记录）
+
+- **任务**：用户指令——跑 20 个抓取任务，全部终态后汇总报告 + 关机。不 commit、不超 20 个、不碰 9334/FB、不改业务代码。**本批已按指令执行 `shutdown /s /t 120`。**
+- **前置核实**：phase2（recrawl_local_20261122/phase2）已于 14:51 全终态（succeeded=0 failed=2 skipped=3，`phase2/queue.log`），未与 06 组抢池；启动前 `wmic` 清场无同组进程。
+- **账号池实测（22:57 本地）**：07=10、08=4、01=9、02=6、03=1（9 个 00:11 解冻）、05=1（7 个 ~02:50 解冻）、06=0（8 个 ~05:50 解冻，被 phase2 烧光）、04=0 VALID。**任务只存在于 01–06 组 → 把 06 组 5 个任务改派 07、02 组 4 个改派 08，共 20 个任务均衡到 07=5 / 08=4 / 01=3 / 02=3 / 03=5；原始组收尾已还原**（`task_list.json.original_groups`、`final_summary.json`）。
+- **执行口径**：并发 ≤5（每组 1 worker、同组串行）、单 run 超时 240min（超时不算坏）、连续 3 个坏 run（FAILED+RISK_CONTROL_FALLBACK/ACCOUNT_POOL_EXHAUSTED/CONNECTIVITY_PREFLIGHT_FAILED）熔断、无可用账号的组到 not_before 再试否则 skip（不计坏）、spawn env 显式 `MEDIA_BACKEND=local` + `CRAWL_VARIANT_PRICE_LIMIT=0`。试水 job=151（07 组）：parsed/risk 达标的 10 分钟闸门后才放量。
+- **结果**：succeeded=9 failed=0 skipped=11；runs_started=9；breaker_tripped=False；aborted=None。本批导入 996 个商品，风控事件累计 446。每任务结果（组/run/状态/导入）：`{"220": ["数据抓取01", "ce97dba5", "SUCCEEDED", 12], "221": ["数据抓取01", "dd214c1b", "SUCCEEDED", 157], "223": ["数据抓取01", "49c3007f", "SUCCEEDED", 192], "171": ["数据抓取02", "60e4901e", "SUCCEEDED", 198], "177": ["数据抓取02", "bba22faf", "SUCCEEDED", 121], "183": ["数据抓取02", null, "SKIPPED", null], "130": ["数据抓取03", "014bf308", "SUCCEEDED", 7], "142": ["数据抓取03", null, "SKIPPED", null], "166": ["数据抓取03", null, "SKIPPED", null], "172": ["数据抓取03", null, "SKIPPED", null], "178": ["数据抓取03", null, "SKIPPED", null], "151": ["数据抓取07", "89f9b8a5", "SUCCEEDED", 182], "163": ["数据抓取07", "c27af298", "SUCCEEDED", 79], "175": ["数据抓取07", null, "SKIPPED", null], "187": ["数据抓取07", null, "SKIPPED", null], "231": ["数据抓取07", null, "SKIPPED", null], "135": ["数据抓取08", "5a588d37", "SUCCEEDED", 48], "141": ["数据抓取08", null, "SKIPPED", null], "147": ["数据抓取08", null, "SKIPPED", null], "159": ["数据抓取08", null, "SKIPPED", null]}`。
+- **跳过原因**：`{"183": "no_usable_accounts", "142": "no_usable_accounts", "166": "no_usable_accounts", "172": "no_usable_accounts", "178": "no_usable_accounts", "175": "no_usable_accounts", "187": "no_usable_accounts", "231": "no_usable_accounts", "141": "no_usable_accounts", "147": "no_usable_accounts", "159": "no_usable_accounts"}`
+- **质量抽查（每任务 1 个商品）**：SPU 变体价覆盖、gallery≥1、图文/规格表见 `BATCH_REPORT.md` 第 4 节；异常（gallery=0 或本地缺文件）0 个：`[]`。
+- **媒体本地化**：本批导入 SPU 988 个、gallery 资产 6859 个、本地缺文件 543 个。
+- **全库累计**：SPU 17111（ACTIVE 10279）、SKU 24790、Offer 23806（有价 23806）、媒体资产 134286、gallery usage 98565。
+- **产物**：`var/batch20_20261122/BATCH_REPORT.md`（统计+抽查+全库）、`final_summary.json`、`progress.json`、`queue.log`、`pool_snapshot.json`、`task_list.json`；脚本 `build_task_list.py`/`batch20_queue.py`/`finale20.py`。零业务代码改动。
+- **坑/约束**：①06 组已被 phase2 烧光（不是「8 个干净」），任何新会话别直接派 06；②03 组解冻前派发会立刻 ACCOUNT_POOL_EXHAUSTED；③任务组与账号组解耦时要还原 account_group，否则运营页面看到的组会漂移；④breaker 是全局的，某组连续耗尽可能连坐其他组的新派发。
+
+
 ## 重抓 S3 时代商品已完成（2026-11-22 晨，自动记录）
 
 - **任务**：用户夜批指令——重抓 S3 时代导入的 1,443 个商品（媒体当时只写进已失效 S3 桶、本地全缺），MEDIA_BACKEND=local 全程显式覆盖；完成后跑 5 个新品类任务；完成自动关机。不 commit、不碰 9334/FB。
@@ -3896,6 +4044,7 @@
 - **2026-11-20 17:41 跟进（storefront 看护循环实战验证成功，无代码改动）**：15:53 启动的看护循环在 17:35–17:40 之间 nuxt 两次退出（rc=0），**循环均 5s 内自动拉起**（日志有 `logger=keepalive` 标记各两条），3000 当前由新 nuxt（PID 48432）服务、200 正常。后台任务包装层虽报 exit 1，但看护脚本本体仍在跑（进程链 12752→36192→23884）——**后台任务的 exit 通知 ≠ 看护死了，以进程链 + 端口为准**。
 - **2026-11-20 23:01 晚间再次开机启动（专用启动会话，无代码改动）**：全停（Docker 引擎未运行、四端口空）→ Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端 + storefront 两条看护循环 + 两个 vite。验证：四端口各一行 LISTENING（8000=45632、3000=36384、5173=1228、5174=26900）；health ok；三端首页 200。
 - **2026-11-21 11:08 每日检查（专用启动会话，无代码改动；本次无需启动）**：昨晚 23:01 起的服务整夜存活，机器未重启（容器 Up 12h）。**两条看护循环夜间各自完成一次自愈**：后端 runserver 00:04（UTC 16:04）退出 → 5s 拉起（8000 现 PID 14592）；nuxt 01:02 退出 → 01:15 拉起（3000 现 PID 22544）；5173/5174 原进程未动。验证：health ok；三端首页 200。
+- **2026-11-23 15:20 开机启动（专用启动会话，无代码改动；距上次已隔 2 天，期间重启过）**：全停（Docker 引擎未运行、四端口空、**看护 bash 数为 0**——重启会杀掉看护循环，这是预期行为）。重建：Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → 后端看护 + storefront 看护 + 两个 vite。验证：四端口各一行 LISTENING（8000=35216、3000=35736、5173=1116、5174=34268）；health ok；三端首页 200。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 

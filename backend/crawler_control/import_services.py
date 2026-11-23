@@ -201,11 +201,74 @@ def _apply_spu_retail_price(spu, payload: dict):
     spu.save(update_fields=["retail_price", "updated_at"])
 
 
-def _sync_product_categories(payload: dict, *, source_system: str):
+def _is_accessory_category_name(name: str) -> bool:
+    """类目名是否含「配件 / Accessories」语义（2026-11-23 批次 A）。"""
+
+    normalized = str(name or "").strip().casefold()
+    return any(token in normalized for token in ("配件", "accessory", "accessories"))
+
+
+def _accessory_parent_conflict(existing, intended_parent) -> bool:
+    """配件类目在库内的父级与源面包屑父级是否不一致。
+
+    「配件」在多个一级类目下同名（电子产品 > 配件 vs 服装与配饰 > 配件），
+    只看名字会把商品静默归到另一个父级。库内节点已有父级、而本次 payload
+    的父级与它不同（或缺失）时，视为不一致。
+    """
+
+    if existing.parent_id is None:
+        return False
+    if intended_parent is None:
+        return True
+    return existing.parent_id != intended_parent.pk
+
+
+def _record_accessory_parent_mismatch(*, staging, node, existing, intended_parent):
+    """记录 ``PRODUCT_CATEGORY_PARENT_MISMATCH`` 告警（日志 + 抓取运行事件）。"""
+
+    intended_name = intended_parent.name if intended_parent is not None else "（源面包屑缺父级）"
+    intended_id = intended_parent.source_id if intended_parent is not None else ""
+    intended_label = f"{intended_name}（source_id {intended_id}）" if intended_id else intended_name
+    message = (
+        f"商品 {getattr(staging, 'source_id', '')} 的配件类目「{node['name']}」"
+        f"（source_id {node['source_id']}）源面包屑父级为「{intended_label}」，"
+        f"与库内父级「{existing.parent.name}」（source_id {existing.parent.source_id}）"
+        "不一致；本次不自动归类，保留库内父级。"
+    )
+    logger.warning(
+        "product_category_parent_mismatch",
+        extra={
+            "event": "PRODUCT_CATEGORY_PARENT_MISMATCH",
+            "staging_source_id": getattr(staging, "source_id", ""),
+            "product_category_source_id": node["source_id"],
+            "existing_parent_source_id": existing.parent.source_id,
+            "intended_parent_source_id": intended_id,
+        },
+    )
+    run_id = getattr(staging, "run_id", None)
+    if not run_id:
+        return
+    from crawler_control.models import CrawlRunEvent
+
+    CrawlRunEvent.objects.create(
+        run_id=run_id,
+        level=CrawlRunEvent.Level.WARNING,
+        code="PRODUCT_CATEGORY_PARENT_MISMATCH",
+        message=message[:1000],
+        source_url=(getattr(staging, "source_url", "") or "")[:2000],
+    )
+
+
+def _sync_product_categories(payload: dict, *, source_system: str, staging=None):
     """把一个商品的两级商品类目路径写进 ``ProductCategory`` 并返回最深节点。
 
     2026-11-09 口径：Joybuy 商品面包屑可能是 3~4 级（厨具餐具/锅具/炒锅），
     这里只保留前两级；第三级及更深永远不落库。
+
+    2026-11-23（批次 A）：名字含「配件 / Accessories」的类目额外校验父级。
+    库内节点已有父级、且与本次源面包屑父级不一致（或 payload 缺父级）时，
+    **不重新归类/不重挂父级**，只记录 ``PRODUCT_CATEGORY_PARENT_MISMATCH``
+    告警事件；商品照常导入，类目保持库内现值。
     """
 
     raw_path = payload.get("product_category_path") or []
@@ -230,6 +293,22 @@ def _sync_product_categories(payload: dict, *, source_system: str):
     path_parts = []
     for depth, node in enumerate(nodes):
         path_parts.append(node["source_id"])
+        existing = (
+            ProductCategory.objects.select_related("parent")
+            .filter(catalog=catalog, source_id=node["source_id"])
+            .first()
+        )
+        if (
+            existing is not None
+            and _is_accessory_category_name(node["name"])
+            and _accessory_parent_conflict(existing, parent)
+        ):
+            _record_accessory_parent_mismatch(
+                staging=staging, node=node, existing=existing, intended_parent=parent
+            )
+            # 保留库内节点与父级，作为下一级的父级继续解析。
+            parent = existing
+            continue
         parent, _ = ProductCategory.objects.update_or_create(
             catalog=catalog,
             source_id=node["source_id"],
@@ -1013,7 +1092,9 @@ def import_staging_product(
 
     with transaction.atomic():
         brand = _resolve_brand(payload)
-        product_category = _sync_product_categories(payload, source_system=staging.source_system)
+        product_category = _sync_product_categories(
+            payload, source_system=staging.source_system, staging=staging
+        )
         activity_source_id = str(payload.get("crawl_source_category_id") or "").strip()
         activity_source_name = str(payload.get("crawl_source_category_name") or "").strip()
         product_path = [

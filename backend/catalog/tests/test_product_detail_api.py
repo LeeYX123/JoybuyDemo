@@ -193,10 +193,98 @@ class ProductDetailApiTests(TestCase):
         self.assertEqual(
             response.json()["category_breadcrumb"],
             [
-                {"id": "288", "name": "厨具餐具", "depth": 0},
-                {"id": "361", "name": "锅具", "depth": 1},
+                {"id": "288", "name": "厨具餐具", "depth": 0, "local_slug": None},
+                {"id": "361", "name": "锅具", "depth": 1, "local_slug": None},
             ],
         )
+
+    def test_breadcrumb_returns_local_slug_from_product_category_mapping(self):
+        """映射存在时每级返回本地类目 slug（2026-11-23 批次 A）。
+
+        配件类商品：源站「电子产品 > 配件」映射到 electronics /
+        electronics-accessories，前端据此生成链接，不再按名称全局误配到
+        fashion-accessories。
+        """
+
+        electronics = self._local_category("electronics", depth=0, path="/electronics/")
+        accessories = self._local_category(
+            "electronics-accessories",
+            depth=1,
+            path="/electronics/electronics-accessories/",
+            parent=electronics,
+        )
+        root, leaf = self._product_category_pair(local_root=electronics, local_leaf=accessories)
+
+        data = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        ).json()
+
+        self.assertEqual(
+            data["category_breadcrumb"],
+            [
+                {
+                    "id": root.source_id,
+                    "name": root.name,
+                    "depth": 0,
+                    "local_slug": "electronics",
+                },
+                {
+                    "id": leaf.source_id,
+                    "name": leaf.name,
+                    "depth": 1,
+                    "local_slug": "electronics-accessories",
+                },
+            ],
+        )
+
+    def test_breadcrumb_local_slug_is_null_when_child_unmapped(self):
+        """只映射了一级时，二级仍返回 null，前端回退到父级 + 名称匹配。"""
+
+        home = self._local_category("home-living", depth=0, path="/home-living/")
+        root, leaf = self._product_category_pair(local_root=home, local_leaf=None)
+
+        crumb = self.client.get(
+            reverse("product-detail", kwargs={"public_id": self.spu.public_id})
+        ).json()["category_breadcrumb"]
+
+        self.assertEqual([item["local_slug"] for item in crumb], ["home-living", None])
+        self.assertEqual([item["id"] for item in crumb], [root.source_id, leaf.source_id])
+
+    def _local_category(self, slug, *, depth, path, parent=None):
+        from catalog.models import LocalCategory
+
+        return LocalCategory.objects.create(
+            name=slug,
+            slug=slug,
+            depth=depth,
+            path=path,
+            parent=parent,
+        )
+
+    def _product_category_pair(self, *, local_root, local_leaf):
+        catalog, _ = SourceCatalog.objects.get_or_create(
+            source_system="joybuy",
+            defaults={"display_name": "Joybuy"},
+        )
+        root = ProductCategory.objects.create(
+            catalog=catalog,
+            source_id="1849",
+            name="电子产品",
+            depth=0,
+            path="/1849/",
+            local_category=local_root,
+        )
+        leaf = ProductCategory.objects.create(
+            catalog=catalog,
+            source_id="1801",
+            name="配件",
+            depth=1,
+            path="/1849/1801/",
+            parent=root,
+            local_category=local_leaf,
+        )
+        Spu.objects.filter(pk=self.spu.pk).update(product_category=leaf)
+        return root, leaf
 
     def test_inventory_display_thresholds_and_unpurchasable_states(self):
         _, offer_low = self.make_sku("sku-low", "10.00", inventory=500)
