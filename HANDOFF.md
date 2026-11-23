@@ -886,11 +886,13 @@
 
 ## 0push. 代码推送 GitHub（2026-11-23，✅ 完成）
 
-- 用户要求「把代码提交到 GitHub，包括爬虫相关的」。检查结论：**爬虫代码 42 个文件早已全部入库**（、、fixtures 均在工作区无遗留改动），（真实 FB cookie）与 、 仍被 .gitignore 正确排除，**未提交任何凭证**。
-- 本次推送两个提交到 （b516985..600739e）：
-  1.  修复媒体去重残留失效引用（ 去重命中时校验物理对象存在性并回写）+ 购物端请求超时兜底（useFetch 15s、devProxy +8s）。
-  2.  频道页卡片版式（layout 枚举 row3/row3_scroll/grid2x2 + 迁移 0015/0016 播种）+ 新增  楼层同步命令（默认 dry-run）+ 管理端面板/商家端接口适配 + 测试。
-- 安全扫描：待提交文件内无 AWS key/password/token 字面量；无大二进制（仅 HANDOFF.md 1.3MB 文档）。工作区提交后干净。
+- 用户要求「把代码提交到 GitHub，包括爬虫相关的」。检查结论：**爬虫代码 42 个文件早已全部入库**（`crawler/debug_crawl.py`、`crawler/joybuy_crawler/*`、`crawler/fixtures/*` 在工作区均无遗留改动）；`crawler/debug_session.py`（含真实会话 Cookie）、`translation_agent/`、`var/*` 仍被 .gitignore 正确排除，**未提交任何凭证**。
+- 本次推送三个提交到 origin/main：
+  1. `0e69f84` 修复媒体去重残留失效引用（`store_bytes` 去重命中时校验物理对象存在性并回写）+ 购物端请求超时兜底（useFetch 15s、devProxy `agent: false` + 8s）。
+  2. `600739e` 频道页卡片版式（layout 枚举 row3 / row3_scroll / grid2x2 + 迁移 0015/0016 播种）+ 新增 `sync_channel_modules` 楼层同步命令（默认 dry-run）+ 管理端面板与商家端接口适配 + 测试。
+  3. `f6e1cfe` 本记录。
+- 安全扫描：待提交文件内无 AWS key / password / token 字面量；无大二进制（仅 HANDOFF.md 1.3MB 文档）。提交后工作区干净。
+- **坑（本次踩到）**：在 `bash -c "python -I -c "...""` 里用反引号包文件名会被 **bash 命令替换**执行，导致写入文本里的反引号内容全部被吞空；且该命令误触发了 `crawler/debug_session.py` 的逐行执行，把会话 Cookie 值打印到了终端。**一次性脚本一律用 Write 落盘再 `python -I <脚本>` 执行，绝不在 bash 里内联含反引号的代码。**
 
 ## 0ss. 一个账号只能绑定一家店 + 存量多店清理（2026-11-22，✅ 完成，未 commit）
 
