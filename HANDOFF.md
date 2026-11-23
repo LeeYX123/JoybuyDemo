@@ -884,6 +884,14 @@
   3. Playwright 点提交别用 `button[type=submit]`（页头搜索按钮也匹配，strict mode 报 2 个）；用 `form button.base-button[type=submit]`。
   4. 买家侧上传的 CSRF 需要同一 Cookie 头里同时带 `joybuy_buyer_session` 与 `csrftoken`；curl 同时用 `-b jar` 再手写 `Cookie:` 会被 Django 只取到一个头导致 401。
 
+## 0push. 代码推送 GitHub（2026-11-23，✅ 完成）
+
+- 用户要求「把代码提交到 GitHub，包括爬虫相关的」。检查结论：**爬虫代码 42 个文件早已全部入库**（、、fixtures 均在工作区无遗留改动），（真实 FB cookie）与 、 仍被 .gitignore 正确排除，**未提交任何凭证**。
+- 本次推送两个提交到 （b516985..600739e）：
+  1.  修复媒体去重残留失效引用（ 去重命中时校验物理对象存在性并回写）+ 购物端请求超时兜底（useFetch 15s、devProxy +8s）。
+  2.  频道页卡片版式（layout 枚举 row3/row3_scroll/grid2x2 + 迁移 0015/0016 播种）+ 新增  楼层同步命令（默认 dry-run）+ 管理端面板/商家端接口适配 + 测试。
+- 安全扫描：待提交文件内无 AWS key/password/token 字面量；无大二进制（仅 HANDOFF.md 1.3MB 文档）。工作区提交后干净。
+
 ## 0ss. 一个账号只能绑定一家店 + 存量多店清理（2026-11-22，✅ 完成，未 commit）
 
 - **需求**：一个账号 = 一个商家端 = 一家店（商家端不再有店铺切换）；之前多店的商家去掉多余店铺。
