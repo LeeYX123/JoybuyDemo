@@ -81,6 +81,9 @@ onBeforeUnmount(() => {
       <h2 class="cms-pool__title">{{ props.payload.title }}</h2>
       <NuxtLink v-if="props.payload.href" class="cms-pool__more" :to="props.payload.href">
         {{ props.payload.more_label || t('cms.viewAll') }}
+        <span v-if="props.payload.more_arrow" class="cms-pool__more-arrow" aria-hidden="true"
+          >›</span
+        >
       </NuxtLink>
     </div>
 
@@ -92,14 +95,28 @@ onBeforeUnmount(() => {
       @scroll="sync"
     >
       <ul class="cms-pool__row">
-        <li v-for="(product, index) in products" :key="product.public_id || index">
-          <ProductCard :product="product" />
+        <li
+          v-for="(product, index) in products"
+          :key="product.sku_public_id || product.spu_public_id || index"
+        >
+          <ProductCard
+            :product="product"
+            :show-rating="!props.payload.hide_rating"
+            :use-retail-price="Boolean(props.payload.use_retail_price)"
+          />
         </li>
       </ul>
     </div>
     <ul v-else class="cms-pool__grid" :style="{ '--cms-pool-columns': columns }">
-      <li v-for="(product, index) in products" :key="product.public_id || index">
-        <ProductCard :product="product" />
+      <li
+        v-for="(product, index) in products"
+        :key="product.sku_public_id || product.spu_public_id || index"
+      >
+        <ProductCard
+          :product="product"
+          :show-rating="!props.payload.hide_rating"
+          :use-retail-price="Boolean(props.payload.use_retail_price)"
+        />
       </li>
     </ul>
 
@@ -150,6 +167,14 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
+/* 真站【查看更多】右侧带 16×16 箭头：`more_arrow` 由频道页楼层开启，
+   CMS 首页楼层不传该字段，渲染结果不变。 */
+.cms-pool__more-arrow {
+  margin-left: 4px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
 .cms-pool__grid {
   display: grid;
   grid-template-columns: repeat(var(--cms-pool-columns, 4), minmax(0, 1fr));
@@ -191,6 +216,11 @@ onBeforeUnmount(() => {
 .cms-pool__row > li {
   flex: 0 0
     calc((100% - (var(--cms-pool-row-columns, 6) - 1) * 20px) / var(--cms-pool-row-columns, 6));
+  /* 2026-11-24 缺陷修复：flex item 默认 min-width: auto，卡内不可断词的长标题
+     （如 FireStick,Smartphone,PS5,Vertical+Horizontal+Keystone）会把 min-content
+     宽度撑到 407px，卡宽失控并连带整行被 align-items:stretch 拉高。显式归零后
+     flex-basis 的 194px 才真正恒定；标题仍由自身的两行 clamp + overflow 裁切。 */
+  min-width: 0;
 }
 
 .cms-pool__row :deep(.product-card) {

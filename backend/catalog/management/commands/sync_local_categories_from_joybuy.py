@@ -46,6 +46,17 @@ from catalog.services import create_local_category
 SOURCE_SYSTEM = "joybuy_uk"
 CONFIDENCE = Decimal("1.0000")
 
+# 爬来的类目名里 `&` 被写成字面量 `u0026`（如「笔记本 u0026 书写纸品」）。
+# 库内中文类目惯例是「X & Y」（`&` 两侧各一个半角空格），替换时只把
+# `u0026` 换成 `&`、保留两侧原有空格，即可与既有 18 条先例口径一致。
+ESCAPED_AMPERSAND = "u0026"
+
+
+def normalize_category_name(value: str | None) -> str:
+    """把来源快照里的字面量 ``u0026`` 归一成 ``&``（保持两侧空格）。"""
+
+    return (value or "").replace(ESCAPED_AMPERSAND, "&")
+
 
 class Command(BaseCommand):
     help = "按 Joybuy 菜单树一对一补齐 11 个一级类目的二级类目并建立 CategoryMapping。"
@@ -198,10 +209,11 @@ class Command(BaseCommand):
                 summary["errors"] += 1
                 continue
 
+            # 写入前归一：来源快照里的字面量 u0026 不得流进本地类目名。
             values = {
-                "name": row["name_en"] or row["name_zh"],
-                "name_en": row["name_en"],
-                "name_zh": row["name_zh"],
+                "name": normalize_category_name(row["name_en"] or row["name_zh"]),
+                "name_en": normalize_category_name(row["name_en"]),
+                "name_zh": normalize_category_name(row["name_zh"]),
                 "sort_order": row["sort_order"],
                 "status": LocalCategory.Status.ACTIVE,
             }

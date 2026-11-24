@@ -926,6 +926,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
               :src="image"
               :alt="`${section.title || data?.title} ${imageIndex + 1}`"
               loading="lazy"
+              decoding="async"
             />
           </div>
         </article>
@@ -1794,15 +1795,19 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 
 .detail__content-images {
   display: grid;
-  /* 与 Joybuy 一致：图文详情的图片一张占满一行，宽度铺满详情内容区。 */
+  /* 与 Joybuy 一致：一张图占一行，但按原图宽度显示、左对齐，不放大
+     （功能需求迭代文档03 §24；真站 .Image_longImageWrap > .Image_longImage 实测行为）。 */
   grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
   gap: var(--space-4);
   margin-top: var(--space-4);
 }
 
 .detail__content-images img {
   display: block;
-  width: 100%;
+  /* 原图窄于容器时保持原宽（左对齐、右侧留白）；宽于容器时才等比缩到容器宽。 */
+  width: auto;
+  max-width: 100%;
   height: auto;
   border-radius: var(--radius-md);
   background: var(--colour-surface-muted);

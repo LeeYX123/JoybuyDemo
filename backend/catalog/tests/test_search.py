@@ -201,6 +201,37 @@ class SearchServiceTests(SearchFixtureBase):
         self.assertEqual(empty["items"], [])
         self.assertEqual(empty["total_pages"], 0)
 
+    def test_items_carry_retail_price_from_spu_without_extra_queries(self):
+        """每个商品带 ``retail_price``（Spu 后台零售价），Decimal → 4 位小数字符串。
+
+        null → null；取值来自已 ``select_related("spu")`` 的行，不额外查库。
+        """
+
+        priced = self.seed_product(
+            source_id="retail-priced",
+            title="Retail Priced Product",
+            price="10.00",
+            category=self.electronics,
+        )
+        unpriced = self.seed_product(
+            source_id="retail-null",
+            title="Retail Null Product",
+            price="5.00",
+            category=self.electronics,
+        )
+        priced.spu.retail_price = Decimal("19.99")
+        priced.spu.save(update_fields=["retail_price"])
+
+        with CaptureQueriesContext(connection) as queries:
+            result = search_documents(market=self.market, sort="price_asc", page=1)
+
+        items = {item["spu_public_id"]: item for item in result["items"]}
+        item = items[str(priced.spu.public_id)]
+        self.assertEqual(item["retail_price"], "19.9900")
+        self.assertEqual(item["price_min"], "10.0000")
+        self.assertIsNone(items[str(unpriced.spu.public_id)]["retail_price"])
+        self.assertLessEqual(len(queries), 5)
+
     def test_search_returns_first_local_gallery_image_without_n_plus_one(self):
         document = self.seed_product(
             source_id="pictured",
@@ -472,6 +503,31 @@ class RecommendationTests(SearchFixtureBase):
         item = payload["items"][0]
         self.assertEqual(item["title"], "API Reco Product")
         self.assertIn("display_currency_symbol", payload)
+
+    def test_recommendations_endpoint_items_carry_retail_price(self):
+        """频道页【精选好物】走同一序列化：接口项含 retail_price（null 时为 null）。"""
+
+        priced = self.seed_product(
+            source_id="reco-retail",
+            title="Reco Retail Priced",
+            price="10.00",
+            category=self.electronics,
+        )
+        self.seed_product(
+            source_id="reco-retail-null",
+            title="Reco Retail Null",
+            price="7.00",
+            category=self.electronics,
+        )
+        priced.spu.retail_price = Decimal("19.99")
+        priced.spu.save(update_fields=["retail_price"])
+
+        response = self.client.get("/api/v1/recommendations", {"page": "1"})
+        self.assertEqual(response.status_code, 200)
+        items = {item["title"]: item for item in response.json()["items"]}
+        self.assertEqual(items["Reco Retail Priced"]["retail_price"], "19.9900")
+        self.assertEqual(items["Reco Retail Priced"]["price_min"], "10.0000")
+        self.assertIsNone(items["Reco Retail Null"]["retail_price"])
 
     def test_recommendations_endpoint_rejects_bad_page(self):
         response = self.client.get("/api/v1/recommendations", {"page": "not-a-number"})

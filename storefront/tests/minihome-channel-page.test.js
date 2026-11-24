@@ -12,6 +12,24 @@ vi.mock('#imports', async (importOriginal) => {
   return {
     ...actual,
     useRoute: () => ({ params: routeState.params, query: {}, path: '/minihome' }),
+    // 【精选好物】首屏走 useFetch；给一条带品牌/评分的推荐商品，让频道页的
+    // 卡片 props（无评分/无品牌/零售价口径）能落到真实 DOM 上断言。
+    useFetch: () => ({
+      data: {
+        value: {
+          items: [
+            {
+              spu_public_id: 'reco-1',
+              title: 'Recommended thing',
+              brand: 'ACME',
+              price_min: 3,
+              rating_average: '4.5',
+              rating_count: 5,
+            },
+          ],
+        },
+      },
+    }),
   }
 })
 
@@ -50,6 +68,14 @@ vi.mock('../composables/useChannelModules', () => ({
   useChannelModules: () => ({ modules: channelModuleItems }),
 }))
 
+// 活动卡片（13.2）：接口按「组」返回（2026-11-23 契约）。
+// groups 给组顺序/布局，items 给组内卡片；空数组时整块不渲染。
+const pageCardItems = ref([])
+const pageCardGroups = ref([])
+vi.mock('../composables/useChannelPageCards', () => ({
+  useChannelPageCards: async () => ({ items: pageCardItems, groups: pageCardGroups }),
+}))
+
 const hotItems = [
   { spu_public_id: 'hot-1', title: 'Storage Box Set', price_min: 3.99 },
   { spu_public_id: 'hot-2', title: 'Ceramic Vase', price_min: 8.5 },
@@ -70,8 +96,11 @@ vi.mock('../composables/useSearchApi', () => ({
 }))
 
 import Page from '../pages/minihome/[code].vue'
+import BaseRatingStars from '../components/BaseRatingStars.vue'
 import ChannelPickedForYou from '../components/ChannelPickedForYou.vue'
 import ProductCard from '../components/ProductCard.vue'
+import { orderChannelTiles } from '../utils/channelTiles'
+import { channelTileList } from '../utils/channelTileLists'
 
 const RouterLinkStub = {
   name: 'RouterLinkStub',
@@ -90,18 +119,56 @@ const PageHolder = defineComponent({
 async function mountPage() {
   const wrapper = mount(PageHolder, {
     global: {
-      components: { ProductCard },
-      stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true, BaseRatingStars: true },
+      components: { ProductCard, BaseRatingStars },
+      // 评分组件用真实实现：频道楼层「不显示评分行」的断言需要真实 DOM
+      //（ProductCard 在 Nuxt 里是自动导入评分组件的，测试里显式注册）。
+      stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
     },
   })
   await flushPromises()
   return wrapper
 }
 
+// 活动卡片批次：count 张；groups 给布局，items 带 group_index/sort_order。
+function cardBatch(count, { layout = 'row3', groupIndex = 0 } = {}) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `card-${groupIndex}-${index}`,
+    image_url: `/media/cards/${groupIndex}-${index}.webp`,
+    link_url: `https://example.com/promo-${groupIndex}-${index}`,
+    sort_order: index,
+    layout,
+    group_index: groupIndex,
+  }))
+}
+
+// 不带 layout/group_index 的旧契约批次（用来验证「groups 缺失按张数推断」）。
+function plainBatch(count) {
+  return cardBatch(count).map((item) => ({
+    id: item.id,
+    image_url: item.image_url,
+    link_url: item.link_url,
+    sort_order: item.sort_order,
+  }))
+} // 每组渲染出的布局 class（row2 / row3 / row3_scroll）。
+function groupLayouts(wrapper) {
+  return wrapper
+    .findAll('.channel-cards__group')
+    .map((group) => group.classes().find((name) => name.startsWith('channel-card-group--')))
+}
+
+// 页面模块顺序（活动卡片位置断言用）。
+function moduleOrder(wrapper) {
+  return [...wrapper.element.querySelectorAll('.channel-tiles, .channel-cards, .cms-pool')].map(
+    (element) => element.classList[0],
+  )
+}
+
 beforeEach(() => {
   routeState.params = { code: 'UK-Mini-HP-Home-Living' }
   bannerItems.value = []
   channelModuleItems.value = []
+  pageCardItems.value = []
+  pageCardGroups.value = []
 })
 
 describe('minihome channel page', () => {
@@ -122,12 +189,35 @@ describe('minihome channel page', () => {
   })
 
   // 需求 16.4：频道页底部【精选好物】按钮文案为【更多 / More】（en）。
-  it('hands the「More」label to the channel picked-for-you module', async () => {
+  // 2026-11-24：精选好物卡片与楼层卡同款——频道页显式传 hide-rating/零售价口径。
+  it('hands the「More」label and floor-card props to the channel picked-for-you module', async () => {
     const wrapper = await mountPage()
     const picked = wrapper.findComponent(ChannelPickedForYou)
     expect(picked.exists()).toBe(true)
     expect(picked.props('moreLabel')).toBe('More')
     expect(picked.props('categorySlug')).toBe('home-living')
+    expect(picked.props('showRating')).toBe(false)
+    expect(picked.props('useRetailPrice')).toBe(true)
+    expect(picked.props('showBrand')).toBe(false)
+  })
+
+  // 2026-11-24 作用域收紧：楼层容器有专属 .channel-floor 类，精选好物只有
+  // .channel-picked（不再靠共用 .channel-pool 被动继承楼层样式）。
+  it('marks the product floors with the floor-only class', async () => {
+    const wrapper = await mountPage()
+    const pools = wrapper.findAll('.cms-pool')
+    expect(pools).toHaveLength(2)
+    for (const pool of pools) {
+      expect(pool.classes()).toContain('channel-floor')
+    }
+    const picked = wrapper.get('.channel-picked')
+    expect(picked.classes()).toContain('channel-pool')
+    expect(picked.classes()).not.toContain('channel-floor')
+    // 精选好物卡与楼层卡同款：无评分行、无品牌行。
+    expect(picked.find('.rating-stars').exists()).toBe(false)
+    expect(picked.find('.product-card__brand').exists()).toBe(false)
+    // 推荐接口不带 retail_price → 回退 price_min。
+    expect(picked.get('.product-card__price').text()).toBe('$3.00')
   })
 
   it('shows a single configured banner as a static image without arrows', async () => {
@@ -172,7 +262,7 @@ describe('minihome channel page', () => {
     expect(pools[0].get('.cms-pool__title').text()).toBe('Hot picks')
     expect(pools[0].get('.cms-pool__more').attributes('href')).toBe('/s?category=home-living')
     expect(pools[1].get('.cms-pool__title').text()).toBe('New arrivals')
-    expect(wrapper.findAll('.product-card').map((card) => card.text())).toEqual([
+    expect(wrapper.findAll('.cms-pool .product-card').map((card) => card.text())).toEqual([
       expect.stringContaining('Storage Box Set'),
       expect.stringContaining('Ceramic Vase'),
       expect.stringContaining('Scented Candle'),
@@ -180,7 +270,7 @@ describe('minihome channel page', () => {
     ])
   })
 
-  it('renders configured real-site modules with a More link to the category listing', async () => {
+  it('renders configured real-site modules with a View More link to the category listing', async () => {
     channelModuleItems.value = [
       {
         public_id: 'm1',
@@ -194,27 +284,62 @@ describe('minihome channel page', () => {
     expect(pools).toHaveLength(1)
     expect(pools[0].get('.cms-pool__title').text()).toBe('Best sellers')
     expect(pools[0].get('.cms-pool__more').attributes('href')).toBe('/c/home-living')
-    expect(pools[0].get('.cms-pool__more').text()).toBe('More')
+    // 截图对比 2026-11-23 第 7 条：真站文案 View More + › 箭头（走频道页 key）。
+    expect(pools[0].get('.cms-pool__more').text()).toContain('View More')
+    expect(pools[0].get('.cms-pool__more-arrow').text()).toBe('›')
     expect(pools[0].text()).toContain('Storage Box Set')
   })
 
+  // 13.1②：没有精选清单的频道（清单返回 null）保持后端树顺序，且按
+  // maxVisible（22）截断、余量给「查看全部品类」。
   it('caps the tile area at 22 tiles and links the overflow to the results page', async () => {
-    rootWithChannel.children = Array.from({ length: 23 }, (_, index) => ({
-      slug: `child-${index}`,
-      name_en: `Child ${index}`,
-      name_zh: `子类 ${index}`,
-    }))
+    // 用一个 channelTileLists 未收录的一级类目，避免被精选清单过滤。
+    treeCategories.value = [
+      {
+        slug: 'mystery-channel',
+        name_en: 'Mystery',
+        name_zh: '未清单频道',
+        channel_code: 'UK-Mini-HP-Home-Living',
+        children: Array.from({ length: 23 }, (_, index) => ({
+          slug: `child-${index}`,
+          name_en: `Child ${index}`,
+          name_zh: `子类 ${index}`,
+        })),
+      },
+    ]
     try {
       const wrapper = await mountPage()
       expect(wrapper.findAll('.category-tile')).toHaveLength(22)
       const more = wrapper.get('.channel-tiles__more-link')
-      expect(more.attributes('href')).toBe('/s?category=home-living')
+      expect(more.attributes('href')).toBe('/s?category=mystery-channel')
       expect(more.text()).toBe('View all categories')
     } finally {
-      rootWithChannel.children = [
-        { slug: 'kitchen-essentials', name_en: 'Kitchen Essentials', name_zh: '厨房用品' },
-        { slug: 'bedding-textiles', name_en: 'Bedding & Textiles', name_zh: '床上用品' },
-      ]
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 2026-11-24 缺陷修复：有精选清单时清单长度即展示数，不再被 maxVisible
+  // 截断（母婴页真站清单 24 条，此前被 maxVisible=22 切掉 2 条）。
+  it('renders the whole curated list when one exists (no maxVisible truncation)', async () => {
+    const slugs = channelTileList('baby-toddler')
+    expect(slugs.length).toBeGreaterThan(22)
+    routeState.params = { code: 'UK-Mini-HP-Baby-Toddler' }
+    treeCategories.value = [
+      {
+        slug: 'baby-toddler',
+        name_en: 'Baby & Toddler',
+        name_zh: '母婴',
+        channel_code: 'UK-Mini-HP-Baby-Toddler',
+        children: slugs.map((slug) => ({ slug, name_en: slug, name_zh: slug })),
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(wrapper.findAll('.category-tile')).toHaveLength(slugs.length)
+      // 清单全量展示 → 没有「查看全部品类」余量入口。
+      expect(wrapper.find('.channel-tiles__more-link').exists()).toBe(false)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
     }
   })
 
@@ -270,7 +395,11 @@ describe('minihome channel page', () => {
     ]
     try {
       const wrapper = await mountPage()
-      const slugs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      const slugs = wrapper
+        .findAll('.category-tile')
+        .map((tile) => tile.attributes('href'))
+        .sort()
+      // 顺序由精选清单决定（另一批次），这里只断言「其他动物用品」被隐藏。
       expect(slugs).toEqual(['/c/cat-food', '/c/dog-food'])
     } finally {
       treeCategories.value = [rootWithChannel, rootWithoutChannel]
@@ -285,5 +414,361 @@ describe('minihome channel page', () => {
     expect(wrapper.get('.channel-unavailable__home').attributes('href')).toBe('/')
     expect(wrapper.find('.category-tiles').exists()).toBe(false)
     expect(wrapper.find('.cms-pool').exists()).toBe(false)
+  })
+
+  // 13.2 活动卡片：groups 缺失时按张数推断布局（真站实测 2 → 两列、
+  // 3 → 三列、≥4 → 一屏三张可滑，measurement.md §B.1）。
+  it('switches the activity-card layout by card count when groups are missing', async () => {
+    pageCardItems.value = plainBatch(2)
+    let wrapper = await mountPage()
+    expect(groupLayouts(wrapper)).toEqual(['channel-card-group--row2'])
+    expect(wrapper.findAll('.channel-card')).toHaveLength(2)
+    wrapper.unmount()
+
+    pageCardItems.value = plainBatch(3)
+    wrapper = await mountPage()
+    expect(groupLayouts(wrapper)).toEqual(['channel-card-group--row3'])
+    expect(wrapper.findAll('.channel-card')).toHaveLength(3)
+    wrapper.unmount()
+
+    pageCardItems.value = plainBatch(5)
+    wrapper = await mountPage()
+    expect(groupLayouts(wrapper)).toEqual(['channel-card-group--row3_scroll'])
+    expect(wrapper.findAll('.channel-card')).toHaveLength(5)
+    wrapper.unmount()
+  })
+
+  // groups 缺失时按 items[].layout 分桶（组顺序 = 首次出现顺序）。
+  it('buckets cards by their own layout when groups are missing', async () => {
+    pageCardItems.value = [
+      ...cardBatch(4, { layout: 'row3_scroll', groupIndex: 0 }).map((item) => ({
+        ...item,
+        group_index: undefined,
+      })),
+      ...cardBatch(2, { layout: 'row2', groupIndex: 1 }).map((item) => ({
+        ...item,
+        group_index: undefined,
+      })),
+    ]
+    const wrapper = await mountPage()
+    expect(groupLayouts(wrapper)).toEqual([
+      'channel-card-group--row3_scroll',
+      'channel-card-group--row2',
+    ])
+    expect(wrapper.findAll('.channel-card')).toHaveLength(6)
+  })
+
+  // row2 = 一行 2 张大卡（620×200、gap 24）：组内两张都渲染。
+  it('renders the row2 group with both of its large cards', async () => {
+    pageCardGroups.value = [{ group_index: 0, layout: 'row2', count: 2 }]
+    pageCardItems.value = cardBatch(2, { layout: 'row2' })
+    const wrapper = await mountPage()
+    const group = wrapper.get('.channel-card-group--row2')
+    expect(group.findAll('.channel-card')).toHaveLength(2)
+    expect(group.findAll('.channel-cards__item')).toHaveLength(2)
+  })
+
+  // 多组：按 group_index 升序渲染各组，组内按 sort_order 升序。
+  it('renders the declared groups in group_index order with sort_order inside each', async () => {
+    pageCardGroups.value = [
+      { group_index: 0, layout: 'row3_scroll', count: 3 },
+      { group_index: 1, layout: 'row2', count: 2 },
+    ]
+    pageCardItems.value = [
+      ...cardBatch(3, { layout: 'row3_scroll', groupIndex: 0 }),
+      ...cardBatch(2, { layout: 'row2', groupIndex: 1 }),
+    ].reverse()
+    const wrapper = await mountPage()
+    expect(groupLayouts(wrapper)).toEqual([
+      'channel-card-group--row3_scroll',
+      'channel-card-group--row2',
+    ])
+    const groups = wrapper.findAll('.channel-cards__group')
+    expect(groups[0].findAll('.channel-card')).toHaveLength(3)
+    expect(groups[1].findAll('.channel-card')).toHaveLength(2)
+    expect(groups[0].findAll('.channel-card').map((card) => card.attributes('href'))).toEqual([
+      'https://example.com/promo-0-0',
+      'https://example.com/promo-0-1',
+      'https://example.com/promo-0-2',
+    ])
+    expect(groups[1].findAll('.channel-card').map((card) => card.attributes('href'))).toEqual([
+      'https://example.com/promo-1-0',
+      'https://example.com/promo-1-1',
+    ])
+  })
+
+  it('renders no activity-card module (and no placeholder) when the channel has no cards', async () => {
+    const wrapper = await mountPage()
+    expect(wrapper.find('.channel-cards').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('No cards')
+  })
+
+  // 13.8：外链新窗口 + noopener、站内路径走 NuxtLink、空链接整张不可点。
+  it('routes activity-card links by the external-link rule', async () => {
+    pageCardItems.value = [
+      { id: 'c1', image_url: '/media/1.webp', link_url: 'https://example.com/a', sort_order: 0 },
+      { id: 'c2', image_url: '/media/2.webp', link_url: '/c/kitchen', sort_order: 1 },
+      { id: 'c3', image_url: '/media/3.webp', link_url: '', sort_order: 2 },
+    ]
+    const wrapper = await mountPage()
+    const cards = wrapper.findAll('.channel-card')
+    expect(cards).toHaveLength(3)
+    expect(cards[0].attributes('target')).toBe('_blank')
+    expect(cards[0].attributes('rel')).toBe('noopener')
+    expect(cards[0].attributes('href')).toBe('https://example.com/a')
+    expect(cards[1].attributes('href')).toBe('/c/kitchen')
+    expect(cards[2].element.tagName).toBe('SPAN')
+    for (const image of wrapper.findAll('.channel-card__img')) {
+      expect(image.attributes('loading')).toBe('lazy')
+    }
+  })
+
+  it('places the activity cards after the tile area and before the first product floor', async () => {
+    pageCardItems.value = cardBatch(3)
+    const wrapper = await mountPage()
+    expect(moduleOrder(wrapper)).toEqual(['channel-tiles', 'channel-cards', 'cms-pool', 'cms-pool'])
+  })
+
+  // 真站实测 §B.3：宠物页两个组都放在第一个商品楼层「Black Friday Deals」
+  // 之后、第二个楼层之前，组#0 与组#1 上下排列。
+  it('renders both pets card groups after the first product floor', async () => {
+    routeState.params = { code: 'UK-Mini-HP-Pets' }
+    pageCardGroups.value = [
+      { group_index: 0, layout: 'row3_scroll', count: 4 },
+      { group_index: 1, layout: 'row2', count: 2 },
+    ]
+    pageCardItems.value = [
+      ...cardBatch(4, { layout: 'row3_scroll', groupIndex: 0 }),
+      ...cardBatch(2, { layout: 'row2', groupIndex: 1 }),
+    ].reverse()
+    treeCategories.value = [
+      {
+        slug: 'pet-supplies',
+        name_en: 'Pets',
+        name_zh: '宠物',
+        channel_code: 'UK-Mini-HP-Pets',
+        children: [{ slug: 'cat-food', name_en: 'Cat Food', name_zh: '猫粮' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(moduleOrder(wrapper)).toEqual([
+        'channel-tiles',
+        'cms-pool',
+        'channel-cards',
+        'cms-pool',
+      ])
+      expect(groupLayouts(wrapper)).toEqual([
+        'channel-card-group--row3_scroll',
+        'channel-card-group--row2',
+      ])
+      const groups = wrapper.findAll('.channel-cards__group')
+      expect(groups[0].findAll('.channel-card')).toHaveLength(4)
+      expect(groups[1].findAll('.channel-card')).toHaveLength(2)
+      // 组#0 在组#1 之前（上下排列）。
+      expect(groups[0].element.nextElementSibling).toBe(groups[1].element)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 母婴页：两个组都在品类卡下方紧邻排列（第一个楼层之前）。
+  it('renders both baby card groups right under the tile area', async () => {
+    routeState.params = { code: 'UK-Mini-HP-Toys-Baby-and-Kids' }
+    pageCardGroups.value = [
+      { group_index: 0, layout: 'row2', count: 2 },
+      { group_index: 1, layout: 'row2', count: 2 },
+    ]
+    pageCardItems.value = [
+      ...cardBatch(2, { layout: 'row2', groupIndex: 0 }),
+      ...cardBatch(2, { layout: 'row2', groupIndex: 1 }),
+    ]
+    treeCategories.value = [
+      {
+        slug: 'baby-toddler',
+        name_en: 'Toys, Baby & Kids',
+        name_zh: '母婴玩具',
+        channel_code: 'UK-Mini-HP-Toys-Baby-and-Kids',
+        children: [{ slug: 'baby-care', name_en: 'Baby Care', name_zh: '婴儿护理' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(moduleOrder(wrapper)).toEqual([
+        'channel-tiles',
+        'channel-cards',
+        'cms-pool',
+        'cms-pool',
+      ])
+      expect(groupLayouts(wrapper)).toEqual([
+        'channel-card-group--row2',
+        'channel-card-group--row2',
+      ])
+      expect(wrapper.findAll('.channel-cards .channel-card')).toHaveLength(4)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 游戏页后端已无启用卡片：空数据自然不渲染，不写频道特例。
+  it('renders no card container on a channel with no enabled cards (gaming)', async () => {
+    routeState.params = { code: 'UK-Mini-HP-Gaming' }
+    treeCategories.value = [
+      {
+        slug: 'games-accessories',
+        name_en: 'Gaming',
+        name_zh: '游戏',
+        channel_code: 'UK-Mini-HP-Gaming',
+        children: [{ slug: 'consoles', name_en: 'Consoles', name_zh: '游戏主机' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(wrapper.find('.channel-cards').exists()).toBe(false)
+      expect(wrapper.find('.channel-cards__group').exists()).toBe(false)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 价格口径（2026-11-23）：优先后台零售价 retail_price，缺失回退 price_min；
+  // 不显示划线原价（<s>）与折扣红。
+  it('shows retail_price on channel floors, falling back to price_min without a strikethrough', async () => {
+    channelModuleItems.value = [
+      {
+        public_id: 'm1',
+        title: 'Best sellers',
+        href: '/c/home-living',
+        products: [
+          {
+            spu_public_id: 'retail-1',
+            title: 'Retail priced',
+            price_min: 10,
+            retail_price: '25.00',
+            original_price: 40,
+          },
+          {
+            spu_public_id: 'retail-2',
+            title: 'No retail price',
+            price_min: 8.5,
+            retail_price: null,
+          },
+        ],
+      },
+    ]
+    const wrapper = await mountPage()
+    const prices = wrapper.findAll('.cms-pool .product-card__price')
+    expect(prices).toHaveLength(2)
+    expect(prices[0].text()).toBe('$25.00')
+    expect(prices[1].text()).toBe('$8.50')
+    expect(wrapper.findAll('.cms-pool s')).toHaveLength(0)
+    expect(wrapper.find('.cms-pool .product-card__price--discount').exists()).toBe(false)
+  })
+
+  // 真站楼层卡没有评分行（截图对比 2026-11-23 第 5 条）；首页/搜索卡不变。
+  it('hides the rating row on channel floor cards only', async () => {
+    const rated = {
+      spu_public_id: 'rated-1',
+      title: 'Rated thing',
+      price_min: 5,
+      rating_average: 4.5,
+      review_count: 9,
+    }
+    const shared = mount(ProductCard, {
+      props: { product: rated },
+      global: {
+        components: { BaseRatingStars },
+        stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
+      },
+    })
+    expect(shared.find('.rating-stars').exists()).toBe(true)
+    shared.unmount()
+
+    channelModuleItems.value = [
+      { public_id: 'm1', title: 'Best sellers', href: '/c/home-living', products: [rated] },
+    ]
+    const wrapper = await mountPage()
+    expect(wrapper.findAll('.cms-pool .product-card')).toHaveLength(1)
+    expect(wrapper.find('.cms-pool .rating-stars').exists()).toBe(false)
+  })
+
+  // 品类卡行距：fill='row'（家居/宠物/母婴）32px，fill='column'（电子/家电）20px。
+  it('uses the 32px row gap only on fill=row channels', async () => {
+    const homeWrapper = await mountPage()
+    expect(homeWrapper.get('.category-tiles').classes()).toContain('category-tiles--fill-row')
+    homeWrapper.unmount()
+
+    routeState.params = { code: 'UK-Mini-HP-Electronics' }
+    treeCategories.value = [
+      {
+        slug: 'electronics',
+        name_en: 'Electronics',
+        name_zh: '电子',
+        channel_code: 'UK-Mini-HP-Electronics',
+        children: [{ slug: 'phones', name_en: 'Phones', name_zh: '手机' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      expect(wrapper.get('.category-tiles').classes()).not.toContain('category-tiles--fill-row')
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  it('reports the per-row cap so 8 small tiles fill one screen', async () => {
+    const wrapper = await mountPage()
+    const style = wrapper.get('.channel-tiles__carousel .category-tiles').attributes('style')
+    expect(style).toContain('--tile-size: 140px')
+    expect(style).toContain('--tiles-per-row: 8')
+  })
+
+  // 有序清单重排：按清单顺序取、清单里没有的 slug 跳过；null 保持原顺序。
+  it('orders tiles by the ordered slug list and skips unknown slugs', () => {
+    const children = [
+      { slug: 'a', name_en: 'A', name_zh: 'A' },
+      { slug: 'b', name_en: 'B', name_zh: 'B' },
+      { slug: 'c', name_en: 'C', name_zh: 'C' },
+    ]
+    // 全局索引（Map）解析，跨一级 slug 也能取到。
+    const index = new Map(children.map((child) => [child.slug, child]))
+    expect(orderChannelTiles(['c', 'a'], index)).toEqual([children[2], children[0]])
+    const onMissing = vi.fn()
+    expect(orderChannelTiles(['missing', 'b'], index, onMissing)).toEqual([children[1]])
+    expect(onMissing).toHaveBeenCalledWith('missing')
+    // 数组 lookup 也支持（本频道 children）。
+    expect(orderChannelTiles(['b'], children)).toEqual([children[1]])
+    // 没有清单 → null，调用方保持后端树顺序。
+    expect(orderChannelTiles(null, index)).toBeNull()
+    expect(orderChannelTiles([], index)).toBeNull()
+  })
+
+  // 清单文件给出的顺序就是页面渲染顺序（未列出的后端节点不渲染）；
+  // 清单里的跨一级 slug 也能从全树索引解析出来（真站家居页挂 diy-tools 等）。
+  // 家居生活 2 行走 fill=row：DOM 顺序是列优先（[0,2,1,3]），视觉第一行是 [0,1]。
+  it('renders the tile area in channelTileLists order', async () => {
+    const ordered = (channelTileList('home-living') || []).slice(0, 4)
+    expect(ordered.length).toBe(4)
+    rootWithChannel.children = [
+      { slug: 'unlisted-child', name_en: 'Unlisted', name_zh: '未列出' },
+      // 第 1 个清单项故意挂在别的一级下，模拟真站的跨一级精选。
+      { slug: ordered[0], name_en: 'Cross-level', name_zh: '跨一级' },
+    ]
+    rootWithoutChannel.children = ordered.slice(1).map((slug) => ({
+      slug,
+      name_en: `Listed ${slug}`,
+      name_zh: `清单 ${slug}`,
+    }))
+    try {
+      const wrapper = await mountPage()
+      const hrefs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      expect(hrefs).toEqual([ordered[0], ordered[2], ordered[1], ordered[3]].map((s) => `/c/${s}`))
+    } finally {
+      rootWithoutChannel.children = []
+      rootWithChannel.children = [
+        { slug: 'kitchen-essentials', name_en: 'Kitchen Essentials', name_zh: '厨房用品' },
+        { slug: 'bedding-textiles', name_en: 'Bedding & Textiles', name_zh: '床上用品' },
+      ]
+    }
   })
 })

@@ -69,15 +69,20 @@ def channel_page_cards(request):
     """频道页品类卡下方的活动卡片（no auth, read-only，13.2）。
 
     契约：``GET /api/v1/cms/channel-page-cards?channel=<channel_code>``
-    → ``{"channel":..., "layout":"row3|row3_scroll|grid2x2",
-        "items":[{id,image_url,link_url,sort_order,layout}]}``（sort_order 升序，
-    空配置或未知频道返回 ``{"items": []}``；``link_url`` 按 13.8 存原值）。
-    ``layout`` 是频道级展示布局，顶层给当前生效值、每个 item 也带一份
-    （购物端不依赖取哪一层）。缺少 ``channel`` 参数才报 400（调用方 bug）。
+    → ``{"channel":..., "layout":"row3",
+        "groups":[{group_index,layout,count}],
+        "items":[{id,group_index,image_url,link_url,sort_order,layout}]}``
+    （items 按 ``group_index`` + ``sort_order`` 升序；空配置或未知频道返回
+    ``{"items": [], "groups": []}``；``link_url`` 按 13.8 存原值）。
+    ``layout`` 是**组级**展示布局：``groups`` 逐组给 layout + 张数（按组序号
+    升序），顶层 ``layout`` 保留旧语义（= 第一个组的 layout，空则 ``row3``），
+    每个 item 也带一份自己的组布局（购物端不依赖取哪一层）。
+    缺少 ``channel`` 参数才报 400（调用方 bug）。
     """
 
     from content.channel_page_card_services import (
         ChannelPageCardError,
+        channel_groups,
         channel_layout,
         public_cards,
     )
@@ -96,6 +101,7 @@ def channel_page_cards(request):
     items = [
         {
             "id": str(row.public_id),
+            "group_index": row.group_index,
             "image_url": row.image_url,
             "link_url": row.link_url,
             "sort_order": row.sort_order,
@@ -107,6 +113,7 @@ def channel_page_cards(request):
         {
             "channel": channel_code,
             "layout": channel_layout(channel_code),
+            "groups": channel_groups(channel_code),
             "items": items,
             "total": len(items),
         }

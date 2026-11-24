@@ -1,7 +1,9 @@
 <script setup>
 // 频道页 hero：管理端配置的轮播图。
 // 0 张 → 渐变占位（不报错、不留空白）；1 张 → 静态；多张 → 箭头 + 圆点 +
-// 5s 自动轮播（hover / 键盘聚焦时暂停）。尺寸与占位一致：1264×280、r=8。
+// 5s 自动轮播（hover / 键盘聚焦时暂停）。尺寸与占位一致：1264×280、r=0
+// （真站截图对比 2026-11-23：banner 与图片圆角均为 0，我们此前是 8px）。
+// 本组件只服务频道页，首页 banner 不复用，改动不影响首页。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useLocale } from '../composables/useLocale'
@@ -156,8 +158,8 @@ onBeforeUnmount(clearTimer)
 </template>
 
 <style scoped>
-/* 与内容区同宽（1264）、高 280px、圆角 8px；无配置时是品牌红→深色渐变占位。
-   窄屏按 1264:280 等比收缩；≤48rem 改固定高度（比例会过扁）。 */
+/* 与内容区同宽（1264）、高 280px、无圆角（真站实测 0px）；无配置时是品牌
+   红→深色渐变占位。窄屏按 1264:280 等比收缩；≤48rem 改固定高度（比例会过扁）。 */
 .channel-hero {
   position: relative;
   display: flex;
@@ -166,7 +168,7 @@ onBeforeUnmount(clearTimer)
   max-height: 280px;
   margin-bottom: var(--space-8);
   padding: var(--space-5);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   overflow: hidden;
   background: linear-gradient(120deg, #c8102e 0%, #7a0d20 55%, #1a1a1a 100%);
 }

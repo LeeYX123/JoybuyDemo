@@ -47,6 +47,8 @@ vi.mock('#imports', async (importOriginal) => {
 })
 
 import ChannelPickedForYou from './ChannelPickedForYou.vue'
+import ProductCard from './ProductCard.vue'
+import BaseRatingStars from './BaseRatingStars.vue'
 
 const RouterLinkStub = {
   name: 'RouterLinkStub',
@@ -181,6 +183,89 @@ describe('ChannelPickedForYou (13.4)', () => {
     // 按钮同时带共享组件类，样式与首页【查看更多】同一份实现。
     expect(wrapper.get('.picked-for-you__more-btn').classes()).toContain('app-more-btn')
     expect(wrapper.get('.picked-for-you__more-btn').text()).toBe('More')
+  })
+
+  // 2026-11-24 频道页口径：卡片与楼层卡同款——无评分行、无品牌行、价格走
+  // retail_price 优先（推荐接口没有该字段时回退 price_min，不出现 $0.00）。
+  it('renders channel-page cards like floor cards when the page opts in', async () => {
+    ssrPayload = {
+      items: [
+        {
+          spu_public_id: 'reco-rated',
+          title: 'Rated thing',
+          brand: 'ACME',
+          price_min: 1.5,
+          rating_average: '4.5',
+          rating_count: 9,
+          original_price: 9.9,
+        },
+        {
+          spu_public_id: 'reco-retail',
+          title: 'Retail priced',
+          brand: 'ACME',
+          price_min: 8.5,
+          retail_price: '12.0000',
+        },
+      ],
+      total: 2,
+      total_pages: 1,
+      page: 1,
+      page_size: 24,
+    }
+    recoProps.value = {
+      categorySlug: 'home-living',
+      showRating: false,
+      useRetailPrice: true,
+      showBrand: false,
+    }
+    const wrapper = mount(RecoHolder, {
+      global: {
+        components: { ProductCard, BaseRatingStars },
+        stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
+      },
+    })
+    await flushPromises()
+    const cards = wrapper.findAll('.product-card')
+    expect(cards).toHaveLength(2)
+    // 无评分行、无品牌行、无划线原价。
+    expect(wrapper.find('.rating-stars').exists()).toBe(false)
+    expect(wrapper.find('.product-card__brand').exists()).toBe(false)
+    expect(wrapper.find('s').exists()).toBe(false)
+    // 有 retail_price 用它；没有则回退 price_min。
+    expect(cards[0].get('.product-card__price').text()).toBe('$1.50')
+    expect(cards[1].get('.product-card__price').text()).toBe('$12.00')
+    wrapper.unmount()
+  })
+
+  // 默认值（购物车页复用）保持改前行为：有评分行、普通 price_min 口径。
+  it('keeps the cart-page defaults (rating row shown, price_min price)', async () => {
+    ssrPayload = {
+      items: [
+        {
+          spu_public_id: 'reco-rated',
+          title: 'Rated thing',
+          brand: 'ACME',
+          price_min: 1.5,
+          rating_average: '4.5',
+          rating_count: 9,
+        },
+      ],
+      total: 1,
+      total_pages: 1,
+      page: 1,
+      page_size: 24,
+    }
+    const wrapper = mount(RecoHolder, {
+      global: {
+        components: { ProductCard, BaseRatingStars },
+        stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.find('.rating-stars').exists()).toBe(true)
+    expect(wrapper.get('.product-card__brand').text()).toBe('ACME')
+    expect(wrapper.get('.product-card__price').text()).toBe('$1.50')
+    wrapper.unmount()
   })
 
   // 需求 13.7-3：购物车页复用——不传 categorySlug = 全库池（URL 不带 category 参数）。

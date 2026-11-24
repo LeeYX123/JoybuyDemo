@@ -1,11 +1,26 @@
 import { computed } from 'vue'
-import { useCookie, useFetch, useRequestHeaders, useRuntimeConfig } from '#imports'
+import { useAsyncData, useCookie, useRequestHeaders, useRuntimeConfig, useState } from '#imports'
 
 // Buyer session state backed by WP-05 cookie sessions. SSR fetches Django
 // directly (forwarding cookies); the client uses the same-origin proxy.
+//
+// 2026-11-24 缺陷修复：整页只发一次 session 请求。此前每个 ProductCard 都通过
+// useWishlist → useBuyerAuth 各自注册一次 useFetch({ key: 'buyer-session' })，而
+// Nuxt 的默认 dedupe:'cancel' 会把先前的同名请求 abort 掉，频道页实测 24 次
+// 请求 / 23 次 abort。现在第一次调用负责唯一一次 useAsyncData 拉取并把结果写进
+// useState（随 SSR payload 一起水合），其余调用只读共享状态，不再注册请求。
+const SESSION_KEY = 'buyer-session'
+const SESSION_DATA_KEY = 'buyer-session-data'
+const SESSION_STARTED_KEY = 'buyer-session-started'
+
 export function useBuyerAuth() {
   const config = useRuntimeConfig()
   const csrfCookie = useCookie('csrftoken')
+  // 共享的会话数据（服务端 → payload → 客户端水合；客户端刷新时原地更新）。
+  const session = useState(SESSION_DATA_KEY, () => null)
+  // useState 在单个请求/单个 SPA 生命周期内是共享的：只有第一个调用者发起
+  // 请求，后续调用者（每个 ProductCard 各一次）直接读上面的共享状态。
+  const started = useState(SESSION_STARTED_KEY, () => false)
 
   function authUrl(path) {
     return import.meta.server
@@ -13,10 +28,41 @@ export function useBuyerAuth() {
       : `/api/v1/auth/buyer${path}`
   }
 
-  const { data, refresh } = useFetch(() => authUrl('/session'), {
-    key: 'buyer-session',
-    headers: { cookie: useRequestHeaders(['cookie']).cookie || '' },
-  })
+  // 只读一次：SSR 需要它把会话写进 payload（头部/心形首屏即为正确状态），
+  // 客户端在 SPA 导航后走同一份共享状态，不再按页重复请求。
+  const requestHeaders = { cookie: useRequestHeaders(['cookie']).cookie || '' }
+
+  if (!started.value) {
+    started.value = true
+    useAsyncData(
+      SESSION_KEY,
+      async () => {
+        const response = await $fetch(authUrl('/session'), {
+          headers: requestHeaders,
+          credentials: 'include',
+          ignoreResponseError: true,
+        })
+        // 写共享状态（useAsyncData 的 handler 在 Nuxt 请求上下文内运行，
+        // useState 可用；SSR 时该值随 payload 序列化到客户端）。
+        session.value = response ?? null
+        return response ?? null
+      },
+      { dedupe: 'defer' },
+    )
+  }
+
+  // 登录/登出/开店申请等写操作之后刷新共享会话（仅浏览器侧调用）。
+  async function refresh() {
+    const response = await $fetch(authUrl('/session'), {
+      headers: requestHeaders,
+      credentials: 'include',
+      ignoreResponseError: true,
+    })
+    session.value = response ?? null
+    return response
+  }
+
+  const data = computed(() => session.value)
 
   const isAuthenticated = computed(() => Boolean(data.value?.authenticated))
   const account = computed(() => data.value?.account || null)

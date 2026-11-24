@@ -2,6 +2,300 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0bz. PDP 详情图不拉伸（2026-11-24，✅ 已改 + 针对性验证通过，未 commit）
+
+> 编号说明：原定的 `0bt` 已被 2026-11-23「商品图片本地缺文件」占用（见本文件下方），故本节顺延为 `0bz`。
+
+### 我们在做什么
+需求 `功能需求迭代文档03.md` 第二十四节 / 实测 `var/pdp_imgwidth_20261124/findings.md`：
+PDP「图文详情」配图原来被 `width:100%` 拉满内容区，559px 原图放大 2.615×→1462 发虚。本批只做「不拉伸」，
+按真站口径：**原图宽显示 + 左对齐**，宽图 `max-width:100%` 等比缩小不横滚；只改 PDP 图文详情，内容页/品类页不动。
+
+### 改了什么（唯一代码文件）
+`storefront/pages/p/[id].vue`（`<style scoped>`，只在本页生效）
+- `.detail__content-images`：加 `justify-items: start`（取消 grid 的 stretch/居中拉伸），其余不变。
+- `.detail__content-images img`：`width: 100%` → `width: auto; max-width: 100%; height: auto; display: block;`（`display`/`height` 原本就有）。
+- 模板（原 923-929 行）：详情 `img` 原有 `loading="lazy"`，补 `decoding="async"`；`alt` 已有（`<区块标题> <序号>`），**未新增包装层**。
+- 未触碰 `.detail__image`（画廊主图）与 `.detail__thumb`（缩略图），样式为 scoped 也不会外泄。
+
+### 实测前后（Playwright 1440/1920/375，完全重启 dev server 后）
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 目标商品 `c01476b4…`（559×10000）1920 | 1462 宽（2.615×），left=229 | **559**，left=229＝容器 left，scale 1.000 |
+| 同上 1440 | 1462 宽 | **559**，left=73＝容器 left（容器 1294） |
+| 同上 375 | — | 293＝容器宽（等比缩小），无溢出 |
+| 宽图 `0148a4de…` / `007e9966…`（1500） | 1462 | **1462＝容器宽**（scale 0.975），无横向滚动 |
+| ~700 图 `b547d095…`（702×641） | 1462 | **702**（原宽），left=229＝容器 left，右侧留白 |
+- 页面 `scrollWidth == clientWidth`（1920/1440/375 全部），无横向滚动。
+- 影响面（findings C6）：抽样 760 张中 **<1462 的 420 张＝55.26% 此前都在被放大**；全量 43,962 张中 54.48%。
+- 与真站并排：`var/pdp_imgwidth_20261124/shots_after/side_by_side_1920.png`（左=我们，右=真站
+  `real_pdp_full.png` 同区域裁切），两侧长图都是 559 宽、距内容列左边 60px。真站容器 1512/left 204 vs 我们
+  1462/left 229 的差异来自详情卡 24px padding+1px border（既有外观差异，本批未动）。
+
+### 验证（按验证纪律仅做了针对性验证）
+1. `npx prettier --check "storefront/pages/p/[id].vue"` → All matched files use Prettier code style。
+2. `npx eslint "storefront/pages/p/[id].vue"` → exit 0，无输出。
+3. vitest / e2e：**PDP 没有单测，也没有任何 e2e 访问 `/p/`**（`tests/e2e` 只有首页快照），故未跑（不是跳过失败）。
+4. `node var/pdp_imgwidth_20261124/verify_pdp_images.mjs` → **67 PASS / 0 FAIL / 2 INFO**，覆盖 5 个场景
+   （target@1920、target@1440、wide0/wide1@1920、mid700@1920、target@375）：渲染宽、左对齐、容器封顶、
+   `loading=lazy`+`decoding=async` 属性、`justify-items:start`、无横滚、console 0 error、无 4xx/5xx；
+   画廊主图 753（nat 1248，仍走自己的 `width:753px`）、缩略图 52px 全部不变。
+   产物：`var/pdp_imgwidth_20261124/shots_after/`（截图 + 每场景 JSON + `summary.json`）。
+5. **lazy 只验到属性层**：headless Chromium 156 在本机会把 `loading=lazy` 的图提前取（对照实验：`setContent` 放
+   一张 4000px 以下的裸 lazy `<img>`，同样立即请求），所以「未进视口不请求」在本环境**不可观测**，脚本记为 INFO 而非 PASS。
+   真机/正常浏览器行为待人工确认。
+
+### 附加产出（Q4，未修图）
+`var/pdp_imgwidth_20261124/lowres_images.csv`（脚本 `lowres_scan.py`）：全库详情图 `width < 800` 清单
+**5,190 张 / 645 个 SPU**（列：spu / asset / width / height / exists / url），**缺文件 0**。
+口径 = ACTIVE SPU 的 43,217 个详情图引用（findings 的 43,962 是全状态；差额 745 属非 ACTIVE，不重抓）。
+
+### 遗留 / 下一步
+- **低分辨率原图 5,190 张**（<800，最低 180px）需爬虫重抓高清，本批未做；清单见上。
+- 详情 `img` 仍**没有 `width`/`height` 属性**（API 未返回尺寸），`width:auto` 下加载前无占位尺寸，理论上会跳动；
+  要彻底消除需接口补 `MediaAsset.width/height`（额外改动）。
+- 真站第二种渲染器「富文本内嵌图」仍铺满（885→1512，见 findings A4）；我们的数据不区分来源，
+  统一成原宽显示，与真站富文本图有差异，属已知口径选择。
+- 详情卡 24px padding + 1px border 让可用宽 1462 < 真站 1512（既有外观差异）。
+
+### 本轮新增的坑
+- **`ls`/`head`/`git` 在 Git Bash 里可能全都找不到**：本机 `PATH` 是 Windows 分号格式，bash 不认。
+  每条命令前先 `export PATH="/usr/bin:/bin:/mingw64/bin:/c/Windows/System32:/c/Program Files/Git/cmd:/e/soft/nvm/nodejs"`。
+- 目标 PDP 画廊第一项是**视频**，所以 `.detail__image img` 为 null（不是回归）；要验画廊主图用 `007e9966…`。
+- 详情图 `<img>` 无 `width/height` 属性 + `width:auto`：**未加载时**量到的宽度不是最终值，必须先滚动触发加载再量
+  （脚本 `scrollThrough()` 即为此）。
+
+## 0by. 频道页数据收口（2026-11-24，SKU 级楼层 / Offer 补齐 / 媒体补回 / u0026 / 零售价判据，✅ 全部 apply，⏸ 3 项待拍板）
+
+### 本轮用户新拍板的口径
+- **楼层按 SKU 展示**（「跟真站一样，SPU 的不同尺码重复展示」）→ 已改模型。
+- **补抓现在做**，不等其它会话。
+- **零售价口径 (b)**：零售价优先；若零售价属于「同 SPU 的另一个尺码」则回退该卡自身报价。
+
+### 已完成（数字均为实跑）
+1. **楼层改 SKU 维度**：`ChannelModuleProduct` 加 `sku`（迁移 `0019`，唯一约束 `(module,spu,sku)`），同步命令按 SKU 解析/落位次/可售判断（`sellable_sku_ids`），接口新增 `sku_public_id` + `specification`（价格/图片取该 SKU 的 Offer 与 variant 图）。测试 `test_channel_modules` 19 条、`test_sync_channel_modules` 20 条通过。
+2. **6 个「零 Offer」SKU 补建 Offer**（`var/offer_backfill_20261124/create_offers.py`）：从同 SPU 兄弟 Offer 复制商家/市场/币种、价格取楼层源 `mainPrice`，ACTIVE Offer 仅 +6。**不要用 `_activate_offers_on_publish` 建**（它会用 retail 覆盖价格）。
+3. **补抓 15 条薄商品**（`var/backfill_20261124/refetch_thin.py`）：15/15 补齐（gallery 1 → 4~11 张，`SpuDetail` 有 sections），图片本地 0 缺失。需 `/dp/`（PC）+ `/dg/`（移动端）两版合并且 `--allow-merchant-fallback`（4 条商家冲突）。
+4. **户外频道重抓并 apply**（`var/outdoor_20261124/`）：**关键坑——`_country=BE&_currency=EUR` 全量 cookie 仍是壳数据，必须用 session-only cookie**（`mfs_session/intl_cust_st/3AB9D23F7A4B3C9B/cookie_consent` + `_lang`）才有完整 `activityProductDTO`。13 个缺失 SKU 用 `.nl/dp/` 补抓入库（`source_system=joybuy_nl`），4 层 70 张。
+5. **全部楼层卡数与真站一致**：家居 20；电子 20；美妆 20+20；家电 12/16/20/13/20；健康 20/13/20/20/20/13/17/20/6；户外 10/20/20/20；宠物 20/20；母婴 19/17；游戏 20/13/13。可售三条件 0 违规、同层无重复 `(spu,sku)`、同步幂等。
+6. **`u0026` 清理**：全库 516 文本列扫描，只有 `local_category.name_zh` 6 行（控脂/经期用品/运动/笔记本/校园/邮寄），已改 ` & `；`source_category_snapshot` 7 行也修；`sync_local_categories_from_joybuy` 加 `normalize_category_name()` 防复发（单测 9 条通过）。Spu 标题 0 处。
+7. **图片体检 + 修复**（`var/media_audit_20261124/`、`var/media_repair_20261124/`）：
+   - 缺口 3,871 个 PRODUCT 资产 / 599 个 ACTIVE SPU，全部集中在 11-18(511)/11-19(87) 两批（S3 时代只写桶）。
+   - 补回 **3,708/3,870 成功**（8 线程，786s），规格图 `variant` 与 `spec_option` **100% 修复**；用户报的两个商品 `74cdae15…` 10/10、`8014bedd…` 8/8 修好并 HTTP 校验（200、非 SVG、sha 一致）。
+   - 派生图缺失 73,012 → **972**（49,852/23,172 是 variant **行数**不是资产数，资产数 11,671）。
+   - **不可恢复 162 条**（`unrecoverable.csv`）：全是 `sha_mismatch`——源站现在返回的字节与入库 sha 不同（同尺寸同 mime、体积约 0.58×，说明源站重编码过），试过 `!q70/!q80/!q90/!q100` 与 `x-oss-process` 均不命中。影响 24 个 SPU 的 126 条详情图。**未强行写入不匹配字节**（会破坏内容寻址不变量）。
+8. **零售价归属判据**（`channel_module_services._output_retail_price`）：`retail < card_price` 或「同 SPU 兄弟 SKU 报价 == retail 且本卡 != retail」→ 输出 `null`（前端回退 `price_min`）；其余保留零售价。只作用于楼层接口，搜索/推荐/CMS 不动。测试 19 条，SQL 恒定 12 次（无 N+1）。影响 15/502 张卡（Bc Babycare 3.79→回退 25.90、Pampers Size 8、Princess 风扇、ION8 Navy 等）。
+9. **前端**：`CmsProductPool` 的 `v-for key` 改 `sku_public_id || spu_public_id || index`；母婴 19/17、户外 10/20/20/20 渲染数与接口一致，无 duplicate key 警告。
+10. **零售价全量审计**（`var/retail_audit_20261124/`）：可售 SPU 18,688，`retail_price` 无 NULL；偏离 ≥1.5× 的 217 个（1.16%）**全部偏高**；根因 74 例「原价当零售价」（符合业务口径）、207 例「多变体聚合」；逐卡 63/502 受影响。`anomalies.csv` / `floor_impact.csv` / `rootcause.csv` 已出。
+
+### 最终回归（2026-11-24，`var/channel_styles_20261123/shots/final2/`）
+- 9 个频道页 + 2 个商品详情页截图与结构核对：**186 PASS / 0 FAIL / 1 N/A**（户外「每行 5 张」因只有 1 张品类卡无法观测）。
+- 502 张楼层卡逐张比对「`retail_price`（null 回退 `price_min`）」，**502/502 一致**；29 个楼层全部 194 宽 / border 0 / 无评分·品牌·划线价 / `View More ›` / 价格 `rgb(26,26,26)`。
+- 母婴两张 BC BABYCARE 显示 $25.90（不再出现 $3.79）；家电 TCL 四台按原价 289/799/1499/1999 显示。
+- 9 页 **坏图 0、console.error 0、4xx/5xx 0**；电子页上一轮的 215/407px 离群卡与 503px 行高已消失。
+- 两个 PDP（`74cdae15…` / `8014bedd…`）：`<img>` 37/37、28/28 全部 naturalWidth>0，规格色卡 4/4、2/2，图文详情 3/3、5/5 全部渲染。
+
+### 当前卡在哪（3 项待用户拍板）
+- **162 条 `sha_mismatch`**：是否做 best-effort 覆盖写入（同尺寸同 mime，风险低、可回滚为删文件），换取 24 个 SPU 的 126 张详情图可见。
+- **TNF 两件 XL 的零售价**：判据 4 把它们判成「兄弟尺码价」→ 回退成折后价（17.66 / 46.95），不再显示 40 / 105 原价。可收窄判据为「仅当差异维度是数量/套装时才算兄弟尺码」。
+- **4 条薄商品的商家仍是占位「Joybuy 自营导入」**（真实是 Gourmet / Arden Grange / PlayStation）：`ImportSourceConflict` 拒绝自动改绑，属数据治理。
+
+### 下一步
+1. 用户答复上面 3 项后处理（都是小改动）。
+2. 仍未做：`_activate_offers_on_publish` 与商家上架路径会用 `retail_price` 覆盖成交价（本次批量上架实测 0 个价格被改，全库仅 1 个 DRAFT Offer 有风险）——建议单独加保护。
+3. 模糊详情图 2,286 个（源站详情图本身只有 800px，换 1248 token 需先验证 CDN 是否支持）、12,121 个无详情图商品（`lowres_products.csv` / `no_detail_images.csv`）属后续优化。
+
+### 本轮新增的坑（必须记住）
+- **户外 `.nl` 站：全量 cookie 拿不到 `activityProductDTO`，必须 session-only cookie**；连续导航 ≥5s。
+- `/dp/` 只给 PC 数据，**规格在 `/dg/<skuId>`**，不合并就没有规格表；`StagingProduct.parser_version` max_length=32（超长 `DataError 1406`）。
+- **`_activate_offers_on_publish` 会把 Offer 价格改成 `Spu.retail_price`**；补建 Offer 要直接 `Offer.objects.create`，并且补完要核对价格没被钉成 retail。
+- `retail_price` 语义 = 抓取时的 `payload.current_price`（原价）；而 Offer 价 = `skus[].price`（折后）→ 多变体 SPU 会出现"零售价来自另一个变体"，必须按卡判断归属。
+- 媒体体检的"缺失数"要区分 **variant 行数** 与 **资产数**；判定必须用物理文件（`/media` 缺失返回 200 + SVG 占位）。
+- `sha_mismatch` ≠ 404：源站会重编码同一 URL，旧字节无法复现；`store_bytes` 遇不匹配字节会新建资产行，不能拿来兜底。
+- 媒体批量修复：目标集用 `os.walk(MEDIA_ROOT)` 建集合（89 万行逐行 `stored_file_exists` 要 214s，walk 只要 15s）；`ruff format` 必须从 `backend/` 跑（仓库配置 line-length 100，从根跑会用 88 改历史代码）。
+
+## 0bx. 6 个「Sku/Spu 均 ACTIVE 但零 Offer」的 SKU 补建 Offer（2026-11-24，✅ 已 apply + 重跑同步 + 核验，未 commit）
+
+### 我们在做什么
+承接 0bv 的 D1/D2 剩余缺口：楼层按 SKU 位次落库后，仍有一批 SKU 自身**零 Offer**（同 SPU 其它尺码有 ACTIVE Offer），
+导致母婴「Buy more save more」与户外 4 层各差若干张。用户已拍板「跟真站一样，SPU 的不同尺码重复展示」，本次只补
+这 6 条 Offer，让卡数到真站值（母婴 17 / 户外合计 70）。
+
+### 已完成（含证据）
+1. **DRY RUN**（`./.venv/Scripts/python.exe -I var/offer_backfill_20261124/create_offers.py`，零写库）：计划 6 / 跳过 0，全部有 ACTIVE 兄弟 Offer 可复制；计划落盘 `var/offer_backfill_20261124/plan.json`。
+2. **备份**：`var/offer_backfill_20261124/backup.json` —— 受影响 5 个 SPU（18094/18096/20034/20040/20041）下**全部 5 个既有 Offer** 的原值（status/price/list/promo/inventory/avail/cost/listed/removed*）。
+3. **apply**（`--apply`，同一脚本）：6 个 Offer 全部 created，**ACTIVE Offer 26,380 → 26,386（Δ+6，只多这 6 条）**，Offer 总数 26,949 → 26,955。
+
+| skuId | sku_pk | spu_pk | 商家（复制自兄弟 Offer） | 市场/币种 | current_price | list | promo | 库存 | avail | 新 offer pk |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 10020550 | 28155 | 18094 | 1 joybuy-self-operated-import（pk=24208） | GB / GBP | 14.00 | NULL | "" | 100 | UNKNOWN | 27104 |
+| 10020691 | 28150 | 18096 | 1 joybuy-self-operated-import（pk=24210） | GB / GBP | 12.98 | NULL | "" | 100 | UNKNOWN | 27105 |
+| 100002830092442 | 28160 | 20034 | 1 joybuy-self-operated-import（pk=27095） | GB / EUR | 13.99 | NULL | "" | 100 | UNKNOWN | 27106 |
+| 100002830097125 | 28163 | 20034 | 1 joybuy-self-operated-import（pk=27095） | GB / EUR | 14.99 | NULL | "" | 100 | UNKNOWN | 27107 |
+| 100373374 | 28177 | 20040 | 1 joybuy-self-operated-import（pk=27101） | GB / EUR | 17.66 | NULL | "" | 100 | UNKNOWN | 27108 |
+| 100183383 | 28180 | 20041 | 1 joybuy-self-operated-import（pk=27102） | GB / EUR | 46.95 | NULL | "" | 100 | UNKNOWN | 27109 |
+
+   - 价格 = 各自在楼层 JSON 的 `mainPrice`；两份 JSON 的 item 均**没有 `discountText` 字段** → `promotion_label=""`；`inStock` 全为 true → 库存 100；`source_availability` 与兄弟 Offer 一致（UNKNOWN）；`cost_price=None`。
+   - 溯源与兄弟 Offer 同构：`OfferSourceIdentity.source_id = "{spu_source_id}#{sku_source_id}"`（如 `117597#10020550`）、`source_url` 取该 SKU 的 `SkuSourceIdentity.source_url`；另建 `InventoryLedger`（INITIAL_IMPORT，`offer-initial:{public_id}`）+ 1 条 `PriceSnapshot`（兄弟 Offer 均含这两类记录）。
+   - **未改**任何既有 Offer / SPU / SKU 状态或价格（备份 5 条原值比对 **0 处差异**）。
+4. **重跑同步（只这两个频道）**：
+   - 母婴 dry-run：`floors=2 new=0 updated=1 unchanged=1 | products planned=17 | missing skus=0`；apply：`products written=17 | missing skus=0`。
+   - 户外 dry-run：`floors=4 new=0 updated=2 unchanged=2 | products planned=40 | missing skus=0`；apply：`products written=40 | missing skus=0`。
+
+### 核验结果（按验证纪律仅做针对性验证：只跑这两个频道 + Django test client 接口，未跑全量测试）
+- 楼层卡数（DB 按 item 计，`不可售=0` 全部楼层）：母婴 **New In 19 / Buy more save more 17**（原 15）；户外 **Bestsellers 10 / Gifting 20 / New Arrivals 20 / Final Pieces 20 = 70**（Gifting、New Arrivals 原各 18）。
+- 位次与真站 JSON 一致（无重复 SKU）：母婴 idx 11/16；户外 Gifting idx 17/19、New Arrivals idx 18/19。
+- 可售三条件（Offer ACTIVE + Sku ACTIVE + Spu ACTIVE）：两个频道 2+4 个楼层**0 违规**，`missing skus=0`，无 `not_sellable`。
+- 接口 `GET /api/v1/channels/<code>/modules`（Django test client，GB）：母婴 19/17、户外 10/20/20/20，与 DB 一致；补的 6 条 `price_min` 正确且 `currency` 正确（母婴 GBP 14.00/12.98；户外 EUR 13.99/14.99/17.66/46.95），`specification` 为各自变体规格（Size 5 / Size 8 / Navy / Green / XL …）。
+- 日志：`var/offer_backfill_20261124/verify_before.log`、`verify_after.log`、接口快照 `api_*.json`。
+
+### 当前卡在哪 / 剩余
+- 本次范围（6 条）已结清，无「需人工决定」项（6 个 SPU 都有 ACTIVE 兄弟 Offer 可复制）。
+- 母婴「Buy more save more」17 张 = 真站值，已满足 0bv 的 D1。户外 4 层 70 张 = 真站值。
+- 注意：商品卡标题仍取 SPU（如 `10020691` 卡面标题是 SPU 的 "Size 7 58 Pack"、规格行才是 `Size:8`），这是既有「标题取 SPU / 规格取 SKU」设计，未改。
+
+### 已踩过、绝对不能再踩的坑
+- **不能用 `_activate_offers_on_publish`（admin 发布语义）来建这些 Offer**：它会把 `current_price` 覆盖成 `Spu.retail_price` 并按商家折扣重算 `cost_price`。本次价格来自楼层 `mainPrice`，与 `retail_price` 不同（如 TNF T-Shirt `mainPrice=17.66` vs `retail_price=40.00`；Pampers Size 8 `12.98` vs `14.00`）——用发布语义会把页面价打回零售价。
+- **`Sku` 没有 `code` 字段**：源站 `skuId` 只能经 `SkuSourceIdentity.source_id` 解析（`Sku.objects.filter(code=...)` 直接 FieldError）。
+- **两个 source_id 命名空间不同**：`SkuSourceIdentity.source_id` = DP 的 skuId（如 `10020550`）；`OfferSourceIdentity.source_id` = `"{spuId}#{dpSkuId}"`（如 `117597#10020550`）。抄错会与同 SPU 既有 Offer 的溯源行撞 `(source_system, source_id)` 唯一约束。
+- `ChannelModuleProduct` 的排序字段是 `sort_order`（不是 `position`）；查询按 `sort_order` 才拿到真站位次。
+- 楼层 JSON 的 item 里**没有** `discountText`（只有 mainPrice / crossOffPrice / inStock），促销标签只能留空，别去 `crossOffPrice` 猜折扣。
+- 商品标题/品牌/零售价取 SPU 搜索文档，价格/规格取 SKU：补了 Offer 后卡面标题仍是 SPU 标题，属预期而非缺陷。
+- `sync_channel_modules --dry-run` 也会覆写 `var/channel_sync_20261123/missing_skus.json`（命令本身行为），会覆盖上一轮的缺失报告——需要旧报告要先备份。
+
+### 关键产物路径
+- 补建脚本 / 探针：`var/offer_backfill_20261124/{create_offers.py, probe.py, probe2.py, verify.py}`
+- 计划与备份：`var/offer_backfill_20261124/{plan.json, backup.json}`
+- 核验日志与接口快照：`var/offer_backfill_20261124/{verify_before.log, verify_after.log, api_UK_Mini_HP_Toys_Baby_and_Kids.json, api_mini_hp_nl_sports_outdoor.json}`
+
+## 0bw. 全部爬取商品批量上架（2026-11-24，✅ 已完成 apply 并验证，未 commit）
+
+### 我们在做什么
+用户要求「把所有抓取的商品，全部上架」。基线：SPU 18,826 = ACTIVE 10,355 + DRAFT 8,469 + INACTIVE 2；
+DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排除 143 个源站 404 商品
+（`var/gap_recrawl_20261121/delisted_source_removed.json` 的 `spus[].spu_pk`，用户此前明确要求下架）后目标 8,326。
+
+### apply 实测结果（2026-11-24 13:36–13:42，用户确认后执行）
+命令：`./.venv/Scripts/python.exe -I var/publish_all_20261124/publish.py --apply > var/publish_all_20261124/apply.log 2>&1`
+（后台跑；写库 168.3s + 文档重建 236.4s ≈ 6.7 分钟）
+- 写库：**上架 8,324 SPU / 激活 6,169 Offer / 失败 0**（分批 500，每批单 SPU 事务，`_activate_offers_on_publish` 抛错则该 SPU 跳过，本次 0 次）。
+- 文档重建：`8324 个 SPU，写入/重建 8324 条`（GB 市场）。
+- 汇总：`var/publish_all_20261124/summary.json`；日志 `apply.log`。
+
+### 三个计数（`verify.py` 实测，before → after）
+| 项 | before | after | 变化 |
+|---|---|---|---|
+| Spu ACTIVE | 10,355 | **18,679** | +8,324 |
+| Spu DRAFT | 8,469 | **145** | −8,324（145 = 143 排除 + 2 阻断） |
+| Spu INACTIVE | 2 | **2** | 0（未动） |
+| Offer ACTIVE | 20,202 | **26,371** | **+6,169** |
+| Offer DRAFT | 6,170 | **1** | −6,169（剩 1 个属于本来就 ACTIVE 的 SPU，不在目标内，未动） |
+| Offer INACTIVE | 568 | **568** | 0（563 是 143 个下架留痕 + 1 个目标内商家自下架 + 4 个其它） |
+| 搜索文档 total | 10,369 | **18,680** | +8,311 |
+| 搜索文档 searchable | 10,355 | **18,679** | +8,324（唯一非 searchable 是阻断 SPU `0ac5c226…` 的旧文档，未产生新文档） |
+
+### 抽查结果（`verify.py`，按验证纪律只做针对性验证，未跑全量）
+- **5 个 PDP**（Django test client `GET /api/v1/products/<uuid>`，GB，不起浏览器）：全部 **200**、有价、`is_purchasable=1`、gallery 非空且**本地文件 0 缺失**：
+  `5bc54457…` 4.99（gallery 1）、`ce709f17…` 16.00（1）、`2124b6d6…` 8.00（1）、`f9253355…` 32.99（1）、`6eb24b6c…` 59.99（7）。
+- **3 个搜索关键词**（翻页扫描 + 标题短语双查，seed 固定 20261124）：全部命中且 `doc.searchable=True`——
+  `Burgundy` total 16（p1/第7）、`FRESHASIA` total 130（p2）、`Bluetooth` total 250（p8）；对应标题短语均 p1 命中。
+- **143 个反向抽查**：PDP 3 个抽样全 **404**；searchable docs **0**；仍 DRAFT **143/143**；ACTIVE offers **0** → 一个都没被误上架。
+- **2 个阻断 SPU** 仍 `DRAFT`（`bcdae5fc…` 零 Offer/无零售价；`0ac5c226…` 仅商家自下架 Offer）。
+- 价格未被改动：从备份随机抽 300 个 SPU / 399 个 Offer 比对 `current_price` → **0 处差异**（激活前 current_price 已等于 retail_price）。
+- 结论：`verify.py` 输出 **ALL OK**，报告 `var/publish_all_20261124/verify_report.json`。
+
+### 备份与回滚
+- 备份：`E:\code\AgentProject\Joybuy\var\publish_all_20261124\backup_before.json`（**4,085,659 字节 ≈ 3.9 MB**，8,324 个 SPU / 其全部 Offer 的原值：status + current_price + cost_price + listed_at + removed_at + removed_by_platform），apply 写库前落盘。
+- 回滚：`./.venv/Scripts/python.exe -I var/publish_all_20261124/publish.py --rollback`（干跑看数量）→ 加 `--apply` 真正还原（会把 Spu/Offer 状态与报价字段还原并重建/删除搜索文档）。`--backup <路径>` 可指定其它备份；`--docs-only` 只补重建文档。
+- 回滚干跑已实测可用（合成 3 SPU 备份 → 报告需还原 3 SPU/3 Offer，DB 无变化）；**正式回滚未执行**（不需要）。
+
+### 剩余 / 后续（本次范围内已结清）
+- 143 个源站已下架商品：仍是 DRAFT，563 个 Offer 仍是 `INACTIVE + removed_by_platform=True`（用户要求永久下架，勿再上架）。
+- 2 个 INACTIVE SPU 未动；2 个阻断 DRAFT 未上架（结构上没有可售报价，需补 Offer/零售价或尊重商家自下架）。
+- 若将来重新激活报价：必须先按三条件（Offer/Sku/Spu 全 ACTIVE）确认，否则文档会被删成搜不到的 ACTIVE 商品。
+
+### 已踩过、绝对不能再踩的坑
+- **143 个源站下架商品绝对不能上架**：它们在库里仍是 `DRAFT`，且 Offer 是 `INACTIVE + removed_by_platform=True`。脚本把 `removed_by_platform=True` 的 Offer 视为红线：目标 SPU 只要含这种 Offer 就整条 blocked（本次 0 命中）。
+- `_activate_offers_on_publish` 会**把 `current_price` 覆盖成 `Spu.retail_price`、`cost_price` 按商家折扣重算**，所以备份必须同时存报价字段（不只 status），否则回滚后价格回不去。本次实测批量激活未改变任何价格（399 个抽样 0 差异）。
+- 不要用「Offer 有 ACTIVE 就以为可售」：admin 口径是三条件（Offer/Sku/Spu 全 ACTIVE）；`Spu.status=ACTIVE` 但零 ACTIVE Offer 的 SPU 会被 `refresh_spu_search_documents` 删文档，等于上了个搜不到的商品。
+- 重跑 apply 会重建备份文件：脚本按 `spu_pk` **合并**并保留最早原值，否则第二次跑就把 DRAFT 原值覆盖成 ACTIVE，回滚失效。
+- 搜索文档必须 apply 后重建（`rebuild_search_document`），只改 Spu.status 的话 `is_searchable` 仍是旧快照，列表/搜索搜不到；重建耗时与写库同量级（本次各 ~3 分钟）。
+- **apply 超过前台 10 分钟上限就必须后台跑并重定向日志**（本次 6.7 分钟仍按纪律后台执行），否则会 timeout 中断在文档重建阶段。
+- 搜索抽查不能只看第 1 页（`PAGE_SIZE=24`）：常见词（FRESHASIA/Bluetooth）目标正常在第 2/第 8 页，须翻页或改用标题短语查询。
+- Windows 控制台 GBK：脚本已 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，自写脚本照做。
+- 校验图片不能只看 HTTP 200（`media.views` 对缺失文件返回 200 + SVG 占位）；要断言本地文件存在或 content-type 非 `image/svg`。
+- **未 commit**：只新增 `var/publish_all_20261124/{publish.py,verify.py,backup_before.json,summary.json,apply.log,verify_report.json}` 与本文档；未改业务代码、未碰 9334/FB、未动抓取进程。
+
+## 0bv. 购物端 9 个一级品类频道页对齐 Joybuy（2026-11-23 ~ 11-24，✅ 主体交付且楼层卡数已与真站对齐，⏸ 2 项待用户拍板）
+
+### 我们在做什么
+把 9 个一级品类频道页（`/minihome/<channel_code>`）的样式、模块、商品数据一比一对齐 joybuy 真站：二级品类卡摆放方式、品类下方活动卡片、商品楼层（去边框单行横滑 + 商品补齐）、【精选好物】模块。用户原需求见会话记录，全部 9 页共用同一个页面文件 `storefront/pages/minihome/[code].vue`。
+
+### 用户已拍板的决策（不要再推翻）
+- 交付节奏：pilot 家居生活 → 复制其余 8 页（已完成）。
+- 样式以**真站实测值**为准，覆盖旧硬编码。
+- 二级品类**数量不增删**（缺的类目就缺），只保证摆放方式（每行张数/行数/溢出横滑）与真站一致。
+- 活动卡片：按用户逐组圈定的结果做，**品牌卡不做**（见下方群组表）。
+- 活动卡片的页面位置：宠物在第一个商品楼层之后，其余在品类卡之后；多个组按 `group_index` 上下排列。
+- 商品卡价格：**显示后台零售价 `Spu.retail_price`**，不显示折扣/划线价/促销标签，价格色统一 `#1A1A1A`。
+- 币种符号不动（全站展示层既定行为，接口 `currency=GBP`、页面显示 `$`）。
+- 楼层数据刷新用可重跑命令；**多余楼层只停用不删**；新商品走正常爬虫管线。
+
+### 已完成（含证据）
+1. **真站实测**（`var/channel_styles_20261123/`）：9 页 DOM 精确数值 `measurement.md`、楼层原始数据 `floors_live.json`（9 频道 / 29 楼层 / 507 位次）、98 张活动卡原图 `cards/`、原始 HTML `html/`。品类卡规格：小卡 140.5×200、大卡 194×254、图块 `#F5F6FA` r8、名称 18/500/24 clamp2 padding 0 10、gap 20/20（`fill=row` 的两行间距 32）。
+2. **楼层同步链路**：`backend/content/management/commands/sync_channel_modules.py`（`--dry-run` / `--channel` / `--source`），支持 list / `{channels}` / 真站 slug-dict 三种输入，去重键 `(title_en, skuId 序列)`，**只补不删**（多余楼层 `enabled=False`），逐处 dry-run 守卫，可售三条件（Offer+Sku+Spu 全 ACTIVE）过滤。测试 `content.tests.test_sync_channel_modules` 15 条。
+3. **楼层数据落地**：8 个英站频道 apply（`var/channel_sync_20261123/`），美妆 `Chinese Beauty`、健康 `Value Bundles` 按真站下线停用（**未删除**）。
+4. **商品补齐**：`var/backfill_20261124/`（DRY_RUN 守卫脚本）补抓 78 个 UK SKU / 71 个新入库，类目来源 categoryId2 54 + categoryId1 24，76/76 SPU 可售；重跑 sync 后 **家居楼层 13 → 20（与真站一致）**，8 频道缺失 SKU 91 → 11（余 11 条全是 `not_sellable`）。
+5. **精选品类清单**：`storefront/utils/channelTileLists.js`（真站 121 条 / 映射成功 108；含 12 条跨一级 L2，前端用全树索引解析）。
+6. **活动卡片组模型**：`ChannelPageCard` 加 `group_index`（迁移 `0015` 加 layout、`0016` 频道默认布局、`0017` 加 `group_index` + `row2` 枚举、`0018` 按用户圈定修正启停；全部已 apply）。`layout` 为**组级**属性（`row2` / `row3` / `row3_scroll`，`grid2x2` 仅历史兼容），服务层按组归一。公开接口 `GET /api/v1/cms/channel-page-cards?channel=` 返回 `groups:[{group_index,layout,count}]` + items 带 `group_index`。
+7. **31 张活动卡入库**（`var/channel_styles_20261123/scripts/import_channel_page_cards.py`，幂等、不删行）：家居 3、电子 3、美妆 3（组#2）、家电 3、健康 6（组#2）、户外 3、宠物 4+2、母婴 2+2、**游戏 0（原 3 行停用）**。
+8. **前端**：`ChannelPageCards.vue` + `ChannelCardRow.vue` + `utils/channelCards.js`（多组归一化、按张数推断布局）、`useChannelPageCards.js`；频道页接入 + 宠物位置分支；6 处硬差异修复（品类卡行距 32/banner 圆角 0/h1 `#1A1A1A`/楼层卡隐藏评分行/`View More ›`/标题到卡顶 24.5）；楼层卡留白 328.98 → **289.98**（品牌行 25 + footer 8 + gap 4 + padding 6 的根因）；精选好物与楼层卡同款（`show-rating/show-brand/use-retail-price` props，购物车不受影响）。
+9. **零售价口径**：`catalog/search_services.py::retail_price_text` + `serialize_search_row` 新增 `retail_price`（搜索/推荐/楼层全部生效，无新增 N+1）；频道楼层 `use_retail_price`。
+10. **管理端**：`ChannelPageCardsPanel.vue` 支持组序号输入、按组分节、张数按启用卡统计（停用卡另标）。
+11. **三个实测缺陷已修**：① `.cms-pool__row > li` 缺 `min-width: 0` 导致电子页长标题把卡撑到 407px、整行拉高到 503px → 恢复 193.98×289.98；② 母婴品类卡 `maxVisible: 22` 截断 → 有精选清单时不截断（24 张）；③ `buyer-session` 每页 24 次请求 23 abort → `useBuyerAuth.js` 改共享状态，整页仅 1 次。
+
+### 验证结果（按验证纪律只做针对性验证，未跑全量）
+- 9 页最终验收截图与结构核对：`var/channel_styles_20261123/shots/final/`（`report.md` + 9 张全页图 + measure.json）。零售价逐张核对 **474 张 0 处不符**；9 页无坏图、无 console.error、无 4xx/5xx。
+- 品类卡张数：家居 16 / 电子 16 / 美妆 8 / 家电 17 / 健康 8 / 户外 1 / 宠物 12 / 母婴 24 / 游戏 6。
+- 活动卡：家居 1×3、电子 1×3、美妆 1×3、家电 1×3、健康 1×6、户外 1×3、宠物 2 组(4+2)、母婴 2 组(2+2)、游戏 0。
+- 29 个商品楼层全部 193.98 宽 / 289.98 高；测试：`test_channel_page_cards` 28 条、`test_channel_modules` 8 条、`test_sync_channel_modules` 15 条、`test_search` 相关、前端 vitest 29 + 72 条，均通过；`ruff` / `prettier` / `eslint` 改动文件干净。
+
+### 当前卡在哪（3 项待用户拍板）
+- **D1 母婴「Buy more save more」楼层 5 张 vs 真站 17 张**：真站 17 张卡只有 5 个不同 SPU（Pampers 多尺码），而 `ChannelModuleProduct` 按 SPU 唯一。建议**接受 5 张**（改 SKU 维度要动模型/接口/管理端/导入链路）。
+- **D2 11 条 `not_sellable`（全部 Sku ACTIVE + Spu DRAFT）**：5 条只需发布 SPU、6 条还需激活 Offer；是各楼层各差 1 张的唯一原因。建议**只发布这 11 个**（清单在 `var/backfill_20261124/not_sellable_diagnosis.json`）。
+- **D3 补抓窗口**：15 个「风控壳页」商品已用楼层卡兜底入库（可售但只有 1 张主图、无图文详情/规格）；户外运动频道 4 层 75 位次仍是 NL 精简结构（需 `_country=BE&_currency=EUR` 重抓才有价格/SPU）。建议**等另一个会话的批量爬虫（run `e2d1b614`，batch26）跑完后一起补**，避免继续吃风控。
+
+### 下一步
+1. 用户答复 D1/D2/D3 后：发布 11 条 DRAFT（如同意）→ 重跑 `sync_channel_modules`（8 频道）→ 楼层商品数补齐到真站。
+2. batch26 跑完后：补抓 15 条薄商品 + 户外频道（BE/EUR 会话）→ 单独 apply 户外 → 重跑验收截图。
+3. 仍缺的品类卡（用户已同意不补）：家居缺 6（4 个汽车二级 + Seasonal Decor + 园艺 l3）、户外只能渲染 1/5（本地该一级二级树太浅）。
+
+### 已踩过、绝对不能再踩的坑
+- 真站 `/minihome/*` **匿名一律 307 → /login?risk605_login**；必须用 `crawler/debug_session.py` 的 cookie（有效），且要**短路 color-api**，否则渲染成 403 屏。
+- `debug_session.py` 的 `_lang=zh_CN`，要英文 payload 必须覆盖成 `en_GB`。
+- 真站频道页 RSC 里同一楼层**重复约 4 次**，去重键必须是 `(title, 有序 skuId 序列)`。
+- **风控壳页返回 HTTP 200**（页面标题 Joybuy Risk Control，无商品数据），只看状态码会静默导入垃圾。
+- 真站活动卡模块 `uk-pc-image-ads` 混着**品牌卡**（`/s?k=<品牌>`、`catShopBrandId`、裸 `/store/<id>`、`/cms/*brand-wall`）与**品类活动卡**（`/campaign/active/`、`/store/<id>/products`）；组别归属只能靠用户看图圈定（接触表 `var/channel_styles_20261123/card_groups.html`）。
+- 车检：`sync_channel_modules` 早期按位置兜底匹配会在**中间楼层下线时级联改名**后面所有楼层并误停用在售楼层；已改为「先标题精确、再位置兜底」，并有回归测试。
+- 可售必须三条件（`Offer ACTIVE + Sku ACTIVE + Spu ACTIVE`）；只按 Offer 过滤全库多出 1,333 个 404 商品。
+- 楼层卡宽度会被长不可断词标题撑爆：flex item 必须 `min-width: 0`，否则 `flex: 0 0 calc(...)` 失效 + `stretch` 让整行等高。
+- `ProductCard` 每张卡各注册一次 `useFetch('buyer-session')`，Nuxt `dedupe:'cancel'` 互踢 → 会话状态必须收敛成共享 `useState`。
+- 本机可能有**另一个会话的并发爬虫**在打真站（本次 batch26 `e2d1b614` 全程并发），会抢风控额度；补抓前先 `ps -W | grep python` 与 `ls -t var/logs/crawl_runs` 确认。
+- 9 页共用 `pages/minihome/[code].vue` 与 `locales/messages.js`，**并行子代理必须用精确 Edit**，否则互相覆盖。
+
+### 关键产物路径
+- 实测与截图：`var/channel_styles_20261123/`（`measurement.md`、`floors_live.json`、`cards/`、`shots/round2`、`shots/final`、`card_groups.html`）
+- 同步与补抓：`var/channel_sync_20261123/`、`var/backfill_20261124/`（含 `missing_skus.json`、`summary.json`、`not_sellable_diagnosis.json`）
+- 卡片导入脚本：`var/channel_styles_20261123/scripts/import_channel_page_cards.py`
+
+## 0bu. 本次会话记录（2026-11-24，弃 AWS 迁 DigitalOcean：官方价格调研 + 选型推荐，✅ 方案定稿，⏸ 待用户购买后派迁移任务）
+
+- **背景**：AWS 账户 11-20 关闭/停用（见 0k）后用户决定弃 AWS，改用 DigitalOcean。本任务只做价格调研与选型，未执行迁移。
+- **DO 官方现价（2026-11-24 官网抓取）**：Basic/Regular 档——$4(512M/1C/10G/0.5T)、$6(1G/1C/25G/1T)、$12(2G/1C/50G/2T)、$18(2G/2C/60G/3T)、$24(4G/2C/80G/4T)、**$48(8G/4C/160G/5T)**、$96(16G/8C/320G/6T)；Premium Intel/AMD 同规格贵 10-20%；流量超额 $0.01/GB（AWS 的 1/9）。**Spaces 对象存储 $5/月 = 250GiB 存储 + 1TiB 出网**（超额 $0.02/GiB·存储、$0.01/GiB·流量，免费 CDN，按小时折算）。区域有 FRA1 法兰克福 / LON1 伦敦。
+- **选型定稿：推荐 $48（8G/4C/160G，FRA1）+ Spaces $5 = 全套 $53/月**。理由：4C 对齐现 EC2；8G 内存对 MySQL+gunicorn×4+Nuxt SSR+Redis/Mailpit 从容；月 2.1TB 流量 < 5T 配额；媒体 56G 现量/200G 上界全在 Spaces 250G 配额内恒定 $5。**$24 = 最低可用**（无余量）；**$96 = 只有重新要求 200 并发能力上限**（容量报告 8C/16G 最低线）才需要——口径已放宽，不必。对比 AWS 时代 EC2+S3 ≈$300+/月 → **$53/月**。
+- **迁移影响清单（执行时另开任务，按既有部署配方）**：① Spaces 兼容 S3 API——代码加 `MEDIA_S3_ENDPOINT` 配置（settings + boto3 client endpoint_url + nginx 反代指向 Spaces endpoint + 爬虫同一套 env），逻辑零改动；② 媒体从本地 `var/media` 重传（AWS 沉没后这份是唯一完整副本——**注意 0bt：管线已切回 MEDIA_BACKEND=local 且补抓后本地齐全**，上行 4-8h）；③ DB 从**本地 dev 库重新 dump**（生产 DB 已随 AWS 消失；本地 dev 比旧生产新——含商家手机版/Crisp 镜像/单店约束等，等于顺带把生产升到最新）；④ 代码走 git bundle 配方（0g/0h）；⑤ TLS 顺便解决：DO 负载均衡 $12/月自带免费托管证书 或 nginx+certbot $0——上 TLS 后**回滚 cookie Secure 降级（0j 回滚条件终于兑现）**；⑥ 新机接线：ssh 别名、.env 全套（6 HMAC 密钥可原样沿用新机旧值或重新生成——没有存量会话要保）。
+- **未做/待办**：用户买 Droplet + Spaces 后交付 IP/凭据；迁移任务派子代理执行；0k 的「恢复 AWS」路线随弃用 AWS 作废。
+
 ## 0bt. 商品图片本地缺文件（2026-11-23，`store_bytes` 去重补写 ✅ / 补抓 8,651 张 ✅ 0 失败 / 复扫缺失 0，未 commit）
 
 - **任务**：用户报「商品图片本地缺文件导致网站裂图」，抽查十几个有七八个裂。实测 gallery 资产去重 **90,484**、本地缺文件 **8,651（9.56%）**，全部有 `source_url`；受影响 SPU **1,582**。前端读 `MediaUsage.role='gallery'` → `/media/<relative_path>`（dev 由 Django serve，文件不在就裂）。与 `0bk` 占位回退的关系：现在缺失图返回 200 SVG 占位而非 404，所以用户看到的是「图不对/占位」；补抓后占位不再命中。
@@ -2823,6 +3117,41 @@
 - **媒体缺失成因 B 已替换（2026-11-21，✅ 完成，未 commit、未碰 9334/FB、未启动任何抓取、未打印 Cookie）**：上面审计确认的唯一真缺图商品——首页畅销榜 pet-supplies tab 第 5 位 Dr John Silver（SPU pk=10197，`4962bdf2-c3df-4897-8efc-03fa2b1d3c1c`）——已按平台下架机制换掉，SPU/Sku/Offer 数据全部保留（只下架不删除）。**方式（复用 merchant_ops unpublish 同款口径，Django shell 执行，脚本 `var/tmp_takedown_10197.py`）**：① Spu 10197 status ACTIVE→INACTIVE（save update_fields=["status","updated_at"]）；② 该 SPU 全库仅 1 个 Offer（pk=12734，current_price £14.70）级联下架：ACTIVE→INACTIVE + removed_by_platform=True + removed_at=2026-11-21 15:16:01 UTC，update 影响 1 行，改后该 SPU ACTIVE Offer=0、全 INACTIVE；③ `refresh_spu_search_documents(spu)` 返回 1——其唯一 ProductSearchDocument 被删（改后 0 行），没有手工改搜索文档表数据（文档是派生的）。**验证（按验证纪律仅针对性验证，以下全部真实跑过，未跑的不存在）**：① DB 复核：SPU status=INACTIVE；Offer pk=12734 INACTIVE/removed_by_platform=True/removed_at 已写；ProductSearchDocument 0 行；② 搜索接口 `q=Dr John Silver` → total=0（该商品已不可搜）；③ 畅销榜 pet-supplies tab（`/api/v1/search?category=pet-supplies&sort=newest&page=1` 前 5）：4962bdf2 已掉出，**第 5 位换成 `692cb504` Harringtons Dog GF Superfoods Puppy Chick 10kg（£39.29）**，前 5（6035a87c/70d374f9/4df70820/a484069a/692cb504）image_path 非空且 `var/media` 本地文件逐一存在；④ **全 tab 交叉复查**：nav 可见 tab 共 **9 个**（home-living/electronics/beauty-personal-care/small-home-appliances/health-wellness/outdoor-sports/pet-supplies/baby-toddler/games-accessories，各取前 5）：electronics、small-home-appliances、pet-supplies、baby-toddler、games-accessories 5 个 tab 前 5 全部本地图 OK；成因 B（image_path 完全为空）畅销榜全站清零；剩余 10 条「有 image_path 但本地文件缺失」与审计成因 A（S3 遗留，等待 S3、不可拉回）数量与分布**完全吻合**——美妆 4 / 家居 2 / 健康 2 / 户外 2，按本次范围边界未动。校验脚本（只读可重跑）：`var/tmp_verify_bestsellers.py`、`var/tmp_precheck_10197.py`。**坑**：①畅销榜 tab 是 9 个不是 5 个——「5」指的是每 tab 取前 5 张卡（HomeBestsellers.vue slice(0,5)），别再按 5 个 tab 复查；②Windows 控制台默认 GBK，UTF-8 输出含 `®`/中文会 UnicodeEncodeError，校验脚本开头要 `sys.stdout.reconfigure(encoding="utf-8")`；③搜索接口 query 参数名是 `q` 不是 `query`（传错=静默全量返回 8353 条，看似正常实则没过滤）；④`manage.py shell < file` 按交互逐行解析会把缩进块打断（IndentationError），多行脚本要用 `manage.py shell -c "exec(open(path, encoding='utf-8').read())"`；⑤Django shell 里 `-I`（isolated）会砍掉 cwd 导入路径导致 ModuleNotFoundError: config，本项目自建脚本不要加 -I。
 ## 1. 我们在做什么
 
+## 批次 26 完成记录（2026-11-23 任务书，25 个 READY 品类任务（汇总 -> 关机，自动记录）
+
+- **任务**：用户指令——跑全部 READY 未执行任务（任务书正文写 26 个，逐条类目名合计 **25** 个：02=6/03=7/05=10/06=2），全部终态后汇总报告 + 关机。不 commit、不超 26 个、不碰 9334/FB、不改业务代码。**本批按指令执行 `shutdown /s /t 120`。**
+- **任务清单（DB 实查：status=READY 且 runs=0）**：02 组 141 体育与休闲 / 159 办公电子产品 / 183 国际风味 / 235 婴儿洗护 / 147 配件 / 207 高端美妆；03 组 142 女装 & 配饰 / 166 油烟机 & 排气扇 / 172 私密和经期护理 / 226 经期护理 / 178 美黑及身体防晒 / 208 运动服装鞋类及配件 / 196 高端烈酒；05 组 138 园艺 & 庭院工具 / 156 女士脱毛仪 / 229 婴儿车 / 192 宠物美容护理 / 150 微波炉 & 烤箱 / 198 打印机与扫描仪 / 186 电脑游戏 / 162 电视机 / 168 身体护理 / 228 键鼠输入；06 组 187 Virtual Reality & Simulation / 175 性保健。**第 26 个未在任务书中逐条列出，未臆测。**
+- **账号池实测（00:40 本地）**：01=9、02=6、03=10、05=8、06=8、07=10、08=4 可用；04=0（排除）。**任务组与账号组解耦**：05 组 3 个改派 01、2 个改派 07；02 组 207、03 组 208/196 改派 07，使 6 个 worker 各 ≤5 个任务（全局并发仍 ≤5）。原始组收尾已还原。
+- **执行口径**：并发 ≤5（每组 1 worker、同组串行；**但试水 run 存活期间实际并发 6**，见坑②）、单 run 超时 240min（超时不算坏）、连续 3 个坏 run（FAILED+RISK_CONTROL_FALLBACK/ACCOUNT_POOL_EXHAUSTED/CONNECTIVITY_PREFLIGHT_FAILED）熔断、无可用账号的组无 not_before 则 skip（不计坏）、spawn env 显式 `MEDIA_BACKEND=local` + `CRAWL_VARIANT_PRICE_LIMIT=0` + `CRAWL_VARIANT_PRICES=true`、派发前检查同 job 无 RUNNING run。试水 job=156（05 组 女士脱毛仪）：parsed/risk 达标的 10 分钟闸门后才放量。
+- **结果**：succeeded=19 failed=0 skipped=6；runs_started=19；breaker_tripped=False；aborted=None。本批导入 1739 个商品，风控事件累计 453。每任务结果（组/run/状态/导入）：`{"138": ["数据抓取01", "09d5cf72", "SUCCEEDED", 195], "150": ["数据抓取01", "cda68b16", "SUCCEEDED", 76], "162": ["数据抓取01", "6af5680f", "SUCCEEDED", 40], "141": ["数据抓取02", "b1d27b32", "SUCCEEDED", 180], "147": ["数据抓取02", null, "SKIPPED", null], "159": ["数据抓取02", "03d64634", "SUCCEEDED", 58], "183": ["数据抓取02", "c3c579af", "SUCCEEDED", 71], "235": ["数据抓取02", "3a9c52f9", "SUCCEEDED", 39], "142": ["数据抓取03", "f5d0637c", "SUCCEEDED", 99], "166": ["数据抓取03", null, "SKIPPED", null], "172": ["数据抓取03", null, "SKIPPED", null], "178": ["数据抓取03", null, "SKIPPED", null], "226": ["数据抓取03", null, "SKIPPED", null], "156": ["数据抓取05", "e2d1b614", "SUCCEEDED", 76], "168": ["数据抓取05", "00623af9", "SUCCEEDED", 135], "186": ["数据抓取05", "1e975e0d", "SUCCEEDED", 172], "192": ["数据抓取05", "5878fd7f", "SUCCEEDED", 119], "229": ["数据抓取05", "aa51a720", "SUCCEEDED", 28], "175": ["数据抓取06", "0e5c4fa9", "SUCCEEDED", 31], "187": ["数据抓取06", "4012be75", "SUCCEEDED", 35], "196": ["数据抓取07", null, "SKIPPED", null], "198": ["数据抓取07", "aee05d91", "SUCCEEDED", 74], "207": ["数据抓取07", "005b6ad0", "SUCCEEDED", 190], "208": ["数据抓取07", "7e91d3d5", "SUCCEEDED", 23], "228": ["数据抓取07", "32f14fe3", "SUCCEEDED", 98]}`。
+- **跳过原因**：`{"147": "no_usable_accounts", "166": "no_usable_accounts", "172": "no_usable_accounts", "178": "no_usable_accounts", "226": "no_usable_accounts", "196": "no_usable_accounts"}`
+- **质量抽查（每任务 1 个商品）**：SPU 变体价覆盖、gallery≥1、图文/规格表见 `BATCH_REPORT.md` 第 4 节；异常（gallery=0 或本地缺文件）0 个：`[]`。
+- **媒体本地化**：本批导入 SPU 全量核对 1721 个、gallery 资产 11046 个、本地缺文件 0 个、无 gallery 的 SPU 0 个。
+- **全库累计**：SPU 18826（ACTIVE 10355）、SKU 28081、Offer 26940（有价 26940）、媒体资产 149736、gallery usage 109490。
+- **剩余未执行类目（READY 按组）**：`{"default": 3, "数据抓取01": 1, "数据抓取02": 1, "数据抓取03": 1, "数据抓取04": 32, "数据抓取06": 3}`。**04 组 32 个仍卡 Google 账号验证（池 0 VALID）**，需先解封/补号。
+- **产物**：`var/batch26_20261123/BATCH_REPORT.md`（统计+抽查+全库+剩余）、`final_summary.json`、`progress.json`、`queue.log`、`pool_snapshot.json`、`task_list.json`；脚本 `build_task_list.py`/`batch26_queue.py`/`finale26.py`。零业务代码改动。
+- **坑/约束（不得再踩）**：①任务书 26 vs 逐条 25 的口径差要如实记录，不臆测补位；②06 组（VR/性保健）历史上会命中源站风控页，务必与大品类隔离、按纪律记录；③组间解耦后必须还原 account_group，否则运营页面的组会漂移；④同一 job 派发前必须确认无 RUNNING run（防双执行器）；⑤DB 里 pk 1/2（2026-11-03/04）与 pk 183（job 238）是僵尸 RUNNING，无进程对应，不是本批产物。
+
+
+## 批次 26 进行中（2026-11-24 00:41 本地启动，25 个 READY 品类任务，自动收尾链已武装）
+
+- **任务**：用户夜批指令——跑全部「status=READY 且从未有 run」的品类抓取任务，全部终态后汇总报告 + 关机（用户去睡了）。不 commit、不超 26 个、不碰 9334/FB、不改业务代码。
+- **任务数口径（重要，勿再纠结）**：任务书正文写「26 个」，但逐条列出的类目名合计 **25 个**（02=6 / 03=7 / 05=10 / 06=2）。本次按 25 个执行，**未臆测第 26 个**。DB 实查（16:35 UTC）：这 25 个全部 `status=READY` 且 `CrawlRun` 计数 0。
+- **清单（组 / pk / 名称）**：02 组 = 141 体育与休闲、159 办公电子产品、183 国际风味、235 婴儿洗护、147 配件、207 高端美妆；03 组 = 142 女装 & 配饰、166 油烟机 & 排气扇、172 私密和经期护理、226 经期护理、178 美黑及身体防晒、208 运动服装/鞋类及配件、196 高端烈酒；05 组 = 138 园艺 & 庭院工具、156 女士脱毛仪、229 婴儿车、192 宠物美容护理、150 微波炉 & 烤箱、198 打印机与扫描仪、186 电脑游戏、162 电视机、168 身体护理、228 键鼠输入；06 组 = 187 Virtual Reality & Simulation、175 性保健。
+- **账号池实测（16:40 UTC）**：01=9、02=6、03=10、05=8、06=8、07=10、08=4 可用；04=0（排除）、default/数据抓取 旧组排除。
+- **任务组与账号组解耦（6 个 worker，单体 ≤5 任务）**：01←138/150/162；02→141/159/183/235/147；03→142/166/172/226/178；05→156/229/192/186/168；06→187/175（风控高风险，单独隔离）；07←207/198/228/208/196。原始组写在 `task_list.json.original_groups`，finale26 收尾自动还原。
+- **执行口径**：全局并发 ≤5（Semaphore）+ 同组串行（每组 1 worker）；单 run 超时 240min（超时不算坏 run）；熔断=连续 3 个 FAILED 且带 RISK_CONTROL_FALLBACK/ACCOUNT_POOL_EXHAUSTED/CONNECTIVITY_PREFLIGHT_FAILED；无可用账号且无 not_before 则 skip（不计坏）；spawn env 显式 `MEDIA_BACKEND=local` + `CRAWL_VARIANT_PRICE_LIMIT=0` + `CRAWL_VARIANT_PRICES=true`；派发前检查同 job 无 RUNNING run（防双执行器）。
+- **试水（job 156 女士脱毛仪 / run e2d1b614，16:41:40 起 600s）**：parsed=15、risk=0、ACCOUNT_ROTATED=1、discovered=84、succeeded=12 → **GATE PASS（16:51:41）**。媒体抽查试水导入的 3 个商品：gallery 3/7/10、本地缺文件 0、SKU 全部有价（variants 0 或 2 与源站一致）。
+- **放量（16:51:41 起）**：142(03)/138(01)/141(02)/187(06)/207(07) 五路并发，试水 156 仍在跑 → **实际并发 6**（试水 run 终态约 1.5-2h 后才回落 ≤5）。偏差原因：试水任务在 Semaphore 之外派发。6 个 run 分属 6 个**不同**账号组、账号池不共享，故未出现抢号；如实记录，不谎称全程 ≤5。
+- **自动收尾链**：队列全终态 → 写 `final_summary.json` → 还原账号组 → 调 `finale26.py`（DB 统计 + 每任务抽 1 商品质量抽查 + 媒体本地缺文件全量核对 + 剩余未执行类目 → `var/batch26_20261123/BATCH_REPORT.md` → HANDOFF 插入完成记录 → `shutdown /s /t 120`）。另有 **watchdog26.py（pid 38304，17:23 修 bug 后重启）**每 5 分钟检查队列存活：队列意外死亡且无 finale_done 时自动兜底跑 finale（24h 兜底，队列仍存活则不抢跑）。
+- **已新增文件（全部在 var/，业务代码零改动）**：`var/batch26_20261123/` 下 `build_task_list.py`（清单校验+解耦计划）、`batch26_queue.py`（队列/闸门/熔断，改自 batch20_queue）、`finale26.py`（报告+HANDOFF+关机）、`watchdog26.py`、`launch26.py`、`launch_watchdog.py`，以及运行产物 `task_list.json`、`pool_snapshot.json`、`launcher.json`、`watchdog.json`、`queue.log`、`watchdog.log`、`progress.json`。
+- **验证（按验证纪律仅做针对性验证，以下均实跑）**：4 个新脚本 `py_compile` 全过；`ruff check var/batch26_20261123/` 仅剩 UP017/I001/ISC004/RUF100 等风格类告警（与 batch20 var/ 脚本同类，非缺陷；已给 subprocess.run 补 `check=False`）；finale26 的 DB 函数冒烟（`library_totals`/`remaining_ready`/`batch_media_check([])`/`quality_spotcheck([])`）实跑通过，剩余 READY 按组 = default 3 / 01 1 / 02 1 / 03 1 / **04 32** / 06 3；试水闸门实跑 PASS；媒体本地化抽 3 商品 `local_missing=0`。
+- **本轮新踩的坑（不得再踩）**：①Windows 下 `timeout` 会解析到 `C:\Windows\System32\timeout.exe`（不是 GNU timeout），拿它包 Python 命令会**静默不执行**（无输出、exit 0）——限时/等待要用 `until` 循环或 TaskOutput；②Git Bash 里 `wmic ... | grep` 输出可能混入 UTF-16 乱码，判进程存活优先用 `psutil.pid_exists(pid)`（见⑥的编码坑）；③试水任务在 Semaphore 之外派发，6 组结构下试水 run 存活期间实际并发为 **6**（约 1.5-2 小时，非「瞬时」），报告要如实写、别谎称全程 ≤5；④finale26 用 DEDUP_ANCHOR（完成记录的标题串）判断「完成记录是否已写过」，任何手工插入的「进行中」记录都**不能**包含该标题串，否则 finale 会误判已写过而跳过完成记录（本次已实际踩到：进行中记录的坑④里引用了旧锚点字符串，导致 finale 会跳过完成记录 → 已把 finale 的锚点改成「完成记录」专用标题串并删除本处的引用）；⑤DB 里 pk 1/2（2026-11-03/04）与 pk 183（job 238「频道楼层补齐 20261124」）是**僵尸 RUNNING**（无进程对应），不属于本批、未动仅记录。⑥**Windows 下用 `subprocess.run(["tasklist", ...], text=True)` 判进程存活会崩**：tasklist 输出是 cp936，`text=True` 按 UTF-8 解码 → `UnicodeDecodeError` → `stdout=None` → TypeError（只在 PID 不存在时触发，最容易在看门狗的兜底路径上炸掉）。正解：`psutil.pid_exists(pid)` 优先，tasklist 兜底时显式 `encoding="cp936", errors="replace"` 并 `or ""`。⑦手工往 HANDOFF 插记录时**不要引用 finale 的 DEDUP_ANCHOR 字符串**（本次真踩到：坑④里引用了旧锚点，会让 finale 误判「完成记录已存在」而静默跳过）。⑧Git Bash 里用 `python -c "..."` 写含反引号的文本，反引号会被 bash 当命令替换吃掉（静默丢字）——要写长文本必须用脚本文件，别塞进 shell 字符串。
+- **已完成（截至 17:23 UTC，26 分钟-42 分钟）**：job 187 VR & Simulation **SUCCEEDED imported=35**（11 分钟，风控 0）、job 175 性保健 **SUCCEEDED imported=31**（16 分钟，风控 0）——**06 组这两个「历史高风险」任务本次全部干净通过，未命中风控页**（与 batch20 时的经验相反，说明源站该组标记已衰减；下批可继续用）。质量抽查：187 抽 1 商品 gallery=6/本地缺 0/有价 1-1/图文段 2/规格表 1；175 抽 1 商品 gallery=4/本地缺 0/有价 1-1/图文段 1（源站无规格表）。**本批已导入 SPU 全量媒体核对：66 个 SPU 的 411 个 gallery 资产、本地缺文件 0、无 gallery 的 SPU 0** → MEDIA_BACKEND=local 生效确认。
+- **当前状态（17:23 UTC 快照）**：5 个 run 在跑（138 园艺 parsed=62、141 体育 parsed=54、142 女装 parsed=33、156 女士脱毛仪 parsed=73/84、207 美妆 parsed=96），**风控事件累计 0**、6 个组账号池全部未损（01=9/02=6/03=10/05=8/06=8/07=10 usable）。试点 run（156, 84 个商品）即将终态，05 组接着跑 229/192/186/168。
+- **ETA 与风险**：约 5 个任务/worker × 1.5-2h → 预计 **8-10 小时**（本地 09:00-11:00 前后）全终态；142（女装）速率偏低（0.8 商品/分钟，多规格变体多）**可能触发单 run 240 分钟超时**——按纪律超时不算坏 run、不算风控，finale 会计时并如实标注 timed_out。
+
+
 ## 批次 20（2026-11-22 夜批）（20 个抓取任务 → 汇总 → 关机，自动记录）
 
 - **任务**：用户指令——跑 20 个抓取任务，全部终态后汇总报告 + 关机。不 commit、不超 20 个、不碰 9334/FB、不改业务代码。**本批已按指令执行 `shutdown /s /t 120`。**
@@ -4306,6 +4635,13 @@
   - **杀后端实测**（脚本停掉 keepalive + runserver，确认 8000 零监听）：首页 SSR **0.02s 返回错误页**（不再挂）、代理 `/api/v1/cart` **8.0s 有界失败**（原来 45s 无响应乃至无限）。
   - **恢复后端实测**：`bash var/start_keepalives_detached.sh` → 后端 3s 起来，**nuxt 进程 PID 不变（37880）**的前提下 `/api/v1/cart` 50ms、`categories` 50ms、`storefront/home` 33ms 全部 200 → **确认「后端重启后必须重启 nuxt」这个坑已被消除**。
   - 现状：四端口 LISTENING（8000=38900、3000=37880、5173=1116、5174=34268），health ok，三端 200。
+- **2026-11-24 13:29 开机启动（专用启动会话，无代码改动）**：机器今天 **12:57 重启**，全停（Docker 引擎未运行、四端口空）。重建：Docker Desktop（引擎 9s 就绪、三容器 healthy）→ `migrate` = No migrations to apply → `bash var/start_keepalives_detached.sh`（后端 + storefront 两条脱管看护）→ admin/merchant 两个 vite。验证：四端口各一行 LISTENING（8000=36784、3000=33044、5173=33036、5174=17620）；health ok；首页 200/2.46s（首屏预热）、管理端 200、商家端 200；代理 `/api/v1/cart` 200/79ms（新配置生效）。
+  - **踩坑（勿再踩）**：开机后第一次数 keepalive 时看到 `backend=3 storefront=3` 是**假象**——`Get-CimInstance` 会把**检查命令自身的临时 bash 链**（含 `keepalive.sh` 字样）算进去；判断看护是否真在跑，要同时看 `CreationDate`（和命令同一秒 = 自己）与是否存在对应 server 进程。
+- **2026-11-24 14:20 购物端支持局域网访问（1 处代码 + 1 个脚本）**：用户要手机/同网设备访问购物端。
+  - **改动**：①`var/run_storefront_keepalive.sh` 的启动命令改为 `npx nuxt dev --host 0.0.0.0`（原来只绑 `::1`，局域网根本连不上；改脚本而非临时命令，重启后依然生效）；②`backend/config/settings.py` 新增 **DEBUG 下的局域网 Origin 自动信任**：用 UDP connect 探测默认出口网卡 IP + `getaddrinfo` 兜底，把所有非 127.* 的 IPv4 × (3000/5173/5174) 追加进 `CSRF_TRUSTED_ORIGINS`，换网络/换 IP 无需改配置；生产不走这段逻辑。
+  - **验证（针对性）**：`localhost:3000` 200 / `127.0.0.1:3000` 200 / **`192.168.1.165:3000` 200**（局域网 IP）；经局域网 IP 的代理 `api/v1/cart` 200/80ms；`manage.py shell` 打印 `CSRF_TRUSTED_ORIGINS` 含 `http://192.168.1.165:3000|5173|5174`；故意用 dummy token POST 时后端报 **"CSRF cookie not set"**（说明 Origin 校验已通过，不是 Origin 被拒）；`ruff check backend/config/settings.py` 通过；四端口正常、三端 200。
+  - **未完成/需用户操作**：**Windows 防火墙**三个 profile 全开且**没有 Node 的入站放行规则**，`netsh advfirewall firewall add rule name="Joybuy storefront 3000" dir=in action=allow protocol=TCP localport=3000` 因非管理员被拒 → **需以管理员身份执行该命令**（或首次连接时在弹窗点"允许访问"），否则手机仍然连不上。当前主机 IP：**192.168.1.165**（以太网），另有 WSL 172.27.160.1（不用）。
+  - 备注：管理端 5173 / 商家端 5174 仍是只绑 127.0.0.1；若要局域网访问，同样加 `--host 0.0.0.0` 即可（CSRF 白名单已覆盖它们的端口）。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 

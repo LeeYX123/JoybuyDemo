@@ -29,6 +29,22 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  // 2026-11-24 频道页【精选好物】卡片与楼层卡同款：楼层卡没有评分行、按后台
+  // 零售价展示（不显示划线价/Promo 标签）。默认值与改前完全一致（有评分、
+  // 普通价格口径），因此购物车页复用不受影响；只有频道页显式传 false/true。
+  // 推荐接口不带 retail_price 时 ProductCard 自动回退 price_min（不报错、不显示 $0.00）。
+  showRating: {
+    type: Boolean,
+    default: true,
+  },
+  useRetailPrice: {
+    type: Boolean,
+    default: false,
+  },
+  showBrand: {
+    type: Boolean,
+    default: true,
+  },
   // 每批 = 接口一页（24 件，RECOMMENDATION_PAGE_SIZE）。真站 ForYou 接口被
   // 风控挡（403）无法实测每批数量，与首页【为您推荐】同口径（measurement.md §4）。
 })
@@ -110,7 +126,12 @@ onBeforeUnmount(() => {
     <h2 class="picked-for-you__title">{{ t('reco.pickedForYou') }}</h2>
     <ul class="picked-for-you__grid">
       <li v-for="(product, index) in items" :key="`${product.spu_public_id}-${index}`">
-        <ProductCard :product="product" />
+        <ProductCard
+          :product="product"
+          :show-rating="props.showRating"
+          :use-retail-price="props.useRetailPrice"
+          :show-brand="props.showBrand"
+        />
       </li>
     </ul>
     <!-- 模块底部哨兵：进入视口触发第一次自动加载（13.4 第 2 步）。 -->

@@ -143,7 +143,10 @@ class Command(BaseCommand):
                             continue
                         resolved.append(spu_id)
                     # 两个变体 SKU id 可能解析到同一个 SPU（SKU 级身份回退），
-                    # 去重保持楼层内唯一商品（唯一约束 channel_module_product_unique）。
+                    # 去重保持楼层内唯一商品。本 seed 只写 SPU 级位次（sku=NULL）：
+                    # 2026-11-24 起唯一约束是 (module, spu, sku)，按 SKU 展开的位次
+                    # 由 sync_channel_modules 生成；重跑本命令会把楼层压回 SPU 级，
+                    # 需再跑一次 sync_channel_modules 恢复。
                     deduped = []
                     seen_in_floor = set()
                     for spu_id in resolved:

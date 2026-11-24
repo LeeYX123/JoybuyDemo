@@ -50,6 +50,20 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  // Channel variant: how many tiles a row must be able to show in the 1264px
+  // channel container (8 for 140px tiles, 6 for 194px tiles). Used as an upper
+  // bound on the tile width so `perRow` is a real constraint, not a comment.
+  perRow: {
+    type: Number,
+    default: 0,
+  },
+  // Channel variant: fill multi-row stacks by row (real site: two stacked
+  // 1-row modules — home/pets/baby) or by column (one 2-row module where each
+  // column holds `rows` tiles — electronics/appliances).
+  fill: {
+    type: String,
+    default: 'column',
+  },
 })
 
 const emit = defineEmits(['select'])
@@ -70,18 +84,35 @@ function onSelect(slug) {
 const isChannel = computed(() => props.variant === 'channel')
 
 // Chunk the flat list into vertical stacks of `columns` tiles (13.1② rows).
+// The number of visible rows is therefore exactly `rows` (truncation by rows);
+// anything that does not fit in `perRow` columns is revealed by the horizontal
+// scroller in CategoryTileCarousel, matching the live site's 2×8 / 11 columns.
+// `fill` picks the reading order: by row (two stacked 1-row modules) or by
+// column (one 2-row module), both of which the live site uses.
 const chunkedItems = computed(() => {
   if (!isChannel.value || props.columns <= 0) return null
+  const rows = props.columns
+  if (props.fill === 'row') {
+    // 行优先：第一行 = 清单前 N 个（N = 总列数）。
+    const columnCount = Math.ceil(props.items.length / rows)
+    return Array.from({ length: columnCount }, (_, column) =>
+      props.items.filter((_, index) => index % columnCount === column),
+    )
+  }
   const groups = []
-  for (let index = 0; index < props.items.length; index += props.columns) {
-    groups.push(props.items.slice(index, index + props.columns))
+  for (let index = 0; index < props.items.length; index += rows) {
+    groups.push(props.items.slice(index, index + rows))
   }
   return groups
 })
 
 const tileStyle = computed(() => {
   if (!isChannel.value) return null
-  return { '--tile-size': TILE_SIZE_BY_NAME_CHARS[props.nameChars] || TILE_SIZE_BY_NAME_CHARS[6] }
+  const style = {
+    '--tile-size': TILE_SIZE_BY_NAME_CHARS[props.nameChars] || TILE_SIZE_BY_NAME_CHARS[6],
+  }
+  if (props.perRow > 0) style['--tiles-per-row'] = String(props.perRow)
+  return style
 })
 </script>
 
@@ -91,6 +122,7 @@ const tileStyle = computed(() => {
     :class="{
       'category-tiles--row': props.row,
       'category-tiles--channel': isChannel,
+      'category-tiles--fill-row': isChannel && props.fill === 'row',
     }"
     :style="tileStyle"
   >
@@ -229,15 +261,32 @@ const tileStyle = computed(() => {
   gap: 20px;
 }
 
-.category-tiles--channel.category-tiles--row > li {
+.category-tiles--channel.category-tiles--row > li:not(.category-tiles__col) {
   flex: 0 0 auto;
 }
 
-/* Vertical stack: one column = `rows` tiles sliding together (13.1②). */
+/* Vertical stack: one column = `rows` tiles sliding together (13.1②). The
+   column width is the configured tile size, but never wider than what
+   `perRow` columns + 20px gaps fit into the channel container (1264px) — so
+   `perRow` is a real constraint: 8×140 / 6×194 fill one screen exactly while
+   perRow 5 keeps the 194px cards and leaves the right edge empty (outdoor). */
 .category-tiles--channel .category-tiles__col {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  flex: 0 0
+    min(
+      var(--tile-size, 140px),
+      calc((100% - (var(--tiles-per-row, 8) - 1) * 20px) / var(--tiles-per-row, 8))
+    );
+}
+
+/* 两种「2 行」实现的纵向间距不同（截图对比 2026-11-23 第 2 条）：
+   fill='row'（家居/宠物/母婴）= 真站两个「单行模块」上下叠 → 行距 32px
+   （首行名称底 → 次行图块顶，measurement.md §A.1 + compare.md）；
+   fill='column'（电子/家电）= 一个模块内每列竖排 → 列内行距仍 20px。 */
+.category-tiles--channel.category-tiles--fill-row .category-tiles__col {
+  gap: 32px;
 }
 
 .category-tiles--channel .category-tile {
@@ -250,16 +299,27 @@ const tileStyle = computed(() => {
   background: transparent; /* the name sits outside any background block */
 }
 
+.category-tiles--channel .category-tiles__col .category-tile {
+  width: 100%;
+}
+
 .category-tiles--channel .category-tile:hover {
   background: transparent;
 }
 
 .category-tiles--channel .category-tile__media {
-  width: var(--tile-size, 140px);
+  width: 100%;
   height: var(--tile-size, 140px);
   border-radius: 8px;
   background: #f5f6fa; /* live-measured image-block colour */
   overflow: hidden;
+}
+
+/* Inside a row column the block follows the (possibly capped) column width
+   and stays square, so 140+12+48 = 200 / 194+12+48 = 254 stays exact. */
+.category-tiles--channel .category-tiles__col .category-tile__media {
+  height: auto;
+  aspect-ratio: 1 / 1;
 }
 
 .category-tiles--channel .category-tile__image {
@@ -271,14 +331,17 @@ const tileStyle = computed(() => {
 .category-tiles--channel .category-tile__name {
   /* The real site reserves the full two-line box (2 × 24px) under every tile
      (140px tile → 200px item even when the name takes one line), so tiles in
-     a column stack at a fixed pitch. */
+     a column stack at a fixed pitch. 名称容器宽 = 卡宽，文本可用宽 = 卡宽−20
+     （padding 0 10px），实测 120 / 174px。 */
+  box-sizing: border-box;
+  width: 100%;
   min-height: 48px;
-  max-width: calc(var(--tile-size, 140px) - 20px);
   margin-top: 12px;
+  padding: 0 10px;
   font-size: 18px;
   font-weight: 500;
   line-height: 24px;
-  color: var(--colour-text);
+  color: #000;
   text-align: center;
 }
 

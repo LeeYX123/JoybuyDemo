@@ -300,6 +300,18 @@ def _first_gallery_images(rows: list[ProductSearchDocument]) -> dict[int, str]:
     return result
 
 
+def retail_price_text(spu) -> str | None:
+    """后台零售价（``Spu.retail_price``）的字符串口径：与 ``price_min`` 一致。
+
+    ``str(Decimal)`` 保留字段的 4 位小数（``19.9900``），null 输出 null。
+    ``serialize_search_row`` 只读已 ``select_related`` 的 ``row.spu``，不额外查库。
+    """
+
+    if spu is None or spu.retail_price is None:
+        return None
+    return str(spu.retail_price)
+
+
 def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") -> dict:
     return {
         "spu_public_id": str(row.spu.public_id),
@@ -308,6 +320,7 @@ def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") ->
         "category_slug": row.local_category.slug if row.local_category else None,
         "price_min": str(row.min_price) if row.min_price is not None else None,
         "price_max": str(row.max_price) if row.max_price is not None else None,
+        "retail_price": retail_price_text(row.spu),
         "currency": row.currency_code,
         "rating_average": str(row.rating_average) if row.rating_average is not None else None,
         "rating_count": row.rating_count,

@@ -83,4 +83,34 @@ describe('CategoryTileGrid', () => {
     expect(columns).toHaveLength(1)
     expect(columns[0].findAll('.category-tile')).toHaveLength(2)
   })
+
+  // 真站「2 行」两种实现：两个 1 行模块上下叠（fill=row，第一行是清单前 N 个）
+  // vs 一个 2 行模块内部每列竖排（fill=column，默认）。
+  it('channel variant can fill multi-row stacks by row or by column', () => {
+    const four = [
+      { slug: 'a', name_en: 'A', name_zh: 'A' },
+      { slug: 'b', name_en: 'B', name_zh: 'B' },
+      { slug: 'c', name_en: 'C', name_zh: 'C' },
+      { slug: 'd', name_en: 'D', name_zh: 'D' },
+    ]
+    const mountFour = (fill) =>
+      mount(CategoryTileGrid, {
+        props: { items: four, variant: 'channel', columns: 2, fill },
+        global: { stubs: { NuxtLink: RouterLinkStub } },
+      })
+    const byRow = mountFour('row').findAll('.category-tiles__col')
+    expect(
+      byRow.map((col) => col.findAll('.category-tile').map((t) => t.attributes('href'))),
+    ).toEqual([
+      ['/c/a', '/c/c'],
+      ['/c/b', '/c/d'],
+    ])
+    const byColumn = mountFour('column').findAll('.category-tiles__col')
+    expect(
+      byColumn.map((col) => col.findAll('.category-tile').map((t) => t.attributes('href'))),
+    ).toEqual([
+      ['/c/a', '/c/b'],
+      ['/c/c', '/c/d'],
+    ])
+  })
 })

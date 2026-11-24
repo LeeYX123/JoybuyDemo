@@ -367,3 +367,41 @@ class PetsOneToOneTests(TestCase):
                 LocalCategory.objects.filter(slug=slug, parent__slug="pet-supplies").exists(),
                 slug,
             )
+
+
+class EscapedAmpersandNormalizationTests(TestCase):
+    """来源快照里的字面量 ``u0026`` 不得写进本地类目名（2026-11-24）。"""
+
+    def test_sync_writes_ampersand_instead_of_escaped_u0026(self):
+        call_command("seed_standard_categories", stdout=StringIO())
+        nodes = [
+            {
+                "source_id": "minihome:UK-Mini-HP-Home-Living",
+                "name": "Home & Living",
+                "name_zh": "家居生活",
+                "parent_source_id": None,
+            },
+            {
+                "source_id": "l2:1572",
+                # 爬取口径：& 被序列化成字面量 u0026。
+                "name": "Kitchen & Dining",
+                "name_zh": "厨房 u0026 餐厅用品",
+                "parent_source_id": "minihome:UK-Mini-HP-Home-Living",
+            },
+        ]
+        version = save_source_category_version(
+            source_system="joybuy_uk",
+            version_key="test-u0026-20261124",
+            nodes=nodes,
+            captured_at=timezone.now(),
+        )
+        version.status = SourceCategoryTreeVersion.Status.PUBLISHED
+        version.published_at = timezone.now()
+        version.save(update_fields=["status", "published_at"])
+
+        call_command("sync_local_categories_from_joybuy", stdout=StringIO())
+
+        kitchen = LocalCategory.objects.get(slug="kitchen-essentials")
+        self.assertEqual(kitchen.name_zh, "厨房 & 餐厅用品")
+        self.assertNotIn("u0026", kitchen.name_zh)
+        self.assertFalse(LocalCategory.objects.filter(name_zh__contains="u0026").exists())

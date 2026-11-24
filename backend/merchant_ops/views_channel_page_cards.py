@@ -47,7 +47,7 @@ class AdminChannelPageCardsView(OpsAPIView):
         rows = ChannelPageCard.objects.all()
         if channel_code:
             rows = rows.filter(channel_code=channel_code)
-        rows = rows.order_by("channel_code", "sort_order", "public_id")
+        rows = rows.order_by("channel_code", "group_index", "sort_order", "public_id")
         items = [serialize_card(row) for row in rows]
         return Response({"channel_code": channel_code, "items": items, "total": len(items)})
 

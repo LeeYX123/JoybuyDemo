@@ -37,6 +37,16 @@ const props = defineProps({
     type: Number,
     default: 1,
   },
+  // Channel variant: tiles that must fit in one viewport row (8 / 6 / 5).
+  perRow: {
+    type: Number,
+    default: 0,
+  },
+  // Channel variant: multi-row reading order ('row' | 'column').
+  fill: {
+    type: String,
+    default: 'column',
+  },
 })
 
 const scroller = ref(null)
@@ -85,7 +95,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="category-carousel">
+  <div class="category-carousel" :class="`category-carousel--${props.variant}`">
     <div ref="scroller" class="category-carousel__track" @scroll="sync">
       <CategoryTileGrid
         row
@@ -94,6 +104,8 @@ onBeforeUnmount(() => {
         :variant="props.variant"
         :name-chars="props.nameChars"
         :columns="props.variant === 'channel' ? Math.max(props.rows, 1) : 0"
+        :per-row="props.variant === 'channel' ? props.perRow : 0"
+        :fill="props.fill"
       />
     </div>
     <div v-if="overflowing" class="category-carousel__nav">
@@ -192,5 +204,51 @@ onBeforeUnmount(() => {
   height: 100%;
   border-radius: var(--radius-pill);
   background: var(--colour-text-secondary);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Channel variant (13.1②, measured 2026-11-23 §A.1): on the live channel */
+/* page the arrows are an overlay ON the row (40×48, rgba(0,0,0,0.12)),    */
+/* invisible until the module is hovered, and there is no progress bar.    */
+/* ---------------------------------------------------------------------- */
+.category-carousel--channel {
+  position: relative;
+  gap: 0;
+}
+
+.category-carousel--channel .category-carousel__nav {
+  position: absolute;
+  inset: 0;
+  justify-content: space-between;
+  gap: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.category-carousel--channel:hover .category-carousel__nav,
+.category-carousel--channel:focus-within .category-carousel__nav {
+  opacity: 1;
+}
+
+.category-carousel--channel .category-carousel__arrow {
+  width: 40px;
+  height: 48px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: rgb(0 0 0 / 12%);
+  color: #1a1a1a;
+  font-size: 1.5rem;
+  pointer-events: auto;
+}
+
+.category-carousel--channel .category-carousel__arrow:hover:not(:disabled) {
+  border: 0;
+  background: rgb(0 0 0 / 22%);
+}
+
+.category-carousel--channel .category-carousel__bar {
+  display: none;
 }
 </style>

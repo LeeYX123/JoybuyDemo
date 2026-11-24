@@ -5,10 +5,12 @@
 2. 非法 channel_code、非 /media/ 图片一律 400；
 3. ``link_url`` 按 13.8 存原值不限制不改写（外链/站内路径/空都原样保存）；
 4. 公开接口 ``GET /api/v1/cms/channel-page-cards?channel=<code>`` 只返回该频道
-   is_active 且按 sort_order 升序的条目，契约固定为
-   ``{channel,layout,items:[{id,image_url,link_url,sort_order,layout}],total}``；
+   is_active 且按 ``group_index`` + ``sort_order`` 升序的条目，契约固定为
+   ``{channel,layout,groups:[{group_index,layout,count}],
+   items:[{id,group_index,image_url,link_url,sort_order,layout}],total}``；
    没配置返回空数组。
-5. ``layout`` 是**频道级**属性：任意一张卡写入 layout 后，该频道所有卡片同步为同一值。
+5. ``layout`` 是**组级**属性：任意一张卡写入 layout 后，只有同频道同组
+   （同 ``group_index``）的卡片同步为同一值，其它组不受影响。
 """
 
 import importlib
@@ -102,6 +104,7 @@ class ChannelPageCardTestBase(TestCase):
     def make_card(self, *, channel_code=HOME_CODE, sort_order=1, is_active=True, **kwargs):
         return ChannelPageCard.objects.create(
             channel_code=channel_code,
+            group_index=kwargs.get("group_index", 0),
             image_url=kwargs.get("image_url", "/media/cms/original/aa/bb/card.webp"),
             link_url=kwargs.get("link_url", "/c/kitchen"),
             sort_order=sort_order,
@@ -273,7 +276,7 @@ class ChannelPageCardAdminCrudTests(ChannelPageCardTestBase):
 
 
 class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
-    """``layout`` 是频道级属性（13.2 布局能力）：非法值拒绝 + 全频道同步。"""
+    """``layout`` 是**组级**属性（13.2 布局能力）：非法值拒绝 + 只同步本组。"""
 
     def test_rejects_invalid_layout_on_create_and_update(self):
         bad = self.post(
@@ -286,6 +289,7 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         )
         self.assertEqual(bad.status_code, 400)
         self.assertEqual(bad.json()["error"]["code"], "LAYOUT_INVALID")
+        self.assertIn("row2", bad.json()["error"]["message"])
         self.assertFalse(ChannelPageCard.objects.exists())
 
         card = self.make_card()
@@ -297,11 +301,12 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         card.refresh_from_db()
         self.assertEqual(card.layout, "row3")
 
-    def test_update_layout_syncs_every_card_of_that_channel_only(self):
+    def test_update_layout_syncs_every_card_of_that_group_only(self):
         self.make_card(sort_order=1)
         second = self.make_card(sort_order=2)
         self.make_card(sort_order=3)
-        other = self.make_card(channel_code=BEAUTY_CODE, sort_order=1)
+        other_group = self.make_card(sort_order=1, group_index=1, layout="row2")
+        other_channel = self.make_card(channel_code=BEAUTY_CODE, sort_order=1)
 
         patched = self.patch(
             f"/api/v1/admin/channel-page-cards/{second.public_id}",
@@ -309,19 +314,81 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         )
         self.assertEqual(patched.status_code, 200, patched.content)
         self.assertEqual(patched.json()["card"]["layout"], "row3_scroll")
-        layouts = set(
-            ChannelPageCard.objects.filter(channel_code=HOME_CODE).values_list("layout", flat=True)
+        group_layouts = set(
+            ChannelPageCard.objects.filter(channel_code=HOME_CODE, group_index=0).values_list(
+                "layout", flat=True
+            )
         )
-        self.assertEqual(layouts, {"row3_scroll"})
-        other.refresh_from_db()
-        self.assertEqual(other.layout, "row3")
+        self.assertEqual(group_layouts, {"row3_scroll"})
+        other_group.refresh_from_db()
+        self.assertEqual(other_group.layout, "row2")
+        other_channel.refresh_from_db()
+        self.assertEqual(other_channel.layout, "row3")
 
         listing = self.client.get(
             "/api/v1/admin/channel-page-cards?channel_code=" + HOME_CODE
         ).json()
-        self.assertEqual({item["layout"] for item in listing["items"]}, {"row3_scroll"})
+        by_group = {}
+        for item in listing["items"]:
+            by_group.setdefault(item["group_index"], set()).add(item["layout"])
+        self.assertEqual(by_group, {0: {"row3_scroll"}, 1: {"row2"}})
         detail = self.client.get(f"/api/v1/admin/channel-page-cards/{second.public_id}")
         self.assertEqual(detail.json()["card"]["layout"], "row3_scroll")
+
+    def test_create_with_group_index_and_layout_syncs_only_that_group(self):
+        self.make_card(sort_order=1)
+        self.make_card(sort_order=2)
+
+        created = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {
+                "channel_code": HOME_CODE,
+                "group_index": 1,
+                "image_url": "/media/cms/new.webp",
+                "layout": "row2",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["card"]["group_index"], 1)
+        self.assertEqual(created.json()["card"]["layout"], "row2")
+        self.assertEqual(created.json()["card"]["sort_order"], 1)  # 组内追加，不跨组算
+        layouts = set(
+            ChannelPageCard.objects.filter(channel_code=HOME_CODE, group_index=0).values_list(
+                "layout", flat=True
+            )
+        )
+        self.assertEqual(layouts, {"row3"})
+
+    def test_rejects_invalid_group_index(self):
+        card = self.make_card()
+        patched = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card.public_id}", {"group_index": -1}
+        )
+        self.assertEqual(patched.status_code, 400)
+        self.assertEqual(patched.json()["error"]["code"], "GROUP_INDEX_INVALID")
+
+    def test_move_card_stays_inside_its_group(self):
+        first = self.make_card(sort_order=1, group_index=0)
+        second = self.make_card(sort_order=2, group_index=0)
+        other = self.make_card(sort_order=1, group_index=1, layout="row2")
+
+        moved = self.post(
+            f"/api/v1/admin/channel-page-cards/{second.public_id}/actions",
+            {"action": "move", "direction": "up"},
+        )
+        self.assertEqual(moved.status_code, 200, moved.content)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((first.sort_order, second.sort_order), (2, 1))
+        self.assertEqual(other.sort_order, 1)
+
+        at_edge = self.post(
+            f"/api/v1/admin/channel-page-cards/{second.public_id}/actions",
+            {"action": "move", "direction": "up"},
+        )
+        self.assertEqual(at_edge.status_code, 400)
+        self.assertEqual(at_edge.json()["error"]["code"], "MOVE_AT_EDGE")
 
     def test_create_with_layout_syncs_existing_cards(self):
         self.make_card(sort_order=1)
@@ -342,7 +409,7 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         )
         self.assertEqual(layouts, {"grid2x2"})
 
-    def test_new_card_without_layout_inherits_channel_layout(self):
+    def test_new_card_without_layout_inherits_group_layout(self):
         self.make_card(sort_order=1, layout="row3_scroll")
         created = self.post(
             "/api/v1/admin/channel-page-cards",
@@ -350,6 +417,15 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         )
         self.assertEqual(created.status_code, 201, created.content)
         self.assertEqual(created.json()["card"]["layout"], "row3_scroll")
+
+    def test_new_card_in_new_group_defaults_to_row3(self):
+        self.make_card(sort_order=1, layout="row3_scroll")
+        created = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {"channel_code": HOME_CODE, "group_index": 1, "image_url": "/media/cms/new.webp"},
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["card"]["layout"], "row3")
 
     def test_card_moved_to_another_channel_adopts_target_layout(self):
         self.make_card(channel_code=BEAUTY_CODE, sort_order=1, layout="grid2x2")
@@ -363,6 +439,18 @@ class ChannelPageCardLayoutTests(ChannelPageCardTestBase):
         card.refresh_from_db()
         self.assertEqual(card.layout, "grid2x2")
         self.assertEqual(patched.json()["card"]["layout"], "grid2x2")
+
+    def test_card_moved_to_another_group_adopts_that_group_layout(self):
+        self.make_card(sort_order=1, group_index=1, layout="row2")
+        card = self.make_card(sort_order=1, group_index=0, layout="row3")
+
+        patched = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card.public_id}",
+            {"group_index": 1},
+        )
+        self.assertEqual(patched.status_code, 200, patched.content)
+        card.refresh_from_db()
+        self.assertEqual((card.group_index, card.layout), (1, "row2"))
 
     def test_data_migration_writes_channel_defaults_idempotently(self):
         health = "UK-Mini-HP-Health-and-Wellness"
@@ -412,12 +500,79 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
         self.assertEqual(payload["total"], 2)
         self.assertEqual([item["sort_order"] for item in payload["items"]], [1, 2])
         self.assertEqual([item["link_url"] for item in payload["items"]], ["/c/a", "/c/b"])
-        # 契约字段固定：id/image_url/link_url/sort_order/layout，不混入其他键
+        # 契约字段固定：id/group_index/image_url/link_url/sort_order/layout，不混入其他键
         self.assertEqual(
             set(payload["items"][0].keys()),
-            {"id", "image_url", "link_url", "sort_order", "layout"},
+            {"id", "group_index", "image_url", "link_url", "sort_order", "layout"},
         )
         self.assertEqual(payload["layout"], "row3")
+        self.assertEqual(payload["groups"], [{"group_index": 0, "layout": "row3", "count": 2}])
+
+    def test_public_orders_items_by_group_then_sort(self):
+        self.make_card(sort_order=1, group_index=1, layout="row2", link_url="/c/g1")
+        self.make_card(sort_order=2, group_index=0, link_url="/c/g0b")
+        self.make_card(sort_order=1, group_index=0, link_url="/c/g0a")
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(
+            [(item["group_index"], item["sort_order"]) for item in payload["items"]],
+            [(0, 1), (0, 2), (1, 1)],
+        )
+        self.assertEqual(
+            payload["groups"],
+            [
+                {"group_index": 0, "layout": "row3", "count": 2},
+                {"group_index": 1, "layout": "row2", "count": 1},
+            ],
+        )
+
+    def test_public_groups_follow_multi_group_channels(self):
+        """宠物 2 组、母婴 2 组、游戏空组（用户圈定的最终形态）。"""
+
+        setup = {
+            "UK-Mini-HP-Pets": [(0, "row3_scroll", 4), (1, "row2", 2)],
+            "UK-Mini-HP-Toys-Baby-and-Kids": [(0, "row2", 2), (1, "row2", 2)],
+        }
+        for channel_code, groups in setup.items():
+            for group_index, layout, count in groups:
+                for position in range(1, count + 1):
+                    self.make_card(
+                        channel_code=channel_code,
+                        group_index=group_index,
+                        sort_order=position,
+                        layout=layout,
+                    )
+        # 游戏：组 #1 是品牌卡，不保留任何组（行存在但全部下线）。
+        for position in range(1, 4):
+            self.make_card(channel_code="UK-Mini-HP-Gaming", sort_order=position, is_active=False)
+
+        pets = self.client.get("/api/v1/cms/channel-page-cards?channel=UK-Mini-HP-Pets").json()
+        self.assertEqual(
+            pets["groups"],
+            [
+                {"group_index": 0, "layout": "row3_scroll", "count": 4},
+                {"group_index": 1, "layout": "row2", "count": 2},
+            ],
+        )
+        self.assertEqual(pets["total"], 6)
+        self.assertEqual(pets["layout"], "row3_scroll")
+
+        baby = self.client.get(
+            "/api/v1/cms/channel-page-cards?channel=UK-Mini-HP-Toys-Baby-and-Kids"
+        ).json()
+        self.assertEqual(
+            baby["groups"],
+            [
+                {"group_index": 0, "layout": "row2", "count": 2},
+                {"group_index": 1, "layout": "row2", "count": 2},
+            ],
+        )
+        self.assertEqual(baby["total"], 4)
+
+        gaming = self.client.get("/api/v1/cms/channel-page-cards?channel=UK-Mini-HP-Gaming").json()
+        self.assertEqual(gaming["groups"], [])
+        self.assertEqual(gaming["items"], [])
+        self.assertEqual(gaming["layout"], "row3")
 
     def test_public_returns_channel_level_layout(self):
         self.make_card(sort_order=1, layout="row3_scroll")
@@ -431,6 +586,7 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
     def test_public_layout_defaults_to_row3_when_channel_unconfigured(self):
         payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
         self.assertEqual(payload["layout"], "row3")
+        self.assertEqual(payload["groups"], [])
 
     def test_public_returns_empty_list_when_unconfigured(self):
         response = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}")
@@ -442,3 +598,73 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
         response = self.client.get("/api/v1/cms/channel-page-cards")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "CHANNEL_REQUIRED")
+
+
+class ChannelPageCardGroupMigrationTests(ChannelPageCardTestBase):
+    """0018 数据迁移：把已有行纠正到「每频道多组」之前的最终基线状态。"""
+
+    CHANNELS = {
+        "UK-Mini-HP-Home-Living": "row3",
+        "UK-Mini-HP-Electronics": "row3",
+        "UK-Mini-HP-Beauty": "row3",
+        "UK-Mini-HP-Home-Appliances": "row3",
+        "UK-Mini-HP-Health-and-Wellness": "row3_scroll",
+        "mini-hp-nl-sports-outdoor": "row3",
+        "UK-Mini-HP-Pets": "row3_scroll",
+        "UK-Mini-HP-Toys-Baby-and-Kids": "row2",
+        "UK-Mini-HP-Gaming": "row3",
+    }
+
+    def _seed(self):
+        # 故意用历史值：母婴 grid2x2、健康 row3_scroll、其余 row3；游戏是 active。
+        for channel_code in self.CHANNELS:
+            layout = "grid2x2" if channel_code.endswith("Toys-Baby-and-Kids") else "row3"
+            if channel_code.endswith("Health-and-Wellness"):
+                layout = "row3_scroll"
+            self.make_card(channel_code=channel_code, sort_order=1, layout=layout)
+
+    def _layouts(self, channel_code):
+        return set(
+            ChannelPageCard.objects.filter(channel_code=channel_code).values_list(
+                "layout", flat=True
+            )
+        )
+
+    def test_migration_sets_final_layouts_and_groups(self):
+        migration = importlib.import_module(
+            "content.migrations.0018_channelpagecard_group_defaults"
+        )
+        self._seed()
+        total = ChannelPageCard.objects.count()
+
+        migration.apply_final_state(apps, None)
+        for channel_code, layout in self.CHANNELS.items():
+            self.assertEqual(self._layouts(channel_code), {layout}, channel_code)
+        self.assertEqual(set(ChannelPageCard.objects.values_list("group_index", flat=True)), {0})
+        gaming = ChannelPageCard.objects.filter(channel_code="UK-Mini-HP-Gaming")
+        self.assertEqual(gaming.count(), 1)  # 行保留不删
+        self.assertFalse(gaming.filter(is_active=True).exists())
+        self.assertEqual(
+            ChannelPageCard.objects.exclude(channel_code="UK-Mini-HP-Gaming")
+            .filter(is_active=False)
+            .count(),
+            0,
+        )
+
+        migration.apply_final_state(apps, None)  # 幂等
+        self.assertEqual(ChannelPageCard.objects.count(), total)
+        for channel_code, layout in self.CHANNELS.items():
+            self.assertEqual(self._layouts(channel_code), {layout}, channel_code)
+
+    def test_migration_revert_restores_0016_state(self):
+        migration = importlib.import_module(
+            "content.migrations.0018_channelpagecard_group_defaults"
+        )
+        self._seed()
+        migration.apply_final_state(apps, None)
+        migration.revert_final_state(apps, None)
+        self.assertEqual(self._layouts("UK-Mini-HP-Toys-Baby-and-Kids"), {"grid2x2"})
+        self.assertEqual(self._layouts("UK-Mini-HP-Health-and-Wellness"), {"row3_scroll"})
+        self.assertEqual(self._layouts("UK-Mini-HP-Pets"), {"row3"})
+        self.assertEqual(self._layouts("UK-Mini-HP-Gaming"), {"row3"})
+        self.assertEqual(set(ChannelPageCard.objects.values_list("is_active", flat=True)), {True})

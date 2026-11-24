@@ -14,13 +14,26 @@ import { apiRequest } from '@/lib/api'
 const LINK_RULE_HINT =
   '以 http(s):// 或 www. 开头按外链原样跳转，否则视为站内路径（如 /c/electronics）。'
 
-// 布局是**频道级**属性（后端 layout 字段）：同一频道所有卡片共用一个值。
+// 布局是**组级**属性（后端 layout 字段）：同一频道的同一个 group_index 下
+// 所有卡片共用一个值；一组卡片可以从 1 张到多张，组内再按 sort_order 排序。
 const LAYOUT_OPTIONS = [
-  { value: 'row3', label: '一行三张' },
-  { value: 'row3_scroll', label: '一屏三张可滑动' },
-  { value: 'grid2x2', label: '两列两行' },
+  { value: 'row2', label: '两列大卡（620×200）', short: '两列大卡' },
+  { value: 'row3', label: '一行三张', short: '一行三张' },
+  { value: 'row3_scroll', label: '一屏三张可滑动', short: '一屏三张可滑动' },
 ]
+// grid2x2 只是历史兼容值：仅当当前值就是它时才补进下拉，避免编辑历史卡片时
+// 下拉没有可选项而变成空白。
+const LEGACY_LAYOUT_OPTIONS = [
+  { value: 'grid2x2', label: '两列两行（历史）', short: '两列两行（历史）' },
+]
+const ALL_LAYOUT_OPTIONS = [...LAYOUT_OPTIONS, ...LEGACY_LAYOUT_OPTIONS]
 const DEFAULT_LAYOUT = 'row3'
+
+function layoutLabel(value, { short = false } = {}) {
+  const option = ALL_LAYOUT_OPTIONS.find((item) => item.value === value)
+  if (!option) return value
+  return short ? option.short : option.label
+}
 
 const state = reactive({
   channels: [],
@@ -39,6 +52,7 @@ const editor = reactive({
   image: '',
   linkUrl: '',
   sortOrder: '',
+  groupIndex: '0',
   isActive: true,
   layout: DEFAULT_LAYOUT,
 })
@@ -55,12 +69,58 @@ const channelLabel = computed(() => {
   if (!channel) return ''
   return channel.name_zh ? `${channel.name_zh}（${channel.name}）` : channel.name
 })
-// 频道布局取自任意一张卡片（后端保证同频道一致）；空频道回落到默认「一行三张」。
-const currentLayout = computed(() => state.items[0]?.layout || DEFAULT_LAYOUT)
-const currentLayoutLabel = computed(
-  () =>
-    LAYOUT_OPTIONS.find((item) => item.value === currentLayout.value)?.label || currentLayout.value,
+// 列表已按 group_index、sort_order 升序返回（后端排序），这里再聚成「组」
+// 用于分节展示，同时给顶部组概览提供数据（不需要额外接口）。
+const groups = computed(() => {
+  const map = new Map()
+  for (const row of state.items) {
+    const groupIndex = Number.isInteger(row.group_index) ? row.group_index : 0
+    let group = map.get(groupIndex)
+    if (!group) {
+      group = { groupIndex, layout: row.layout || DEFAULT_LAYOUT, rows: [], activeCount: 0 }
+      map.set(groupIndex, group)
+    }
+    group.rows.push(row)
+    if (row.is_active) group.activeCount += 1
+  }
+  return [...map.values()].sort((a, b) => a.groupIndex - b.groupIndex)
+})
+
+// 面板顶部组概览：`共 2 组：组#0 一行三张(3) / 组#1 两列大卡(2)`。
+// 张数按**启用卡**统计，与购物端实际渲染的卡片数一致；停用卡只在组标题里注明。
+const groupSummary = computed(() => {
+  if (!groups.value.length) return '共 0 组'
+  const parts = groups.value.map(
+    (group) =>
+      `组#${group.groupIndex} ${layoutLabel(group.layout, { short: true })}(${group.activeCount})`,
+  )
+  return `共 ${groups.value.length} 组：${parts.join(' / ')}`
+})
+
+// 新增卡片默认落在最后一组（没有卡片时为 0 组）。
+const maxGroupIndex = computed(() =>
+  groups.value.length ? groups.value[groups.value.length - 1].groupIndex : 0,
 )
+
+function groupLayout(groupIndex) {
+  return groups.value.find((group) => group.groupIndex === groupIndex)?.layout || DEFAULT_LAYOUT
+}
+
+// 下拉选项：历史值 grid2x2 只在当前就是它时出现（否则历史卡片编辑时下拉变空）。
+const editorLayoutOptions = computed(() => {
+  const options = [...LAYOUT_OPTIONS]
+  if (editor.layout === 'grid2x2') options.push(...LEGACY_LAYOUT_OPTIONS)
+  return options
+})
+
+// 改组序号时布局跟随目标组（后端换组未指定布局也是这个语义）；
+// 目标组还不存在时保留当前选择，等于在为新组定布局。
+function syncLayoutWithGroup() {
+  const groupIndex = Number.parseInt(editor.groupIndex, 10)
+  if (!Number.isInteger(groupIndex)) return
+  const target = groups.value.find((group) => group.groupIndex === groupIndex)
+  if (target) editor.layout = target.layout
+}
 
 async function loadChannels() {
   state.error = ''
@@ -106,8 +166,9 @@ function openCreate() {
   editor.linkUrl = ''
   editor.sortOrder = ''
   editor.isActive = true
-  // 新增时沿用该频道现有布局（频道级属性，不在这里改频道布局）。
-  editor.layout = currentLayout.value
+  // 新增时默认落在最后一组，布局沿用该组（新组则由这里选定的布局决定）。
+  editor.groupIndex = String(maxGroupIndex.value)
+  editor.layout = groupLayout(maxGroupIndex.value)
   editorError.value = ''
   editorOpen.value = true
 }
@@ -117,6 +178,7 @@ function openEdit(row) {
   editor.image = row.image_url || ''
   editor.linkUrl = row.link_url || ''
   editor.sortOrder = String(row.sort_order ?? '')
+  editor.groupIndex = String(row.group_index ?? 0)
   editor.isActive = Boolean(row.is_active)
   editor.layout = row.layout || DEFAULT_LAYOUT
   editorError.value = ''
@@ -131,21 +193,24 @@ function closeEditor() {
 async function saveCard() {
   editorBusy.value = true
   editorError.value = ''
+  const groupIndexText = String(editor.groupIndex ?? '').trim()
   const body = {
     channel_code: state.channelCode,
+    // 组序号必填；清空时按 0 组提交（非法值由后端返回 GROUP_INDEX_INVALID）。
+    group_index: groupIndexText === '' ? 0 : groupIndexText,
     image_url: editor.image,
     link_url: editor.linkUrl,
     is_active: editor.isActive,
     layout: editor.layout,
   }
-  // 新增时留空 = 后端追加到该频道末尾；编辑时必须带上当前值。
+  // 新增时留空 = 后端追加到该组末尾；编辑时必须带上当前值。
   if (editorId.value || editor.sortOrder !== '') {
     body.sort_order = editor.sortOrder
   }
   try {
     if (editorId.value) {
       await adminWrite(`/channel-page-cards/${editorId.value}`, body, 'PATCH')
-      state.notice = '活动卡片已更新（布局同步到该频道所有卡片），购物端频道页即时生效。'
+      state.notice = '活动卡片已更新（布局同步到该组所有卡片），购物端频道页即时生效。'
     } else {
       await adminWrite('/channel-page-cards', body)
       state.notice = '活动卡片已新增。'
@@ -243,7 +308,7 @@ onMounted(async () => {
             </select>
           </label>
           <div class="channel-toolbar__actions">
-            <span class="tag">布局：{{ currentLayoutLabel }}</span>
+            <span class="tag tag--gray">{{ groupSummary }}</span>
             <span class="tag">{{ state.items.length }} 张</span>
             <button
               type="button"
@@ -260,62 +325,73 @@ onMounted(async () => {
           暂无可配置的频道（一级类目没有 minihome 频道映射）。
         </p>
         <p v-else-if="state.loading" class="inline-loading">加载中…</p>
-        <table v-else-if="state.items.length" class="data-table">
-          <thead>
-            <tr>
-              <th style="width: 200px">图片</th>
-              <th>跳转链接</th>
-              <th style="width: 90px">状态</th>
-              <th style="width: 70px">顺序</th>
-              <th class="actions-col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(row, index) in state.items"
-              :key="row.id"
-              :class="{ 'row--off': !row.is_active }"
-            >
-              <td>
-                <img :src="row.image_url" alt="" class="card-thumb" />
-              </td>
-              <td class="mono">{{ row.link_url || '—' }}</td>
-              <td>
-                <button
-                  type="button"
-                  class="tag"
-                  :class="row.is_active ? 'tag--ok' : 'tag--warn'"
-                  @click="toggle(row)"
+        <div v-else-if="state.items.length" class="card-groups">
+          <section v-for="group in groups" :key="group.groupIndex" class="card-group">
+            <h3 class="card-group__head">
+              组 #{{ group.groupIndex }} · {{ layoutLabel(group.layout) }} ·
+              {{ group.activeCount }} 张
+              <span v-if="group.rows.length > group.activeCount" class="card-group__inactive">
+                （另有 {{ group.rows.length - group.activeCount }} 张停用）
+              </span>
+            </h3>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 200px">图片</th>
+                  <th>跳转链接</th>
+                  <th style="width: 90px">状态</th>
+                  <th style="width: 90px">组内顺序</th>
+                  <th class="actions-col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(row, index) in group.rows"
+                  :key="row.id"
+                  :class="{ 'row--off': !row.is_active }"
                 >
-                  {{ row.is_active ? '启用中' : '已停用' }}
-                </button>
-              </td>
-              <td class="num">{{ index + 1 }}</td>
-              <td class="actions-col">
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  :disabled="index === 0 || movingId === row.id"
-                  @click="move(row, 'up')"
-                >
-                  上移
-                </button>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  :disabled="index === state.items.length - 1 || movingId === row.id"
-                  @click="move(row, 'down')"
-                >
-                  下移
-                </button>
-                <button type="button" class="btn btn--sm" @click="openEdit(row)">编辑</button>
-                <button type="button" class="btn btn--sm btn--danger" @click="askRemove(row)">
-                  删除
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                  <td>
+                    <img :src="row.image_url" alt="" class="card-thumb" />
+                  </td>
+                  <td class="mono">{{ row.link_url || '—' }}</td>
+                  <td>
+                    <button
+                      type="button"
+                      class="tag"
+                      :class="row.is_active ? 'tag--ok' : 'tag--warn'"
+                      @click="toggle(row)"
+                    >
+                      {{ row.is_active ? '启用中' : '已停用' }}
+                    </button>
+                  </td>
+                  <td class="num">{{ index + 1 }}</td>
+                  <td class="actions-col">
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      :disabled="index === 0 || movingId === row.id"
+                      @click="move(row, 'up')"
+                    >
+                      上移
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      :disabled="index === group.rows.length - 1 || movingId === row.id"
+                      @click="move(row, 'down')"
+                    >
+                      下移
+                    </button>
+                    <button type="button" class="btn btn--sm" @click="openEdit(row)">编辑</button>
+                    <button type="button" class="btn btn--sm btn--danger" @click="askRemove(row)">
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
         <p v-else class="empty-state">该频道还没有活动卡片，频道页对应位置不会显示卡片区。</p>
       </div>
     </div>
@@ -342,13 +418,30 @@ onMounted(async () => {
 
       <div class="form-grid" style="margin-top: 12px">
         <label class="field">
+          <span class="field__label">组序号</span>
+          <input
+            v-model="editor.groupIndex"
+            type="number"
+            min="0"
+            max="99"
+            step="1"
+            placeholder="0"
+            @change="syncLayoutWithGroup"
+          />
+          <span class="field__hint">
+            从 0 开始；同组卡片聚在一起。填新组号即新建一组，布局随目标组。
+          </span>
+        </label>
+        <label class="field">
           <span class="field__label">布局</span>
           <select v-model="editor.layout">
-            <option v-for="option in LAYOUT_OPTIONS" :key="option.value" :value="option.value">
+            <option v-for="option in editorLayoutOptions" :key="option.value" :value="option.value">
               {{ option.label }}
             </option>
           </select>
-          <span class="field__hint">频道级设置：保存后该频道所有卡片统一使用此布局。</span>
+          <span class="field__hint">
+            组级设置：保存后该组所有卡片统一使用此布局，不影响同频道其它组。
+          </span>
         </label>
         <label class="field">
           <span class="field__label">跳转链接（选填）</span>
@@ -362,9 +455,9 @@ onMounted(async () => {
             type="number"
             min="0"
             max="9999"
-            placeholder="留空则排到最后"
+            placeholder="留空则排到组末"
           />
-          <span class="field__hint">数字越小越靠前。</span>
+          <span class="field__hint">组内数字越小越靠前。</span>
         </label>
       </div>
 
@@ -413,6 +506,40 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 组之间留明显间隔（同一频道多组时列表分段阅读）。 */
+.card-group + .card-group {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.card-group__head {
+  display: flex;
+  align-items: center;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #203555;
+}
+
+.card-group__head::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+/* 停用卡不参与前台渲染，张数之外单独用灰色小字注明。 */
+.card-group__inactive {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #8493a9;
 }
 
 .card-thumb {

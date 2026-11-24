@@ -1,3 +1,9 @@
 # Pinned runtime dependencies for the crawler (installed into the shared repo venv).
 Scrapy==2.13.4
 playwright==1.55.0
+# 真实浏览器兜底（登录墙 / 风控验证码 / 账号登录 / 批量登录）——代码直接 import，
+# 此前漏声明，导致新机器按 requirements 装完仍 ImportError。
+DrissionPage==4.1.1.4
+# 批量账号登录（crawler_account_batch_setup）：Excel 导入 + 2FA 自动填写。
+openpyxl==3.1.5
+PyOTP==2.10.0

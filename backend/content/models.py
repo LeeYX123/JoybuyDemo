@@ -180,21 +180,30 @@ class ChannelPageCard(models.Model):
     链接规则**存原值不限制不改写**：以 ``http(s)://``、``//``、``www.``
     开头视为外链原样跳转，否则视为站内路径（判定在消费端 helper）。
 
-    ``layout`` 是**频道级**展示布局（同一 ``channel_code`` 下所有卡片共用
-    同一个值，写入时由服务层同步全频道），不是单卡属性：
+    2026-11-24 起支持「每频道多组」：真站频道页往往有多个 ``uk-pc-image-ads``
+    模块（品牌卡 + 品类活动卡），只有其中一部分是品类活动卡。``group_index``
+    标识同一频道内的第几组（从 0 开始，按真站模块出现顺序编号），组内再按
+    ``sort_order`` 排序。
 
+    ``layout`` 是**组级**展示布局（同一 ``(channel_code, group_index)`` 内所有
+    卡片共用一个值，写入时由服务层只同步该组），不是单卡属性，也不是频道属性：
+
+    - ``row2``：一行 2 张的大卡（620×200），2 张即一行
     - ``row3``：一行 3 张（多数频道）
-    - ``row3_scroll``：一屏 3 张、共 6 张，可左右滑动（健康保健）
-    - ``grid2x2``：2 列 × 2 行共 4 张（母婴童玩）
+    - ``row3_scroll``：一屏 3 张、共 6 张，可左右滑动（健康保健 / 宠物首组）
+    - ``grid2x2``：历史值，仅为兼容旧数据保留在 choices 里，新代码不再产生
     """
 
     class Layout(models.TextChoices):
+        ROW2 = "row2", "两列两行"
         ROW3 = "row3", "一行三张"
         ROW3_SCROLL = "row3_scroll", "一屏三张可滑动"
-        GRID2X2 = "grid2x2", "两列两行"
+        GRID2X2 = "grid2x2", "两列两行（历史）"
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     channel_code = models.CharField(max_length=64)
+    # 同一频道内的组序号（0 起）；组内再按 sort_order 排序。
+    group_index = models.PositiveIntegerField(default=0)
     image_url = models.CharField(max_length=1000)
     link_url = models.CharField(max_length=1000, blank=True, default="")
     sort_order = models.PositiveIntegerField(default=0)
@@ -205,7 +214,7 @@ class ChannelPageCard(models.Model):
 
     class Meta:
         db_table = "channel_page_card"
-        ordering = ["sort_order", "public_id"]
+        ordering = ["group_index", "sort_order", "public_id"]
         indexes = [
             models.Index(
                 fields=["channel_code", "is_active", "sort_order"],
@@ -214,7 +223,7 @@ class ChannelPageCard(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.channel_code}#{self.sort_order}"
+        return f"{self.channel_code}#{self.group_index}.{self.sort_order}"
 
 
 class ChannelModule(models.Model):
@@ -256,10 +265,27 @@ class ChannelModule(models.Model):
 
 
 class ChannelModuleProduct(models.Model):
-    """频道楼层内的商品顺序（唯一 SPU + 楼层内排序）。"""
+    """频道楼层内的商品顺序（唯一 ``(spu, sku)`` + 楼层内排序）。
+
+    2026-11-24 起按 **SKU 唯一**：同一 SPU 的不同尺码/颜色各占一张卡（真站
+    母婴「Buy more save more」17 张卡只有 5 个 SPU）。``sku`` 为空表示该位次
+    只有 SPU 粒度（老数据 / 源站解析不到本地 SKU 时的兜底），渲染与旧行为一致。
+
+    唯一约束选用 ``(module, spu, sku)``：MySQL 与 SQLite 都把 NULL 视为互不
+    相等，``sku IS NULL`` 的重复行不会撞约束，因此 SPU 级去重由应用层保证
+    （同步命令按 ``(spu_id, sku_id)`` 保序去重；``(module, sort_order)`` 保证
+    同层位次不重）。没有做数据迁移：老行的 ``sku`` 保持 NULL，仍按 SPU 渲染。
+    """
 
     module = models.ForeignKey(ChannelModule, on_delete=models.CASCADE, related_name="items")
     spu = models.ForeignKey("catalog.Spu", on_delete=models.CASCADE, related_name="channel_items")
+    sku = models.ForeignKey(
+        "catalog.Sku",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="channel_items",
+    )
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -267,11 +293,15 @@ class ChannelModuleProduct(models.Model):
         db_table = "channel_module_product"
         ordering = ["module", "sort_order", "pk"]
         constraints = [
-            models.UniqueConstraint(fields=["module", "spu"], name="channel_module_product_unique"),
+            models.UniqueConstraint(
+                fields=["module", "spu", "sku"],
+                name="channel_module_product_sku_unique",
+            ),
             models.UniqueConstraint(
                 fields=["module", "sort_order"], name="channel_module_product_order_unique"
             ),
         ]
 
     def __str__(self):
-        return f"{self.module_id}:{self.spu_id}@{self.sort_order}"
+        identity = self.sku_id if self.sku_id is not None else "spu"
+        return f"{self.module_id}:{self.spu_id}/{identity}@{self.sort_order}"

@@ -46,6 +46,40 @@ CSRF_TRUSTED_ORIGINS = env_list(
     "http://m.localhost:5174",
 )
 
+# 局域网访问（手机 / 同网段电脑）：浏览器直连 nuxt/vite 时 Origin 是本机局域网 IP，
+# 例如 http://192.168.1.165:3000，不在上面的白名单里就会让所有写请求 403。
+# DEBUG 下自动把本机全部 IPv4 的三个前端端口加进去，换网络/换 IP 都不用改配置。
+# 生产不启用该逻辑（生产走真实域名，由 DJANGO_CSRF_TRUSTED_ORIGINS 显式配置）。
+if DEBUG:
+    import socket as _socket
+
+    def _local_ipv4_addresses() -> set[str]:
+        addresses: set[str] = set()
+        # UDP connect 不真正发包，但能让系统给出默认出口网卡地址。
+        try:
+            probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            try:
+                probe.connect(("8.8.8.8", 80))
+                addresses.add(probe.getsockname()[0])
+            finally:
+                probe.close()
+        except OSError:
+            pass
+        try:
+            for info in _socket.getaddrinfo(_socket.gethostname(), None, _socket.AF_INET):
+                addresses.add(info[4][0])
+        except OSError:
+            pass
+        return addresses
+
+    for _ip in _local_ipv4_addresses():
+        if _ip.startswith("127."):
+            continue
+        for _port in (3000, 5173, 5174):
+            _origin = f"http://{_ip}:{_port}"
+            if _origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS.append(_origin)
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",

@@ -24,9 +24,51 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  // 频道页楼层卡不显示星级评分行（真站楼层卡没有评分，只有首页/搜索卡有）。
+  // 默认 true，首页/搜索/精选好物的渲染结果不变。
+  showRating: {
+    type: Boolean,
+    default: true,
+  },
+  // 频道页楼层卡价格口径（2026-11-23 用户拍板）：优先后台零售价
+  // retail_price，缺失回退 price_min；不乘折扣、不显示划线原价/Promo 标签。
+  useRetailPrice: {
+    type: Boolean,
+    default: false,
+  },
+  // 频道页卡片不显示品牌行（真站楼层卡没有品牌，2026-11-24）。默认 true，
+  // 首页/搜索/购物车卡片渲染结果不变；频道页楼层仍由页面 :deep() 隐藏，
+  // 精选好物走该 prop。
+  showBrand: {
+    type: Boolean,
+    default: true,
+  },
 })
 
-const price = computed(() => formatDisplayPrice(props.product.price_min ?? props.product.price))
+const price = computed(() => {
+  if (props.useRetailPrice) {
+    const raw = props.product.retail_price
+    if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+      // retail_price 契约是十进制字符串；万一带币种符号则原样展示。
+      return formatDisplayPrice(raw) ?? String(raw).trim()
+    }
+  }
+  return formatDisplayPrice(props.product.price_min ?? props.product.price)
+})
+
+// 划线原价：只在数据里真的带有更高的原价时渲染（真站折扣卡 14/500/20
+// line-through）。搜索/推荐接口目前不返回原价字段，因此首页与搜索页的卡片
+// 渲染结果不变；频道页的配色/字号由该页 :deep() 覆盖。
+// 频道楼层走零售价口径 → 一律不出划线价（用户明确：不显示折扣）。
+const originalPrice = computed(() => {
+  if (props.useRetailPrice) return null
+  const raw = props.product.original_price ?? props.product.compare_at_price ?? null
+  if (raw === null || raw === undefined || raw === '') return null
+  const original = Number(raw)
+  const current = Number(props.product.price_min ?? props.product.price)
+  if (!Number.isFinite(original) || !Number.isFinite(current) || original <= current) return null
+  return formatDisplayPrice(original)
+})
 
 const image = computed(() => {
   const path = props.product.image_path || props.product.image
@@ -50,6 +92,8 @@ const viewed = computed(() => {
 const badge = computed(() => {
   // Marketing labels (新客福利/优惠x%/送达/满减/自营) never render (req 5-6);
   // delivery-estimate labels are suppressed by the display rule too.
+  // 频道楼层走零售价口径时连促销标签也不渲染（用户明确：不显示 Promo 标签）。
+  if (props.useRetailPrice) return ''
   return props.product.badge && !isDeliveryLabel(props.product.badge) ? props.product.badge : ''
 })
 
@@ -96,19 +140,30 @@ function toggleWishlist() {
       <BaseSkeleton v-else variant="block" />
     </NuxtLink>
     <div class="product-card__body">
-      <p v-if="brand" class="product-card__brand">{{ brand }}</p>
+      <p v-if="props.showBrand && brand" class="product-card__brand">{{ brand }}</p>
       <h3 class="product-card__title">
         <NuxtLink class="product-card__title-link" :to="href">{{ props.product.title }}</NuxtLink>
       </h3>
       <p v-if="viewed" class="product-card__viewed">{{ viewed }}</p>
       <BaseRatingStars
-        v-if="props.rank === 0 && (props.product.rating || props.product.rating_average)"
+        v-if="
+          props.showRating &&
+          props.rank === 0 &&
+          (props.product.rating || props.product.rating_average)
+        "
         :rating="Number(props.product.rating_average ?? props.product.rating ?? 0)"
         :count="Number(props.product.review_count ?? 0)"
         show-count
       />
       <div class="product-card__footer">
-        <p v-if="price" class="product-card__price">{{ price }}</p>
+        <p
+          v-if="price"
+          class="product-card__price"
+          :class="{ 'product-card__price--discount': Boolean(originalPrice) }"
+        >
+          {{ price }}
+          <s v-if="originalPrice" class="product-card__price-original">{{ originalPrice }}</s>
+        </p>
         <span v-if="badge" class="product-card__badge">{{ badge }}</span>
         <NuxtLink class="product-card__add" :to="href" :aria-label="t('detail.addToCart')">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -261,6 +316,19 @@ function toggleWishlist() {
   color: #1a1a1a;
   font-size: 1.125rem;
   font-weight: var(--font-weight-bold);
+}
+
+/* 折扣卡：现价红、原价划线（真站 18/700/24 + 14/500/20 line-through）。 */
+.product-card__price--discount {
+  color: #e1251b;
+}
+
+.product-card__price-original {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--colour-text-secondary);
 }
 
 .product-card__badge {
