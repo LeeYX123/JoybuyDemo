@@ -771,4 +771,187 @@ describe('minihome channel page', () => {
       ]
     }
   })
+
+  // 批次 BA（2026-11-24）：户外页真站 5 张二级卡，清单按真站顺序映射到本地
+  // 节点，其中 2 个挂在别的一级下（Sports Nutrition / Smartwatches），靠全树
+  // 索引解析。此前清单只写 1 条 → 页面只出 1 张。
+  it('renders all five outdoor-sports tiles in real-site order', async () => {
+    const ordered = channelTileList('outdoor-sports')
+    expect(ordered).toEqual([
+      'sports-apparel-shoes',
+      'fitness-training',
+      'outdoor-gear',
+      'sports-nutrition-performance',
+      'wearables',
+    ])
+    routeState.params = { code: 'mini-hp-nl-sports-outdoor' }
+    treeCategories.value = [
+      {
+        slug: 'outdoor-sports',
+        name_en: 'Outdoor & Sports',
+        name_zh: '户外运动',
+        channel_code: 'mini-hp-nl-sports-outdoor',
+        children: [
+          { slug: 'outdoor-gear', name_en: 'Outdoors', name_zh: '户外' },
+          { slug: 'sports-apparel-shoes', name_en: 'Sports Apparel', name_zh: '运动服装' },
+          { slug: 'fitness-training', name_en: 'Sports & Leisure', name_zh: '体育与休闲' },
+        ],
+      },
+      {
+        slug: 'health-wellness',
+        name_en: 'Health',
+        name_zh: '健康',
+        channel_code: 'UK-Mini-HP-Health-and-Wellness',
+        children: [
+          {
+            slug: 'sports-nutrition-performance',
+            name_en: 'Sports Nutrition',
+            name_zh: '运动 & 体能',
+          },
+        ],
+      },
+      {
+        slug: 'electronics',
+        name_en: 'Electronics',
+        name_zh: '电子',
+        channel_code: 'UK-Mini-HP-Electronics',
+        children: [{ slug: 'wearables', name_en: 'Wearables', name_zh: '可穿戴设备' }],
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      const hrefs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      expect(hrefs).toEqual(ordered.map((slug) => `/c/${slug}`))
+      expect(hrefs).toHaveLength(5)
+      // 清单全量展示（5 张 = 清单长度），没有横滑余量入口。
+      expect(wrapper.find('.channel-tiles__more-link').exists()).toBe(false)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 2026-11-24 批次：home-living 真站 22 张，本地可映射 17 张（汽车/节庆装饰
+  // 本地无节点；Watering & Garden Tools 提升映射到 outdoor-sports/garden）。
+  // 顺序严格按真站，跨根 garden 靠全树索引解析；2 行 fill=row → DOM 列优先。
+  it('renders all seventeen home-living tiles in real-site order', async () => {
+    const expected = [
+      'kitchen-essentials',
+      'home-storage',
+      'bedding-textiles',
+      'bath',
+      'home-decor',
+      'party-decorations',
+      'home-arts-craft-supplies',
+      'gift-wrap-cards',
+      'furniture',
+      'garden',
+      'diy-tools',
+      'fitness-training',
+      'outdoor-gear',
+      'notebooks-pads-paper',
+      'pens-pencils',
+      'school-office-accessories',
+      'mailing-supplies',
+    ]
+    expect(channelTileList('home-living')).toEqual(expected)
+    const asNode = (slug) => ({ slug, name_en: slug, name_zh: slug })
+    const crossRoot = ['garden', 'diy-tools', 'fitness-training', 'outdoor-gear']
+    treeCategories.value = [
+      {
+        slug: 'home-living',
+        name_en: 'Home & Living',
+        name_zh: '家居生活',
+        channel_code: 'UK-Mini-HP-Home-Living',
+        children: expected.filter((slug) => !crossRoot.includes(slug)).map(asNode),
+      },
+      {
+        slug: 'outdoor-sports',
+        name_en: 'Outdoor & Sports',
+        name_zh: '户外运动',
+        channel_code: 'mini-hp-nl-sports-outdoor',
+        children: crossRoot.map(asNode),
+      },
+    ]
+    try {
+      const wrapper = await mountPage()
+      const hrefs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      // fill=row + rows=2：DOM 按列刷，视觉第一行是清单前 9 个。
+      const columnCount = Math.ceil(expected.length / 2)
+      const domOrder = []
+      for (let column = 0; column < columnCount; column += 1) {
+        for (let index = 0; index < expected.length; index += 1) {
+          if (index % columnCount === column) domOrder.push(expected[index])
+        }
+      }
+      expect(hrefs).toEqual(domOrder.map((slug) => `/c/${slug}`))
+      expect(hrefs).toHaveLength(17)
+      expect(wrapper.find('.channel-tiles__more-link').exists()).toBe(false)
+    } finally {
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 2026-11-24 批次：games 真站 9 张，本地可映射 7 张（Gaming Keyboards /
+  // Gaming Mice 本地只有合并的 peripherals，跳过；Monitors 跨根解析）。
+  it('renders all seven games tiles in real-site order', async () => {
+    const expected = [
+      'controllers',
+      'console-games',
+      'consoles',
+      'gaming-memory-storage',
+      'gaming-pc-components',
+      'monitors',
+      'steering-wheels',
+    ]
+    expect(channelTileList('games-accessories')).toEqual(expected)
+    const asNode = (slug) => ({ slug, name_en: slug, name_zh: slug })
+    treeCategories.value = [
+      {
+        slug: 'games-accessories',
+        name_en: 'Gaming',
+        name_zh: '游戏',
+        channel_code: 'UK-Mini-HP-Gaming',
+        children: expected.filter((slug) => slug !== 'monitors').map(asNode),
+      },
+      {
+        slug: 'computers-accessories',
+        name_en: 'Computers & Accessories',
+        name_zh: '计算机与配件',
+        channel_code: 'UK-Mini-HP-Electronics',
+        children: [asNode('monitors')],
+      },
+    ]
+    try {
+      routeState.params = { code: 'UK-Mini-HP-Gaming' }
+      const wrapper = await mountPage()
+      const hrefs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      // games 1 行（rows=1，按列刷 = 清单顺序）。
+      expect(hrefs).toEqual(expected.map((slug) => `/c/${slug}`))
+      expect(hrefs).toHaveLength(7)
+    } finally {
+      routeState.params = { code: 'UK-Mini-HP-Home-Living' }
+      treeCategories.value = [rootWithChannel, rootWithoutChannel]
+    }
+  })
+
+  // 批次 BA 通用兜底：清单解析后不足 2 张时回退该品类树 children（过滤 nav
+  // 隐藏项与该频道的 hiddenTiles），避免其他频道再出现「只剩 1 张」。
+  it('falls back to the category tree children when the curated list resolves to one tile', async () => {
+    rootWithChannel.children = [
+      // 清单里只有 kitchen-essentials 能解析到 → 解析后 1 张，触发兜底。
+      { slug: 'kitchen-essentials', name_en: 'Kitchen Essentials', name_zh: '厨房用品' },
+      { slug: 'cat-food', name_en: 'Cat Food', name_zh: '猫粮' },
+      { slug: 'nav-hidden-child', name_en: 'Hidden', name_zh: '导航隐藏', visible_in_nav: false },
+    ]
+    try {
+      const wrapper = await mountPage()
+      const hrefs = wrapper.findAll('.category-tile').map((tile) => tile.attributes('href'))
+      expect(hrefs).toEqual(['/c/kitchen-essentials', '/c/cat-food'])
+    } finally {
+      rootWithChannel.children = [
+        { slug: 'kitchen-essentials', name_en: 'Kitchen Essentials', name_zh: '厨房用品' },
+        { slug: 'bedding-textiles', name_en: 'Bedding & Textiles', name_zh: '床上用品' },
+      ]
+    }
+  })
 })

@@ -2,7 +2,346 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0bz. PDP 详情图不拉伸（2026-11-24，✅ 已改 + 针对性验证通过，未 commit）
+## 0cd. 批次 BC：Facebook / Google 登录接入方案（2026-11-24，📋 仅方案文档，零代码改动，未 commit）
+
+### 我们在做什么
+用户要求给购物端接入 Facebook 登录 + Google 登录，问「怎么申请账号、怎么接入」。本轮**只做调研与方案**，
+新增 `docs/16-third-party-login.md`，**未改任何代码、未加依赖、未建迁移**。
+
+### 已完成
+1. 盘点现有认证事实（决定方案形状）：
+   - `BuyerAccount.auth_provider` 已有 EMAIL/FACEBOOK/GOOGLE，但注释写明「三方 OAuth 只做按钮占位」；
+   - `buyer_account_has_identifier` 约束要求 email/phone 至少一个非空 → **Facebook 不返回邮箱时无法建号**；
+   - 会话是 host-only cookie（`services.py:240`）→ **OAuth 回调必须落在商城同域**（生产 nginx 单域 `/api/`→8000
+     成立；本地走 Nuxt `/api` 代理落 `localhost:3000` 成立）；
+   - 后端出网统一 stdlib `urllib.request`（`merchant_ops/crisp_mirror.py:143`），requirements 里**没有 requests**；
+   - 登录页当前**没有**第三方按钮（`AuthForm.vue:11` 注释：按需求不渲染），locale 有 en/zh/de/fr/nl 五种。
+2. 核实两家控制台 2026-11 的实际路径：Google 已改版为 **Google Auth Platform**（Branding / Audience / Data access /
+   Clients 四个分区，External 一旦选定不可改）；Facebook 用 **use case「Authenticate and request data from users
+   with Facebook Login」**（use case 加了不能删）。官方口径要点：
+   - Google `openid`+`email`+`profile` 为 **non-sensitive**，发布**无需验证**；External 默认 Testing（100 测试用户上限）；
+   - Facebook `public_profile`+`email` **免 App Review**；Development 模式**只有 App 角色能登**；localhost 回调
+     **自动放行**，Live 必须 https；`id` 是 **app-scoped**，Graph **不返回 email_verified 且 email 可能为空**。
+3. 方案文档落地 `docs/16-third-party-login.md`：A 部分（两家逐步申请 + 必填项表 + 坑）、B 部分（`BuyerIdentity`
+   新表 migration 0008、3 个接口 `/api/v1/auth/buyer/oauth/{providers,<p>/start,<p>/callback}`、
+   state+PKCE 一次性 cache、next 白名单、5 个 env、前端 3 处改动、国内出网要求）、分批计划 P0–P4 与验收清单。
+4. **18:10 用户改了一条需求并已同步进文档**：Facebook 可能拿不到邮箱，**用 FB 的 app-scoped id 做唯一键，
+   允许账号没有邮箱，登录后照常购物**。据此推翻上午的「补录邮箱页」方案，改为：
+   - 唯一键 `(provider, subject)`，FB 用户即使 `email IS NULL` 也能建号登录，前端不需要 `/auth/complete-profile`；
+   - `BuyerAccount` 新增 `identity_bound` 布尔列，`buyer_account_has_identifier` 约束放宽为
+     「email 非空 或 phone 非空 或 `identity_bound=True`」（迁移 0008 一并做）；`email` 的唯一约束**不动**
+     （MySQL/SQLite 都允许多行 NULL）；
+   - 逐处核查了「无邮箱账号」会踩的现成代码：`notifications/services.py:126-129` 会对 None 调 `.split`
+     （有 try/except 兜底，但通知静默丢失 + 日志刷 traceback）、`merchant_ops/views_buyers.py:20,23` 后台账号名
+     空白、`:75,246` 搜不到人；`orders/checkout/cart` 后端不读 buyer.email，下单链路不受影响；找回密码是 stub。
+
+### 当前卡在哪（等用户动作）
+**决策已拍板（2026-11-24）**：
+1. **同邮箱合并策略 = Google 已验证邮箱可自动合并**（`email_verified==true` 且本地同邮箱存在 → 同事务建 identity 并登录）；
+   **Facebook 不自动合并**（Graph 无验证标记、email 不可信）。合并只建 identity + 更新 last_login，**不改**
+   `auth_provider`/`display_name`/`balance`/`purchase_whitelisted`，并打无明文日志 `buyer_identity_linked`。
+   风险用户已接受：本仓邮箱注册未做验证码，存在「别人先用你的 Gmail 注册 → 你 Google 登录被并入该账号」的可能；
+   缓解项（给邮箱注册补验证码）列后续迭代，**不阻塞本次接入**。
+2. **Facebook 无邮箱 = 直接建号，无补录页**（18:10 变更，覆盖上午的补录方案）：`email=NULL`、
+   `identity_bound=True`、`password=make_password(None)`，`display_name` 走 `_ensure_display_name`，
+   `purchase_whitelisted` 默认 True → 可加购下单。代价是要放宽 `buyer_account_has_identifier`（见上）。
+3. **推进顺序：用户先去两家控制台申请凭据（本轮不写代码）**。等 4 个值 + 2 条回调地址到位后再开 P1/P2。
+
+### 下一步
+1. **等用户回填凭据**：`GOOGLE_OAUTH_CLIENT_ID/SECRET`、`FACEBOOK_OAUTH_APP_ID/SECRET`、`OAUTH_REDIRECT_BASE_URL`；
+   两家控制台都要登记 `.../api/v1/auth/buyer/oauth/<provider>/callback`（本地 `http://localhost:3000/...`）。
+2. 凭据到位后按 P1（`BuyerIdentity` + 迁移 0008 含约束放宽 + `oauth.py` + mock 单测，必须覆盖无邮箱建号）
+   → P2（按钮 / 5 locale 文案 / 后台账号名与搜索兜底）→ P3（真账号联调，含一个只绑手机号的 FB 账号）推进。
+3. 前端按钮要按 `/oauth/providers` 返回渲染，凭据未配置时不出现死按钮（本地无凭据仍可开发其余功能）。
+
+### 本轮新增的坑（后续实现别再踩）
+- 回调千万别写成 `localhost:8000` 或独立 API 域：本地因 cookie 不区分端口会「看起来能登」，生产必炸。
+- Facebook 返回的 `email` 既可能为空也不可信，不能作为合并依据；`id` 跨 App 不通用，且只作 identity 去重键，
+  对外仍用 `BuyerAccount.public_id`。
+- **不要把「必有 email/phone」当成不变量**：无邮箱账号会踩 `notifications/services.py:126`（None.split）、
+  `merchant_ops/views_buyers.py:20,23`（空白账号名）、`:75,246`（搜不到）。改 OAuth 时顺手一起改，别只改建号。
+- `state` 取出即删，并校验 provider 与签发时一致；`next` 只允许站内相对路径。
+- 别为 OAuth 引 `requests`/`google-auth`，与仓库出网写法（stdlib）保持一致。
+
+### 验证（按验证纪律）
+本轮**零代码改动**，未跑任何单测/lint；仅做了代码事实核查（文件与行号见上）与两家官方文档核实。文档自身无验证命令。
+
+## 0cc. 批次 BB：小批补抓验证（详情/规格/SKU 链路，2026-11-24，✅ 10/10 入库，未 commit）
+
+### 我们在做什么
+为 `var/channel_audit_20261124/findings.md` B 组缺口（438 个频道 SPU 里 45% 无详情、48.2% 无评分、
+89.7% 单 SKU）做**小批补抓验证**：户外 10 个「无详情 + 单 SKU」SPU，验证「补抓能否拿到 详情 + 规格表 + 多 SKU」。
+**只验证，未启动 197 个全量**；未改后端/爬虫代码；未 commit。报告 `var/crawl_detail_pilot_20261124/report.md`。
+
+### 结果（四项比例，实跑）
+- 详情 `content_sections` 非空 **10/10 = 100%**（每商品 1–3 块）；画廊 1 → 4~11 张。
+- 规格表非空 **9/10 = 90%**（唯一 0 的 `5b67f52e` 真站本身无参数表）。
+- SKU 数 >1 **1/10 = 10%**（只有 `5753670b` 6 SKU，新建 5 个）。
+- 评分有值 **8/10 = 80%**（缺的 2 个页面本身无评分）；搜索文档与 `SpuDetail` 评分 **10/10 一致**；
+  商城 API 回读 10/10 有详情、9/10 有规格表。
+- `colorSizePartList` 出现 10/10 HTML，解析器对 6/10 抽到变体（8/10/10/1/3/3），导入日志 24 条 `WP45 variant …`。
+
+### 关键结论（断点）
+1. **断点 B1 商家绑定（已解，脚本级）**：`.nl` PDP 无卖家块（`venderId="0"`），导入不带 seller 就落到
+   `Joybuy 自营导入`（pk=1），与既有 Offer 的 `SOURCE_VIRTUAL Joybuy`（pk=762，映射 `joybuy_nl|Joybuy`）冲突
+   → 首跑 10/10 `ImportSourceConflict`。修法：payload 的 `source_seller_id/name` 按既有 Offer 反查
+   `MerchantSourceMapping` 对齐 → 10/10 成功。**不要改 `import_services`（拒绝改绑是正确不变量）**。
+2. **断点 B2 规格表 100% 依赖 `/dg/`**：10/10 的 `/dp/` 解析 `specifications = 0`，合并 `/dg/` 后 0~11。
+   全量必须 `/dp/`+`/dg/` 两版合并，否则规格表收益为 0。
+3. **断点 B3「单 SKU」根因不是漏抓**：真站变体 skuId 逐个查 `SkuSourceIdentity` → 库中缺 **0**，
+   大多数**早已各自成独立 SPU**（如 ION8 8 色：1 在本 SPU、7 在 `dc037655…`/`4b41c192…`/`65035783…`），
+   导入器 `skipped_identity_conflict` 拒绝二次绑定。靠补抓变多 SKU 只对「库里没有独立 SPU」的变体有效，
+   其余需 **SPU 合并**（数据治理，未做）。新 SKU 无价会被 `offers_skipped_no_price` 跳过（有 SKU 无 Offer）。
+4. **断点 B5 价格上浮**：6/10 商品重抓后 Offer 价 = PDP 页面价（如 654ade12 40.99→105.00、f0076bed 26.39→42.90），
+   因楼层卡抓的是促销价、PDP 这批无折扣。**全量会让频道页价格普遍上浮，需用户拍板**。
+5. B4 评分 2/10 源站无；B6 `.co.uk` 同 SKU 解析为空（143 个 `joybuy_uk` 的全量方案需另验）。
+
+### 全量预估（等用户确认）
+- 实测基线 8 个样品/16 次请求/562s ≈ **70s/商品**（30s 间隔）；`/dp/`+`/dg/` 各 1 次请求。
+- 197 个 = 394 次请求：**30s 间隔 ≈ 4.3h**；**5s 间隔 ≈ 1.6h**；只跑户外 54 ≈ 25min（5s）。
+- 风控：本批 16 次请求 0 风控/0 403，`.nl` 今天三批均干净；但 11-23 单轮 417 `RISK_CONTROL_FALLBACK`、
+  11-16 9 账号 10 分钟全灭。建议分频道分批（≤30/批、批间停 3–5min）、单线程 5s、遇 1 次壳页即停。
+- 账号池：76 行未删，ACTIVE+VALID 58，按 `_account_unusable_reason` 可用 **57**（`risk_flagged_at` 只锁 6h，
+  历史 flag 全过期）。**别把「有 flag」当不可用**。
+
+### 验证（按验证纪律仅做了针对性验证）
+1. `select_samples.py` → 选样 10 + 账号池预检 PASS（57 ≥3）。
+2. `pilot_fetch.py --preflight-only` → 网络 `robots.txt` 200/1089B PASS。
+3. `pilot_fetch.py --apply --min-interval 30 --allow-merchant-fallback` → 16 次请求，10/10 `refreshed`，
+   0 风控/0 403/0 维护页，无新建 SPU（今日 9 个新 SPU 属 05:57–06:00 另一批次）。
+4. `analyze_variant_split.py` + `verify_pilot.py` → `pilot_result.csv`（10 行 29 列）、四项比例如上、
+   留档 `real_pdp_100002830090524.html` 交叉核对同为 8 变体。
+5. `post_check.py` → 库 + `GET /api/v1/products/<id>`：10/10 有详情、9/10 规格表、10/10 评分与文档一致、
+   `duplicate_offers` 0；`Spu.status` 全 ACTIVE、可售 Offer 10/10。
+6. 商城 SSR 抽查 `http://localhost:3000/p/0be5ba92-…` → 200/96KB，含 `Product Description` +
+   `Materials & Specifications` + `4.0 / 13 reviews`。
+7. 未跑任何单测/lint（本批**零代码改动**，只新增 `var/crawl_detail_pilot_20261124/` 下的数据脚本与产物）。
+
+### 下一步
+1. 用户拍板：价格口径（B5）、是否做 SPU 合并（B3）、UK 143 个是否同批（B6）。
+2. 拍板后按「户外 54 → 其余按频道」分批跑，脚本可复用 `pilot_fetch.py`（需补：每批 CrawlJob/断点续跑、
+   变体补价 `CRAWL_VARIANT_PRICE_LIMIT`、UK `.co.uk` 分支）。
+
+### 本轮新增的坑
+- PDP 导入前必须先把 seller 对齐到既有 Offer 的商家（见 B1），否则全量 100% 被 `ImportSourceConflict` 拒。
+- 首次失败后可用 `--reuse-html` 复用同批 HTML 重跑（0 请求），别再打一遍源站。
+- `verify_pilot.py` 依赖 `variant_split.json`，先跑 `analyze_variant_split.py`。
+- 账号池可用性用 `_account_unusable_reason()` 判，不要看 `risk_flagged_at` 是否有值。
+
+### 0cc-2. 用户拍板后的执行（2026-11-24 19:2x–19:50，✅ Q1 回滚 + Q2 户外清空，未 commit）
+> 用户答复：**Q1 回滚价格 / Q2 先跑户外 54 / Q3 不做 SPU 合并 / Q4 接受 `/dg/` 双请求**。
+> 完整报告 `var/crawl_detail_backfill_20261124/report.md`，逐条数据 `result.csv`。
+
+**第 1 步 价格回滚（8 条，不是 6 条）**
+- 试点把 Offer 价写成 `.nl` 页面的 `crossOffPrice`（划线原价），实际改了 **8/10**（首版报告误记 6，已在
+  `var/crawl_detail_pilot_20261124/report.md` 4.3 节改正）。回滚：654ade12 105→**40.99**、f0076bed 42.9→**26.39**、
+  b0d61396 28→**22.35**、18c7c47f 179.95→**139**、5b67f52e 40.95→**36.95**、9ff82b73 53.95→**47.95**、
+  0be5ba92 13.99→**11.49**、5753670b 14.99→**12.74**；45c927e0/9deb5e26 未变。
+- 依据：`offers_before.json`（试点前快照，10/10 有）+ `var/retail_audit_20261124/*.csv`（17:2x 独立审计，
+  8/10 有）。**没有无法回滚的条目**；`Spu.retail_price` 试点没改过（审计 retail = 现值），只回滚 `Offer.current_price`。
+- 回滚后：DB 10/10、搜索文档 `min_price` 10/10、频道楼层接口 `retail_price/price_min` 与试点前审计全等、
+  PDP 接口价 = 试点前值。脚本 `var/crawl_detail_backfill_20261124/rollback_prices.py`（默认 DRY_RUN）。
+- **独立问题（待查，本批不修）**：列表卡显示 `retail_price`（原价 105.00）而 PDP 显示
+  `Offer.current_price`（折后 40.99）——**试点前就存在**，需单独定口径。
+
+**第 2 步 户外补抓（44 条，54 里 10 条试点已做）**
+- 2 批（30 + 13）+ 1 条冒烟，批间停 4 分钟，5s/请求，`/dp/`+`/dg/` 各 1 次：**88 次请求、
+  0 风控事件、0 停批、0 失败、44/44 入库**，净抓取 ≈671s（≈15.3s/商品）。
+- 详情 44/44（100%）、规格表 **31/44（70.5%）**、评分 **22/44（50%）**、画廊 +145 张、`/dg/` 合并 44/44、
+  搜索文档重建 44/44（`min_price` 与最低 Offer 价一致 44/44）。
+- **价格冻结 44/44**：payload `current_price`=既有 `retail_price`、`skus[].price`=既有 Offer 价、
+  `variants=[]`（不新建变体 SKU）；与补抓前审计对比 Offer 价/retail/楼层卡 0 处不一致。脚本
+  `var/crawl_detail_backfill_20261124/backfill_outdoor.py`（seller 对齐沿用试点逻辑，未改后端）。
+- **户外频道 63 个 SPU 现在：详情 63/63（原 9）、规格表 40/63（原 0）、评分 37/63（原 7）、文档 63/63。**
+
+**剩余 / UK 143 建议（`remaining.csv`）**：全频道仍缺详情 **143 个唯一 SPU，全部 `joybuy_uk`**
+（appliances 46 / health 44 / pets 11 / electronics 10 / beauty 10 / baby 10 / games 7 / home-living 5）。
+建议**不要今晚续跑**：`.co.uk` 风控画像不同（11-23 单轮 417 次 `RISK_CONTROL_FALLBACK`），先单条冒烟 3 个
+确认 `.co.uk` 今日放行；明天白天 5 批×30，按 15.3s/条估 **36 分钟净抓 + 批间停顿 ≈60–75 分钟**；
+脚本需改 3 处（host 换 `.co.uk` + `source_system=joybuy_uk`、seller 对齐换 `joybuy_uk` 映射、
+价格冻结照抄）。若 `.co.uk` 仍 403，可评估 UK sku 走 `.nl` 兜底（**未验证**，必须先冒烟 1 条）。
+
+### 本轮追加的坑（BB-2）
+- **同 `--batch-index` 重跑会覆盖 `batch0.json`**：分批报告要先 `cp` 改名（本批 `batch1_of_2.json`/`batch2_of_2.json`）。
+- `floor_impact.csv` 按逗号切列会被「标题含逗号」带偏（ION8 那批），交叉核对要回退 `offers_before.json` 并注明依据。
+- 补抓 payload 必须 `variants=[]`：不清空时导入器会给库里没有的变体按 `current_price`（原价）**新建 Offer**，等于偷偷加价。
+- 空 `payload.skus` + 现价：`get_or_create_sku_from_source` 对「已有规格的 SKU」要求签名一致，用库里
+  `Sku.specification` 回填 `specs` 才能通过（本批脚本已这么做）。
+
+## 0cb. 批次 BA：户外频道页 banner + 二级品类卡（2026-11-24，✅ 已改 + 针对性验证 33/33，未 commit）
+
+### 我们在做什么
+修 `http://localhost:3000/minihome/mini-hp-nl-sports-outdoor` 两处退化：顶部 banner 只剩渐变占位、
+二级品类卡只剩 1 张。根因见 `var/channel_audit_20261124/findings.md` A1/A2：`ChannelBanner` 表从来
+没有 outdoor 行（三个候选 code 均 0 行）；`storefront/utils/channelTileLists.js` 的 outdoor 清单只写了
+`['sports-apparel-shoes']` 1 条，而「有清单时清单长度 = 展示数」。
+
+### 已完成
+1. **banner（数据，无代码改动）**：从真站户外页 SSR 存档
+   `var/channel_styles_20261123/html/mini-hp-nl-sports-outdoor.html` 顶部 swiper 取到 2 张 1264×280 hero，
+   用 curl（带 Referer/UA、走本机代理）下载到 `var/channel_banners_ba_20261124/media/outdoor_s0.webp`
+   （66,112 B）与 `outdoor_s1.webp`（21,914 B），均 Pillow 实测 **1264×280 WEBP**。脚本
+   `var/channel_banners_ba_20261124/import_outdoor.py` 走既有管线 `media.uploads.store_upload(
+   purpose="channel_banner")` + `content.channel_banner_services.create_banner` 建记录（**未外链、未改
+   MEDIA_BACKEND**）：
+   - `channel_code=mini-hp-nl-sports-outdoor`，`enabled=True`，`sort_order` 0/1；
+   - `href` 统一 `/s?category=outdoor-sports`（13.8 站内路径；真站原 jumpURL 是 joybuy.nl 活动页，
+     本地无对应活动页，故落户外一级列表页）；
+   - 图片落 `/media/cms/original/a6/f4/a6f4…f960.webp`、`…/a2/b1/a2b1…14b1.webp`；
+   - **幂等**：去重键 `(channel_code, image_url)`，重跑 `created=0 skipped=2`，表内仍 2 行（全表
+     21→23 行，旧 8 个频道配置未动）。
+   - 产物：`var/channel_banners_ba_20261124/import_report.json`、`api_outdoor.json`。
+2. **品类卡 5 张（代码）**：`storefront/utils/channelTileLists.js` 的 `outdoor-sports` 清单补齐为
+   `['sports-apparel-shoes','fitness-training','outdoor-gear','sports-nutrition-performance','wearables']`
+   ——按真站 5 张的语义顺序映射。**必读：简报里给的候选 slugs 有 2 个不在 outdoor 根下**，实测本地：
+   户外根 5 个 ACTIVE 二级是 `sports-apparel-shoes / fitness-training / outdoor-gear / garden / diy-tools`；
+   `sports-nutrition-performance` 属 `health-wellness`、`wearables` 属 `electronics`（真站把外部一级叶子挂
+   在本页，页面用「全树 children slug→节点」索引解析，跨根 slug 能正常渲染，已验证）。`garden`/`diy-tools`
+   真站该页不展示，故不放进清单（本地树里仍在，可随时改清单）。
+3. **通用兜底（代码，`storefront/pages/minihome/[code].vue`）**：`MIN_CURATED_TILES = 2`——精选清单解析后
+   不足 2 张即视为失效，回退该品类树 `children`（过滤 `visible_in_nav === false` 与该频道 `hiddenTiles`），
+   截断仍按 `maxVisible`；清单 ≥2 张时行为不变（清单长度 = 展示数）。以后任何频道清单与本地树脱节都不会
+   再退化成 1 张。
+4. **其他 8 频道差异清单（只读，本批不改）**：`var/channel_banners_ba_20261124/other_channels_tile_diff.csv`
+   - `home-living` 16/22（缺 6 个本地节点：Seasonal Decor、Car Wash & Maintenance Tools、Auto Accessories、
+     Watering & Garden Tools、Car Electronics、Car Lights）
+   - `games-accessories` 6/9（缺 Monitors、Gaming Keyboards、Gaming Mice）
+   - `electronics` 16/16、`beauty-personal-care` 8/8、`small-home-appliances` 17/17、`health-wellness` 8/8、
+     `pet-supplies` 12/12、`baby-toddler` 24/24 —— 与真站一致；banner 也均 ≥1 张（无回归）。
+
+### 验证（按验证纪律仅做了针对性验证）
+1. `vitest run --config storefront/vitest.config.js storefront/tests/minihome-channel-page.test.js
+   storefront/tests/channel-hero-carousel.test.js` → **2 files / 34 tests passed**（新增 2 例：户外 5 张按真站顺序
+   渲染且跨根 slug 可解析；清单只解析出 1 张时回退 children 并过滤 `visible_in_nav:false`）。
+2. `prettier --check` 3 个改动文件 → All matched files use Prettier code style；
+   `eslint` 3 个改动文件 → exit 0 无输出（`[code].vue` 先 `--write` 修过格式，格式化后已复跑 eslint）。
+3. `node var/channel_banners_ba_20261124/verify_channels.mjs` → **33 PASS / 0 FAIL**：
+   - 户外 1440×900：2 张 hero 均 `natural 1264×280`、渲染 `1264×280`（容器 1264）、无占位块、2 个分页点；
+   - 5 张品类卡 href 严格等于真站顺序，缩略图全部加载，`--tiles-per-row:5`；
+   - 点击第 1 张落到 `/c/sports-apparel-shoes`（页面 9,427 字符），另 4 个 `/c/<slug>` 全部 200 且 h1 正常；
+   - 其他 8 频道 banner 张数与修复前一致、全部图片 loaded、无占位块；品类卡数量保持 16/16/8/17/8/12/24/6；
+   - console error 0、页面 4xx/5xx 0。产物 `verify_report.json` + `shots/outdoor_1440x900.png`、
+     `outdoor_tiles_1440.png`、`outdoor_hero_1440.png`。
+4. `manage.py check` → no issues；`makemigrations --check --dry-run` → No changes detected（本批无迁移）。
+5. 未跑全量后端/组件/e2e 套件（按验证纪律）；未跑首页 e2e 快照（未触碰首页）。
+
+### 遗留 / 下一步
+- 户外 banner 第 2 张真站原链接是 `/marketing/outlets` 活动页，本地无 outlets 活动页，故两张都落
+  `/s?category=outdoor-sports`；若要区分可等本地建活动页后再改 `href`（管理端可改）。
+- `home-living` 缺 6 个、`games-accessories` 缺 3 个二级节点仍未建（本批只出清单，用户未拍板是否建类目）。
+- 兜底的「nav 隐藏项」过滤目前只对一级生效（接口只给 `visible_in_nav`，二级无此字段），是前瞻性写法。
+
+### 本轮新增的坑
+- **任务简报里的 slug 不可直接信**：`sports-nutrition-performance` / `wearables` 不在 `outdoor-sports` 根下，
+  且 `sports-apparel-shoes` 之外本地户外根还有 `garden`/`diy-tools`；改清单前必须回库核 `LocalCategory.parent`。
+- 公开 banner 接口实际是 `GET /api/v1/channel-banners?channel_code=<code>`（管理端是 `/api/v1/admin/channel-banners`）；
+  简报写的 `/api/v1/cms/channel-banners?channel=` **不存在**（404）。不带 `channel_code` 时返回 400。
+- 真站图片 CDN `images3.joy-sourcing.com` 无需 cookies，带 Referer/UA + 代理直接 200；`s1264x280_` 路径
+  直接给 1264×280，无需再缩放。
+- 本机 `node_modules` 在**仓库根**不在 `storefront/`：vitest 命令要 `node node_modules/vitest/vitest.mjs
+  run --config storefront/vitest.config.js <file>`，从 `storefront/` 目录跑会 `MODULE_NOT_FOUND`。
+
+### 同日追加：home-living / games 二级品类卡补齐（✅ 已改 + 针对性验证 41/41，未 commit）
+> 本节更新上文「其他 8 频道差异清单」中 home-living（原 16/22）与 games（原 6/9）的数字，其余频道不变。
+
+**真站口径（存档核对，未再打真站）**：`var/channel_styles_20261123/html/UK-Mini-HP-Home-Living[_zh].html`
+（22 张，两个 small-1 模块 11/11）、`UK-Mini-HP-Gaming[_zh].html`（9 张，一个 big-1 模块）；条目名称/顺序/
+href 取自 `var/channel_styles_20261123/scripts/tiles_raw.json`，映射见同目录 `tile_mapping_report.json`。
+
+1. **home-living：16 → 17 张**（真站 22，本地可映射 17）。新增 `garden`（真站
+   `Watering & Garden Tools`，l3=3121，是三级卡片；本地只有 `outdoor-sports/garden`
+   「园艺 & 庭院工具」这个二级，按语义就近提升映射，属跨根——页面全树索引可解析）。
+   顺序按真站：kitchen-essentials → home-storage → bedding-textiles → bath → home-decor →
+   party-decorations → home-arts-craft-supplies → gift-wrap-cards → furniture → garden →
+   diy-tools → fitness-training → outdoor-gear → notebooks-pads-paper → pens-pencils →
+   school-office-accessories → mailing-supplies。
+2. **games-accessories：6 → 7 张**（真站 9，本地可映射 7）。新增 `monitors`（真站
+   `Monitors` l3=1437；本地 `computers-accessories/monitors`「显示器」，跨根）。
+   顺序：controllers → console-games → consoles → gaming-memory-storage →
+   gaming-pc-components → monitors → steering-wheels。
+3. **本地缺失、未造节点（已在清单内按真站位置跳过）**：
+   - `Seasonal Decor`（l2=1580，`/s?k=Seasonal%20Decor&l2=1580`）→ 建议在 home-living 下建 L2 `seasonal-decor`
+   - `Car Wash & Maintenance Tools`（l2=3902）→ 建议建 `car-wash-maintenance-tools`
+   - `Auto Accessories`（l2=3904）→ 建议建 `auto-accessories`
+   - `Car Electronics`（l2=3896）→ 建议建 `car-electronics`
+   - `Car Lights`（l2=3898）→ 建议建 `car-lights`
+   - `Gaming Keyboards`（l3=5116）→ 建议在 games-accessories 建 L2 `gaming-keyboards`
+   - `Gaming Mice`（l3=5117）→ 建议建 `gaming-mice`
+   注意：本地 `computers-accessories/peripherals` 是「键盘、鼠标及输入设备」**合并节点**，
+   把 keyboards/mice 两条真站卡都映射到它会渲染两张同名同链接的卡，故两条都跳过；
+   建独立节点后只需往清单补 slug。
+4. **只改 2 个文件**：`storefront/utils/channelTileLists.js`（两清单 + 头注释缺失/跨根/层级提升说明）、
+   `storefront/tests/minihome-channel-page.test.js`（新增 2 例：home-living 17 张顺序+跨根 garden、
+   games 7 张顺序+跨根 monitors）。未改页面/后端/类目树，未造节点。
+
+**验证（按验证纪律仅做了针对性验证）**
+- `node node_modules/vitest/vitest.mjs run --config storefront/vitest.config.js
+  storefront/tests/minihome-channel-page.test.js` → **33/33 passed**。
+- `prettier --check` + `eslint` 2 个改动文件 → 通过（exit 0）。
+- `node var/channel_tiles_bb_20261124/verify_tiles.mjs` → **41 PASS / 0 FAIL**：
+  - home-living 17 张，视觉顺序（按 y→x 排序，非 DOM 列优先）与真站映射顺序逐项相等；每张卡点击后
+    `/c/<slug>` 200（17/17，正文 ≥2.4k 字符）。
+  - games 7 张，顺序逐项相等；每张卡点击后 `/c/<slug>` 200（7/7）。
+  - 回归：electronics 16、beauty 8、appliances 17、health 8、outdoor 5、pets 12、baby 24 全部不变。
+  - console error 0，非 devtools 4xx/5xx 0。产物 `verify_tiles_report.json` +
+    `shots/home-living_1440x900.png`、`home-living_tiles_1440.png`、`games_*`。
+- 未跑全量套件（按验证纪律）。
+
+**遗留 / 注意**
+- home-living 17 张时 `fill: row` 的自动分行是 9/8；真站 22 张是 11/11。去掉 5 个缺失节点后分行边界
+  无法与真站完全一致，但阅读顺序（行优先）与真站一致；补齐缺失节点后会自动回到 11/11。
+- 新增 `garden` / `monitors` 是跨一级卡（分别属于 outdoor-sports / computers-accessories），
+  频道页仍用全树索引解析，点击落对应 `/c/<slug>`（已实测 200）。
+
+## 0ca. 低分图「商品级」抽检清单（2026-11-24，✅ 只读数据整理完成；**用户抽检后确认「当前图片能接受，无需修改」**，不重抓）
+
+> **结论（2026-11-24 用户拍板）**：用户抽检 `lowres_products.csv` 后确认现有低分辨率详情图**可接受**，**不做重抓/替换**。
+> 本清单仅作留档；后续若客户投诉某商品图片模糊，可直接从该 CSV 定位（含最窄图 URL 与 PDP 链接）。
+
+### 我们在做什么
+上一批（0bz）留下 `var/pdp_imgwidth_20261124/lowres_images.csv`（5,190 张图 / 645 SPU，`width < 800`，
+ACTIVE 口径）。用户要抽检「详情图分辨率偏低」的**商品**，需要一份商品级清单，能逐个点开 PDP 看。
+
+### 已完成（产出全在新目录 `var/lowres_products_20261124/`）
+1. `lowres_products.csv` —— **645 行商品级清单**，列 `spu_public_id / title / lowres_image_count /
+   min_width / min_height / min_width_image_url / avg_width / has_active_offer / pdp_url`，按最窄图宽升序。
+   输入 CSV **本身带 `spu` 列**，无需回 `SpuDetail` 重扫图片；只回库补了 `title`（`SpuTranslation`，
+   优先 `zh-CN` 只有 20 条 → 实际几乎全是 `en-GB`）和 `has_active_offer`（`Offer.status=ACTIVE` 经 `sku.spu`）。
+2. `lowres_products.md` —— 中文摘要：总计、四档统计（SPU 按最窄图 / 图片按自身宽两套口径）、Top20、抽样自检。
+3. 脚本：`build_lowres_products.py`（聚合，产出 `summary.json`）、`sample_check.py`（抽样，产出 `sample_check.json`）。
+
+### 关键结果（实跑）
+- **645 SPU / 5,190 张图**；645 个 SPU 全部 ACTIVE、**全部有 ACTIVE Offer**（全库 18,688/18,835 SPU 有 ACTIVE
+  Offer，故「全是有售」不异常）；缺文件 **0**（图片均存在）。
+- 分档（SPU 按最窄图 / 图片按自身宽）：`<300` 2/2；`300–499` 70/116；`500–599` 60/126；
+  `600–799` 513/4,946。最窄图 `<600` 的商品 **132 个** = 优先抽检区间。
+- 商品维度：仅 1 张低分图 191 个；≥5 张 342 个；≥10 张 229 个；单 SPU 最多 48 张；中位数 5。
+- 最差 3 个：`7eaff785` 180×136（1 张）、`65e346f9` 180×180（1 张）、`d812ae9a` 300×225（4 张）；
+  另有 `eac84575`/`4c5a1342`/`c0b6799e` 是 362–393 宽、**10000 高**的超长详情图，放大后观感最差。
+- 抽样自检 3/3 PASS：PDP `200 text/html`（`<title>` 与 CSV title 一致）、图片 `200 image/jpeg|webp`
+  （首字节 `ffd8ffe0` / `RIFF....WEBP`，非 SVG 占位）；并交叉验证 `GET /api/v1/products/<public_id>`
+  的 JSON 里确实含该最窄图 URL。
+
+### 验证（按验证纪律仅做了针对性验证）
+- `.venv/Scripts/python.exe -I var/lowres_products_20261124/build_lowres_products.py` → 输入 5,190/645、
+  库中命中 645、ACTIVE Offer 645、写出 645 行，统计与上面一致。
+- `.venv/Scripts/python.exe -I var/lowres_products_20261124/sample_check.py` → `ALL OK`，exit 0。
+- 未跑任何单测 / lint：本批**没改代码**（只新增 `var/` 下的数据脚本与只读产物），无受影响模块。
+
+### 遗留 / 下一步
+- 清单只是「哪些商品该看」，**5,190 张原图仍需爬虫重抓高清**（最低 180px），本批未做。
+- 真站对照列按要求留空；如需真站 URL 需另抓，不可臆测拼站内 id。
+
+### 本轮新增的坑
+- **Git Bash 里 `grep` 实为 `ugrep`**：`grep -o "/media/..."` 会把开头的 `/m` 当选项报
+  `invalid argument -m=edia/...`。匹配以 `/` 开头的模式要写成 `grep -o -e "/media/..."`，或直接用 Python `re`。
+- **手动 `grep -c "<完整图片URL>"` 会假阴性（返回 0）**，同一文件用 Python 能匹配到 → 判定「HTML 里有没有这张图」
+  别信手动 grep，用脚本 + Python 复核（`sample_check.py` 的做法：curl 存文件后用 Python 读）。
+- **`python.exe -I manage.py shell -c` 会 `ModuleNotFoundError: config/catalog`**：`-I` 把 cwd 移出 `sys.path`。
+  自己写的脚本可以 `-I`（脚本内 `sys.path.insert(backend)`，同 `lowres_scan.py`），`manage.py shell` 不要加 `-I`。
+- curl 头部解析：状态行就在**第一行**，别 `lines[1:]` 跳过，否则 status 抓成空串（首版踩过，已修）。
+
+## 0bz. PDP 详情图不拉伸（2026-11-24，✅ 已改，独立验收 10/10，已随 `fa285aa` 提交推送）
 
 > 编号说明：原定的 `0bt` 已被 2026-11-23「商品图片本地缺文件」占用（见本文件下方），故本节顺延为 `0bz`。
 
@@ -288,13 +627,24 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 同步与补抓：`var/channel_sync_20261123/`、`var/backfill_20261124/`（含 `missing_skus.json`、`summary.json`、`not_sellable_diagnosis.json`）
 - 卡片导入脚本：`var/channel_styles_20261123/scripts/import_channel_page_cards.py`
 
-## 0bu. 本次会话记录（2026-11-24，弃 AWS 迁 DigitalOcean：官方价格调研 + 选型推荐，✅ 方案定稿，⏸ 待用户购买后派迁移任务）
+## 0bu. 本次会话记录（2026-11-24，弃 AWS 迁 DigitalOcean：价格调研 + 选型 + 交付与部署执行，🔄 服务器部署子代理进行中，媒体上传已启动）
 
-- **背景**：AWS 账户 11-20 关闭/停用（见 0k）后用户决定弃 AWS，改用 DigitalOcean。本任务只做价格调研与选型，未执行迁移。
+- **背景**：AWS 账户 11-20 关闭/停用（见 0k）后用户决定弃 AWS，改用 DigitalOcean。
+- **已交付（2026-11-24）**：① **Droplet**：FRA1 Premium Intel，**实测 4 vCPU / 7.8G / 154G 盘**（页面标 2C 但 nproc=4），Ubuntu 24.04.5，IP `161.35.23.231`，本机 ssh 别名 **`joybuy-do`**（root，密钥 `~/.ssh/do_joybuy_ed25519`，无口令，ACL 已收紧）。② **Spaces**：桶 `joybuy-media` @ FRA1（endpoint `https://fra1.digitaloceanspaces.com`），Limited Access key（读写该桶，写在本机 `var/do_migration_20261124/upload_media.sh` 内——var/ 被 gitignore）。**坑：桶 Private 时匿名 GET 403，Limited key 支持 put-object `--acl public-read` → 上传脚本统一带此参数，对象级公共读，桶不用改可见性**（已实测 PUT/匿名GET 200/DELETE 全链路）。③ **连接排障记录**：新机 Active 但 22/80/443/ICMP 全静默丢弃——无云防火墙、IP 无误、tracert 到 Telia 后死亡；**根因 = 用户 VPN 是规则模式，ssh 原始流量直连国内→DO FRA1 被掐；切 TUN 全局模式立即接通**（教训：新 DO 段从国内直连不可靠，raw TCP 流量必须走 TUN）。
+- **本地侧准备 ✅（commit `3332e26` 已推送）**：`MEDIA_S3_ENDPOINT` 支持（空=AWS 原行为；非空=path-style + `Config(s3={"addressing_style":"path"})`，`s3_public_url` 拼 `{endpoint}/{bucket}/{prefix}{path}`）；34 个存储测试 OK；dump `var/do_migration_20261124/joybuy_dump.sql.gz`（183MB，md5 56d9597c…，126 表，来自本地 dev = 含最新全部功能）；上传/对账/nginx Spaces 反代片段/README 全在 `var/do_migration_20261124/`。**本地媒体现量 1,038,989 文件 / 89.6GB**（爬虫持续录入，比 0bt 时又涨）。
+- **媒体上传 🔄 进行中**：`upload_media.sh` 后台挂起（sync.log 每文件一行），`--acl public-read` + 并发 15，预计 8-14h+，断点安全（重跑续传）；上传完成后跑 `verify_media.sh` 对账。
+- **服务器部署 🔄 子代理进行中**（本节由部署子代理完成后追加结果小节）：bundle(3332e26)→基础组件→compose(MySQL/Redis/Mailpit)→dump 导入+九表对账→venv→三前端→systemd→nginx（/media/ 暂 alias 本地空目录 404 预期，Spaces 反代配置文件已备好待切）→本机/外网/admin 登录三重验证。`.env` 要点：沿用旧生产密钥、ALLOWED_HOSTS=161.35.23.231、cookie Secure 双 false（http 期，回滚条件=TLS）、MEDIA_BACKEND=local（Spaces 凭据到位后切 s3+endpoint+bucket=joybuy-media）。
 - **DO 官方现价（2026-11-24 官网抓取）**：Basic/Regular 档——$4(512M/1C/10G/0.5T)、$6(1G/1C/25G/1T)、$12(2G/1C/50G/2T)、$18(2G/2C/60G/3T)、$24(4G/2C/80G/4T)、**$48(8G/4C/160G/5T)**、$96(16G/8C/320G/6T)；Premium Intel/AMD 同规格贵 10-20%；流量超额 $0.01/GB（AWS 的 1/9）。**Spaces 对象存储 $5/月 = 250GiB 存储 + 1TiB 出网**（超额 $0.02/GiB·存储、$0.01/GiB·流量，免费 CDN，按小时折算）。区域有 FRA1 法兰克福 / LON1 伦敦。
-- **选型定稿：推荐 $48（8G/4C/160G，FRA1）+ Spaces $5 = 全套 $53/月**。理由：4C 对齐现 EC2；8G 内存对 MySQL+gunicorn×4+Nuxt SSR+Redis/Mailpit 从容；月 2.1TB 流量 < 5T 配额；媒体 56G 现量/200G 上界全在 Spaces 250G 配额内恒定 $5。**$24 = 最低可用**（无余量）；**$96 = 只有重新要求 200 并发能力上限**（容量报告 8C/16G 最低线）才需要——口径已放宽，不必。对比 AWS 时代 EC2+S3 ≈$300+/月 → **$53/月**。
-- **迁移影响清单（执行时另开任务，按既有部署配方）**：① Spaces 兼容 S3 API——代码加 `MEDIA_S3_ENDPOINT` 配置（settings + boto3 client endpoint_url + nginx 反代指向 Spaces endpoint + 爬虫同一套 env），逻辑零改动；② 媒体从本地 `var/media` 重传（AWS 沉没后这份是唯一完整副本——**注意 0bt：管线已切回 MEDIA_BACKEND=local 且补抓后本地齐全**，上行 4-8h）；③ DB 从**本地 dev 库重新 dump**（生产 DB 已随 AWS 消失；本地 dev 比旧生产新——含商家手机版/Crisp 镜像/单店约束等，等于顺带把生产升到最新）；④ 代码走 git bundle 配方（0g/0h）；⑤ TLS 顺便解决：DO 负载均衡 $12/月自带免费托管证书 或 nginx+certbot $0——上 TLS 后**回滚 cookie Secure 降级（0j 回滚条件终于兑现）**；⑥ 新机接线：ssh 别名、.env 全套（6 HMAC 密钥可原样沿用新机旧值或重新生成——没有存量会话要保）。
-- **未做/待办**：用户买 Droplet + Spaces 后交付 IP/凭据；迁移任务派子代理执行；0k 的「恢复 AWS」路线随弃用 AWS 作废。
+- **选型定稿：$48 FRA1 + Spaces $5 = 全套 $53/月**（实际机器 nproc=4 核）。**$24 = 最低可用**；$96 只为 200 并发能力（口径已放宽不必）。对比 AWS 时代 ≈$300+/月。
+- **迁移影响清单（已按此执行）**：① Spaces 兼容 S3 API——`MEDIA_S3_ENDPOINT` ✅；② 媒体本地重传 ✅ 进行中；③ DB 本地 dev dump ✅；④ 代码 git bundle ✅ 进行中；⑤ TLS：DO LB $12/月免费证书 或 certbot $0——上 TLS 回滚 cookie 降级；⑥ ssh 别名/.env 接线 ✅。
+- **档位确认（2026-11-24 用户问「$48 2核8G160G 够吗」→ 已定案；追加 Regular4C vs Premium2C 吞吐对比）**：官方默认区页 $48 是 Basic Regular 8G/**4C**/160G，但**用户实际选的是 FRA1 法兰克福 Premium Intel 线——该区该线最高档只放出 2C/8G/160G NVMe/5T @ $48**（DO 各区域可售档位不一致，之前"不存在 2核档"的说法只对默认区成立）。**定论：可买、当前够用**——内存需求 ~4.5G/8G、盘 160G NVMe、2 个 Premium 核单核性能比 Regular 高 20-30%（≈2.5-3 Regular 核），峰值 7-10 req/s 扛得住、余量薄于 4C；买前可再瞄一眼 FRA1 的 Basic→Regular 标签有无 4C/8G $48（有则优先），无则直接买 Premium Intel 2C。**DO CPU/内存可在线 resize（盘只增不减）→ 先买 2C 后升配不是陷阱**。别选 General Purpose $63（8G/2 专用核）：只有 25G 盘，硬伤。**4C-慢核 vs 2C-快核的吞吐对比（实测数据推演）**：聚合吞吐 4C Regular ≈ 4.0 标准核 vs Premium 2C ≈ 2.5（1.6× 差）；但 **Nuxt SSR 单线程只吃 1 核 → Premium 快核直接受益，4C 多核对 SSR 无用**；每页导航 CPU ≈ 0.33 核·秒（SSR 100ms + 4×API 45ms）→ 日常峰值 1.67 页/s ≈ 0.55 核（两档 ~15-25% 占用都稳）；突发 5× → Premium 接近满、4C ~65%；200 并发（12 页/s ≈ 4 核）→ Premium 顶不住、4C 边际（=容量报告原话）。批量任务（爬虫导入重建文档）4C 快 ~60%。
+- **本地侧准备完成（2026-11-24，弃 AWS→DO 的执行前置；本任务只做本地，未动任何远端/未动 dev 容器写路径）**：
+  - **代码支持 S3 兼容端点（DO Spaces）**：`backend/config/settings.py` 新增 `MEDIA_S3_ENDPOINT`（空=AWS 虚拟主机式，行为不变；非空=S3 兼容端点）；`backend/media/storage.py::get_s3_client` 端点非空时 `boto3.client(endpoint_url=..., Config(s3={"addressing_style": "path"}))`（DO Spaces 用 path style 最稳），懒加载单例沿用 `reset_s3_client` 供测试重置；`s3_public_url` 端点非空拼 `{endpoint}/{bucket}/{prefix}{path}`（path-style），views 302 回退零改动。**commit `3332e26`（信息英文一行），已推送 origin main**。
+  - **测试（按验证纪律仅定向）**：`MEDIA_BACKEND=local ./.venv/Scripts/python.exe backend/manage.py test media.tests.test_media_storage media.tests.test_media_storage_s3 --keepdb --noinput --parallel 1` → **Ran 34 tests, OK**；`test_media_storage_s3.py` 新增 5 个 endpoint 用例（get_s3_client 带 endpoint_url+path style / 空端点保持 AWS 默认 client / path-style URL / 空端点保持虚拟主机 URL / FakeS3Client put 正常），既有 AWS 用例原样全过。ruff check 三文件全过；ruff format storage.py 与测试文件已格式化——**settings.py 的 STOREFRONT_BASE_URL 折叠警告是 HEAD 既有 drift（backend line-length=100 下 ruff 要求合并一行），非本次引入，未顺手改**。
+  - **DB dump**：`var/do_migration_20261124/joybuy_dump.sql.gz` = **183,262,892 字节（~174.8MB），md5 `56d9597c22b58df7a4b990f402fe5350`**；头部 `-- MySQL dump 10.13 Distrib 8.4.7`、尾部 `Dump completed on 2026-11-24 8:48:19`、126 张 CREATE TABLE，完整。命令：`docker exec joybuy-dev-mysql-1 sh -c "mysqldump -ujoybuy -pjoybuy_dev_only --single-transaction --routines --triggers --set-gtid-purged=OFF joybuy" | gzip > ...`（容器只读）。
+  - **本地媒体清点（2026-11-24 16:5x，`count_local_media.py` 实测）**：**1,038,989 文件 / 89,628,757,144 字节（~83.5 GiB）**——比本任务简报的「~71.5 万」大（11-23 后爬虫/补抓持续写入），**上传 ETA 按 ~90GB/104 万文件重估（家庭上行 8-14h+），别按旧口径排期**；数字已存 `var/do_migration_20261124/local_media_count.json`。
+  - **工具就绪（`var/do_migration_20261124/`，gitignore 区，不入库）**：`upload_media.sh`（aws s3 sync --endpoint-url，断点安全：中断重跑同一命令续传；头部 SPACES_KEY/SECRET/ENDPOINT/BUCKET 四变量待用户交付后填）、`verify_media.sh` + `count_local_media.py`（上传后文件数/字节对账）、`nginx-media-spaces.conf`（/media/ 反代 Spaces path-style + proxy_cache；resolver 以真机 /etc/resolv.conf 为准，DO 历史值 127.0.0.202/67.207.0.x）、`README.md`（Spaces key 获取=控制台 API→Spaces Keys 生成后只显示一次；FRA1 建桶；0g/0h 全套部署 checklist + .env 追加 MEDIA_BACKEND=s3 / MEDIA_S3_ENDPOINT=https://fra1.digitaloceanspaces.com / MEDIA_S3_BUCKET / MEDIA_S3_PREFIX=media/ / MEDIA_S3_REGION=fra1 / AWS_ACCESS_KEY_ID/SECRET=Spaces key）。脚本 `bash -n` 语法通过、JSON 解析逻辑实测通过；**sync 未实跑（无凭据，等交付），不得写成已验证**。
+  - **待用户**：①Spaces 凭据 + bucket 名/endpoint → 填脚本 → 上传 + 对账；②Droplet 161.35.23.231 解封后按 README checklist 部署。本机 `~/.aws/credentials` 的失效 AWS key 未动（上传脚本用环境变量覆盖凭据，仅向共享 `~/.aws/config` 写一条 s3 性能默认值）。
 
 ## 0bt. 商品图片本地缺文件（2026-11-23，`store_bytes` 去重补写 ✅ / 补抓 8,651 张 ✅ 0 失败 / 复扫缺失 0，未 commit）
 

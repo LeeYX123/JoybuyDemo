@@ -100,17 +100,30 @@ const curatedTiles = computed(() =>
       )
     : null,
 )
+
+// 通用兜底（2026-11-24 批次 BA）：精选清单解析后不足 2 张时视为「清单失效」
+// ——真站清单里的 slug 与本地类目树脱节（户外页此前只剩 sports-apparel-shoes
+// 1 张可解析，而本地树有 5 个 ACTIVE 二级）。此时回退该品类树的 children，
+// 避免任何频道出现「品类卡区只有 1 张」的退化。
+const MIN_CURATED_TILES = 2
+const usableCuratedTiles = computed(() => {
+  const list = curatedTiles.value
+  return list && list.length >= MIN_CURATED_TILES ? list : null
+})
+
 const channelTiles = computed(() => {
   const hidden = tileConfig.value.hiddenTiles || []
-  const base = curatedTiles.value || channelRoot.value?.children || []
-  return hidden.length ? base.filter((child) => !hidden.includes(child.slug)) : base
+  const base = usableCuratedTiles.value || channelRoot.value?.children || []
+  // 兜底路径用后端树：过滤 nav 隐藏项（现有接口只给一级带 visible_in_nav，
+  // 二级缺省视为可见）与该频道页的 hiddenTiles。
+  return base.filter((child) => child.visible_in_nav !== false && !hidden.includes(child.slug))
 })
 // 截断口径（2026-11-24 缺陷修复）：有精选清单时清单长度就是展示数——清单是
 // 真站该页的完整精选子集，maxVisible 只用于没有清单的降级路径（后端树可能很
 // 长）。此前统一按 maxVisible=22 截断，把母婴页清单的第 23/24 张卡切掉了。
 // 余量（降级路径）仍交给横滑与「查看全部品类」。
 const tiles = computed(() =>
-  curatedTiles.value
+  usableCuratedTiles.value
     ? channelTiles.value
     : channelTiles.value.slice(0, tileConfig.value.maxVisible),
 )
