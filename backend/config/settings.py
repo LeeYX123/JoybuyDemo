@@ -149,6 +149,16 @@ if database_engine == "sqlite":
         }
     }
 elif database_engine == "mysql":
+    mysql_options = {
+        "charset": "utf8mb4",
+        "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+    }
+    # Managed MySQL (e.g. DigitalOcean Managed Database) enforces TLS. Point
+    # MYSQL_SSL_CA at the provider CA bundle to enable certificate
+    # verification; empty/unset keeps the historical behaviour unchanged.
+    mysql_ssl_ca = os.getenv("MYSQL_SSL_CA", "").strip()
+    if mysql_ssl_ca:
+        mysql_options["ssl"] = {"ca": mysql_ssl_ca}
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
@@ -158,10 +168,7 @@ elif database_engine == "mysql":
             "HOST": os.getenv("MYSQL_HOST", "127.0.0.1"),
             "PORT": os.getenv("MYSQL_PORT", "33060"),
             "CONN_MAX_AGE": 60,
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
+            "OPTIONS": mysql_options,
             "TEST": {"CHARSET": "utf8mb4"},
         }
     }
