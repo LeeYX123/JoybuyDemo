@@ -94,6 +94,38 @@ const balanceDisplay = computed(() => {
   return account.value?.balance != null ? formatDisplayPrice(account.value.balance) : null
 })
 
+// ADR 0001: on the m. host the same checkout state renders the mobile
+// checkout (docs/20 §4); the desktop template below is untouched. Quote
+// money is pre-formatted here so the mobile component stays presentational.
+const { isMobileHost } = useMobileView()
+
+const mobileQuoteItems = computed(() =>
+  (quote.value?.items || []).map((item) => ({
+    offer_public_id: item.offer_public_id,
+    title: item.title,
+    quantity: item.quantity,
+    line: formatMoney(Number(item.price) * item.quantity) ?? '—',
+    image: '',
+  })),
+)
+const mobileSubtotalText = computed(() => formatMoney(quote.value?.subtotal) ?? '—')
+const mobileShippingText = computed(() =>
+  quote.value?.shipping_method === 'FREE'
+    ? t('checkout.free')
+    : (formatMoney(quote.value?.shipping_cost) ?? '—'),
+)
+const mobileTotalText = computed(() => formatMoney(quote.value?.total) ?? '—')
+
+function updateAddressField(field, value) {
+  newAddress.value[field] = value
+}
+
+// Bottom-bar Save: new form open -> create the address; otherwise continue
+// with the selected one (same branch as the desktop buttons).
+function mobileSaveAddress() {
+  if (showNewForm.value) saveAddress()
+  else useSelectedAddress()
+}
 const paymentMethods = computed(() => [
   {
     value: 'balance',
@@ -111,7 +143,33 @@ useHead({ title: 'Checkout' })
 </script>
 
 <template>
-  <AppContainer>
+  <!-- ADR 0001: mobile host renders the docs/20 §4 mobile checkout. -->
+  <MobileCheckout
+    v-if="isMobileHost"
+    :step="step"
+    :address-list="addressList"
+    :show-new-form="showNewForm"
+    :selected-address-id="selectedAddressId"
+    :new-address="newAddress"
+    :error="error"
+    :submitting="submitting"
+    :payment-method="paymentMethod"
+    :payment-methods="paymentMethods"
+    :selected-address="selectedAddress"
+    :quote-items="mobileQuoteItems"
+    :subtotal-text="mobileSubtotalText"
+    :shipping-text="mobileShippingText"
+    :total-text="mobileTotalText"
+    @select-address="selectedAddressId = $event"
+    @toggle-new-form="showNewForm = !showNewForm"
+    @update-address-field="updateAddressField"
+    @save-address="mobileSaveAddress"
+    @change-step="step = $event"
+    @select-payment="paymentMethod = $event"
+    @pay-now="payNow"
+    @back="navigateTo('/cart')"
+  />
+  <AppContainer v-else>
     <section class="checkout" aria-labelledby="checkout-title">
       <h1 id="checkout-title" class="visually-hidden">{{ t('checkout.title') }}</h1>
 

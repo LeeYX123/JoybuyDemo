@@ -20,6 +20,12 @@ const { items, subtotal, needsAttention, formatMoney, updateItem, removeItem } =
 
 const { t } = useLocale()
 const { apiQuery } = useMarketLocale()
+const { isMobileHost } = useMobileView()
+
+// ADR 0001: on the m. host the same cart payload renders the mobile cart
+// (docs/20 §3); the desktop template below is untouched. The mobile
+// component is presentational — rows carry the image/spec/line resolved by
+// the productMeta lookup above, mutations stay in the page handlers.
 
 useHead({ title: () => t('cart.title') })
 
@@ -231,10 +237,34 @@ function specFor(item) {
 function imageFor(item) {
   return metaFor(item)?.image || ''
 }
+
+// Mobile cart rows (docs/20 §3): resolve image/spec/line at page level so the
+// mobile component stays presentational.
+const mobileRows = computed(() =>
+  items.value.map((item) => ({
+    ...item,
+    image: imageFor(item),
+    spec: specFor(item),
+    line: lineTotal(item),
+    isValid: item.is_valid,
+  })),
+)
 </script>
 
 <template>
-  <div class="cart-page">
+  <!-- ADR 0001: mobile host renders the docs/20 §3 mobile cart. -->
+  <MobileCart
+    v-if="isMobileHost"
+    :rows="mobileRows"
+    :subtotal-text="formatMoney(subtotal) ?? ''"
+    :selected-count="selectedCount"
+    :needs-attention="needsAttention"
+    @step="onQuantityStep"
+    @remove="onRemove"
+    @checkout="goCheckout"
+    @back="navigateTo('/')"
+  />
+  <div v-else class="cart-page">
     <AppContainer class="cart-page__container">
       <div class="cart-page__columns">
         <div class="cart-page__left">
