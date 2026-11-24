@@ -397,6 +397,14 @@ watch(
   () => nextTick(measureThumbs),
 )
 
+// ADR 0001: on the m. host the same detail payload renders the mobile PDP
+// (docs/20 §2); the desktop template below is untouched. The mobile
+// component is presentational — it receives the resolved state as props and
+// emits actions back to the handlers above.
+const { isMobileHost } = useMobileView()
+// Same active-value basis as the desktop variant buttons (matchSpec).
+const selectedSkuSpec = computed(() => matchSpec(selectedSku.value))
+
 const contentSections = computed(() =>
   Array.isArray(data.value?.content_sections) ? data.value.content_sections : [],
 )
@@ -533,7 +541,31 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
 </script>
 
 <template>
-  <div class="detail-page-bg">
+  <MobilePDP
+    v-if="isMobileHost"
+    :data="data"
+    :error="error"
+    :media-items="mediaItems"
+    :offer="offer"
+    :price="price"
+    :variant-axes="variantAxes"
+    :selected-sku="selectedSku"
+    :selected-sku-spec="selectedSkuSpec"
+    :is-single-sku="isSingleSku"
+    :readonly-spec="stickySpecText"
+    :quantity="quantity"
+    :add-state="addState"
+    :wishlisted="wishlisted"
+    :wish-pending="wishPending"
+    :content-sections="contentSections"
+    :specification-tables="specificationTables"
+    @select-variant="selectVariant"
+    @change-quantity="changeQuantity"
+    @add-to-cart="onAddToCart"
+    @buy-now="onBuyNow"
+    @toggle-wishlist="toggle(publicId)"
+  />
+  <div v-else class="detail-page-bg">
     <AppContainer>
       <div v-if="error" class="detail-state" role="alert">
         <!-- 迭代02：平台下架/商家下架统一提示「商品已下架，无法查看」。 -->

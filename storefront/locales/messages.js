@@ -562,6 +562,10 @@ export const messages = {
     'shopApply.rejectedNote': 'You may update the details below and apply again.',
     'shopApply.rejectReason': 'Rejection reason',
     'shopApply.reApply': 'Re-apply',
+    // Mobile PDP (docs/20 §2): details-card toggle + gallery dot labels.
+    'mobile.pdp.expand': 'Expand',
+    'mobile.pdp.collapse': 'Collapse',
+    'mobile.pdp.galleryDot': 'Image {n}',
   },
   zh: {
     'topStrip.region': '英国 | 中文',
@@ -1104,6 +1108,10 @@ export const messages = {
     'shopApply.rejectedNote': '您可以修改以下信息后重新提交申请。',
     'shopApply.rejectReason': '驳回原因',
     'shopApply.reApply': '重新申请',
+    // 手机版商品详情（docs/20 §2）：详情卡展开/收起与画廊圆点标签。
+    'mobile.pdp.expand': '展开',
+    'mobile.pdp.collapse': '收起',
+    'mobile.pdp.galleryDot': '第 {n} 张图片',
   },
   de: {
     'topStrip.region': 'UK | Deutsch',
