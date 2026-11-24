@@ -2,7 +2,85 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
-## 0cd. 批次 BC：Facebook / Google 登录接入方案（2026-11-24，📋 仅方案文档，零代码改动，未 commit）
+## 0ce. 全栈部署到 DigitalOcean Droplet + 托管 MySQL（2026-11-24，✅ 部署完成、外网可达、admin 冒烟通过；媒体本轮不接 Spaces）
+
+### 我们在做什么
+把 Joybuy 全栈从本地 dev 迁到第三台生产机 DO Droplet（前两台 Lightsail/AWS 已死）。中途用户拍板变更：**数据库不用 compose 的 mysql 容器，改用 DO Managed Database Clusters（托管 MySQL，公网端点 25060，强制 SSL）**；redis/mailpit 仍走 compose。
+
+### 服务器与产物
+- `ssh joybuy-do` = root@161.35.23.231（FRA1，Ubuntu 24.04.5，4C/7.8G/154G，hostname ubuntu-joybuy）。**无 DO 云防火墙；ufw 已装但 inactive——不要启用**。
+- 基础组件（逐一验证过）：docker 29.1.3 / docker compose v2.40.3 / nginx 1.24.0 / git 2.43.0 / node 22.23.5（nodesource）/ pnpm 11.29.0 / ffmpeg 6.1.1 / mysql client 8.0.46（default-mysql-client）。
+- 代码：`/srv/joybuy` @ **cd1c4c9**（= 3332e26 + 本次新增 `MYSQL_SSL_CA` 支持），已 push GitHub；bundle 路径 `var/do_migration_20261124/joybuy-main.bundle`（上传后已 md5 对账）。`git -C /srv/joybuy status` 干净。
+- **本轮唯一代码改动**：`backend/config/settings.py` DATABASES 新增 env `MYSQL_SSL_CA`（非空时 OPTIONS 加 `{"ssl": {"ca": <路径>}}`，空则行为不变）。ruff check 过、manage.py check 过；`ruff format --check` 报 would-reformat 是 HEAD 既有状态，非本次引入。
+- 托管库：`dbaas-db-4211065-do-user-49740357-0.i.db.ondigitalocean.com:25060`，用户 `joybuy`，库 `joybuy`，CA 证书落位 `/srv/joybuy/var/do-ca.crt`（644）。连接串见服务器 `/srv/joybuy/.env`（HANDOFF 不写密码明文）。实测 `SELECT 1` 与 SSL REQUIRED 均通。
+- compose 三容器 healthy：prod-mysql-1 / prod-redis-1 / prod-mailpit-1（mysql 容器只是占位依赖，**应用不连它**；托管库凭据到达后未导入容器库）。
+- DB 导入：dump `var/do_migration_20261124/joybuy_dump.sql.gz`（md5 56d9597c…350）→ zcat | mysql 到托管库，**126 表全到位**，行数对账 8/8 与本地 dev 基准一致：spu 18835 / sku 28116 / offer 26955 / media_asset 149873 / product_search_document 18689 / buyer_account 108 / merchant 869 / staff_account 5。
+- 后端：`/srv/joybuy/venv`（prod.txt，pip 缓存预热加速）；`migrate --noinput` = **No migrations to apply**（仅 catalog 未 makemigrations 警告 + MySQL W036 条件唯一约束警告，与 dev 同状）；collectstatic 154 个文件 → `/srv/joybuy/var/staticfiles`。
+- 前端：storefront `.output` 构建成功；admin-web `pnpm --filter @joybuy/admin-web exec vite build --base=/admin/`（dist 内 assets 路径已 grep 验证 `/admin/assets/`）；merchant-web 构建成功（本轮未挂 nginx）。
+- systemd：`/etc/systemd/system/joybuy-api.service`（gunicorn 4 worker :8000）+ `joybuy-storefront.service`（node :3000）。**模板 User=ubuntu 在 DO 不存在 → 改 User=root**；storefront unit 增加一条 `NUXT_PUBLIC_CRISP_WEBSITE_ID=4c57c1c5-7246-46d3-b9db-b925c93eee3b`。两单元 enabled + active。
+- nginx：`sites-available/joybuy`（80 default_server，client_max_body_size 25m；`/api/`→127.0.0.1:8000；`/admin/`→admin-web/dist try_files 回退；`/`→127.0.0.1:3000；**`/media/` alias + add_header Cache-Control，顺手修掉了旧 expires 7d 双 Cache-Control 瑕疵**）；sites-enabled/default 已删；`nginx -t` 过、reload 过。
+- .env：`/srv/joybuy/.env`（600）沿用 11-17 生产密钥 + 新 IP ALLOWED_HOSTS/CSRF + `DJANGO_SESSION_COOKIE_SECURE=false`、`DJANGO_CSRF_COOKIE_SECURE=false`（**http-only 临时降级，TLS 落地当天删这两行即回滚**）+ `MEDIA_BACKEND=local`（**Spaces 凭据到位后切 s3 + MEDIA_S3_ENDPOINT，另任务；现在 /media/ 无文件是预期**：目录裸路径 403、假文件 404）+ CRISP_* 四行（本地 dev .env 同值）。`infra/prod/.env`（600）= compose.env 原样。
+
+### admin 账号
+- 新建 `ops-do@joybuy.local` / 密码 `OpsDO-32e2ed9c26435fcd`（bootstrap_platform_admin，TOTP secret 已生成但登录不需要 TOTP）。
+- dump 自带 5 个 ACTIVE staff（admin@joybuy.test 等，密码同本地 dev demo 口径），未动。
+
+### 验证记录（按验证纪律仅做针对性验证，未跑全量测试）
+- 服务器本机：`/`、`/api/v1/categories`（真实 JSON）、`/admin/`、`/api/v1/health` 全 200；`systemctl is-active` joybuy-api / joybuy-storefront / nginx / docker / containerd 五项全 active；docker ps 三容器 healthy；git status 干净；两个 .env 600。
+- 外网（本机经 VPN）：http://161.35.23.231/ 与 /api/v1/categories、/admin/ 全 200。
+- Playwright 登录冒烟（`var/do_deploy_20261124/admin_login_probe.js`，headless chromium）：/admin/ → /admin/login → ops-do 登录 → 落地 /admin/merchants，admin-shell 可见，**console error 0 / page error 0**，截图 `var/do_deploy_20261124/admin_login_probe.png`（登录态、侧栏 platform_admin 徽标可见）。
+- storefront SSR→API 链路：journalctl 见 /api/v1/storefront/home、/api/v1/auth/buyer/session、/api/v1/recommendations 等 200。
+
+### 踩过的坑（新会话必读）
+1. **VPN 单流 scp 只有 ~7KB/s**：273MB 顺序传要数小时。解法=split 8MB 块 + 16 并行 scp + 服务器 cat 重组 + **md5 必须对账**（实测抓到重叠 scp 把部分块写坏，靠 md5 定位后单块重传修复）。后台跑长传输，脚本里 `cd` 后再 `ls 相对路径` 会静默得空列表（本次第一版脚本就因此 0 块上传还 exit 0）。
+2. **长 SSH 会话会被远端掐断**（VPN 抖动）：zcat|mysql 直接跑在 ssh 前台，连接断=导入被杀（60/126 表）。长任务一律 `nohup … > log 2>&1 < /dev/null &` 落在服务器上跑，本地只轮询。
+3. **两个导入进程并发会互卡**：旧进程没死干净时新导入 DROP TABLE 等 metadata lock。杀掉旧 mysql 客户端进程即解。
+4. **clone 目标目录非空会失败**：/srv/joybuy/var（CA 证书）先挪走、clone 完再挪回；注意仓库本身带 var/README.md，挪回时会嵌套一层。
+5. `git clone -b main bundle` 可直接得 main（不必再 checkout）；clone 后记得 `remote set-url origin https://github.com/LeeYX123/JoybuyDemo.git`。
+6. DO Ubuntu 24.04 没有 docker-compose-plugin，包名是 `docker-compose-v2`；ufw 已装但 inactive，保持不启用。
+7. admin 探针首跑 /admin/ 出现过一次瞬时 502（gunicorn worker 冷启动时段），复跑 0 错误；若复现先查 `journalctl -u joybuy-api` 与 nginx access.log。
+8. 并行会话同时在改本仓库（0cb/0cc/0cd 批次、storefront 文件有未提交改动）——**不属于本任务，不要动、不要一起 commit**。
+
+### 下一步（不在本轮范围）
+- Spaces 凭据 + bucket 交付后：`var/do_migration_20261124/upload_media.sh` / `verify_media.sh` 传媒体 → .env 切 `MEDIA_BACKEND=s3` + MEDIA_S3_ENDPOINT → nginx /media/ 改反代 Spaces（配置样例 `var/do_migration_20261124/nginx-media-spaces.conf`）。
+- TLS（certbot）落地时删 .env 两行 cookie Secure=false。
+- merchant-web 挂 nginx（独立 server 块或子路径）待定。
+
+## 0ce. 批次 BD：登录/注册页 1:1 复刻（2026-11-24，📋 需求已 grill 定稿，**零代码改动**）
+
+### 我们在做什么
+用户要求「打开 joybuy 真站，参考它的登录页和 Google/Facebook 按钮，写一个一模一样的登录页」。
+本轮只做**实测 + grill 拍板 + 方案定稿**，产出 `docs/17-auth-page-replica.md`；`AuthForm.vue` 一行未改。
+
+### 实测事实（`var/auth_page_20261124/`）
+1. 真站 UK 登录页（2026-11-24，1440×900，en-GB）**只有 `Continue with Google` + `Continue with JD`，没有 Facebook**。
+   用户拍板改为 Google + Facebook（迭代02 需求），JD 不渲染。
+2. 真站是 **email-first 两步**：第一屏只有 `Email/Mobile + Continue`；点 Continue 后服务端判断，
+   已存在进密码步，不存在进 `Create your Joybuy account` 注册步（邮箱灰底锁定 + 铅笔按钮 316×48、
+   `Create a password` 356×48 白底描边、灰色禁用 `Verify email` 380×48 #C2C4CC）；**第二步无三方按钮、无忘记密码**。
+3. 第一屏实测：内容列 x=530 宽 380；标题 18/700；礼包行含 `£5`（#E1251B）；主按钮 380×48 #1A1A1A 18/600；
+   分隔 `— or —` 14/500；三方按钮 380×48 白底 1px #1A1A1A、间距 12、图标为内联 SVG；
+   下方 `View more options` → `United Kingdom ▾` → `Feedback` → 协议行 12px。
+4. **密码步无法实测**（需要真实已有账号），按注册步同版式推断，已在文档标注为假设、不冒充实测值。
+5. `tests/e2e/auth.spec.js` 断言的还是更早的 `Send code / Create account` 流程，**本来就与当前页面脱节**。
+6. 上一轮探针踩坑：`page.locator('input').first()` 选中页头隐藏 radio（w=0）→ fill 超时；
+   cookie 同意抽屉会拦截点击。正确写法：`input[placeholder="Email/Mobile"]` + 先点掉 Accept。
+
+### 用户拍板的 12 条（详见 docs/17 §2）
+Google+Facebook / 两页一起改 / email-first 两步 / 接真实后端 / **新增 lookup 接口** / 保留 `/auth/register` 直达页 /
+保留 Email/Mobile（手机号只登录）/ 注册按钮叫「Create account」且可用 / 附属元素全渲染 /
+地区选择器做成真实语言切换 / 移除忘记密码 / 本轮重写 e2e。
+
+### 下一步（等用户说开工）
+1. 后端：`POST /api/v1/auth/buyer/identifier/lookup`（5 次/60s 限流、恒定响应时间、只返回 bool、日志不记明文）+ 单测。
+2. 前端：`AuthForm.vue` 改三态状态机（identifier / password / register）+ providers 拉取 + 地区切换 + 5 locale 文案。
+3. 测试：vitest 组件用例 + 重写 `tests/e2e/auth.spec.js` 3 个用例 + 三态截图比对。
+4. 未做：真站密码步实测（缺可用账号）、手机号注册（无短信通道）。
+
+### 验证（按验证纪律）
+本轮零代码改动：未跑单测/e2e/lint。仅做了真站实测（Playwright，产物见上）与代码事实核查。
+
+## 0cd. 批次 BC：Facebook / Google 登录（2026-11-24，📋 方案 + ✅ P1 后端已实现，未 commit）
 
 ### 我们在做什么
 用户要求给购物端接入 Facebook 登录 + Google 登录，问「怎么申请账号、怎么接入」。本轮**只做调研与方案**，
@@ -35,7 +113,44 @@
      （有 try/except 兜底，但通知静默丢失 + 日志刷 traceback）、`merchant_ops/views_buyers.py:20,23` 后台账号名
      空白、`:75,246` 搜不到人；`orders/checkout/cart` 后端不读 buyer.email，下单链路不受影响；找回密码是 stub。
 
-### 当前卡在哪（等用户动作）
+### P1 后端已实现（20:15–20:40，✅ 54 个用例通过，迁移已应用）
+
+用户给了 Google 凭据（客户端 ID `678718496669-…`，密钥写进 `.env`，`.env` 已 gitignore；`.env.example` 只留空占位）。
+
+改动清单（全部后端，前端一行没动）：
+1. `accounts_buyers/models.py`：新增 `BuyerIdentity`（`db_table=buyer_identity`，唯一键 `(provider, subject)`，
+   另有 `email_snapshot/display_name/avatar_url/last_login_at`）；`BuyerAccount.identity_bound` 布尔列；
+   `buyer_account_has_identifier` 放宽为「email 非空 或 phone 非空 或 `identity_bound=True`」。
+2. `migrations/0008_buyeridentity_and_more.py`：建表 + 加列 + 换约束，**已在开发库 `migrate` 成功**。
+3. `accounts_buyers/oauth.py`（新）：provider 配置（Google 用 PKCE，Facebook 不用）、state 存 cache 10 分钟且取出即删
+   + 校验渠道一致、`_http_json`（stdlib urllib，报错只带去掉 query 的 URL，避免 token 进日志）、
+   `resolve_account`（identity 命中 → 登录；Google 已验证邮箱 → 合并；FB → 不合并报 `email_exists`；否则建号）、
+   `sanitize_next`。
+4. `accounts_buyers/views.py`：`OAuthProvidersView`（只返回凭据已配的渠道）、`OAuthStartView`（限流 30/10min/IP）、
+   `OAuthCallbackView`（换 token → 认人 → `create_buyer_session` → 种 host-only cookie → 302 回 `next`）；
+   失败统一 302 到 `{STOREFRONT_BASE_URL}/auth/login?oauth_error=<code>`，日志只记业务码。
+5. `accounts_buyers/services.py`：`ensure_display_name` 从 views 下沉（oauth 建无邮箱账号也要生成 `userXXXXyyyy`），
+   views 的 `_ensure_display_name` 变成一行转发。
+6. `accounts_buyers/urls.py`：`oauth/providers`、`oauth/<provider>/start`、`oauth/<provider>/callback`。
+7. `config/settings.py`：`OAUTH_REDIRECT_BASE_URL`（默认回退 `STOREFRONT_BASE_URL`）、`OAUTH_STATE_TTL_SECONDS`、
+   `OAUTH_HTTP_TIMEOUT_SECONDS`、`OAUTH_START_LIMIT/WINDOW`、`GOOGLE_OAUTH_*`、`FACEBOOK_OAUTH_*`、
+   `FACEBOOK_GRAPH_VERSION`（默认 v23.0）。
+8. `accounts_buyers/tests/test_oauth_api.py`（新，20 例，出网全 mock）：providers 只列已配置渠道、start 的
+   state/PKCE/redirect_uri、FB scope 用逗号且无 code_challenge、Google 建号+身份+cookie、**FB 无邮箱建号并能拿到
+   authenticated 会话且 `purchase_whitelisted=True`**、二次登录不重复建号、Google 已验证邮箱合并不覆盖资料、
+   state 一次性/跨渠道拒绝、无 code=denied、FB 同邮箱不合并报 `email_exists`、禁用账号拒绝、`sanitize_next`、
+   profile 解析（FB 永不置 email_verified）、DB 约束（无标识且 `identity_bound=False` 必须被拒）。
+
+验证（按验证纪律只做针对性验证）：
+- `python manage.py test accounts_buyers merchant_ops.tests.test_switch_to_mall` → **54 tests OK**（含新增 20 例）。
+- `ruff check accounts_buyers config/settings.py` → All checks passed。
+- 临时实例 `127.0.0.1:8010`（不打扰常驻的 8000）：`/oauth/providers` 返回 google；`/google/start` 302 到
+  accounts.google.com，`redirect_uri` 与 `state`、`code_challenge`(S256) 均正确；Facebook 凭据为空 → 不出现。
+- 未跑前端任何验证（本轮没改前端）。
+
+---
+
+### 当前卡在哪（P1 已通，等前端与真机联调）
 **决策已拍板（2026-11-24）**：
 1. **同邮箱合并策略 = Google 已验证邮箱可自动合并**（`email_verified==true` 且本地同邮箱存在 → 同事务建 identity 并登录）；
    **Facebook 不自动合并**（Graph 无验证标记、email 不可信）。合并只建 identity + 更新 last_login，**不改**
@@ -46,13 +161,17 @@
    `identity_bound=True`、`password=make_password(None)`，`display_name` 走 `_ensure_display_name`，
    `purchase_whitelisted` 默认 True → 可加购下单。代价是要放宽 `buyer_account_has_identifier`（见上）。
 3. **推进顺序：用户先去两家控制台申请凭据（本轮不写代码）**。等 4 个值 + 2 条回调地址到位后再开 P1/P2。
+   → **已过时**：20:15 Google 凭据已给，P1 后端已实现并验证（见上）；Facebook 凭据仍为空。
 
 ### 下一步
-1. **等用户回填凭据**：`GOOGLE_OAUTH_CLIENT_ID/SECRET`、`FACEBOOK_OAUTH_APP_ID/SECRET`、`OAUTH_REDIRECT_BASE_URL`；
-   两家控制台都要登记 `.../api/v1/auth/buyer/oauth/<provider>/callback`（本地 `http://localhost:3000/...`）。
-2. 凭据到位后按 P1（`BuyerIdentity` + 迁移 0008 含约束放宽 + `oauth.py` + mock 单测，必须覆盖无邮箱建号）
-   → P2（按钮 / 5 locale 文案 / 后台账号名与搜索兜底）→ P3（真账号联调，含一个只绑手机号的 FB 账号）推进。
-3. 前端按钮要按 `/oauth/providers` 返回渲染，凭据未配置时不出现死按钮（本地无凭据仍可开发其余功能）。
+1. **P2 前端（下一个动作）**：`storefront/components/AuthForm.vue` 加两枚按钮（按 `GET /api/v1/auth/buyer/oauth/providers`
+   渲染，未配置渠道不出现）+ 分隔线 + `oauth_error` 文案兜底；`useBuyerAuth` 加 providers 拉取；
+   `storefront/locales/messages.js` 补 5 个 locale（en/zh/de/fr/nl）的 `auth.oauth.*` 文案。
+2. **P2 后端小补**：`notifications/services.py:126` 无邮箱时跳过并记 info（别让 None.split 刷 traceback）；
+   `merchant_ops/views_buyers.py:20,23` 账号名 fallback 改 `display_name`、`:75,246` 搜索补 `display_name__icontains`。
+3. **P3 真机**：Google 控制台「目标对象 → 测试用户」加测试账号；本地后端是 `--noreload` 起的，**必须重启**才有新路由。
+   Facebook 凭据拿到后填 `.env`（`FACEBOOK_OAUTH_APP_ID/SECRET`），并把测试 FB 账号加进 App Roles。
+4. 前端按钮要按 `/oauth/providers` 返回渲染，凭据未配置时不出现死按钮（本地无凭据仍可开发其余功能）。
 
 ### 本轮新增的坑（后续实现别再踩）
 - 回调千万别写成 `localhost:8000` 或独立 API 域：本地因 cookie 不区分端口会「看起来能登」，生产必炸。
@@ -64,7 +183,9 @@
 - 别为 OAuth 引 `requests`/`google-auth`，与仓库出网写法（stdlib）保持一致。
 
 ### 验证（按验证纪律）
-本轮**零代码改动**，未跑任何单测/lint；仅做了代码事实核查（文件与行号见上）与两家官方文档核实。文档自身无验证命令。
+- 上午：零代码改动，仅代码事实核查与官方文档核实。
+- 20:15 后（P1）：`test accounts_buyers merchant_ops.tests.test_switch_to_mall` → **54 OK**；`ruff check` 通过；
+  `migrate accounts_buyers` OK；临时实例 8010 实测 providers/start。**未跑前端验证**（本轮零前端改动）。
 
 ## 0cc. 批次 BB：小批补抓验证（详情/规格/SKU 链路，2026-11-24，✅ 10/10 入库，未 commit）
 
@@ -167,6 +288,91 @@
 - 补抓 payload 必须 `variants=[]`：不清空时导入器会给库里没有的变体按 `current_price`（原价）**新建 Offer**，等于偷偷加价。
 - 空 `payload.skus` + 现价：`get_or_create_sku_from_source` 对「已有规格的 SKU」要求签名一致，用库里
   `Sku.specification` 回填 `specs` 才能通过（本批脚本已这么做）。
+
+### 0cc-3. UK 143 补抓（2026-11-24 两轮，⛔ 各撞 1 次 307 → **已停，等用户决定**，未 commit）
+> 用户决定当场跑 UK 143。完整报告 `var/crawl_detail_backfill_uk_20261124/report.md`，
+> 明细 `result.csv`（34 行）/ `remaining.csv`（109 行）/ `verify_uk.json`。
+
+**冒烟 3 条（`.co.uk`，10s 间隔）：通过** —— 3/3 refreshed、6 次请求、91.9s、0 风控；
+`00feed44`（DAEWOO 电水壶）2 块/评分 4.0-12、`0136acb3`（TCL 55P8K）2 块/规格表 16 行、`043d5b7f`（Purina）1 块/7 行。
+
+**批 1：跑 6 条后中止**（30 条上限没跑完）
+- 6 条全部 refreshed（`04f14f41`/`0603fde7`/`0737dd29`/`0797be8e`/`08f4175e`/`09e74a52`），详情 6/6、规格表 4/6、评分 5/6、画廊 +40。
+- 第 7 条 **`0c23dd3f`（Pampers Size 4，sku 10024251）12:02:35 UTC 返回 HTTP 307**，`Location` 含
+  `error403`/`risk` → 脚本 `StopBatch`，链脚本检测 `ABORT` 后**退出码 2、第 2–5 批未启动**（未重试、未换号）。
+- 统计：完成 **9**（含冒烟）、失败 **1**（307）、跳过 0、剩余 **134**；请求 **19** 次、净耗时 **247.2s**（≈27.5s/条）；
+  风控事件 **1 次（307 redirect）**，HTTP 200 壳页 0、403 0、维护 0、登录墙 0。
+- 价格安全：`verify_uk.py` 对照 `offers_before_uk.json`（143 个补抓前快照）→ Offer 价/`retail_price`/
+  `promotion_label`/Offer 状态/Offer 条数 **全部 0 变化**；搜索文档 143/143 存在且评分、`min_price` 同步。
+- 剩余 134 分布：small-home-appliances 43、health-wellness 41、electronics 10、beauty 10、pets 10、
+  baby 9、games 7、home-living 4。
+
+**第 2 轮（用户手动过验证、会话恢复后，12:06–12:33 UTC / 20:06–20:33 本地）：又跑 25 条后再次撞 307 → 已停**
+- 冒烟 1 条（重试第 1 轮失败的 `0c23dd3f`）：**200，无登录墙**，refreshed（2 请求 / 39.4s）。
+- 批 `batch2_01`（10 条，319.1s）+ `batch2_02`（10 条，420.1s）全绿；批 `batch2_03` 跑 4 条后，
+  第 5 条 **`4063fd4b` 12:33:05 UTC 返回 HTTP 307**（同上 error403/risk）→ 停批、停链，第 3–14 批未启动。
+- 本轮节奏：10 条/批、单条 **16s**、批间停 **5 分钟**、`/dp/`+`/dg/` 双请求、价格冻结。
+- **累计（两轮）**：完成 **34**、风控中止 **2 次**（`0c23dd3f` 12:02:35、`4063fd4b` 12:33:05，均 307）、
+  跳过 0、剩余 **109**；请求 **70** 次、净抓取 **1170.1s**（含停顿墙钟约 53 分钟）。
+  34 条质量：详情 34/34、规格表 20/34、评分 23/34、画廊 **+203 张**、搜索文档 34/34。
+- 价格安全：`verify_uk.py` 对照 143 个补抓前快照 → Offer 价 / `retail_price` / `promotion_label` /
+  Offer 状态 / Offer 条数 **全部 0 变化**。
+
+**当前状态（第 3 轮：账号池轮换后已完成，见下）**。两轮静态会话实测：连续浏览 `.co.uk` 详情页约 20–25 条
+就会被 307 挑战，**用户手动过一次验证即刻恢复**（`0c23dd3f` 重试 200）。
+
+### 0cc-3a. 账号池轮换（2026-11-24 13:0x–14:3x，✅ UK **143/143** 全部完成，未 commit）
+> 用户问「能不能用爬虫任务的账号池抓」。完整报告 `var/crawler_accounts_rotation_20261124/report.md`。
+
+**必须记住的两条结论（用户明确要求写进交接）**
+1. **307 的真正触发条件是「单会话浏览总量」，不是 IP 封锁。**
+   同一静态会话连续浏览 `.co.uk` 详情页约 20–25 条必被 307 挑战（第 1 轮 19 次请求、第 2 轮 25 条后各撞 1 次），
+   而**轮换 20 个账号跑 106 条 = 0 次 307、0 个账号被标记**。以后 UK 批量抓取**一律用账号池轮换**：
+   每账号 ≤8 条、单条 15s、`/dp/`+`/dg/` 双请求、**遇 307/403 只换号不停链**，全部账号都被标记才停。
+   命令：`var/crawler_accounts_rotation_20261124/backfill_uk_rotate.py --apply --accounts <20 个> --per-account 8 --min-interval 15`
+2. **账号池现状**：`CrawlerAccount` **76 未软删**（全 ACTIVE）/ `session_status` **58 VALID + 18 UNKNOWN** /
+   解密后**57 个含 `pin`**（登录态有效，≥20 满足放量）。**`数据抓取04` 整组 10 个全无 pin**，
+   根因是 **2026-11-12 13:56–15:03 那批登录未成功**（只抓到访客 cookie，无 `pin`/`mfs_session`），
+   **不是会话过期、也不是解密 bug**（58 个会话 0 解密失败）。要恢复这 19 个需对那批重跑
+   `crawler_account_batch_setup --login`；本次 57 个已够用，未重登录。
+
+**执行明细**
+- 盘点：按组 08=4、07=10、06=8、05=8+2unk、03=10、01=9+1unk、02=6+4unk、04=0+10unk、default=0；
+  抽查 id=36/11/47（04/01/05 组无 pin）确认都是「从未登录成功」形态。产物 `inventory.csv`。
+- 探测：6 个跨组账号各 1 次请求打 `/dp/10024251`（上次 307 的 URL）→ **6/6 `200_ok`**（713–723KB）。
+- 轮换：20 账号 → **106 条完成 105**，0 次 307；请求 218 次、墙钟约 58 分钟
+  （长跑剩 9 条时被系统 kill=exit 137，**非风控**；用 4 个账号补跑完）。
+- **最后 1 条 `819d6c82`（Wimius 投影仪）：标题归一化后成功**——根因是身份比较缺归一化：源站标题带
+  `【Black Friday Deals | 100% Authentic|10x Refund if Counterfeit】` 前缀，且比较基准取的是审计 CSV 被截断
+  到 80 字符的标题（`…Wimius K1 Project`），raw 相似度 0.46。修法（**只改导入侧比较逻辑，入库标题不动**）：
+  ① `title_for_compare()` 剥 `【…】`/`[…]` 段 + 促销词（black friday/deals/sale/clearance/authentic/
+  counterfeit/official/new arrivals/free shipping…）+ `xx% off` + 竖线；② 比较基准改用**库里完整 en-GB 标题**
+  （`SpuTranslation`），CSV 标题只作兜底。重试 `title_ratio=1.000` → 详情 1 块、规格表 1 张/14 行、
+  评分 4.00/7、画廊 1→11、`/dg/` 合并、搜索文档 OK（min_price 149.00）、价格冻结 OK；
+  **入库标题仍保留原前缀（261 字符，未改写）**。
+- **累计（UK 143）**：详情 **143/143**、规格表 102、评分 110、搜索文档 143/143、
+  **价格 0 变价 143/143**（逐 offer pk 对比 `offers_before_uk.json`）；`remaining.csv` **0 行**；
+  `result.csv` 143 行含 `account` 列（pool 109 / static 34）。
+
+### 本轮追加的坑（BB-3）
+- **身份相似度不能用审计 CSV 的标题做基准**：`channel_products_quality.csv` 的 title 截断到 80 字符，
+  长标题必然低分；要用 `SpuTranslation`/搜索文档的完整标题。
+- **标题比较要先剥促销壳**：`【Black Friday Deals …】`、`[SALE]`、`xx% off` 等前缀会让同一商品相似度掉到 0.5 以下；
+  但**只用于比较**，入库标题保持页面原样。
+- **`CrawlJob.source_catalog_id` 不能为空**：`joybuy_uk` 没有 `minihome:mini-hp-nl-sports-outdoor` 源类目，
+  照抄户外脚本会 `IntegrityError (1048)`；要回退该源系统任意 `SourceCategory` + `SourceCatalog`
+  （副作用：这批 run 的类目归属是「该源第一个类目」，按类目统计时要排除）。
+- **同一 SKU 可能有两条 ACTIVE Offer**（`454de050`：49.99 无促销 + 29.99 "40% off"）：用价格集合判
+  `price_frozen_ok` 会误报 False，**必须按 offer pk 逐条对快照**（`reconcile_result.py` 已按此重算，143/143 OK）。
+- **后台长任务会被系统 kill（exit 137）**：脚本要逐条落 `progress_*.json`，kill 后按 remaining 续跑。
+- 轮换里「账号级停止」与「商品级失败」必须分开：307/403/登录墙/壳页 → 标记账号换号；
+  `identity_mismatch`/解析失败 → 只记商品失败，别浪费账号。
+- **`redirect_risk`（307）不会被计入 `risk_events`**：那个计数器只统计 HTTP 200 壳页，判定风控必须看
+  `abort_reason`；本次若只看 `risk_events` 会误判为「0 风控」。
+- 中止条目不会进 `results`（异常路径直接抛），要回 `abort_reason` + 快照反查 SKU；它们仍留在
+  `remaining.csv`，下次自动被选中重试。
+- `build_result.py` 原来 glob `batch[0-9].json`，第二轮 `batch2_01.json` 会被漏统计 → 已改 `batch*.json`。
+- `.co.uk` 比 `.nl` 脆：NL 今天 71 次请求 0 风控，UK 静态会话约 20–25 条就 1 次 307；节奏要按 UK 单独定。
 
 ## 0cb. 批次 BA：户外频道页 banner + 二级品类卡（2026-11-24，✅ 已改 + 针对性验证 33/33，未 commit）
 
@@ -4992,6 +5198,7 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
   - **验证（针对性）**：`localhost:3000` 200 / `127.0.0.1:3000` 200 / **`192.168.1.165:3000` 200**（局域网 IP）；经局域网 IP 的代理 `api/v1/cart` 200/80ms；`manage.py shell` 打印 `CSRF_TRUSTED_ORIGINS` 含 `http://192.168.1.165:3000|5173|5174`；故意用 dummy token POST 时后端报 **"CSRF cookie not set"**（说明 Origin 校验已通过，不是 Origin 被拒）；`ruff check backend/config/settings.py` 通过；四端口正常、三端 200。
   - **未完成/需用户操作**：**Windows 防火墙**三个 profile 全开且**没有 Node 的入站放行规则**，`netsh advfirewall firewall add rule name="Joybuy storefront 3000" dir=in action=allow protocol=TCP localport=3000` 因非管理员被拒 → **需以管理员身份执行该命令**（或首次连接时在弹窗点"允许访问"），否则手机仍然连不上。当前主机 IP：**192.168.1.165**（以太网），另有 WSL 172.27.160.1（不用）。
   - 备注：管理端 5173 / 商家端 5174 仍是只绑 127.0.0.1；若要局域网访问，同样加 `--host 0.0.0.0` 即可（CSRF 白名单已覆盖它们的端口）。
+- **2026-11-24 20:55 手动重启后端（用户要求，无代码改动）**：杀掉 8000 上的 runserver（PID 37436），**脱管看护循环 6 秒内自动拉起**新实例（PID 44428，父 35640），无需手动敲命令。验证：8000 单行 LISTENING、health ok、经 3000 代理 `api/v1/cart` 200/0.27s、`localhost:3000` / `192.168.1.165:3000` / 5173 / 5174 全部 200。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
