@@ -1,15 +1,20 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useFetch, useRequestHeaders, useRuntimeConfig } from '#imports'
+import { useFetch, useRequestHeaders, useRouter, useRuntimeConfig } from '#imports'
 
 import { useLocale } from '../../../composables/useLocale'
+import { useMobileView } from '../../../composables/useMobileView'
 import { formatDisplayPrice } from '../../../utils/display'
 
 // 订单详情（迭代02）：状态/金额/支付方式/商品行/地址，
 // 存在未完成商家子单时显示【确认收货】——点击即全部完成并回款商家。
 const route = useRoute()
+const router = useRouter()
 const { t } = useLocale()
 const config = useRuntimeConfig()
+// ADR 0001: on the m. host the same payload renders the mobile order detail
+// (docs/20 §5.2); the desktop template below is untouched.
+const { isMobileHost } = useMobileView()
 
 const publicId = computed(() => String(route.params.id || ''))
 
@@ -78,6 +83,31 @@ function statusLabel(status) {
   return t(STATUS_KEYS[status] || 'orders.statusProcessing')
 }
 
+// Mobile detail view model (docs/20 §5.2): status card / address / items /
+// amounts / payment method; confirm-receipt flags reuse the desktop logic.
+const mobileOrder = computed(() => {
+  if (!order.value) return null
+  const shipping = order.value.shipping_address
+  return {
+    number: order.value.public_id.slice(0, 8).toUpperCase(),
+    statusLabel: statusLabel(order.value.status),
+    placedAt: order.value.created_at?.slice(0, 16).replace('T', ' ') || '',
+    paymentMethod: order.value.payment_method || '',
+    total: formatDisplayPrice(order.value.total),
+    address: shipping
+      ? `${shipping.full_name} · ${shipping.line1}, ${shipping.city} ${shipping.postcode}`
+      : '',
+    items: (Array.isArray(order.value.items) ? order.value.items : []).map((item) => ({
+      title: item.title,
+      qty: item.quantity,
+      price: formatDisplayPrice(item.unit_price),
+      image: item.image_path || '',
+    })),
+    showConfirm: !allCompleted.value && order.value.status === 'PAID',
+    completed: allCompleted.value,
+  }
+})
+
 useHead(() => ({
   title: order.value
     ? `${t('orders.orderNumber')} #${order.value.public_id.slice(0, 8)}`
@@ -86,7 +116,18 @@ useHead(() => ({
 </script>
 
 <template>
-  <AppContainer narrow>
+  <!-- ADR 0001: mobile host renders the docs/20 §5.2 mobile order detail;
+       the desktop template below is untouched. -->
+  <MobileOrderDetail
+    v-if="isMobileHost"
+    :loading="status === 'pending'"
+    :not-found="Boolean(error)"
+    :order="mobileOrder"
+    :confirming="confirming"
+    @back="router.back()"
+    @confirm="confirmReceipt"
+  />
+  <AppContainer v-else narrow>
     <section class="order-detail" aria-labelledby="order-title">
       <NuxtLink to="/account/orders" class="order-detail__back">{{
         t('orders.backToOrders')

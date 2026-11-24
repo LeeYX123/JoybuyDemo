@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useHead } from '#imports'
 
 import { useLocale } from '../../composables/useLocale'
+import { useMobileView } from '../../composables/useMobileView'
 
 import AccountEmpty from '../../components/account/AccountEmpty.vue'
 import AccountShell from '../../components/account/AccountShell.vue'
@@ -12,6 +13,9 @@ import AccountTabs from '../../components/account/AccountTabs.vue'
 // This repo has no buyer after-sales backend yet, so the page shows the real
 // tab structure with an honest empty state instead of fabricated records.
 const { t } = useLocale()
+// ADR 0001: on the m. host the same tab data renders the mobile after-sales
+// page (docs/20 §5.5); the desktop AccountShell below is untouched.
+const { isMobileHost } = useMobileView()
 
 const tab = ref('all')
 const tabs = computed(() => [
@@ -25,7 +29,10 @@ useHead(() => ({ title: t('accountMenu.returns') }))
 </script>
 
 <template>
-  <AccountShell :title="t('accountMenu.returns')">
+  <!-- ADR 0001: mobile host renders the docs/20 §5.5 mobile after-sales;
+       the desktop AccountShell below is untouched. -->
+  <MobileReturns v-if="isMobileHost" :tabs="tabs" :active-tab="tab" @tab="tab = $event" />
+  <AccountShell v-else :title="t('accountMenu.returns')">
     <template #actions>
       <button class="returns-apply" type="button" disabled>
         {{ t('returns.apply') }}

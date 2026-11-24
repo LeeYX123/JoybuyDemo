@@ -1,9 +1,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useFetch, useHead, useRequestHeaders, useRuntimeConfig } from '#imports'
+import { useFetch, useHead, useRequestHeaders, useRouter, useRuntimeConfig } from '#imports'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
+import { useMobileView } from '../../composables/useMobileView'
 import { useUiToast } from '../../composables/useUiToast'
 
 import AccountEmpty from '../../components/account/AccountEmpty.vue'
@@ -21,6 +22,10 @@ const { t } = useLocale()
 const { isAuthenticated } = useBuyerAuth()
 const { show } = useUiToast()
 const config = useRuntimeConfig()
+// ADR 0001: on the m. host the same payload renders the mobile address book
+// (docs/20 §5.4); the desktop AccountShell below is untouched.
+const { isMobileHost } = useMobileView()
+const router = useRouter()
 
 const addressesUrl = computed(() =>
   import.meta.server ? `${config.apiBaseInternal}/addresses` : '/api/v1/addresses',
@@ -246,6 +251,37 @@ function handleKeydown(event) {
   if (showForm.value) closeForm()
 }
 
+// --- Mobile address book (docs/20 §5.4) -------------------------------------
+// The mobile component is presentational: cards carry the same resolved
+// fields, the form forwards its edits as `field` events into the same
+// reactive form, and every mutation reuses the desktop handlers above.
+const mobileAddresses = computed(() =>
+  addresses.value.map((address) => ({
+    // Keep the raw payload spread in so edit/setDefault receive the same
+    // object shape as the desktop handlers (full_name/line1/...).
+    ...address,
+    publicId: address.public_id,
+    fullName: address.full_name || '',
+    phone: address.phone || '',
+    lines: addressLines(address),
+    isDefault: Boolean(address.is_default),
+    isServiceable: address.is_serviceable !== false,
+  })),
+)
+
+const mobileDeleteTarget = computed(() =>
+  deleteTarget.value
+    ? {
+        ...deleteTarget.value,
+        fullName: deleteTarget.value.full_name || '',
+      }
+    : null,
+)
+
+function setMobileField(name, value) {
+  form[name] = value
+}
+
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
 })
@@ -258,7 +294,37 @@ useHead(() => ({ title: t('addresses.title') }))
 </script>
 
 <template>
-  <AccountShell :title="t('addresses.title')">
+  <!-- ADR 0001: mobile host renders the docs/20 §5.4 mobile address book;
+       the desktop AccountShell below is untouched. -->
+  <MobileAddresses
+    v-if="isMobileHost"
+    :signed-in="isAuthenticated"
+    :loading="status === 'pending'"
+    :tab="tab"
+    :tabs="tabs"
+    :addresses="mobileAddresses"
+    :show-form="showForm"
+    :form-title="formTitle"
+    :form="form"
+    :form-error="formError"
+    :saving="saving"
+    :add-button-label="addButtonLabel"
+    :delete-target="mobileDeleteTarget"
+    :deleting="deleting"
+    @tab="tab = $event"
+    @add="openCreate"
+    @edit="openEdit"
+    @copy="copyAddress"
+    @set-default="setDefault"
+    @request-delete="deleteTarget = $event"
+    @confirm-delete="confirmDelete"
+    @cancel-delete="deleteTarget = null"
+    @close-form="closeForm"
+    @save="save"
+    @field="setMobileField"
+    @back="router.back()"
+  />
+  <AccountShell v-else :title="t('addresses.title')">
     <template #tabs>
       <div class="addresses-toolbar">
         <AccountTabs v-model="tab" :tabs="tabs" />

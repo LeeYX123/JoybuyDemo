@@ -566,6 +566,16 @@ export const messages = {
     'mobile.pdp.expand': 'Expand',
     'mobile.pdp.collapse': 'Collapse',
     'mobile.pdp.galleryDot': 'Image {n}',
+    // Mobile account sub-pages (docs/20 §5).
+    'mobile.reviews.title': 'My reviews',
+    'mobile.reviews.tabToReview': 'To review',
+    'mobile.reviews.tabReviewed': 'Reviewed',
+    'mobile.messages.title': 'Messages',
+    'mobile.messages.tabSupport': 'Customer service',
+    'mobile.messages.tabOrders': 'Orders',
+    'mobile.messages.supportDesc': 'Chat with us any time, 24/7. We usually reply within minutes.',
+    'mobile.messages.supportCta': 'Online chat',
+    'mobile.messages.empty': 'No order updates yet. Placed orders will show their status here.',
   },
   zh: {
     'topStrip.region': '英国 | 中文',
@@ -1112,6 +1122,16 @@ export const messages = {
     'mobile.pdp.expand': '展开',
     'mobile.pdp.collapse': '收起',
     'mobile.pdp.galleryDot': '第 {n} 张图片',
+    // 手机版账号子页（docs/20 §5）。
+    'mobile.reviews.title': '我的评价',
+    'mobile.reviews.tabToReview': '待评价',
+    'mobile.reviews.tabReviewed': '已评价',
+    'mobile.messages.title': '消息',
+    'mobile.messages.tabSupport': '客服',
+    'mobile.messages.tabOrders': '订单',
+    'mobile.messages.supportDesc': '7×24 小时在线客服，通常几分钟内回复。',
+    'mobile.messages.supportCta': '在线咨询',
+    'mobile.messages.empty': '暂无订单通知。下单后订单状态变化会显示在这里。',
   },
   de: {
     'topStrip.region': 'UK | Deutsch',

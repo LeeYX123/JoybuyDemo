@@ -4,6 +4,7 @@ import { useFetch, useHead, useRequestHeaders, useRoute, useRuntimeConfig } from
 
 import { useBuyerAuth } from '../../../composables/useBuyerAuth'
 import { useLocale } from '../../../composables/useLocale'
+import { useMobileView } from '../../../composables/useMobileView'
 import { formatDisplayPrice } from '../../../utils/display'
 
 import AccountEmpty from '../../../components/account/AccountEmpty.vue'
@@ -19,6 +20,9 @@ const { t } = useLocale()
 const { isAuthenticated } = useBuyerAuth()
 const route = useRoute()
 const config = useRuntimeConfig()
+// ADR 0001: on the m. host the same payload renders the mobile order list
+// (docs/20 §5.1); the desktop AccountShell below is untouched.
+const { isMobileHost } = useMobileView()
 
 const ordersUrl = computed(() =>
   import.meta.server ? `${config.apiBaseInternal}/orders` : '/api/v1/orders',
@@ -119,11 +123,40 @@ function orderTotal(order) {
   return formatDisplayPrice(order.total)
 }
 
+// Mobile order cards (docs/20 §5.1): status badge, first item image,
+// number/date/total, view-details link. Formatting reuses the desktop helpers.
+const mobileOrders = computed(() =>
+  pagedOrders.value.map((order) => {
+    const first = Array.isArray(order.items) ? order.items[0] : null
+    return {
+      publicId: order.public_id,
+      number: order.public_id.slice(0, 8).toUpperCase(),
+      date: formatDate(order.created_at),
+      statusLabel: stateLabel(order),
+      statusClass: stateClass(order),
+      total: orderTotal(order),
+      image: first?.image_path || '',
+      title: first?.title || '',
+    }
+  }),
+)
+
 useHead(() => ({ title: t('accountMenu.orders') }))
 </script>
 
 <template>
-  <AccountShell :title="t('accountMenu.orders')">
+  <!-- ADR 0001: mobile host renders the docs/20 §5.1 mobile order list;
+       the desktop AccountShell below is untouched. -->
+  <MobileOrders
+    v-if="isMobileHost"
+    :signed-in="isAuthenticated"
+    :loading="status === 'pending'"
+    :tabs="tabs"
+    :active-tab="activeTab"
+    :orders="mobileOrders"
+    @tab="activeTab = $event"
+  />
+  <AccountShell v-else :title="t('accountMenu.orders')">
     <template #tabs>
       <AccountTabs v-model="activeTab" :tabs="tabs" />
     </template>

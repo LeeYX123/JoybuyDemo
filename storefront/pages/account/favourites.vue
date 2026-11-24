@@ -1,15 +1,22 @@
 <script setup>
+import { computed } from 'vue'
 import { useHead } from '#imports'
 import { useLocale } from '../../composables/useLocale'
+import { useMobileView } from '../../composables/useMobileView'
 
 const { t } = useLocale()
+const { isMobileHost } = useMobileView()
 
 import { useActivityList } from '~/composables/useActivityList'
 import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice } from '../../utils/display'
 
 // Buyer favourites: list, remove, empty state and pagination.
-const { items, total, totalPages, page, goToPage, clientDelete } = useActivityList('favourites')
+// useActivityList is async (SSR fetch inside); awaiting it is required —
+// without the await the destructured refs are undefined (latent desktop bug,
+// fixed here because the mobile branch needs the same refs).
+const { items, total, totalPages, page, goToPage, clientDelete } =
+  await useActivityList('favourites')
 const { removeLocal } = useWishlist()
 
 function removeItem(publicId) {
@@ -18,11 +25,25 @@ function removeItem(publicId) {
   clientDelete(publicId)
 }
 
+// Mobile wishlist cards (docs/20 §5.3): same 2-column card style as the
+// mobile listing; removal reuses the shared removeItem above.
+const mobileItems = computed(() =>
+  items.value.map((item) => ({
+    spuId: item.spu_public_id,
+    title: item.title,
+    price: formatDisplayPrice(item.price_min) ?? '',
+    image: item.image_path || '',
+  })),
+)
+
 useHead({ title: 'Favourites' })
 </script>
 
 <template>
-  <AppContainer narrow>
+  <!-- ADR 0001: mobile host renders the docs/20 §5.3 mobile wishlist;
+       the desktop template below is untouched. -->
+  <MobileWishlist v-if="isMobileHost" :items="mobileItems" @remove="removeItem" />
+  <AppContainer v-else narrow>
     <section class="activity" aria-labelledby="activity-title">
       <h1 id="activity-title">{{ t('account.favourites') }}</h1>
 
