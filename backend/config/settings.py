@@ -215,6 +215,10 @@ MEDIA_BACKEND = os.getenv("MEDIA_BACKEND", "local").strip().lower()
 MEDIA_S3_BUCKET = os.getenv("MEDIA_S3_BUCKET", "joybuy-media-fra")
 MEDIA_S3_PREFIX = os.getenv("MEDIA_S3_PREFIX", "media/")
 MEDIA_S3_REGION = os.getenv("MEDIA_S3_REGION", "eu-central-1")
+# S3-compatible endpoint (e.g. https://fra1.digitaloceanspaces.com for
+# DigitalOcean Spaces). Empty = AWS virtual-host style URLs and the default
+# boto3 endpoint; non-empty = path-style URLs against this endpoint.
+MEDIA_S3_ENDPOINT = os.getenv("MEDIA_S3_ENDPOINT", "").strip().rstrip("/")
 if MEDIA_BACKEND not in {"local", "s3"}:
     raise ImproperlyConfigured("MEDIA_BACKEND must be local or s3")
 

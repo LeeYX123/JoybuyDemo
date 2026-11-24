@@ -52,14 +52,28 @@ def get_s3_client():
 
     Kept as a module-level function so tests can monkeypatch it with a fake
     client. No credentials are ever hardcoded; the bucket must allow anonymous
-    reads for ``MEDIA_S3_PREFIX*`` (public access is managed in AWS, not here).
+    reads for ``MEDIA_S3_PREFIX*`` (public access is managed at the provider).
+
+    When ``MEDIA_S3_ENDPOINT`` is set (S3-compatible providers such as
+    DigitalOcean Spaces) the client targets that endpoint with path-style
+    addressing; otherwise the AWS default endpoint/virtual-host style applies.
     """
 
     global _s3_client
     if _s3_client is None:
         import boto3
+        from botocore.config import Config
 
-        _s3_client = boto3.client("s3", region_name=settings.MEDIA_S3_REGION)
+        endpoint = settings.MEDIA_S3_ENDPOINT
+        if endpoint:
+            _s3_client = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                region_name=settings.MEDIA_S3_REGION,
+                config=Config(s3={"addressing_style": "path"}),
+            )
+        else:
+            _s3_client = boto3.client("s3", region_name=settings.MEDIA_S3_REGION)
     return _s3_client
 
 
@@ -78,8 +92,15 @@ def s3_key(relative_path: str) -> str:
 
 
 def s3_public_url(relative_path: str) -> str:
-    """Anonymous bucket URL for a media-relative path (nginx proxies this too)."""
+    """Anonymous bucket URL for a media-relative path (nginx proxies this too).
 
+    Endpoint mode (MEDIA_S3_ENDPOINT set, e.g. DigitalOcean Spaces) builds a
+    path-style URL; empty endpoint keeps the AWS virtual-host style.
+    """
+
+    endpoint = settings.MEDIA_S3_ENDPOINT
+    if endpoint:
+        return f"{endpoint}/{settings.MEDIA_S3_BUCKET}/{s3_key(relative_path)}"
     return (
         f"https://{settings.MEDIA_S3_BUCKET}.s3.{settings.MEDIA_S3_REGION}"
         f".amazonaws.com/{s3_key(relative_path)}"

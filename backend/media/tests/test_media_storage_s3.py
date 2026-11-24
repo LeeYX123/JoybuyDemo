@@ -2,7 +2,9 @@
 
 A fake S3 client stands in for boto3 so no network is touched: the tests
 assert put/get/head/delete calls, dedup behaviour without uploads, variant
-generation from in-memory bytes, and the dev-view fallback redirect.
+generation from in-memory bytes, and the dev-view fallback redirect. A
+separate class covers MEDIA_S3_ENDPOINT mode (S3-compatible providers such
+as DigitalOcean Spaces) without touching the network either.
 """
 
 import io
@@ -20,8 +22,11 @@ from PIL import Image
 from media.models import MediaAsset, MediaVariant
 from media.storage import (
     delete_asset_file,
+    get_s3_client,
     read_stored_bytes,
+    reset_s3_client,
     s3_key,
+    s3_public_url,
     store_bytes,
     stored_file_exists,
 )
@@ -298,3 +303,85 @@ class ServeMediaFileTests(IsolatedMediaRootMixin, TestCase):
         with override_settings(DEBUG=False, MEDIA_BACKEND="s3"):
             with self.assertRaises(Http404):
                 self.request("x.png")
+
+
+class S3EndpointTests(IsolatedMediaRootMixin, TestCase):
+    """MEDIA_S3_ENDPOINT mode: S3-compatible providers (DigitalOcean Spaces).
+
+    The endpoint must reach both the boto3 client factory (endpoint_url plus
+    path-style addressing) and the anonymous public URL builder; an empty
+    endpoint keeps the AWS defaults verbatim.
+    """
+
+    ENDPOINT = "https://fra1.digitaloceanspaces.com"
+
+    def setUp(self):
+        super().setUp()
+        override = override_settings(
+            MEDIA_BACKEND="s3",
+            MEDIA_S3_BUCKET=FAKE_BUCKET,
+            MEDIA_S3_ENDPOINT=self.ENDPOINT,
+        )
+        override.enable()
+        self.addCleanup(override.disable)
+        # The client is a module-level singleton: drop any endpoint-mode client
+        # cached by one test so no other test inherits it (and vice versa).
+        reset_s3_client()
+        self.addCleanup(reset_s3_client)
+
+    @staticmethod
+    def record_boto3_client():
+        recorded = {}
+
+        def fake_client(service, **kwargs):
+            recorded["service"] = service
+            recorded.update(kwargs)
+            return FakeS3Client()
+
+        return recorded, fake_client
+
+    def test_get_s3_client_uses_endpoint_and_path_style(self):
+        recorded, fake_client = self.record_boto3_client()
+        with patch("boto3.client", fake_client):
+            client = get_s3_client()
+        self.assertIsInstance(client, FakeS3Client)
+        self.assertEqual(recorded["service"], "s3")
+        self.assertEqual(recorded["endpoint_url"], self.ENDPOINT)
+        self.assertEqual(recorded["region_name"], settings.MEDIA_S3_REGION)
+        self.assertEqual(recorded["config"].s3.get("addressing_style"), "path")
+
+    def test_empty_endpoint_keeps_aws_default_client(self):
+        recorded, fake_client = self.record_boto3_client()
+        with override_settings(MEDIA_S3_ENDPOINT=""):
+            with patch("boto3.client", fake_client):
+                get_s3_client()
+        self.assertEqual(recorded["service"], "s3")
+        self.assertNotIn("endpoint_url", recorded)
+        self.assertNotIn("config", recorded)
+        self.assertEqual(recorded["region_name"], settings.MEDIA_S3_REGION)
+
+    def test_s3_public_url_is_path_style_with_endpoint(self):
+        self.assertEqual(
+            s3_public_url("cms/original/aa/bb/x.png"),
+            f"{self.ENDPOINT}/{FAKE_BUCKET}/media/cms/original/aa/bb/x.png",
+        )
+
+    def test_empty_endpoint_keeps_aws_virtual_host_url(self):
+        with override_settings(MEDIA_S3_ENDPOINT=""):
+            self.assertEqual(
+                s3_public_url("cms/original/aa/bb/x.png"),
+                f"https://{FAKE_BUCKET}.s3.{settings.MEDIA_S3_REGION}"
+                ".amazonaws.com/media/cms/original/aa/bb/x.png",
+            )
+
+    def test_store_bytes_uploads_object_via_endpoint_client(self):
+        """The write path is endpoint-agnostic; a fake put still lands."""
+        fake = FakeS3Client()
+        payload = make_png(color=(21, 22, 23))
+        with patch("media.storage.get_s3_client", return_value=fake):
+            asset, created = store_bytes(payload, kind="CMS", mime_type="image/png")
+        self.assertTrue(created)
+        self.assertEqual(len(fake.put_calls), 1)
+        self.assertEqual(fake.put_calls[0]["Bucket"], FAKE_BUCKET)
+        self.assertEqual(fake.put_calls[0]["Key"], f"media/{asset.relative_path}")
+        self.assertEqual(fake.objects[f"media/{asset.relative_path}"]["body"], payload)
