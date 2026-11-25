@@ -110,7 +110,7 @@ const displayName = computed(
 
 async function signOut() {
   await logout()
-  await navigateTo('/')
+  await navigateTo('/auth/login')
 }
 
 useHead(() => ({ title: t('account.myAccount') }))

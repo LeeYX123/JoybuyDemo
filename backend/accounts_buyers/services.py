@@ -1,6 +1,8 @@
 import hashlib
 import hmac
+import random
 import secrets
+import string
 from datetime import timedelta
 
 from django.conf import settings
@@ -33,6 +35,28 @@ def verification_code_digest(target: str, purpose: str, code: str) -> str:
 
 def session_token_digest(token: str) -> str:
     return _hmac_digest(settings.BUYER_SESSION_HMAC_KEY, "buyer-session", token)
+
+
+def ensure_display_name(account: BuyerAccount) -> str:
+    """需求 13.5-6：未设置用户名时生成 `user+4位数字+4位小写字母`（真站格式实证
+    user4323txlb），一次生成固定存库；已设置（含用户自改）则原样返回。
+
+    三方登录建的账号可能没有邮箱，展示名只能走这条生成规则，所以逻辑放在 service
+    层共用（视图与 `accounts_buyers.oauth` 都调它）。
+    """
+
+    if account.display_name:
+        return account.display_name
+    candidate = ""
+    for _ in range(10):
+        candidate = "user" + "".join(random.choices(string.digits, k=4)) + "".join(
+            random.choices(string.ascii_lowercase, k=4)
+        )
+        if not BuyerAccount.objects.filter(display_name=candidate).exists():
+            break
+    account.display_name = candidate
+    account.save(update_fields=["display_name", "updated_at"])
+    return candidate
 
 
 def rate_limit_key(scope: str, *values: str) -> str:

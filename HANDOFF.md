@@ -2,6 +2,17 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0ch. 30 个 FAILED 爬虫任务按用户指令标记取消并克隆重跑（2026-11-25 00:50 本地，✅ 已写库 + 已启动，批次进行中）
+
+### 一行结论
+30 FAILED 已按用户指令标记 CANCELED（名称带 `[RETRIED_BY_JOB_<新id>]`）并克隆为 30 个新任务（**id 244-273**，账号组 7 有效组打乱轮转、concurrency=2、status READY），经 `var/crawler_retry_20261124/retry_queue.py` 以**全局并发 2 + `CRAWL_MEDIA_DOWNLOAD_WORKERS=2`** 启动重跑；首批 run 223（job 244）/ run 224（job 245）16:50:57 UTC 启动，观察 >3 分钟正常抓取（ConnectionLost=0）。
+
+### 细节与底档（全部在 CRAWLER_STATUS.md，不在本档重复）
+- **old→new 映射、组分配、原失败原因、启动观察** → `CRAWLER_STATUS.md` §1.4 批次记录；任务台账已刷新（§1.1/§1.2/§4，快照 2026-11-24 16:53 UTC）。
+- 脚本与运行记录 → `var/crawler_retry_20261124/`（retry_failed.py / mapping.json / retry_queue.py / queue.log / progress.json）。
+- 坑：协调者 id 清单列了 29 个，按"30 个 FAILED"补入 213（§1.2 台账第 30 行）；CrawlJob 无 remark/error 字段，标记写在 job 名称。
+- 批次预计通宵运行：完成后核对 `final_summary.json` 并刷新 CRAWLER_STATUS.md §1/§4（新会话接手时先看 queue.log 是否仍在跑）。
+
 ## 0ce. 全栈部署到 DigitalOcean Droplet + 托管 MySQL（2026-11-24，✅ 部署完成、外网可达、admin 冒烟通过；媒体本轮不接 Spaces）
 
 ### 我们在做什么
@@ -46,11 +57,38 @@
 - TLS（certbot）落地时删 .env 两行 cookie Secure=false。
 - merchant-web 挂 nginx（独立 server 块或子路径）待定。
 
-## 0ce. 批次 BD：登录/注册页 1:1 复刻（2026-11-24，📋 需求已 grill 定稿，**零代码改动**）
+## 0cg. 批次 BE：手机版购物端功能需求文档（2026-11-25，✅ 新增文档，零代码改动）
+
+> 爬虫任务/账号/冷却台账 → 见根目录 `CRAWLER_STATUS.md`（快照 2026-11-24 16:34 UTC / 2026-11-25 00:34 UTC+8，以后爬虫信息只更新该文档，HANDOFF 不放明细）。
+
+### 我们在做什么
+用户要求「把当前的功能写一个 Markdown 需求文档」，文件名 `手机版购物端功能需求.md`。
+产出**现状基线**文档（不是新增需求），把手机壳已实现能力固化成可验收条目。
+
+### 完成
+- 新增根目录 `手机版购物端功能需求.md`：范围/形态与访问规则（m. 主机、≤768px 自动切换、手动切换、
+  移动壳组成）→ 信息架构（30 条路由表）→ 功能需求 M1–M11（每条含验收标准）→ 非功能需求 →
+  接口依赖表 → 约束与已知限制 → 手机端冒烟清单。
+- 素材来源：`storefront/pages/**`、`components/mobile/*`、`layouts/mobile.vue`、`middleware/mobile-host.global.js`、
+  `plugins/mobile-auto-switch.client.js`、`locales/messages.js` 的 `mobile.*` 键、`pages/checkout` 支付方式、
+  `orders/order_services.py` 的余额扣减逻辑。
+
+### 写文档时核出的三处「实现与口头认知不一致」（已按代码写进文档的限制项）
+1. **购物车勾选不参与下单**：`selectedIds` 只是页面本地状态，`goCheckout()` 不带任何 id，结算使用购物车全部
+   有效商品（原以为"只结算勾选项"）。
+2. **下单不是跳成功页**：成功后 `navigateTo('/account/orders')`。
+3. **余额支付真扣、其他方式只是演示**：`order_services.py:63` 只在 `payment_method == "BALANCE"` 时锁余额并扣减，
+   其余方式走演示成功路径；余额不足报 `NOT_ENOUGH_BALANCE`。
+4. 桌面页脚**没有**「Mobile version」对称入口（只有手机版有 Desktop version）。
+
+### 验证（按验证纪律）
+本轮零代码改动，未跑测试/lint；只做了代码事实核对（上述行号）与文档交叉引用检查。
+
+## 0cf. 批次 BD：登录/注册页 1:1 复刻（2026-11-24，✅ 已实现 + 针对性验证，未 commit）
 
 ### 我们在做什么
 用户要求「打开 joybuy 真站，参考它的登录页和 Google/Facebook 按钮，写一个一模一样的登录页」。
-本轮只做**实测 + grill 拍板 + 方案定稿**，产出 `docs/17-auth-page-replica.md`；`AuthForm.vue` 一行未改。
+先按 grill 规则定稿 12 条决策（`docs/17-auth-page-replica.md`），21:40 用户说「开工」后实现完毕。
 
 ### 实测事实（`var/auth_page_20261124/`）
 1. 真站 UK 登录页（2026-11-24，1440×900，en-GB）**只有 `Continue with Google` + `Continue with JD`，没有 Facebook**。
@@ -71,14 +109,92 @@ Google+Facebook / 两页一起改 / email-first 两步 / 接真实后端 / **新
 保留 Email/Mobile（手机号只登录）/ 注册按钮叫「Create account」且可用 / 附属元素全渲染 /
 地区选择器做成真实语言切换 / 移除忘记密码 / 本轮重写 e2e。
 
-### 下一步（等用户说开工）
-1. 后端：`POST /api/v1/auth/buyer/identifier/lookup`（5 次/60s 限流、恒定响应时间、只返回 bool、日志不记明文）+ 单测。
-2. 前端：`AuthForm.vue` 改三态状态机（identifier / password / register）+ providers 拉取 + 地区切换 + 5 locale 文案。
-3. 测试：vitest 组件用例 + 重写 `tests/e2e/auth.spec.js` 3 个用例 + 三态截图比对。
-4. 未做：真站密码步实测（缺可用账号）、手机号注册（无短信通道）。
+### 已完成（21:40–22:10）
 
-### 验证（按验证纪律）
-本轮零代码改动：未跑单测/e2e/lint。仅做了真站实测（Playwright，产物见上）与代码事实核查。
+后端：
+1. `accounts_buyers/views.py` 新增 `BuyerIdentifierLookupView`：`POST /api/v1/auth/buyer/identifier/lookup`，
+   入参 `identifier`，出参 `{kind: EMAIL|PHONE, exists: bool}`；限流 5 次/60s/IP+标识指纹（**命中与未命中都计数**），
+   恒定耗时（无论存在与否都跑一次 `check_password(value, DUMMY_PASSWORD_HASH)`），禁用账号也按 exists=true 返回；
+   `settings.IDENTIFIER_LOOKUP_LIMIT / _WINDOW_SECONDS`；路由 `buyer-identifier-lookup`。
+2. `tests/test_identifier_lookup.py` 7 例。
+
+前端：
+3. `AuthForm.vue` 重写为三态状态机（identifier / password / register），真站版式：礼包行、`— or —`、
+   三方按钮（内联 SVG 图标）、View more options、地区选择器（接 `useMarketLocale` 真实切语言）、Feedback、协议行。
+   - 礼包行真站约 640 宽单行 → 用 `margin-inline: -130px` 越出 380 列（窄屏回落多行）。
+   - **国旗不能用 emoji**（Windows 渲染成 "GB"）→ 内联 Union Jack SVG。
+   - 注册步按钮 `Create account`（真站是禁用 `Verify email`，按拍板故意偏离）。
+   - 忘记密码入口按真站移除。
+4. `useBuyerAuth.js` 新增 `loadOAuthProviders()` 与 `lookupIdentifier()`（后者不复用 `post()`，避免查询后多刷一次会话）。
+5. `pages/auth/login.vue` / `register.vue`：**页面层** `await useAsyncData('auth-oauth-providers', ...)` 取渠道后
+   以 prop 下传。不要在组件里顶层 await（会让组件变成异步 setup，单测不渲染且与 Nuxt 页面语义不符）。
+6. `locales/messages.js`：5 个 locale 各补 20 键；en 措辞对齐真站（`Email/Mobile`、`Create a password`、
+   `Trusted Quality, Speedy Delivery`）。
+7. `storefront/tests/auth-form.test.js` 7 例；`tests/e2e/auth.spec.js` 重写 4 例。
+
+### 验证（按验证纪律，仅针对性）
+- 后端 `manage.py test accounts_buyers merchant_ops.tests.test_switch_to_mall` → **61 OK**。
+- 前端 `vitest run --config storefront/vitest.config.js` → **249 passed**（含新增 7）。
+- e2e `playwright test tests/e2e/auth.spec.js` → **4 passed**。
+- `eslint` 改动文件无输出；`prettier --check` 通过。
+- 截图 `var/auth_page_20261124/local_login.png` / `local_register.png`：内容列 x=530 宽 380、
+  主按钮/三方按钮 380×48，与真站一致；console error 0。
+- 未 commit。
+
+### 二次调整（23:05–23:25，用户三条反馈，✅ 已验证）
+1. **Facebook 与 Google 并排**：`oauth.providers_payload()` 改为返回**全部渠道 + `enabled` 标记**（不再只返回已配置的）；
+   `AuthForm` 用 `<component :is="provider.enabled ? 'a' : 'button'">` 渲染同款按钮，未配置的点击给
+   `auth.error.oauthUnavailable` 行内提示（凭据到位即变真跳转）。`/oauth/providers` 返回结构变了，
+   旧断言（只列已配置渠道）已同步改成两渠道。
+2. **地区行去掉国旗、显示语言名**：删掉 Union Jack SVG 与 `marketOption.name`，改用 `localeName`
+   （取自 `availableLocales` + `localeCode`）；原生 select 仍透明覆盖整块，真实切语言。
+3. **退出登录回登录页**：`AppHeader.signOut()`、`pages/account/index.vue` 的 `signOut()` 在 `logout()` 后
+   `navigateTo('/auth/login')`（原来分别停留原页 / 回首页）。
+
+### 三次修复（23:56，手机端登录 403）
+用户报：手机端（`m.localhost:3000`）输入账号密码点登录 → `POST /api/v1/auth/buyer/register/email 403 (Forbidden)`。
+- **根因是 CSRF 白名单漏了商城手机壳**：`config/settings.py` 的 `CSRF_TRUSTED_ORIGINS` 默认值里有
+  `http://m.localhost:5174`（商家端手机壳）却**没有 `http://m.localhost:3000`**。经 Nuxt devProxy 后 Host 被改写成
+  `127.0.0.1:8000`，Django 只剩 `Origin: http://m.localhost:3000` 参与校验 → 不在白名单 → 所有写请求 403
+  （登录、注册、lookup、登出全受影响，不只是注册）。
+- 修复：默认白名单补 `m.localhost:3000` / `:5173` / `:5174` 三个；`ALLOWED_HOSTS` 默认值补 `m.localhost`（直连场景）。
+- 新增回归测试 `backend/accounts_buyers/tests/test_csrf_origins.py`（3 例）：三个 m. 端口都在白名单、
+  带 `Origin: http://m.localhost:3000` 的注册真的 201、未知 Origin 仍然 403（防止放宽成任意来源）。
+- 实机验证：`probe_mobile_login.cjs`（390×844）在 `http://m.localhost:3000/auth/login` 走完
+  email→密码→登录，落地 `/account`，**0 个 4xx / 0 pageerror**；截图 `var/auth_page_20261124/mobile_after_login.png`。
+- 提醒：`m.localhost` 走的是同一套 Nuxt + Django，**任何新增前端端口/主机名都要同时补 Origin 白名单**。
+
+### 顺手修掉的跨批次故障（重要，非本批次引入）
+`storefront/composables/useMobileView.js` 里 `mobileCounterpartHost` / `desktopCounterpartHost` 是局部函数却**没 export**，
+而另一会话新增的 `storefront/plugins/mobile-auto-switch.client.js` 按具名导出 import 它们 →
+浏览器报 `does not provide an export named 'desktopCounterpartHost'`，**整个商城无法水合**（`__vue_app__` 不存在，
+所有 e2e 全挂、按钮点了没反应）。已给这两个函数补 `export`，水合恢复。该文件属并行会话的未提交改动
+（未跟踪文件，`git diff` 看不到），只补导出、未改逻辑。
+
+### 下一步（本批次）
+1. 真机验证 Google 授权（控制台需把账号加进「测试用户」）：点 `Continue with Google` 走完回跳并落到 `/account`。
+2. Facebook 凭据到位后填 `.env` 的 `FACEBOOK_OAUTH_APP_ID/SECRET` —— 按钮已经在位，填完即从"点击提示不可用"
+   变成真实跳转，**不需要再改前端**。
+3. 若拿到真实已有账号，补测真站密码步并回填 `docs/17 §3`（目前是推断版式）。
+
+### 坑（本轮新增）
+1. **`--noreload` 的 runserver 会吞掉新路由**：本轮出现两次 404（providers 一次、lookup 一次）。
+   已把本地 8000 改成**自动重载**重启；若日志里报 `Not Found: /api/v1/...` 先怀疑进程太旧。
+2. **403 不代表路由存在**：CSRF 中间件在路由解析前就拒绝，所以"无 token POST 返回 403"不能证明接口已注册，
+   必须用带 `csrftoken` 的请求验证（本次正是在这里误判过一次）。
+3. **Nuxt 里 `v-if` / `v-else-if` 链会被夹在中间的 `<template v-if>` 打断**，导致两个分支同时渲染
+   （本次注册表单与第一屏表单同时出现过）。互斥分支用独立 `v-if` 或把整步包进一个 `<template v-if>`。
+4. **e2e 填表必须等水合**：SSR 出的 input 在水合时被 Vue 接管，过早 `fill` 会被抹掉
+   （现象=邮箱为空 + "Please enter a valid email address"）。用 `document.getElementById('__nuxt').__vue_app__` 判就绪。
+5. **`page.click('button[type="submit"]')` 会点到页头搜索按钮**（页面有 2 个 form）；用 role+name 定位。
+6. 账户页没有 "Your account" 标题，旧 e2e 断言已过期；改用 `My orders` + `Sign out`。
+7. MSYS 会把 `/auth/login` 这类参数转成 Windows 路径（`http://localhost:3000D:/...`）：调 node 脚本传路径要 `MSYS_NO_PATHCONV=1`。
+8. **Facebook 变成 `<button>` 后，Playwright `getByRole('button', {name:'Continue'})` 会子串命中
+   "Continue with Facebook"**（strict mode 报 2 个元素）→ 必须加 `exact: true`。
+9. **Django `StatReloader` 在本机并不总是触发**（本轮两次改完都没 reload，日志里 0 条 Reloading）：
+   改后端后先 `curl` 验行为，不要假设自动重载生效。
+10. **Vite 报 "does not provide an export named X" 且 X 在文件里明明存在** → 先看它是不是**没写 `export`**
+    （本轮真因），不要先怀疑缓存。
 
 ## 0cd. 批次 BC：Facebook / Google 登录（2026-11-24，📋 方案 + ✅ P1 后端已实现，未 commit）
 

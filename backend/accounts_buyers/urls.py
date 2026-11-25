@@ -22,4 +22,26 @@ urlpatterns = [
         name="buyer-merchant-handoff",
     ),
     path("api/v1/auth/buyer/session", views.BuyerSessionView.as_view(), name="buyer-session"),
+    # 三方登录（docs/16）：providers 给前端渲染按钮，start/callback 是 OAuth 跳转链。
+    path(
+        "api/v1/auth/buyer/oauth/providers",
+        views.OAuthProvidersView.as_view(),
+        name="buyer-oauth-providers",
+    ),
+    # 登录页 email-first 第一步：只回答「这个邮箱/手机号是否已注册」（docs/17 §4）。
+    path(
+        "api/v1/auth/buyer/identifier/lookup",
+        views.BuyerIdentifierLookupView.as_view(),
+        name="buyer-identifier-lookup",
+    ),
+    path(
+        "api/v1/auth/buyer/oauth/<str:provider>/start",
+        views.OAuthStartView.as_view(),
+        name="buyer-oauth-start",
+    ),
+    path(
+        "api/v1/auth/buyer/oauth/<str:provider>/callback",
+        views.OAuthCallbackView.as_view(),
+        name="buyer-oauth-callback",
+    ),
 ]

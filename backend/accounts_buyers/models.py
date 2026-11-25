@@ -25,6 +25,11 @@ class BuyerAccount(models.Model):
     auth_provider = models.CharField(
         max_length=16, choices=AuthProvider.choices, default=AuthProvider.EMAIL
     )
+    # 三方登录（docs/16）：Facebook 可能不返回邮箱，这类账号没有任何 email/phone。
+    # 该布尔列在「建号 + 写 BuyerIdentity」的同一事务里置 True，用于把
+    # `buyer_account_has_identifier` 的不变量放宽成「有标识 或 已绑定三方身份」——
+    # 否则无邮箱账号会被 DB 约束直接拒绝。CheckConstraint 不能跨表判断，故去规范化冗余一列。
+    identity_bound = models.BooleanField(default=False)
     # 需求文档03 13.5-6: 展示用户名。未设置时首次登录生成 `user+4位数字+4位小写字母`
     # （真站格式实证 user4323txlb），一次生成固定存库；用户以后设置昵称则覆盖显示。
     display_name = models.CharField(max_length=32, blank=True, default="")
@@ -48,7 +53,8 @@ class BuyerAccount(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=(Q(email__isnull=False) & ~Q(email=""))
-                | (Q(phone_e164__isnull=False) & ~Q(phone_e164="")),
+                | (Q(phone_e164__isnull=False) & ~Q(phone_e164=""))
+                | Q(identity_bound=True),
                 name="buyer_account_has_identifier",
             ),
             models.CheckConstraint(
@@ -67,6 +73,42 @@ class BuyerAccount(models.Model):
     @property
     def is_active(self) -> bool:
         return self.status == self.Status.ACTIVE
+
+
+class BuyerIdentity(models.Model):
+    """三方登录身份（Google / Facebook）；``(provider, subject)`` 是账号的唯一键。
+
+    Facebook 可能不返回邮箱，这类买家账号 ``email`` 为 NULL，只能靠本表 subject 认人。
+    subject 语义：Google 是稳定不变的 ``sub``；Facebook 是 **app-scoped id**
+    （同一人在不同 App 里 ID 不同，dev/prod 换 App 即不能复用）。对外一律用
+    ``BuyerAccount.public_id``，本表的 subject 不进前端 payload / URL。
+    """
+
+    class Provider(models.TextChoices):
+        FACEBOOK = "FACEBOOK", "Facebook"
+        GOOGLE = "GOOGLE", "Google"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    account = models.ForeignKey(
+        BuyerAccount, on_delete=models.CASCADE, related_name="identities"
+    )
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    subject = models.CharField(max_length=191)
+    # 三方当时返回的邮箱快照：Facebook 可能为空且不可信，仅作排障线索，不参与认人。
+    email_snapshot = models.EmailField(max_length=254, null=True, blank=True)
+    display_name = models.CharField(max_length=120, blank=True, default="")
+    avatar_url = models.CharField(max_length=512, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "buyer_identity"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "subject"], name="buyer_identity_unique"
+            )
+        ]
+        indexes = [models.Index(fields=["account"], name="buyer_identity_account_idx")]
 
 
 class BuyerSession(models.Model):

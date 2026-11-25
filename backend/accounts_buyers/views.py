@@ -1,9 +1,11 @@
-import random
-import string
+import logging
+import urllib.parse
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.http import HttpResponseRedirect
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -12,6 +14,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts_buyers import oauth
 from accounts_buyers.api_exceptions import BuyerApiError
 from accounts_buyers.domain import (
     VerificationCodeExpired,
@@ -20,6 +23,7 @@ from accounts_buyers.domain import (
     VerificationDeliveryUnavailable,
 )
 from accounts_buyers.models import BuyerAccount, VerificationCode
+from accounts_buyers.normalization import normalize_identifier
 from accounts_buyers.serializers import (
     BuyerLoginSerializer,
     BuyerRegisterSerializer,
@@ -32,6 +36,7 @@ from accounts_buyers.services import (
     create_buyer_session,
     delete_buyer_session_cookie,
     deliver_verification_code,
+    ensure_display_name,
     increment_rate_limit,
     issue_verification_code,
     rate_limit_key,
@@ -40,6 +45,8 @@ from accounts_buyers.services import (
     set_buyer_session_cookie,
 )
 from merchants.models import MerchantApplication
+
+logger = logging.getLogger(__name__)
 
 DUMMY_PASSWORD_HASH = make_password(None)
 
@@ -71,21 +78,9 @@ def _merchant_application_brief(account: BuyerAccount) -> dict:
 
 
 def _ensure_display_name(account: BuyerAccount) -> str:
-    """需求 13.5-6: 未设置用户名时生成 `user+4位数字+4位小写字母`（真站格式
-    实证 user4323txlb），一次生成固定存库；已设置（含未来用户自改）则原样返回。"""
+    """兼容旧调用点：生成规则已移到 `services.ensure_display_name`（oauth 也用它）。"""
 
-    if account.display_name:
-        return account.display_name
-    candidate = ""
-    for _ in range(10):
-        candidate = "user" + "".join(random.choices(string.digits, k=4)) + "".join(
-            random.choices(string.ascii_lowercase, k=4)
-        )
-        if not BuyerAccount.objects.filter(display_name=candidate).exists():
-            break
-    account.display_name = candidate
-    account.save(update_fields=["display_name", "updated_at"])
-    return candidate
+    return ensure_display_name(account)
 
 
 def _account_payload(account: BuyerAccount) -> dict:
@@ -377,5 +372,115 @@ class BuyerMerchantHandoffView(BuyerCsrfAPIView):
             user_agent=request.headers.get("User-Agent", ""),
         )
         response = Response({"email": account.email})
+        set_buyer_session_cookie(response, session_token)
+        return response
+
+
+# ---------------------------------------------------------------------------
+# 三方登录（docs/16）：三个端点都是 GET，安全性靠 state + PKCE
+# ---------------------------------------------------------------------------
+
+
+def _oauth_error_redirect(code: str) -> HttpResponseRedirect:
+    """失败统一回商城登录页（同域），由前端按 oauth_error 渲染文案。"""
+
+    query = urllib.parse.urlencode({"oauth_error": code})
+    return HttpResponseRedirect(f"{settings.STOREFRONT_BASE_URL}/auth/login?{query}")
+
+
+class OAuthProvidersView(BuyerCsrfAPIView):
+    """GET /api/v1/auth/buyer/oauth/providers：全部支持渠道 + enabled 标记。
+
+    未配置凭据的渠道也返回（enabled=False），前端据此渲染同款按钮但点击提示不可用。
+    """
+
+    def get(self, request):
+        return Response({"providers": oauth.providers_payload()})
+
+
+class BuyerIdentifierLookupView(BuyerCsrfAPIView):
+    """POST /api/v1/auth/buyer/identifier/lookup：email-first 第一步的分流判断。
+
+    只回答「这个邮箱/手机号是否已注册」，**不返回**账号 id、登录渠道、注册时间等任何
+    可关联信息。该接口天然可被用于账号枚举（docs/17 §4 / §7），因此：
+    - 限额比登录更紧（默认 5 次/60s/IP+标识指纹），且命中与未命中**都计数**；
+    - 无论命中与否都跑一次 dummy 哈希校验，避免靠响应耗时侧信道区分。
+    """
+
+    def post(self, request):
+        raw = str((request.data or {}).get("identifier") or "").strip()
+        try:
+            field, value = normalize_identifier(raw)
+        except ValidationError as exc:
+            raise BuyerApiError(
+                business_code="IDENTIFIER_INVALID",
+                message="请输入有效的邮箱或手机号。",
+                status_code=400,
+            ) from exc
+
+        limit_key = rate_limit_key(
+            "identifier-lookup", value, _client_ip(request) or "unknown"
+        )
+        if (
+            increment_rate_limit(limit_key, settings.IDENTIFIER_LOOKUP_WINDOW_SECONDS)
+            > settings.IDENTIFIER_LOOKUP_LIMIT
+        ):
+            raise BuyerApiError(
+                business_code="IDENTIFIER_LOOKUP_RATE_LIMITED",
+                message="查询过于频繁，请稍后再试。",
+                status_code=429,
+            )
+
+        # 禁用账号也按「存在」返回：让用户走正常的密码步，由登录接口报禁用，
+        # 避免多一个"存在但被禁用"的可枚举状态。
+        exists = BuyerAccount.objects.filter(**{field: value}).exists()
+        check_password(value, DUMMY_PASSWORD_HASH)  # 恒定耗时
+        return Response({"kind": "EMAIL" if field == "email" else "PHONE", "exists": exists})
+
+
+class OAuthStartView(BuyerCsrfAPIView):
+    """GET .../oauth/<provider>/start?next=/account → 302 到授权页。"""
+
+    def get(self, request, provider):
+        limit_key = rate_limit_key(
+            "oauth-start", provider, _client_ip(request) or "unknown"
+        )
+        if (
+            increment_rate_limit(limit_key, settings.OAUTH_START_WINDOW_SECONDS)
+            > settings.OAUTH_START_LIMIT
+        ):
+            return _oauth_error_redirect("rate_limited")
+        try:
+            return HttpResponseRedirect(oauth.start_login(provider, request.GET.get("next")))
+        except oauth.OAuthError as exc:
+            return _oauth_error_redirect(exc.code)
+
+
+class OAuthCallbackView(BuyerCsrfAPIView):
+    """GET .../oauth/<provider>/callback?code&state：换 token、认人、种 session cookie。
+
+    回调落在商城同域（生产 nginx `/api/` → Django；开发走 Nuxt `/api` 代理），
+    所以这里种下的 host-only cookie 浏览器能直接带到商城页面。
+    """
+
+    def get(self, request, provider):
+        try:
+            account, next_path = oauth.complete_login(
+                provider, code=request.GET.get("code"), state=request.GET.get("state")
+            )
+        except oauth.OAuthError as exc:
+            # 只记业务码，不记 provider 原文（可能带 code / token）。
+            logger.info("buyer_oauth_failed provider=%s code=%s", provider, exc.code)
+            return _oauth_error_redirect(exc.code)
+
+        session_token, _session = create_buyer_session(
+            account=account,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        logger.info(
+            "buyer_oauth_login provider=%s account=%s", provider, account.public_id
+        )
+        response = HttpResponseRedirect(f"{settings.STOREFRONT_BASE_URL}{next_path}")
         set_buyer_session_cookie(response, session_token)
         return response

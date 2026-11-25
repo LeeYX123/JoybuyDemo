@@ -34,16 +34,24 @@ if APP_ENV not in {"development", "test"} and (
 ):
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a real secret")
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
+ALLOWED_HOSTS = env_list(
+    "DJANGO_ALLOWED_HOSTS",
+    # m.localhost 是商城/商家端的手机壳主机名（宽度自动切换会跳到 m. 前缀），
+    # 直连 Django 时也要能过 Host 校验。
+    "localhost,127.0.0.1,[::1],m.localhost",
+)
 CSRF_TRUSTED_ORIGINS = env_list(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
     # 3000 商城端 / 5173 平台管理端 / 5174 商家端（三个前端都要能发写请求）
     # localhost 与 127.0.0.1 是不同的 Origin，两个变体都必须配置，
     # 否则用 localhost 访问时所有写请求都会被 CSRF 中间件 403。
     # m.localhost:5174 是商家端手机壳主机名（merchant-web 双壳方案），写请求同样要放行。
+    # m.localhost:3000 是商城手机壳主机名 —— 2026-11-24 漏配导致手机端登录/注册全部 403：
+    # 经 Nuxt 代理后 Host 被改写成 127.0.0.1:8000，只剩 Origin=http://m.localhost:3000
+    # 参与校验，不在白名单就直接 CSRF 失败。
     "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,"
     "http://localhost:3000,http://localhost:5173,http://localhost:5174,"
-    "http://m.localhost:5174",
+    "http://m.localhost:3000,http://m.localhost:5173,http://m.localhost:5174",
 )
 
 # 局域网访问（手机 / 同网段电脑）：浏览器直连 nuxt/vite 时 Origin 是本机局域网 IP，
@@ -268,6 +276,10 @@ VERIFICATION_CODE_SEND_WINDOW_SECONDS = int(
 )
 BUYER_LOGIN_FAILURE_LIMIT = int(os.getenv("BUYER_LOGIN_FAILURE_LIMIT", "5"))
 BUYER_LOGIN_FAILURE_WINDOW_SECONDS = int(os.getenv("BUYER_LOGIN_FAILURE_WINDOW_SECONDS", "900"))
+# 登录页 email-first 第一步「这个账号是否存在」的查询限流（docs/17 §4）。
+# 该接口天然可被用来枚举账号，所以限额比登录更紧，且命中/未命中都计数。
+IDENTIFIER_LOOKUP_LIMIT = int(os.getenv("IDENTIFIER_LOOKUP_LIMIT", "5"))
+IDENTIFIER_LOOKUP_WINDOW_SECONDS = int(os.getenv("IDENTIFIER_LOOKUP_WINDOW_SECONDS", "60"))
 
 STAFF_SESSION_COOKIE_NAME = os.getenv("STAFF_SESSION_COOKIE_NAME", "joybuy_staff_session")
 # 员工会话要同时服务平台端（/api/v1/admin/*）与商家端（/api/v1/merchant/*），
@@ -294,6 +306,26 @@ MERCHANT_WEB_PORT = int(os.getenv("MERCHANT_WEB_PORT", "5174"))
 STOREFRONT_BASE_URL = (
     os.getenv("STOREFRONT_BASE_URL", "http://localhost:3000").strip().rstrip("/")
 )
+
+# 购物端三方登录（Facebook / Google，OAuth 2.0 授权码 + PKCE）。
+# 回调必须落在**商城同域**：买家会话 cookie 是 host-only（不设 domain），
+# 回调落到别的 host 就写不进浏览器会话。所以默认复用 STOREFRONT_BASE_URL，
+# 且 Google / Facebook 控制台里登记的重定向 URI 必须与这里拼出来的逐字一致：
+#   {OAUTH_REDIRECT_BASE_URL}/api/v1/auth/buyer/oauth/<provider>/callback
+# 凭据留空 = 该渠道视为未启用（/oauth/providers 不返回它，前端不渲染按钮）。
+OAUTH_REDIRECT_BASE_URL = (
+    os.getenv("OAUTH_REDIRECT_BASE_URL") or STOREFRONT_BASE_URL
+).strip().rstrip("/")
+OAUTH_STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "600"))
+OAUTH_HTTP_TIMEOUT_SECONDS = int(os.getenv("OAUTH_HTTP_TIMEOUT_SECONDS", "10"))
+OAUTH_START_LIMIT = int(os.getenv("OAUTH_START_LIMIT", "30"))
+OAUTH_START_WINDOW_SECONDS = int(os.getenv("OAUTH_START_WINDOW_SECONDS", "600"))
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+FACEBOOK_OAUTH_APP_ID = os.getenv("FACEBOOK_OAUTH_APP_ID", "").strip()
+FACEBOOK_OAUTH_APP_SECRET = os.getenv("FACEBOOK_OAUTH_APP_SECRET", "").strip()
+# Graph API 版本集中一处；Facebook 每季度发新版本，升级只改这里。
+FACEBOOK_GRAPH_VERSION = os.getenv("FACEBOOK_GRAPH_VERSION", "v23.0").strip() or "v23.0"
 
 # Crisp 客服消息镜像（需求 18 / 批次 V）：商家端、管理端聊天消息旁路镜像到 Crisp Inbox。
 # 凭据全部留空 = 镜像直接返回 skipped（只写 CrispMirrorLog，不发任何外部请求、不报错）。

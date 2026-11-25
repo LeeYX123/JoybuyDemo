@@ -1,22 +1,52 @@
 # Facebook / Google 登录接入方案（申请 + 接入）
 
-> 目标：购物端登录页在「邮箱 + 密码」之外，增加 **Continue with Google** 与 **Continue with Facebook**。
-> 需求来源：`功能需求迭代文档02.md` 13（登录方式保留 Facebook + Google + 邮箱）、平台后台「登录渠道」字段。
-> 本文档分两部分：**A. 去哪申请、填什么**（人工，需真实账号）；**B. 代码怎么接**（本仓库具体改法）。
+> 目标：购物端登录页在「邮箱 + 密码」之外，增加 **Continue with Google** 与 **Continue with Facebook**。  
+> 需求来源：`功能需求迭代文档02.md` 13（登录方式保留 Facebook + Google + 邮箱）、平台后台「登录渠道」字段。  
+> 本文档分两部分：**A. 去哪申请、填什么**（人工，需真实账号）；**B. 代码怎么接**（本仓库具体改法）。  
 > 编写时间 2026-11-24，控制台界面按当时实测路径描述；Google 控制台近两年改版频繁，菜单名若不一致以「Branding / Audience / Data access / Clients」四个分区为准。
+
+---
+
+## 实现进度
+
+### P1 后端（2026-11-24 完成，54 个用例通过）
+
+| 文件 | 改动 |
+|---|---|
+| `backend/accounts_buyers/models.py` | 新增 `BuyerIdentity`（唯一键 `provider+subject`）；`BuyerAccount.identity_bound`；`buyer_account_has_identifier` 放宽 |
+| `backend/accounts_buyers/migrations/0008_buyeridentity_and_more.py` | 建表 + 加列 + 换约束（已在开发库 `migrate` 通过） |
+| `backend/accounts_buyers/oauth.py` | 新增：provider 配置、state+PKCE、换 token、取 profile、认人/合并/建号 |
+| `backend/accounts_buyers/views.py` | 新增 `OAuthProvidersView` / `OAuthStartView` / `OAuthCallbackView`；`_ensure_display_name` 改调 `services.ensure_display_name` |
+| `backend/accounts_buyers/services.py` | 新增 `ensure_display_name`（视图与 oauth 共用，避免两份生成逻辑漂移） |
+| `backend/accounts_buyers/urls.py` | 挂 3 个路由 |
+| `backend/config/settings.py` | `OAUTH_*` / `GOOGLE_*` / `FACEBOOK_*` 配置 |
+| `backend/accounts_buyers/tests/test_oauth_api.py` | 20 个用例，出网全部 mock |
+
+本机实测（临时实例 `127.0.0.1:8010`，不打扰常驻的 8000）：
+- `GET /api/v1/auth/buyer/oauth/providers` → `{"providers":[{"provider":"google","enabled":true,"start_url":"/api/v1/auth/buyer/oauth/google/start"}]}`
+- `GET .../google/start?next=/account` → 302 到 `accounts.google.com`，带 `state`、`code_challenge`(S256)、
+  `redirect_uri=http://localhost:3000/api/v1/auth/buyer/oauth/google/callback`、`prompt=select_account`
+- Facebook 凭据留空 → 该渠道不出现在 providers 里（前端不会渲染死按钮）
+
+### 待办
+
+- **P2 前端**：`AuthForm.vue` 按钮 + `useBuyerAuth` providers + 5 locale 文案 + 后台账号名/搜索兜底
+  （`notifications/services.py:126` 的 None.split、`merchant_ops/views_buyers.py:20,23,75,246`）。
+- **重启后端**：本地 8000 是 `--noreload` 起的，新路由要重启才生效。
+- **P3 真机**：Google 控制台把测试账号加进「目标对象 → 测试用户」，再走一次真实授权。
 
 ---
 
 ## 0. 先明确两个硬约束（决定方案形状）
 
-1. **会话 cookie 是 host-only**（`accounts_buyers/services.py:240` `set_buyer_session_cookie`，不设 domain）。
-   所以 OAuth 回调**必须落在商城同一个 host**上，否则 Set-Cookie 到不了浏览器会话。
-   本仓库生产 nginx 是单域（`/`→3000、`/api/`→8000），回调走 `/api/v1/auth/buyer/oauth/<provider>/callback` 天然同域；
+1. **会话 cookie 是 host-only**（`accounts_buyers/services.py:240` `set_buyer_session_cookie`，不设 domain）。  
+   所以 OAuth 回调**必须落在商城同一个 host**上，否则 Set-Cookie 到不了浏览器会话。  
+   本仓库生产 nginx 是单域（`/`→3000、`/api/`→8000），回调走 `/api/v1/auth/buyer/oauth/<provider>/callback` 天然同域；  
    本地开发走 Nuxt devServer 的 `/api` 代理（`storefront/nuxt.config.js:41`），回调落在 `localhost:3000` 也成立。
    > 反例：回调写成 `http://localhost:8000/...` 或 `https://api.example.com/...` 就会写错 host。
-2. **`buyer_account_has_identifier` 约束要求 email 或 phone 至少有一个非空**（`models.py:49-53`）。
-   Google 一定给邮箱；**Facebook 可能不给邮箱**（用户拒绝 `email` 权限，或账号只绑了手机号）。
-   **需求已明确：这类用户也要能登录下单**，所以唯一键放成 `(provider, subject)`（Facebook 用其 app-scoped id），
+2. **`buyer_account_has_identifier` 约束要求 email 或 phone 至少有一个非空**（`models.py:49-53`）。  
+   Google 一定给邮箱；**Facebook 可能不给邮箱**（用户拒绝 `email` 权限，或账号只绑了手机号）。  
+   **需求已明确：这类用户也要能登录下单**，所以唯一键放成 `(provider, subject)`（Facebook 用其 app-scoped id），  
    并把这条约束放宽到「email/phone 二选一 **或** 已绑定三方身份」（见 B1-2）。**不再做补录邮箱的强制页。**
 
 ---
@@ -27,20 +57,20 @@
 
 准备：一个能长期持有的 Google 账号（建议用公司邮箱并加入同一 GCP 组织），后续它就是这个 OAuth 客户端的 owner。
 
-| 步骤 | 操作 | 关键点 |
-|---|---|---|
-| 1 | `console.cloud.google.com` → 顶部项目选择器 → **新建项目**，命名如 `joybuy-prod`（建议再建 `joybuy-dev`） | 建完**必须切到新项目**再往下做，否则配到了别的项目上 |
-| 2 | 左侧菜单 → **API 和服务 → Google Auth Platform**（老入口叫「OAuth 同意屏幕」）→ 首次进入点 **Get started** | 新版是 4 步向导：App information → Audience → Contact information → Finish |
-| 3 | App name（**用户会在授权页看到，填品牌名**）、User support email（要能收信） | 名字后续改动需重新走品牌验证 |
-| 4 | Audience（用户类型）→ 选 **External** | Internal 只对同 Workspace 组织成员生效；个人 Gmail 项目没有组织，被迫 External。**这一步建完不能改**，选错只能新建项目 |
-| 5 | Contact information → 填运维邮箱 → 勾选同意用户数据政策 → **Create** | |
-| 6 | **Data access** → Add or remove scopes → 勾 `openid`、`.../auth/userinfo.email`、`.../auth/userinfo.profile` | 这三个都是 **non-sensitive**，发布时**不需要 Google 验证、不需要安全评估**。只勾这三个，别贪多 |
-| 7 | **Branding** → 填 App name、首页 URL、**隐私政策 URL**、服务条款 URL、**Authorized domains**（填生产域名，如 `joybuy.example.com`）、开发者联系邮箱 | 生产发布前必须填齐，否则同意页信息不全、审核会打回 |
-| 8 | **Audience** → Test users → Add users，把要联调的 Google 账号加进去 | External 默认 `Testing` 状态，**只有名单内账号能登**（上限 100）；不在名单会报 `Error 403: access_denied` |
-| 9 | **Clients** → Create client → Application type 选 **Web application** | 别选 Desktop/iOS/Android，选错就是 `redirect_uri_mismatch` 灾难 |
-| 10 | Authorized JavaScript origins：可留空（我们是服务端跳转，不用 JS SDK）；**Authorized redirect URIs 必须逐字填**：<br>`http://localhost:3000/api/v1/auth/buyer/oauth/google/callback`<br>`https://<生产域名>/api/v1/auth/buyer/oauth/google/callback` | 协议、端口、路径、结尾斜杠都要一模一样，**多一个 `/` 就失败**。改动生效可能延迟几分钟到几小时 |
-| 11 | Create → **立刻复制 Client ID 与 Client secret**（secret 只在创建时完整显示一次，之后只看得到后四位） | 丢了只能在同一个 client 里「添加密钥」再换，别删 client |
-| 12 | 联调通了以后：**Audience → Publish app** 切到 In production | 只有基础身份 scope 时可直接发布、无需验证；不发布会一直停在 Testing（有 testing 警告横幅，且测试名单限制） |
+| 步骤 | 操作                                                                                                                                                                                                                           | 关键点                                                                              |
+| -- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1  | `console.cloud.google.com` → 顶部项目选择器 → **新建项目**，命名如 `joybuy-prod`（建议再建 `joybuy-dev`）                                                                                                                                         | 建完**必须切到新项目**再往下做，否则配到了别的项目上                                                     |
+| 2  | 左侧菜单 → **API 和服务 → Google Auth Platform**（老入口叫「OAuth 同意屏幕」）→ 首次进入点 **Get started**                                                                                                                                           | 新版是 4 步向导：App information → Audience → Contact information → Finish              |
+| 3  | App name（**用户会在授权页看到，填品牌名**）、User support email（要能收信）                                                                                                                                                                        | 名字后续改动需重新走品牌验证                                                                   |
+| 4  | Audience（用户类型）→ 选 **External**                                                                                                                                                                                               | Internal 只对同 Workspace 组织成员生效；个人 Gmail 项目没有组织，被迫 External。**这一步建完不能改**，选错只能新建项目  |
+| 5  | Contact information → 填运维邮箱 → 勾选同意用户数据政策 → **Create**                                                                                                                                                                        | <br />                                                                           |
+| 6  | **Data access** → Add or remove scopes → 勾 `openid`、`.../auth/userinfo.email`、`.../auth/userinfo.profile`                                                                                                                    | 这三个都是 **non-sensitive**，发布时**不需要 Google 验证、不需要安全评估**。只勾这三个，别贪多                   |
+| 7  | **Branding** → 填 App name、首页 URL、**隐私政策 URL**、服务条款 URL、**Authorized domains**（填生产域名，如 `joybuy.example.com`）、开发者联系邮箱                                                                                                          | 生产发布前必须填齐，否则同意页信息不全、审核会打回                                                        |
+| 8  | **Audience** → Test users → Add users，把要联调的 Google 账号加进去                                                                                                                                                                     | External 默认 `Testing` 状态，**只有名单内账号能登**（上限 100）；不在名单会报 `Error 403: access_denied` |
+| 9  | **Clients** → Create client → Application type 选 **Web application**                                                                                                                                                         | 别选 Desktop/iOS/Android，选错就是 `redirect_uri_mismatch` 灾难                           |
+| 10 | Authorized JavaScript origins：可留空（我们是服务端跳转，不用 JS SDK）；**Authorized redirect URIs 必须逐字填**：<br />`http://localhost:3000/api/v1/auth/buyer/oauth/google/callback`<br />`https://<生产域名>/api/v1/auth/buyer/oauth/google/callback` | 协议、端口、路径、结尾斜杠都要一模一样，**多一个 `/` 就失败**。改动生效可能延迟几分钟到几小时                              |
+| 11 | Create → **立刻复制 Client ID 与 Client secret**（secret 只在创建时完整显示一次，之后只看得到后四位）                                                                                                                                                    | 丢了只能在同一个 client 里「添加密钥」再换，别删 client                                              |
+| 12 | 联调通了以后：**Audience → Publish app** 切到 In production                                                                                                                                                                           | 只有基础身份 scope 时可直接发布、无需验证；不发布会一直停在 Testing（有 testing 警告横幅，且测试名单限制）                |
 
 拿到的东西：
 
@@ -50,6 +80,7 @@ GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxx
 ```
 
 已知坑：
+
 - 同一 OAuth client **6 个月无流量会被 Google 自动删除**（提前 30 天邮件通知），生产别用一次性测试项目。
 - 授权页要重新出现：`prompt=select_account`（每次选账号）或让用户去 `myaccount.google.com/linkedapps` 撤销。
 - 我们**不需要 refresh token**（只取一次 profile），所以不用管 Testing 状态 7 天 refresh token 过期那套限制。
@@ -58,17 +89,17 @@ GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxx
 
 准备：一个**真实 Facebook 个人账号**（要能收短信/邮箱验证），建议同时有 Meta Business 账号（后续 Business Verification 要用）。
 
-| 步骤 | 操作 | 关键点 |
-|---|---|---|
-| 1 | `developers.facebook.com` → 右上角 Get Started，用个人 FB 账号注册开发者 | 需验证邮箱/手机；建议直接开启两步验证，否则部分功能被限制 |
-| 2 | My Apps → **Create App** → 填 App name（**登录对话框里会显示**）+ App contact email | Business portfolio 这步可以先 Skip |
-| 3 | Use case 选 **「Authenticate and request data from users with Facebook Login」** | **只选这个**。选「Manage everything on your Page」之类会带一堆用不上的权限，且 **use case 加了就不能删** |
-| 4 | Dashboard → Use cases → 该用例 → **Customize** → Settings：Client OAuth Login = On、Web OAuth Login = On、**Enforce HTTPS = On**、Valid OAuth Redirect URIs 填 `https://<生产域名>/api/v1/auth/buyer/oauth/facebook/callback` | 开发阶段 `http://localhost:*` 的回调 Meta **自动放行**，不必登记；一旦切 Live 就必须 https（本地想继续用就换 tunnel 域名，或让 dev 继续用 Development 模式的独立 App） |
-| 5 | App settings → **Basic**：App ID、App Secret（点 Show，需输 FB 密码）、App Domains（只填域名，**不带协议**）、Privacy Policy URL、Terms of Service URL、App Icon、Category | Privacy Policy / Data Deletion / Icon / Category 是**切 Live 的硬性前置**，缺一个就卡在 Development |
-| 6 | 权限：确认 `public_profile` + `email` 已授予 | 这两个**不需要 App Review**（官方明确「do not require app review and are automatically granted」）。任何超出这两个的权限才要 review + 录屏 + 用途说明 |
-| 7 | App roles → Roles → 加 **Administrator / Developer / Tester** | **Development 模式下只有这些角色能登录**。本地联调必须把自己的测试 FB 账号加成 Tester，否则登录页直接报「App not active」 |
-| 8 | 切 **Live**（右上角 App Mode 开关）：需补齐上面第 5 步合规项；如果后续申请高级权限，还要 **Business Verification**（营业执照等） | 只做登录的话，Live 后所有 FB 用户都能登，无需 review |
-| 9 | Data Deletion：Live 前要填 **Data Deletion Instructions URL**（可指向你的隐私说明页），否则审核/上线受阻 | |
+| 步骤 | 操作                                                                                                                                                                                                                | 关键点                                                                                                                      |
+| -- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1  | `developers.facebook.com` → 右上角 Get Started，用个人 FB 账号注册开发者                                                                                                                                                        | 需验证邮箱/手机；建议直接开启两步验证，否则部分功能被限制                                                                                            |
+| 2  | My Apps → **Create App** → 填 App name（**登录对话框里会显示**）+ App contact email                                                                                                                                           | Business portfolio 这步可以先 Skip                                                                                            |
+| 3  | Use case 选 **「Authenticate and request data from users with Facebook Login」**                                                                                                                                     | **只选这个**。选「Manage everything on your Page」之类会带一堆用不上的权限，且 **use case 加了就不能删**                                             |
+| 4  | Dashboard → Use cases → 该用例 → **Customize** → Settings：Client OAuth Login = On、Web OAuth Login = On、**Enforce HTTPS = On**、Valid OAuth Redirect URIs 填 `https://<生产域名>/api/v1/auth/buyer/oauth/facebook/callback` | 开发阶段 `http://localhost:*` 的回调 Meta **自动放行**，不必登记；一旦切 Live 就必须 https（本地想继续用就换 tunnel 域名，或让 dev 继续用 Development 模式的独立 App） |
+| 5  | App settings → **Basic**：App ID、App Secret（点 Show，需输 FB 密码）、App Domains（只填域名，**不带协议**）、Privacy Policy URL、Terms of Service URL、App Icon、Category                                                                  | Privacy Policy / Data Deletion / Icon / Category 是**切 Live 的硬性前置**，缺一个就卡在 Development                                    |
+| 6  | 权限：确认 `public_profile` + `email` 已授予                                                                                                                                                                              | 这两个**不需要 App Review**（官方明确「do not require app review and are automatically granted」）。任何超出这两个的权限才要 review + 录屏 + 用途说明     |
+| 7  | App roles → Roles → 加 **Administrator / Developer / Tester**                                                                                                                                                      | **Development 模式下只有这些角色能登录**。本地联调必须把自己的测试 FB 账号加成 Tester，否则登录页直接报「App not active」                                        |
+| 8  | 切 **Live**（右上角 App Mode 开关）：需补齐上面第 5 步合规项；如果后续申请高级权限，还要 **Business Verification**（营业执照等）                                                                                                                          | 只做登录的话，Live 后所有 FB 用户都能登，无需 review                                                                                       |
+| 9  | Data Deletion：Live 前要填 **Data Deletion Instructions URL**（可指向你的隐私说明页），否则审核/上线受阻                                                                                                                                   |                                                                                                                          |
 
 拿到的东西：
 
@@ -78,6 +109,7 @@ FACEBOOK_OAUTH_APP_SECRET=xxxxxxxx
 ```
 
 已知坑 / 必须记住的语义差异：
+
 - **`id` 是 app-scoped**：同一个人在不同 App 里 ID 不同。所以 dev 与 prod 用两个 App 时，**用户不能跨环境复用**（本来也是两套库，问题不大）；但也意味着不能拿 FB ID 跟别处对账。
 - **不返回 `email_verified`**，Graph API 没有任何验证标记字段；而且 `email` **可能为空**（用户取消勾选，或账号只绑手机）。→ 见第 3 节的合并策略。
 - 错误 `URL Blocked: this redirect failed because it's not in the app's allowed redirect URIs` = 回调没登记或差一个字符；`App not active` = App 还在 Development 且你不是角色成员。
@@ -89,7 +121,7 @@ FACEBOOK_OAUTH_APP_SECRET=xxxxxxxx
 
 ### B1. 数据模型：新增 `BuyerIdentity`（migration 0008）
 
-不要往 `BuyerAccount` 上加 `google_sub` / `fb_id` 两列 —— 一个账号可能先后绑定多个渠道，而且以后加渠道就要改表。
+不要往 `BuyerAccount` 上加 `google_sub` / `fb_id` 两列 —— 一个账号可能先后绑定多个渠道，而且以后加渠道就要改表。  
 新建一张身份表，`(provider, subject)` 唯一：
 
 ```python
@@ -113,12 +145,12 @@ class BuyerIdentity(models.Model):
         constraints = [models.UniqueConstraint(fields=["provider", "subject"], name="buyer_identity_unique")]
 ```
 
-`BuyerAccount.password` 存 `make_password(None)`（Django 的 unusable password），保证 `check_password` 永远为 False，
+`BuyerAccount.password` 存 `make_password(None)`（Django 的 unusable password），保证 `check_password` 永远为 False，  
 这样 OAuth 账号无法用「猜密码」路径登录，也不会破坏 `password` 非空字段。
 
 #### B1-2. 放宽 `buyer_account_has_identifier`（**无邮箱账号能建号的前提**）
 
-现有约束（`models.py:49-53`）要求 `email` 或 `phone_e164` 至少一个非空。Facebook 允许用户不给邮箱，
+现有约束（`models.py:49-53`）要求 `email` 或 `phone_e164` 至少一个非空。Facebook 允许用户不给邮箱，  
 若不放宽这条，**「没邮箱也能下单购物」这个需求在 DB 层就不成立**。
 
 做法：给 `BuyerAccount` 加一个去规范化的布尔列，把不变量从「必有标识」改成「必有标识**或**已绑定三方身份」：
@@ -136,29 +168,31 @@ models.CheckConstraint(
 )
 ```
 
-迁移 0008 一次做完：`AddField(identity_bound)` → `RemoveConstraint(buyer_account_has_identifier)` →
-`AddConstraint(新条件)` → `CreateModel(BuyerIdentity)`。建 OAuth 账号时在**同一事务**里
+迁移 0008 一次做完：`AddField(identity_bound)` → `RemoveConstraint(buyer_account_has_identifier)` →  
+`AddConstraint(新条件)` → `CreateModel(BuyerIdentity)`。建 OAuth 账号时在**同一事务**里  
 `identity_bound=True` + 写 `BuyerIdentity`，两者不会脱节。
 
 为什么不选另外两条路：
+
 - **不删约束、只在应用层校验**：丢掉 DB 兜底，以后任何一个建号入口漏判就会写进「无标识也无身份」的孤儿账号。
-- **塞假邮箱**（如 `fb_<sub>@facebook.invalid`）：会污染后台列表与 CSV 导出、可能被误用于发信、
+- **塞假邮箱**（如 `fb_<sub>@facebook.invalid`）：会污染后台列表与 CSV 导出、可能被误用于发信、  
   还会跟真实的「同邮箱合并」逻辑打架。`.invalid` 虽然不会真发出去，但没必要的复杂度。
 
-> MySQL / SQLite 的唯一索引都允许多行 `NULL`，所以 `email` 继续保持 `unique=True, null=True` 即可，
+> MySQL / SQLite 的唯一索引都允许多行 `NULL`，所以 `email` 继续保持 `unique=True, null=True` 即可，  
 > 多个无邮箱账号不会互相冲突，**不需要**动 `email` 的唯一约束。
 
 ### B2. 后端接口（挂在 `accounts_buyers/urls.py`，全部是 GET 跳转，只有 start/callback）
 
-| 方法 | 路径 | 作用 |
-|---|---|---|
-| GET | `/api/v1/auth/buyer/oauth/providers` | 返回 `[{provider, enabled, start_url}]`；**前端按它渲染按钮**，凭据没配时不出现死按钮 |
-| GET | `/api/v1/auth/buyer/oauth/<provider>/start?next=/account` | 生成 state + PKCE → 302 到授权页 |
-| GET | `/api/v1/auth/buyer/oauth/<provider>/callback?code&state` | 校验 state → 换 token → 取 profile → 建/查身份 → 建 session → 302 回商城 |
+| 方法  | 路径                                                        | 作用                                                             |
+| --- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| GET | `/api/v1/auth/buyer/oauth/providers`                      | 返回 `[{provider, enabled, start_url}]`；**前端按它渲染按钮**，凭据没配时不出现死按钮 |
+| GET | `/api/v1/auth/buyer/oauth/<provider>/start?next=/account` | 生成 state + PKCE → 302 到授权页                                     |
+| GET | `/api/v1/auth/buyer/oauth/<provider>/callback?code&state` | 校验 state → 换 token → 取 profile → 建/查身份 → 建 session → 302 回商城   |
 
 > 没有「补录邮箱」接口：Facebook 拿不到邮箱时**直接建号登录**（见 B3 第 3 条），不需要用户多填一步。
 
 要点：
+
 - 这两个 GET **不能被 `csrf_protect` 拦**（`BuyerCsrfAPIView` 只对不安全方法校验，GET 天然通过）；安全性完全靠 `state` + PKCE。
 - `state` 用 `secrets.token_urlsafe(24)`，存 cache（`oauth:state:<state>`，TTL 600s），**callback 里取出即删**（参考现有 `consume_merchant_handoff_token` 的一次性写法）。
 - `next` 必须校验：只接受以 `/` 开头且不以 `//` 开头的站内路径（沿用 `AuthForm.vue:35-41` 的白名单规则），否则就是开放重定向。
@@ -194,9 +228,10 @@ Facebook authorize: https://www.facebook.com/<VER>/dialog/oauth          # FACEB
                 password=make_password(None))
    BuyerIdentity(provider=FACEBOOK, subject=fb_id, email_snapshot=None, ...)
    ```
-   `display_name` 交给现有 `_ensure_display_name`（生成 `user4323txlb` 格式并固定存库），
+   `display_name` 交给现有 `_ensure_display_name`（生成 `user4323txlb` 格式并固定存库），  
    `purchase_whitelisted` 走默认 True、`status=ACTIVE` → **可以正常加购、结账、下单**。
 4. **账号被禁用**（`status != ACTIVE`）→ 302 带 `oauth_error=disabled`，不建 session。
+
 
 > **已拍板（2026-11-24）**：
 > - 唯一键 = `(provider, subject)`。**Facebook 的 ID 就是这类用户的账号唯一标识**，不依赖邮箱存在。

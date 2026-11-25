@@ -222,6 +222,8 @@ function togglePanel() {
 async function signOut() {
   accountMenuOpen.value = false
   await logout()
+  // 退出后回到登录页（用户要求：不要留在原页面）
+  await navigateTo('/auth/login')
 }
 
 // 需求 13.5-6：展示名优先用后端生成/用户设置的 display_name（user+数字+字母），

@@ -12,6 +12,8 @@ import { useAsyncData, useCookie, useRequestHeaders, useRuntimeConfig, useState 
 const SESSION_KEY = 'buyer-session'
 const SESSION_DATA_KEY = 'buyer-session-data'
 const SESSION_STARTED_KEY = 'buyer-session-started'
+// 三方登录渠道（docs/16）：只返回后端凭据已配置的渠道，登录页据此渲染按钮。
+const OAUTH_DATA_KEY = 'buyer-oauth-providers-data'
 
 export function useBuyerAuth() {
   const config = useRuntimeConfig()
@@ -21,6 +23,8 @@ export function useBuyerAuth() {
   // useState 在单个请求/单个 SPA 生命周期内是共享的：只有第一个调用者发起
   // 请求，后续调用者（每个 ProductCard 各一次）直接读上面的共享状态。
   const started = useState(SESSION_STARTED_KEY, () => false)
+  // 三方登录渠道：与 session 同一套「首个调用者拉取、其余只读共享状态」模式。
+  const oauthProviders = useState(OAUTH_DATA_KEY, () => [])
 
   function authUrl(path) {
     return import.meta.server
@@ -51,6 +55,18 @@ export function useBuyerAuth() {
     )
   }
 
+  // 三方登录渠道按需拉取（登录页在 SSR 阶段 await 它，避免首屏没按钮、水合后
+  // 才冒出来导致 hydration mismatch）。取过一次就复用共享状态。
+  async function loadOAuthProviders() {
+    if (oauthProviders.value.length) return oauthProviders.value
+    const response = await $fetch(authUrl('/oauth/providers'), {
+      headers: requestHeaders,
+      credentials: 'include',
+      ignoreResponseError: true,
+    })
+    oauthProviders.value = response?.providers ?? []
+    return oauthProviders.value
+  }
   // 登录/登出/开店申请等写操作之后刷新共享会话（仅浏览器侧调用）。
   async function refresh() {
     const response = await $fetch(authUrl('/session'), {
@@ -113,6 +129,21 @@ export function useBuyerAuth() {
     return post('/login', payload)
   }
 
+  // docs/17 §4：email-first 第一步「这个邮箱/手机号是否已注册」。
+  // 不走 post()，因为它会在写操作后 refresh() 会话，而这里只是一次查询。
+  async function lookupIdentifier(value) {
+    if (import.meta.server) return null
+    const fresh = await $fetch(authUrl('/session'), { credentials: 'include' })
+    const token = fresh?.csrf_token || csrfToken.value
+    return $fetch(authUrl('/identifier/lookup'), {
+      method: 'POST',
+      body: { identifier: value },
+      headers: { 'X-CSRFToken': token },
+      credentials: 'include',
+      ignoreResponseError: true,
+    })
+  }
+
   // 商家端「切换去商城」：兑换后端签发的一次性 handoff token。同源 POST，
   // CSRF 沿用 post() 的「先 GET session 取 csrftoken 再带 X-CSRFToken」约定；
   // 成功后 session cookie 由后端写在 storefront 自己的 host 上（host-only）。
@@ -130,11 +161,14 @@ export function useBuyerAuth() {
     csrfToken,
     merchantApplicationStatus,
     purchaseWhitelisted,
+    oauthProviders,
+    loadOAuthProviders,
     refresh,
     sendVerificationCode,
     register,
     registerEmail,
     login,
+    lookupIdentifier,
     exchangeMerchantHandoff,
     logout,
   }
