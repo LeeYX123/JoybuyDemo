@@ -16,7 +16,7 @@ import { useMarketLocale } from '../../composables/useMarketLocale'
 // ②右侧合计下方补支付图标行（真站 paymentLogos 顺序，本地 pdp-services SVG）；
 // ③页面底部加【精选好物】（ChannelPickedForYou 不带 category = 全库池，交互同 13.4）。
 
-const { items, subtotal, needsAttention, formatMoney, updateItem, removeItem } = await useCart()
+const { items, needsAttention, formatMoney, updateItem, removeItem } = await useCart()
 
 const { t } = useLocale()
 const { apiQuery } = useMarketLocale()
@@ -52,13 +52,17 @@ const validItems = computed(() => items.value.filter((item) => item.is_valid))
 const selectableIds = computed(() => validItems.value.map((item) => item.public_id))
 
 const selectedIds = ref(new Set())
+// 首次加载默认全选；之后的刷新只剔除失效行，**不能**因为「当前一个都没选」就重新全选
+// ——否则用户点「取消全选」后任何一次刷新（改数量、删行）都会把勾选还原。
+let selectionInitialised = false
 watch(
   items,
   (list) => {
     const valid = new Set(list.filter((item) => item.is_valid).map((item) => item.public_id))
     const next = new Set([...selectedIds.value].filter((id) => valid.has(id)))
-    if (next.size === 0) {
+    if (!selectionInitialised) {
       for (const id of valid) next.add(id)
+      selectionInitialised = true
     }
     selectedIds.value = next
   },
@@ -70,6 +74,15 @@ const selectedCount = computed(() => {
   return validItems.value
     .filter((item) => ids.has(item.public_id))
     .reduce((sum, item) => sum + item.quantity, 0)
+})
+
+// 小计按「勾选中的有效商品 × 数量」实时计算（2026-11-26）：后端 subtotal 是全车合计，
+// 取消勾选/改数量/删除行时不会变，右侧金额必须跟着左侧勾选走。
+const selectedSubtotal = computed(() => {
+  const ids = selectedIds.value
+  return validItems.value
+    .filter((item) => ids.has(item.public_id))
+    .reduce((sum, item) => sum + Number(item.price) * item.quantity, 0)
 })
 
 const allSelected = computed(
@@ -256,7 +269,7 @@ const mobileRows = computed(() =>
   <MobileCart
     v-if="isMobileHost"
     :rows="mobileRows"
-    :subtotal-text="formatMoney(subtotal) ?? ''"
+    :subtotal-text="formatMoney(selectedSubtotal) ?? ''"
     :selected-count="selectedCount"
     :needs-attention="needsAttention"
     @step="onQuantityStep"
@@ -457,7 +470,7 @@ const mobileRows = computed(() =>
               <div class="cart-summary__subtotal">
                 <span class="cart-summary__subtotal-label">{{ t('cart.subtotal') }}</span>
                 <strong class="cart-summary__subtotal-value">{{
-                  formatMoney(subtotal) ?? '—'
+                  formatMoney(selectedSubtotal) ?? '—'
                 }}</strong>
               </div>
             </template>

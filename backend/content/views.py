@@ -177,3 +177,63 @@ def channel_modules(request, code):
     data["market"] = context.market.code
     data["request_id"] = getattr(request, "request_id", None)
     return JsonResponse(data)
+
+
+def activity_page(request, kind, external_id):
+    """活动页 / 店铺页公开数据（no auth, read-only）。
+
+    URL：``/api/v1/activity-pages/<kind>/<external_id>``，kind ∈ {active, store}。
+    未发布/不存在 → 404（购物端渲染空态）；市场上下文缺失 → 503（与其它接口一致）。
+    """
+
+    from content.activity_services import activity_page_payload
+    from content.models import ActivityPage
+    from offers.market_services import resolve_market_context
+
+    kind_map = {
+        "active": ActivityPage.Kind.ACTIVITY,
+        "store": ActivityPage.Kind.STORE,
+    }
+    page_kind = kind_map.get(str(kind or "").strip().lower())
+    if page_kind is None:
+        return JsonResponse(
+            {
+                "error": {"code": "KIND_INVALID", "message": "Unknown page kind."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=404,
+        )
+    context = resolve_market_context(request)
+    if context is None:
+        return JsonResponse(
+            {
+                "error": {"code": "MARKET_UNAVAILABLE", "message": "Market not configured."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=503,
+        )
+    page = (
+        ActivityPage.objects.filter(
+            kind=page_kind, external_id=str(external_id).strip(), enabled=True
+        )
+        .prefetch_related(
+            "sections__items__spu__translations",
+            "sections__items__spu__brand",
+            "sections__items__spu__local_category",
+        )
+        .first()
+    )
+    if page is None:
+        return JsonResponse(
+            {
+                "error": {"code": "PAGE_NOT_FOUND", "message": "Page not found."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=404,
+        )
+    payload = activity_page_payload(
+        page, market=context.market, locale_code=context.locale.code
+    )
+    payload["market"] = context.market.code
+    payload["locale"] = context.locale.code
+    return JsonResponse(payload)

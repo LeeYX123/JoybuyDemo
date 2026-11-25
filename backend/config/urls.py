@@ -41,6 +41,11 @@ urlpatterns = [
         content_views.channel_modules,
         name="storefront-channel-modules",
     ),
+    path(
+        "api/v1/activity-pages/<str:kind>/<str:external_id>",
+        content_views.activity_page,
+        name="storefront-activity-page",
+    ),
     path("api/v1/categories", search_views.category_tree, name="category-tree"),
     path("api/v1/markets", offer_views.storefront_markets, name="storefront-markets"),
     path("api/v1/search", search_views.storefront_search, name="storefront-search"),

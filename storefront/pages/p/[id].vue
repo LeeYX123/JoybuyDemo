@@ -8,7 +8,7 @@ import { useCart } from '../../composables/useCart'
 import { useLocale } from '../../composables/useLocale'
 import { useMarketLocale } from '../../composables/useMarketLocale'
 import { useWishlist } from '../../composables/useWishlist'
-import { formatDisplayPrice, isDeliveryLabel } from '../../utils/display'
+import { formatDisplayPrice } from '../../utils/display'
 import { categoryHref } from '../../utils/categoryLinks'
 import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
 import { resolveProductCategoryCrumbs } from '../../utils/pdpBreadcrumb'
@@ -752,14 +752,10 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             :data-offer-id="offer?.public_id || ''"
             :data-merchant-slug="offer?.merchant?.slug || ''"
           >
+            <!-- 需求（2026-11-25）：价格区不再渲染任何促销徽标（如 "70% off"）；
+                 后端 offer.promotion_label 保留，仅展示层不展示。 -->
             <div v-if="offer" class="detail__price-block">
               <p class="detail__price">{{ price }}</p>
-              <BaseBadge
-                v-if="offer.promotion_label && !isDeliveryLabel(offer.promotion_label)"
-                tone="promo"
-              >
-                {{ offer.promotion_label }}
-              </BaseBadge>
             </div>
             <!-- 需求 20.1：URL 带入的商家 offer 不在此商品里 → 回落默认并明确提示。 -->
             <p v-if="offerFallbackNotice" class="detail__offer-notice" role="status">

@@ -321,7 +321,7 @@ describe('AppHeader', () => {
     expect(items.map((item) => item.text().trim())).toEqual([
       'My orders',
       'Reviews and Q&A',
-      'Wishlist',
+      'Favourites',
       'Addresses',
       'Sign out',
     ])

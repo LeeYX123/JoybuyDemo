@@ -129,6 +129,13 @@ const router = createRouter({
           meta: { title: '活动卡片', module: 'cms.campaign' },
         },
         {
+          // 2026-11-25：真站活动页 / 店铺页的本地复刻配置（首页推荐卡落地页）。
+          path: 'activity-pages',
+          name: 'activity-pages',
+          component: () => import('@/views/ActivityPagesView.vue'),
+          meta: { title: '活动页 / 店铺页', module: 'cms.campaign' },
+        },
+        {
           path: 'banners',
           name: 'banners',
           component: () => import('@/views/BannersView.vue'),

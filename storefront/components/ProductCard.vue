@@ -5,7 +5,7 @@ import { useWishlist } from '../composables/useWishlist'
 
 const { t } = useLocale()
 
-import { formatDisplayPrice, isDeliveryLabel } from '../utils/display'
+import { formatDisplayPrice, isDeliveryLabel, isPromoLabel } from '../utils/display'
 
 // Shared product card aligned to the joybuy.co.uk card spec (sampled from
 // the Bestsellers floor, 2026-11-04): white 12px-radius card, full-width
@@ -91,10 +91,13 @@ const viewed = computed(() => {
 
 const badge = computed(() => {
   // Marketing labels (新客福利/优惠x%/送达/满减/自营) never render (req 5-6);
-  // delivery-estimate labels are suppressed by the display rule too.
+  // delivery-estimate and discount/promotion labels are suppressed by the
+  // display rules too (2026-11-03 / 2026-11-25).
   // 频道楼层走零售价口径时连促销标签也不渲染（用户明确：不显示 Promo 标签）。
   if (props.useRetailPrice) return ''
-  return props.product.badge && !isDeliveryLabel(props.product.badge) ? props.product.badge : ''
+  const label = props.product.badge
+  if (!label || isDeliveryLabel(label) || isPromoLabel(label)) return ''
+  return label
 })
 
 // Wishlist heart: session-backed, optimistic, and shared across every card.

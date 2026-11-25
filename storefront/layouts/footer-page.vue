@@ -2,12 +2,20 @@
 // 页脚内容页布局（需求 12.1 → 16.1）：复用全局 site-header，只隐藏品类那一栏
 // （分类按钮 + 一级品类行 + 其下拉）。黑条（语言）、logo、搜索、账号/申请店铺/
 // 购物车与首页完全一致——不再维护第二份简顶栏，避免两套 header 漂移。
+import { computed } from 'vue'
+
+import { useCart } from '../composables/useCart'
+
+const { items } = await useCart()
+const cartCount = computed(() =>
+  items.value.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+)
 </script>
 
 <template>
   <div class="app-shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <AppHeader hide-category-nav />
+    <AppHeader hide-category-nav :cart-count="cartCount" />
     <main id="main-content" class="app-main" tabindex="-1">
       <slot />
     </main>

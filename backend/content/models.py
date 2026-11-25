@@ -305,3 +305,149 @@ class ChannelModuleProduct(models.Model):
     def __str__(self):
         identity = self.sku_id if self.sku_id is not None else "spu"
         return f"{self.module_id}:{self.spu_id}/{identity}@{self.sort_order}"
+
+
+class ActivityPage(models.Model):
+    """真站 ``/campaign/active/<id>`` 与 ``/store/<id>`` 落地页的本地复刻
+    （2026-11-25，首页「为你推荐」10 模块配套）。
+
+    本地 URL 保留真站 ID：``/active/<external_id>``、``/store/<external_id>``。
+    页面结构固定为「hero banner + 若干分区」：分区要么是整幅图片模块
+    （``ActivitySection.Kind.BANNER``），要么是商品楼层（标题 + 商品清单，
+    ``ActivitySection.Kind.PRODUCTS``）。倒计时、优惠码等运营交互元素按用户
+    2026-11-25 口径**一律不复刻**。
+
+    与 ``ChannelPageCard`` 同口径：单条开关 + 排序的高频运营对象，不进 CMS
+    版本快照；店铺页（kind=STORE）是一次性快照，配置定死后不做常规运营入口。
+    """
+
+    class Kind(models.TextChoices):
+        ACTIVITY = "ACTIVITY", "活动页"
+        STORE = "STORE", "店铺页"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    kind = models.CharField(
+        max_length=16, choices=Kind.choices, default=Kind.ACTIVITY, db_index=True
+    )
+    #: 真站 URL 段：active 页是 base62 id，store 页是数字店铺 id。
+    external_id = models.CharField(max_length=64)
+    title = models.CharField(max_length=200)
+    title_zh = models.CharField(max_length=200, blank=True, default="")
+    #: 店铺页顶栏店铺名（活动页留空）。
+    store_name = models.CharField(max_length=160, blank=True, default="")
+    #: 店铺页顶部黑色条里的商家头像（2026-11-26）。
+    logo_image = models.CharField(max_length=1000, blank=True, default="")
+    source_url = models.CharField(max_length=500, blank=True, default="")
+    #: 首屏整幅 banner 图（本地 /media/ 或 public 路径）。
+    hero_image = models.CharField(max_length=1000, blank=True, default="")
+    #: 页面底色（真站部分活动页有底色，如 #ffffff）。
+    background_color = models.CharField(max_length=16, blank=True, default="")
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "activity_page"
+        ordering = ["sort_order", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "external_id"], name="activity_page_kind_external_unique"
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["kind", "enabled", "sort_order"], name="activity_page_lookup_idx"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.kind}:{self.external_id} {self.title}"
+
+
+class ActivitySection(models.Model):
+    """活动页/店铺页内的一个分区：整幅图片模块或商品楼层。
+
+    ``columns`` 是商品楼层的列数（真站实测活动页 5 列、店铺页 5 列）；
+    ``show_more`` 只在楼层下显示【View more】按钮（本地点击加载已采集的下一批，
+    见 ``ActivitySectionProduct`` 的分批口径）。
+    """
+
+    class Kind(models.TextChoices):
+        BANNER = "BANNER", "整幅图片"
+        PRODUCTS = "PRODUCTS", "商品楼层"
+        #: 自动轮播 banner（真站店铺页顶部，hover 出左右箭头）。
+        CAROUSEL = "CAROUSEL", "轮播图"
+        #: 视频模块（真站店铺页 banner 下方，静音自动循环）。
+        VIDEO = "VIDEO", "视频"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    page = models.ForeignKey(ActivityPage, on_delete=models.CASCADE, related_name="sections")
+    kind = models.CharField(
+        max_length=16, choices=Kind.choices, default=Kind.PRODUCTS, db_index=True
+    )
+    title = models.CharField(max_length=200, blank=True, default="")
+    title_zh = models.CharField(max_length=200, blank=True, default="")
+    #: 楼层标题条配色（2026-11-26 实测真站）：真站标题统一是 flex_cube floorTitle
+    #: 模块，配色按页面配置——白底页是砖红字，深色页是白字配深红/炭黑条。
+    #: 空字符串表示「无底色」（纯文字标题）。
+    # 32 位：允许 rgba(255,255,255,1) 这类写法（真站有的模块就是 rgba）。
+    title_color = models.CharField(max_length=32, blank=True, default="")
+    title_background = models.CharField(max_length=32, blank=True, default="")
+    image_url = models.CharField(max_length=1000, blank=True, default="")
+    href = models.CharField(max_length=1000, blank=True, default="")
+    columns = models.PositiveSmallIntegerField(default=5)
+    show_more = models.BooleanField(default=False)
+    #: 轮播/视频模块的附加配置：
+    #: CAROUSEL: {"images": ["/a.webp", ...]}
+    #: VIDEO: {"video": "/videos/x.mp4", "poster": "/images/x.webp"}
+    extra = models.JSONField(default=dict, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "activity_section"
+        ordering = ["page", "sort_order", "pk"]
+
+    def __str__(self):
+        return f"{self.page_id}:{self.kind}@{self.sort_order} {self.title}"
+
+
+class ActivitySectionProduct(models.Model):
+    """商品楼层里的商品位次（按真站顺序）。
+
+    首批展示 ``FIRST_BATCH = 15`` 个（真站一屏 5×3），点一次【View more】
+    追加剩余（我们只采一屏 + 一次更多，见 HANDOFF 0ct）。
+    """
+
+    FIRST_BATCH = 15
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    section = models.ForeignKey(
+        ActivitySection, on_delete=models.CASCADE, related_name="items"
+    )
+    spu = models.ForeignKey("catalog.Spu", on_delete=models.PROTECT, related_name="activity_items")
+    #: 多规格商品的具体规格（2026-11-25）：真站同一 SPU 的不同尺寸/规格各占一卡
+    #: （如 Novilla 床垫 King 与 Double 各一个链接）。为空表示按 SPU 展示。
+    sku = models.ForeignKey(
+        "catalog.Sku",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="activity_items",
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "activity_section_product"
+        ordering = ["section", "sort_order", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "spu", "sku"], name="activity_section_product_unique"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.section_id}:{self.spu_id}@{self.sort_order}"

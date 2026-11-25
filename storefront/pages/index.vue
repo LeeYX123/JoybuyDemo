@@ -4,6 +4,8 @@ import { computed } from 'vue'
 // Home = published CMS page. SSR fetches Django directly via the internal
 // base; the client re-fetches through the same-origin proxy. A missing page
 // degrades to a friendly empty state instead of an error screen.
+// ADR 0001: on the m. host the same payload renders the mobile floor set
+// (MobileHome, docs/19); the desktop floors are unchanged otherwise.
 const config = useRuntimeConfig()
 const apiBase = import.meta.server ? config.apiBaseInternal : config.public.apiBase
 
@@ -14,16 +16,23 @@ const { data, error } = await useFetch(`${apiBase}/storefront/home`, {
 const modules = computed(() => (Array.isArray(data.value?.modules) ? data.value.modules : []))
 const mainModules = computed(() => modules.value)
 const pageTitle = computed(() => data.value?.page?.title || 'Joybuy')
+const { isMobileHost } = useMobileView()
 
 useHead(() => ({ title: pageTitle.value }))
 </script>
 
 <template>
+  <MobileHome
+    v-if="isMobileHost"
+    class="home-page-bg--mobile"
+    :modules="modules"
+    :load-failed="Boolean(error)"
+  />
   <!-- The whole home row is white (#FFFFFF) behind every floor, and the
        campaign floor sits flush against the header (real site: no gap), so
        this full-bleed wrapper carries the background and kills the top
        margin that .app-main applies to its children. -->
-  <div class="home-page-bg">
+  <div v-else class="home-page-bg">
     <AppContainer class="home-page">
       <div class="home-content">
         <template v-if="modules.length > 0">

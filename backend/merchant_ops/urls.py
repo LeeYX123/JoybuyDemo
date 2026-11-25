@@ -2,6 +2,7 @@ from django.urls import path
 
 from merchant_ops import (
     views_accounts,
+    views_activity_pages,
     views_audit,
     views_auto_orders,
     views_banners,
@@ -649,6 +650,32 @@ urlpatterns = [
         "api/v1/admin/campaign-cards/<uuid:public_id>/actions",
         views_campaign.AdminCampaignCardActionsView.as_view(),
         name="admin-campaign-card-actions",
+    ),
+    # 活动页 / 店铺页（真站 /campaign/active/<id>、/store/<id> 复刻，2026-11-25）
+    path(
+        "api/v1/admin/activity-pages",
+        views_activity_pages.AdminActivityPagesView.as_view(),
+        name="admin-activity-pages",
+    ),
+    path(
+        "api/v1/admin/activity-pages/<uuid:public_id>",
+        views_activity_pages.AdminActivityPageDetailView.as_view(),
+        name="admin-activity-page-detail",
+    ),
+    path(
+        "api/v1/admin/activity-pages/<uuid:public_id>/sections",
+        views_activity_pages.AdminActivityPageSectionsView.as_view(),
+        name="admin-activity-page-sections",
+    ),
+    path(
+        "api/v1/admin/activity-pages/<uuid:public_id>/sections/<uuid:section_id>",
+        views_activity_pages.AdminActivityPageSectionDetailView.as_view(),
+        name="admin-activity-page-section-detail",
+    ),
+    path(
+        "api/v1/admin/activity-pages/<uuid:public_id>/sections/<uuid:section_id>/products",
+        views_activity_pages.AdminActivityPageSectionProductsView.as_view(),
+        name="admin-activity-page-section-products",
     ),
     # 频道页 banner（/minihome/<code> 顶部轮播图，按频道分组）
     path(
