@@ -24,6 +24,10 @@ export const useRuntimeConfig = () => ({
 })
 export const useRoute = () => ({ params: {}, query: {}, path: '/' })
 export const useRouter = () => ({ push: () => {} })
+export const useRequestURL = () => new URL('http://localhost:3000')
+// useBuyerAuth stores the shared session useAsyncData handle on the app object
+// (nuxtApp._joybuySessionAsyncData); a plain object is enough for that.
+export const useNuxtApp = () => ({})
 export const navigateTo = recorder('navigateTo')
 export const useHead = recorder('useHead')
 export const useState = (initializer) =>
@@ -40,6 +44,8 @@ export default {
   useRuntimeConfig,
   useRoute,
   useRouter,
+  useRequestURL,
+  useNuxtApp,
   navigateTo,
   useHead,
   useState,

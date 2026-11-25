@@ -146,6 +146,7 @@ urlpatterns = [
         name="payment-attempt",
     ),
     path("api/v1/buyer/favourites", activity_views.favourites, name="buyer-favourites"),
+    path("api/v1/buyer/wallet", activity_views.wallet, name="buyer-wallet"),
     path(
         "api/v1/buyer/recently-viewed",
         activity_views.recently_viewed,

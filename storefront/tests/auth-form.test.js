@@ -123,7 +123,7 @@ describe('AuthForm email-first', () => {
     expect(wrapper.text()).toContain('This mobile number is not registered')
   })
 
-  it('renders both providers side by side and warns when one is not configured', async () => {
+  it('renders only providers whose credentials are configured', () => {
     route.query = { next: '/cart' }
     const wrapper = mountForm('login', [
       { provider: 'google', enabled: true, start_url: '/api/v1/auth/buyer/oauth/google/start' },
@@ -135,15 +135,22 @@ describe('AuthForm email-first', () => {
     ])
 
     const buttons = wrapper.findAll('[data-testid="oauth-button"]')
-    // 用户要求：Facebook 与 Google 并排，不需要先点 View more options
-    expect(buttons).toHaveLength(2)
+    // Facebook 凭据未配置时按钮整条隐藏；填上凭据（enabled=true）后会自动出现
+    expect(buttons).toHaveLength(1)
     expect(buttons[0].text()).toContain('Continue with Google')
-    expect(buttons[1].text()).toContain('Continue with Facebook')
+    expect(wrapper.text()).not.toContain('Continue with Facebook')
     expect(buttons[0].attributes('href')).toBe('/api/v1/auth/buyer/oauth/google/start?next=%2Fcart')
-    expect(buttons[1].attributes('href')).toBeUndefined()
+  })
 
-    await buttons[1].trigger('click')
-    expect(wrapper.find('[role="alert"]').text()).toContain('unavailable')
+  it('renders both buttons when both providers are configured', () => {
+    const wrapper = mountForm('login', [
+      { provider: 'google', enabled: true, start_url: '/api/v1/auth/buyer/oauth/google/start' },
+      { provider: 'facebook', enabled: true, start_url: '/api/v1/auth/buyer/oauth/facebook/start' },
+    ])
+
+    const buttons = wrapper.findAll('[data-testid="oauth-button"]')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[1].text()).toContain('Continue with Facebook')
   })
 
   it('shows the language name (not the country) below the social buttons', () => {

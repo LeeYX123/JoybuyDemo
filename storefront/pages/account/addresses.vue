@@ -39,10 +39,9 @@ const { data, status, refresh } = await useFetch(addressesUrl, {
 const addresses = computed(() => (Array.isArray(data.value?.addresses) ? data.value.addresses : []))
 
 const tab = ref('delivery')
-const tabs = computed(() => [
-  { key: 'delivery', label: t('addresses.tabDelivery') },
-  { key: 'pickup', label: t('addresses.tabPickup') },
-])
+// 用户决定（2026-11-25）：账户地址页去掉「自提」tab，只保留配送地址；
+// 真站虽有 配送/自提 两个 tab，但本项目无自提点业务，不虚设。
+const tabs = computed(() => [{ key: 'delivery', label: t('addresses.tabDelivery') }])
 
 const showForm = ref(false)
 const editingId = ref('')
@@ -68,11 +67,9 @@ const formTitle = computed(() =>
   editingId.value ? t('addresses.editTitle') : t('addresses.addTitle'),
 )
 
-// The toolbar button follows the active tab: the pickup tab creates a pickup
-// point entry, the delivery tab a delivery address. Both open the same modal.
-const addButtonLabel = computed(() =>
-  tab.value === 'pickup' ? t('addresses.addPickup') : t('addresses.addNew'),
-)
+// The toolbar button no longer switches with a tab: only delivery addresses
+// are manageable here (pickup tab removed, user decision 2026-11-25).
+const addButtonLabel = computed(() => t('addresses.addNew'))
 
 function resetForm() {
   Object.assign(form, EMPTY_FORM)
@@ -353,7 +350,7 @@ useHead(() => ({ title: t('addresses.title') }))
       </div>
     </div>
 
-    <template v-else-if="tab === 'delivery'">
+    <template v-else>
       <div v-if="status === 'pending'" class="addresses-list" aria-hidden="true">
         <div class="address-card address-card--skeleton">
           <BaseSkeleton variant="text" />
@@ -440,8 +437,6 @@ useHead(() => ({ title: t('addresses.title') }))
         </li>
       </ul>
     </template>
-
-    <AccountEmpty v-else :message="t('addresses.pickupEmpty')" />
 
     <!-- Add / edit address modal (joybuy uses a centred modal too). -->
     <div v-if="showForm" class="address-modal" @click.self="closeForm">

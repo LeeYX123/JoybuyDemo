@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDisplayPrice, isDeliveryLabel } from './display'
+import { formatDisplayPrice, isDeliveryLabel, isPromoLabel } from './display'
 
 describe('formatDisplayPrice', () => {
   it('formats every price with the US dollar symbol', () => {
@@ -38,5 +38,33 @@ describe('isDeliveryLabel', () => {
     expect(isDeliveryLabel(null)).toBe(false)
     expect(isDeliveryLabel(undefined)).toBe(false)
     expect(isDeliveryLabel(42)).toBe(false)
+  })
+})
+
+describe('isPromoLabel', () => {
+  it('detects discount wording in English and Chinese', () => {
+    expect(isPromoLabel('70% off')).toBe(true)
+    expect(isPromoLabel('81% OFF')).toBe(true)
+    expect(isPromoLabel('Save 60% on RRP')).toBe(true)
+    expect(isPromoLabel('-30%')).toBe(true)
+    expect(isPromoLabel('满减 20')).toBe(true)
+    expect(isPromoLabel('立减 $5')).toBe(true)
+    expect(isPromoLabel('限时折扣')).toBe(true)
+    expect(isPromoLabel('优惠 30%')).toBe(true)
+    expect(isPromoLabel('Was $49.99')).toBe(true)
+    expect(isPromoLabel('Big discount')).toBe(true)
+  })
+
+  it('keeps neutral badges', () => {
+    expect(isPromoLabel('New')).toBe(false)
+    expect(isPromoLabel('Bestseller')).toBe(false)
+    expect(isPromoLabel('999+ sold')).toBe(false)
+    expect(isPromoLabel('Arrives today')).toBe(false)
+  })
+
+  it('returns false for non-string values', () => {
+    expect(isPromoLabel(null)).toBe(false)
+    expect(isPromoLabel(undefined)).toBe(false)
+    expect(isPromoLabel(42)).toBe(false)
   })
 })

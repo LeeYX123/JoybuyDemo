@@ -6,6 +6,7 @@ import { useFetch, useHead, useRequestHeaders, useRuntimeConfig } from '#imports
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
 import { useMerchantEntry } from '../../composables/useMerchantEntry'
+import { useMobileView } from '../../composables/useMobileView'
 
 // 需求 22.3-2（2026-11-22 真站 /profile 实测）：用户中心是**纵向堆叠**结构
 // （无左侧导航）：用户信息行 → 订单状态条 → 权益 tile 网格；内容区 1264px、
@@ -15,6 +16,7 @@ import { useMerchantEntry } from '../../composables/useMerchantEntry'
 // 申请店铺），只重做视觉与结构。
 const { isAuthenticated, account, logout } = useBuyerAuth()
 const { t } = useLocale()
+const { isMobileHost } = useMobileView()
 const config = useRuntimeConfig()
 const {
   label: merchantLabel,
@@ -56,34 +58,29 @@ const orderStats = computed(() => [
 ])
 
 // 真站权益 tile（22/700 标题 + 24px 图标 + 16px 右箭头 + 18px 灰描述）。
+// 2026-11-25 与真站 /profile 重新对齐：磁贴 = 优惠券 / 心愿单(我的收藏) / 积分
+// （真站口径）；原「售后/评价/最近浏览」磁贴移除，最近浏览页仍可直链访问。
 const modules = computed(() => [
   {
-    key: 'returns',
-    to: '/account/returns',
-    title: t('accountMenu.returns'),
-    description: t('account.moduleReturnsDesc'),
-    icon: 'returns',
-  },
-  {
-    key: 'reviews',
-    to: '/account/reviews',
-    title: t('accountMenu.reviews'),
-    description: t('account.moduleReviewsDesc'),
-    icon: 'reviews',
+    key: 'coupons',
+    to: '/account/coupons',
+    title: t('accountMenu.coupons'),
+    description: t('account.couponsEmpty'),
+    icon: 'coupons',
   },
   {
     key: 'favourites',
     to: '/account/favourites',
-    title: t('account.favourites'),
+    title: t('accountMenu.favourites'),
     description: t('account.moduleFavouritesDesc'),
     icon: 'favourites',
   },
   {
-    key: 'recently-viewed',
-    to: '/account/recently-viewed',
-    title: t('account.recentlyViewed'),
-    description: t('account.moduleRecentlyViewedDesc'),
-    icon: 'recentlyViewed',
+    key: 'points',
+    to: '/account/points',
+    title: t('accountMenu.points'),
+    description: t('account.pointsEmpty'),
+    icon: 'points',
   },
   {
     key: 'merchant',
@@ -117,7 +114,11 @@ useHead(() => ({ title: t('account.myAccount') }))
 </script>
 
 <template>
-  <div class="profile-page">
+  <!-- ADR 0001: on the m. host the account hub renders the mobile layout
+       (docs/19 §3, real-site screenshots 2026-11-24); the desktop stacked
+       profile below is untouched. -->
+  <MobileAccount v-if="isMobileHost" />
+  <div v-else class="profile-page">
     <AppContainer>
       <section
         v-if="isAuthenticated"
@@ -239,26 +240,14 @@ useHead(() => ({ title: t('account.myAccount') }))
             <span class="profile-module__title">
               <span class="profile-module__title-text">
                 <svg
-                  v-if="module.icon === 'returns'"
+                  v-if="module.icon === 'coupons'"
                   viewBox="0 0 24 24"
                   width="24"
                   height="24"
                   aria-hidden="true"
                 >
                   <path
-                    d="M4 6h16v4H4V6Zm0 6h16v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7Zm3 3v2h6v-2H7Zm9-9h4v14h-2V8h-2V6Z"
-                    fill="currentColor"
-                  />
-                </svg>
-                <svg
-                  v-else-if="module.icon === 'reviews'"
-                  viewBox="0 0 24 24"
-                  width="24"
-                  height="24"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4V5a1 1 0 0 1 1-1Zm3 5v2h10V9H7Zm0 4v2h7v-2H7Z"
+                    d="M3 5h18a1 1 0 0 1 1 1v4a2 2 0 0 0 0 4v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-4a2 2 0 0 0 0-4V6a1 1 0 0 1 1-1Zm3 4v2h6V9H6Zm0 4v2h10v-2H6Z"
                     fill="currentColor"
                   />
                 </svg>
@@ -278,19 +267,15 @@ useHead(() => ({ title: t('account.myAccount') }))
                   />
                 </svg>
                 <svg
-                  v-else-if="module.icon === 'recentlyViewed'"
+                  v-else-if="module.icon === 'points'"
                   viewBox="0 0 24 24"
                   width="24"
                   height="24"
                   aria-hidden="true"
                 >
                   <path
-                    d="M12 3a9 9 0 1 1-8.5 6.1M12 7v5.2l3.6 2.1M3.5 9.1 4 3.6"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.7"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+                    d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 5v3.2l3 1.7-1 1.7-3-1.7-3 1.7-1-1.7 3-1.7V7h2Z"
+                    fill="currentColor"
                   />
                 </svg>
                 <svg v-else viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">

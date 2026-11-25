@@ -39,7 +39,7 @@ describe('MobileDrawer', () => {
   it('shows the core item rows and drops the coupons module', async () => {
     const wrapper = await openDrawer()
     const text = wrapper.find('.m-drawer__body').text()
-    for (const label of ['Orders', 'Messages', 'Wishlist', 'Addresses', 'Language', 'Settings']) {
+    for (const label of ['Orders', 'Messages', 'Favourites', 'Addresses', 'Language', 'Settings']) {
       expect(text).toContain(label)
     }
     expect(text).not.toContain('Coupons')

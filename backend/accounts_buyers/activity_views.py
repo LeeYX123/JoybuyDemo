@@ -25,6 +25,11 @@ def _require_buyer(request):
 
 
 def _serialize_cards(rows):
+    # 收藏/最近浏览卡片需要商品图（真站心愿单卡 = 图 + 标题 + 价）。
+    # 复用频道楼层的画廊解析（第一张 gallery 图，与请求 locale 无关）。
+    from content.channel_module_services import _gallery_paths
+
+    image_paths = _gallery_paths([row.spu_id for row in rows])
     market = Market.objects.filter(code="GB", is_active=True).first()
     cards = []
     for row in rows:
@@ -39,6 +44,7 @@ def _serialize_cards(rows):
             {
                 "spu_public_id": str(row.spu.public_id),
                 "title": title,
+                "image_path": image_paths.get(row.spu_id, ""),
                 "price_min": str(document.min_price) if document and document.min_price else None,
                 "currency": document.currency_code if document else "GBP",
                 "rating_average": (
@@ -187,4 +193,57 @@ def record_view(spu, account):
         account=account,
         spu=spu,
         defaults={"viewed_at": timezone.now()},
+    )
+
+
+WALLET_PAGE_SIZE = 20
+
+
+def wallet(request):
+    """Read-only buyer balance + wallet entries (account sidebar "Joybuy 余额").
+
+    充值/调整仍走平台管理端（需求 8-6 白名单口径）；买家侧只读。
+    金额收入为正、消费为负，直接沿用 ``BuyerWalletEntry`` 的符号约定。
+    """
+
+    account, denied = _require_buyer(request)
+    if denied:
+        return denied
+
+    if request.method != "GET":
+        return JsonResponse(
+            {
+                "error": {"code": "METHOD_NOT_ALLOWED", "message": "Unsupported method."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=405,
+        )
+
+    try:
+        page = max(1, min(int(request.GET.get("page", "1")), MAX_PAGE))
+    except ValueError:
+        page = 1
+    queryset = account.wallet_entries.all()
+    total = queryset.count()
+    offset = (page - 1) * WALLET_PAGE_SIZE
+    rows = list(queryset[offset : offset + WALLET_PAGE_SIZE])
+    return JsonResponse(
+        {
+            "balance": str(account.balance),
+            "page": page,
+            "page_size": WALLET_PAGE_SIZE,
+            "total": total,
+            "total_pages": (total + WALLET_PAGE_SIZE - 1) // WALLET_PAGE_SIZE,
+            "entries": [
+                {
+                    "public_id": str(row.public_id),
+                    "kind": row.kind,
+                    "amount": str(row.amount),
+                    "balance_after": str(row.balance_after),
+                    "note": row.note,
+                    "occurred_at": row.occurred_at.isoformat(),
+                }
+                for row in rows
+            ],
+        }
     )

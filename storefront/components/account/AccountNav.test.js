@@ -75,23 +75,37 @@ afterEach(() => {
 })
 
 describe('AccountNav merchant entry', () => {
-  it('keeps the four base modules and adds the seller entry', async () => {
+  it('renders the real-site module rail plus the seller entry', async () => {
     const wrapper = await mountNav()
     wrapped.push(wrapper)
     const items = wrapper.findAll('.account-nav__item')
     expect(items.map((item) => item.text())).toEqual([
+      'My account',
       'My orders',
       'After-sales',
       'Reviews and Q&A',
+      'Favourites',
+      'Joybuy balance',
+      'Points',
+      'Coupons',
       'Addresses',
       'Apply for a shop',
     ])
   })
 
+  it('links the wishlist entry to our favourites page under our own naming', async () => {
+    const wrapper = await mountNav()
+    wrapped.push(wrapper)
+    // 我的收藏 (not the real site's 心愿单 wording) — see CONTEXT.md.
+    const favourites = wrapper.findAll('.account-nav__item')[4]
+    expect(favourites.attributes('href')).toBe('/account/favourites')
+    expect(favourites.text()).toBe('Favourites')
+  })
+
   it('links to apply-shop when there is no application', async () => {
     const wrapper = await mountNav()
     wrapped.push(wrapper)
-    const seller = wrapper.findAll('.account-nav__item')[4]
+    const seller = wrapper.findAll('.account-nav__item')[9]
     expect(seller.element.tagName).toBe('A')
     expect(seller.attributes('href')).toBe('/account/apply-shop')
     expect(seller.text()).toBe('Apply for a shop')
@@ -101,7 +115,7 @@ describe('AccountNav merchant entry', () => {
     __setApplicationStatus('PENDING')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
-    const seller = wrapper.findAll('.account-nav__item')[4]
+    const seller = wrapper.findAll('.account-nav__item')[9]
     expect(seller.element.tagName).toBe('A')
     expect(seller.attributes('href')).toBe('/account/apply-shop')
     expect(seller.text()).toBe('Application under review')
@@ -111,7 +125,7 @@ describe('AccountNav merchant entry', () => {
     __setApplicationStatus('REJECTED')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
-    const seller = wrapper.findAll('.account-nav__item')[4]
+    const seller = wrapper.findAll('.account-nav__item')[9]
     expect(seller.element.tagName).toBe('A')
     expect(seller.text()).toBe('Apply for a shop')
   })
@@ -120,7 +134,7 @@ describe('AccountNav merchant entry', () => {
     __setApplicationStatus('APPROVED')
     const wrapper = await mountNav()
     wrapped.push(wrapper)
-    const seller = wrapper.findAll('.account-nav__item')[4]
+    const seller = wrapper.findAll('.account-nav__item')[9]
     expect(seller.element.tagName).toBe('BUTTON')
     expect(seller.attributes('href')).toBeUndefined()
     expect(seller.text()).toBe('Enter Merchant Center')

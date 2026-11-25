@@ -97,7 +97,11 @@ watch(
   { immediate: true },
 )
 
-const providers = computed(() => (props.providers || []).filter((item) => item && item.start_url))
+// 只渲染凭据已配置的渠道：Facebook 凭据为空时按钮整条不出现，
+// 等 .env 填上 FACEBOOK_OAUTH_APP_ID/SECRET（后端 providers 报 enabled=true）后自动显示。
+const providers = computed(() =>
+  (props.providers || []).filter((item) => item && item.enabled && item.start_url),
+)
 const showSocial = computed(() => step.value === 'identifier' && providers.value.length > 0)
 
 // 地区选择器显示**语言名**（用户要求去掉国旗、不显示国家名）。
@@ -123,14 +127,6 @@ function providerLabel(provider) {
 function oauthHref(provider) {
   const query = new URLSearchParams({ next: nextPath.value })
   return `${provider.start_url}?${query.toString()}`
-}
-
-// 凭据未配置的渠道：按钮照样并排显示（用户要求与 Google 一致），点击给行内提示。
-function handleProviderClick(provider, event) {
-  if (provider.enabled) return
-  event.preventDefault()
-  identifierError.value = ''
-  formError.value = t('auth.error.oauthUnavailable')
 }
 
 function validateIdentifier() {
@@ -320,16 +316,12 @@ useHead({ title: () => title.value })
           <span>{{ t('auth.oauth.or') }}</span>
         </p>
         <div class="auth-social">
-          <!-- 未配置凭据的渠道也并排显示（同款按钮），点击给「暂不可用」提示 -->
-          <component
-            :is="provider.enabled ? 'a' : 'button'"
+          <a
             v-for="provider in providers"
             :key="provider.provider"
             class="auth-social__button"
-            :href="provider.enabled ? oauthHref(provider) : undefined"
-            :type="provider.enabled ? undefined : 'button'"
+            :href="oauthHref(provider)"
             data-testid="oauth-button"
-            @click="handleProviderClick(provider, $event)"
           >
             <span class="auth-social__icon" aria-hidden="true">
               <svg v-if="provider.provider === 'google'" viewBox="0 0 24 24" width="24" height="24">
@@ -359,7 +351,7 @@ useHead({ title: () => title.value })
               </svg>
             </span>
             <span class="auth-social__label">{{ providerLabel(provider) }}</span>
-          </component>
+          </a>
         </div>
 
         <button class="auth-more" type="button">{{ t('auth.viewMoreOptions') }}</button>

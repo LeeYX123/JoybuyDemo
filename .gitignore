@@ -50,6 +50,8 @@ screenshots/
 # Local runtime data and generated media
 var/*
 !var/README.md
+# 前端本地截图/对比产物（调试用，不入库）
+storefront/var/
 backend/raw/
 /media/
 /raw/
