@@ -2,6 +2,632 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0d2. ⏸ 补货队列已暂停（准备换 VPN 节点）（2026-11-26 01:52 本地，未 commit / 未关机）
+
+### 我们在做什么
+用户要求**立即暂停**正在跑的 `var/topup50_20261125/batch_queue.py` 补货队列（「把每个二级类目补到 50」，
+`target_imported_count` 目标模式，并发 ≤5），因为马上要重启 Clash Verge 换节点，网络会断；
+要求**已导入数据保留、稍后可续跑**，不 commit、不碰 9334/FB、不关机、不动别的会话的任务。
+
+### 已完成的动作（均为实跑，非计划）
+1. **清点**（`wmic process where "name='python.exe'" get ProcessId,CommandLine /format:csv`）：
+   调度进程树 `36160` → 子进程 `52552`，其下挂 5 个 `manage.py run_crawl_run --run <id>`
+   （每个 run 双进程，venv 启动器 + 真身：33388/50024、52136/53016、4956/51460、55968/39768、47592/45716）。
+2. **停调度 + 停执行器**：`taskkill //PID 36160 //T //F`，共终止 **12 个进程**（1 调度 + 1 调度子进程 + 5 执行器 ×2）。
+   复核 `wmic ... | grep -Ei "batch_queue|run_crawl_run"` 已空，只剩 4 个 `manage.py runserver`；
+   也无残留 chrome/msedge 调试实例（`remote-debugging` 查无）。
+3. **DB 收尾**（`complete_run_failed`，未删任何数据、未改商品/媒体）：
+   | run | job | 类目 | run 入库/发现 | job 现状态 |
+   |---|---|---|---|---|
+   | 3ebbcdd2 | 277 | 补货50-家居装饰 | 4 / 42 | FAILED |
+   | 453be23e | 276 | 补货50-清洁用品 | 5 / 25 | FAILED |
+   | 1ff88cf9 | 173 | 数据抓取04-按摩与舒缓 | 3 / 50 | FAILED |
+   | f7060a38 | 47 | 数据抓取04-小宠用品 | 5 / 50 | FAILED |
+   | 2794bb13 | 266 | 数据抓取01-狗零食（重跑） | 5 / 50 | FAILED |
+   | c332c80f | 274 | 补货50-计生用品 | 1 / 1（暂停前已 SUCCEEDED） | COMPLETED |
+   reason 统一写「用户要求暂停（准备切换 VPN 节点），已导入数据保留，可续跑」（`RUN_FAILED` 事件）。
+4. **进度快照**：`var/topup50_20261125/pause_snapshot.json`（只读生成）。实测口径：
+   任务 **56** 个（`task_list.json` 实际 56 条，用户口径说 55，按 56 记）、初始 need 合计 **2171**、
+   本批已入库 **23**（`snapshot_before.json` 的 DRAFT 378 → 现 401，总量对得上）、
+   **剩余 need 合计 2148**、本批已派发 6 个任务、job 状态 **FAILED 5 / COMPLETED 2 / READY 49**。
+   注意新导入商品落在 **DRAFT**（未上架），所以类目 ACTIVE 数不变，进度要看 `imported_this_batch` / `draft_delta`。
+
+### 当前卡点 / 恢复前必须处理
+- **5 个 FAILED 任务会被队列跳过**：`batch_queue.dispatch()` 只派 `status == READY` 的任务，
+  而 `JOB_TRANSITIONS`（`backend/crawler_control/services.py`）里 FAILED 只能 → RUNNING/CANCELED，
+  **没有 FAILED→READY 的服务函数**。恢复时（用户确认后）需直接改状态再起队列：
+  `CrawlJob.objects.filter(pk__in=[173, 266, 47, 276, 277]).update(status='READY')`
+  （`start_run()` 本身也接受 FAILED，但队列不走那条路，所以必须改回 READY）。
+- **job 274（计生用品，target 30）已 COMPLETED 但只入 1**：COMPLETED 是终态，要补只能新建 job/run，别原地改状态。
+- job 131（家具）本批开始前就 COMPLETED（试水已完成），队列自动跳过，未动。
+- DB 里 `d4d82124`(job 2)/`e6b6c146`(job 3) 是 2026-11-03/04 遗留**僵尸 RUNNING**（无进程、不属本批），未动。
+- 另一个人会话的「首页推荐10模块-活动页采集」（run `7e39938e`）**已于 16:28 UTC SUCCEEDED 结束**，
+  本次没有碰任何非补货进程（它当时本就不在跑）。
+- **恢复命令**（Git Bash，仓库根）：
+  1. 先把上面 5 个 job 改回 READY（一次性 ORM update，需用户同意）；
+  2. `.venv/Scripts/python.exe var/topup50_20261125/batch_queue.py`
+  新 run 会因 `skip_imported_products=True` 跳过已入库商品，无需清理数据。
+  `progress.json` 是上一轮的残留，新进程启动会覆盖，**进度以 `pause_snapshot.json` + DB 为准**。
+
+### 本轮踩过的坑（不得再踩）
+- **Git Bash 里 `taskkill` 参数必须写成 `//PID 36160 //T //F`**：写 `/PID` 会被 MSYS 改写成
+  `C:/Program Files/Git/PID` 报「无效参数」，而加 `MSYS_NO_PATHCONV=1` 又会让 `//PID` 原样传过去同样报错。
+- `manage.py shell -c` 的 cwd 不是仓库根，脚本里用相对路径 `var/...` 会 `FileNotFoundError`，**用绝对路径**。
+- 不要在 `var/` 全目录跑 `grep -r`（目录太大，会挂到 120s 超时被转后台），只搜具体子目录。
+
+## 0d7. 购物车角标锚定到图标（2026-11-26 凌晨）
+
+活动页 Cart 是「图标 + Cart 文字」，而 `.cart-count` 原本相对整个按钮定位 → 角标跑到**文字**右上角。
+改法：图标与角标包进 `.cart-icon { position: relative }`，角标 `top:-8 / right:-7`；活动页给文字加
+`margin-left: 8px` 拉开距离，角标只压在图标角上、不碰文字。尺寸收到 18×18（字号 10px，`99+` 自适应）。
+实测角标相对图标 `dx=+2, dy=-7`（右上方），单测 20/20，截图 `var/home_modules_20261125/cart_badge_icon.png`。
+
+## 0d6. 购物车角标（2026-11-26 凌晨）
+
+现象：右上角 Cart 从来没有数量角标。根因：`AppHeader` 的 `cartCount` prop 默认 0，而
+`layouts/default.vue` / `layouts/footer-page.vue` 里都是 `<AppHeader />` 裸调用，**从未传过数量**。
+
+修复：两个布局用 `useCart()`（与页面共用 `key: 'cart'`，不额外发请求）汇总件数：
+
+```js
+const { items } = await useCart()
+const cartCount = computed(() => items.value.reduce((s, i) => s + (Number(i.quantity) || 0), 0))
+```
+
+`AppHeader` 内原有格式化 `cartCount > 99 ? '99+' : String(cartCount)` 保持不变，`> 0` 才渲染角标。
+
+验证：加购 A×3 + B×1 + C×2 → 角标显示 **6**（截图 `var/home_modules_20261125/cart_badge.png`）；
+`AppHeader.test.js` 20/20 通过（含 `cartCount: 150 → '99+'` 用例）。
+注：99+ 的端到端造数因 nuxt devProxy 对 POST 间歇性 `ECONNRESET`（重启 dev server 后仍有）没跑通，
+逻辑本身由单测覆盖。
+
+## 0d5. 拆分活动页/店铺页头部 + 图标与间距（2026-11-26 凌晨）
+
+用户指出「store 页顶部样式和 active 不一样，改多了」。修正：把原来的 `isImmersiveRoute` 拆成
+`isActivityRoute`（`/active/*`）与 `isStoreRoute`（`/store/*`），CSS 类 `site-header--immersive` → `--activity`。
+
+| | /active/* | /store/* |
+|---|---|---|
+| 分类按钮 | 扁平（无灰底） | **保持原灰底胶囊** |
+| 搜索框 | 白底 + 1px 边 + 8 圆角 + 黑色方按钮，无 Shops | **保持原灰底胶囊 + Shops** |
+| 黑条语言 | 隐藏（移到 header 右侧） | **保持左侧 English** |
+| 公告 | 左对齐、无箭头 | **保持居中 + 箭头** |
+| 购物车 / 我的 | 线性图标 + 文字（Cart / Me ˅） | **保持图标式 + Sign in** |
+| 品类行 | 隐藏 | 隐藏 |
+| 吸顶 | 否（static） | 是（sticky + 下滑隐藏黑条 + 半透明） |
+
+活动页图标换成真站线性风格：Cart 改成线条购物车（车斗 + 两个轮，stroke 1.6），Me 用线性人形（24px）；
+右侧按钮间距 `account-nav gap: 8px → 20px`（真站约 20px）。
+
+## 0d4. 活动页/店铺页头部按真站细化（2026-11-26 凌晨）
+
+真站活动页 header 实测后逐项对齐（全部只在 `isImmersiveRoute` 下生效，首页/其它页不变）：
+
+| 元素 | 真站 | 改法 |
+|---|---|---|
+| 分类 | 无灰底胶囊，图标 + `Categories` 文字 | `.categories-button { background: transparent; padding: 0 10px; border-radius: 8px }` |
+| 搜索框 | 白底 + 1px #e5e5e5 边 + 8px 圆角、高 44、内嵌**黑色方形**放大镜 | 覆写 `.search` 与 `.search__submit`（36×36、radius 8） |
+| 搜索商家 | 无 | 沉浸式 `v-if` 隐藏 `.search__merchant` |
+| 语言 | 在右侧（地址之后、Me 之前），显示 `EN` | 黑条语言 `v-if="!isImmersiveRoute"`；header 内新增 `.header-locale`（`option.code.slice(0,2).toUpperCase()`） |
+| 购物车 / 我的 | 图标 + 文字（`Cart` / `Me ˅`），无灰底圆 | `.icon-button { width:auto; background:transparent; gap:6px }` + `.icon-button__label`；我的换成线性人形图标 + Me + 下箭头；**未登录也显示「Me」样式**（点击去登录） |
+| 顺序 | 地址 → 语言 → Me → Cart | 用 CSS `order` 调整（apply 0 / locale 1 / Me 2 / Cart 3） |
+| JoyPlus | 真站有，本项目不展示 | 不需要（本来就没有该入口） |
+
+新增 i18n key `header.me`（Me / 我的 / Ich / Moi / Ik）。
+
+## 0d3. 头部沉浸式变体 + jnSk 楼层补采（2026-11-26 凌晨）
+
+### 一、活动页/店铺页的 header（`components/AppHeader.vue`）
+
+真站活动页（7Uw）与店铺页的头部与首页不同，实测：黑条公告**左对齐无箭头**、**没有一级品类行**、
+logo/分类/搜索靠左且搜索框拉满、header 与 banner **零间距**。实现：
+
+- 新增 `isImmersiveRoute`（`/active/*`、`/store/*`）与 `headerScrolled`（`scrollY > 40`）；
+- 沉浸式：隐藏品类行、`.site-header__inner` 取消 max-width（padding 24）、`.search { flex: 1 }`、
+  黑条 `justify-content: flex-start` 且隐藏左右箭头与 spacer；
+- 活动页 `position: static`（下滑不吸顶，实测 scroll 后 header top = -400）；
+- 店铺页 `position: sticky`：下滑 40px 后黑条 `height/min-height → 0 + opacity 0`，
+  header 变 `rgba(255,255,255,.84)` + `backdrop-filter: blur(10px)`；
+- 页面侧 `ActivityPageView` 根元素用行内 `margin-block-start: 0` 压掉 `.app-main > *` 的 24px，
+  实现 header 与 banner 无缝（实测 gap=0）；
+- 店铺页底部两张图之间 24px（`.activity-section--banner.activity-section--store-banner`，
+  选择器要压过 `banner + section` 的 0,2,0 特异性）。
+
+### 二、jnSk 的 Flash sale / Coupon zone 没有【查看更多】
+
+根因：**采集时只点了页面上的第一个 View more**（`page.ele(f"text=View more")` + break），
+后面的楼层停留在默认 5 个商品，所以本地只有一屏、无剩余 → 不显示按钮。真站实测这三层点开后都是 **25 个**。
+
+修复：`pages_run._render_page` 改为**每一层的 View more 各点一次**（最多 8 个）；
+补采 job `补采-jnSk 全楼层更多 20261126`（run `dbb73011`）清单 79 条，回填后：
+
+```
+Top deals 5（真站 more=False，无按钮）｜Year-end 25｜Flash sale 25｜Coupon zone 24
+```
+
+页面实测：三层都有按钮，点击 `5 → 25`。
+
+## 0d2. 店铺页三处调整（2026-11-26 凌晨）
+
+1. **商家条通栏**：`.activity-store-bar` 移到 `.activity-page__inner` 之外，宽度 100%（视口），
+   内部 `.activity-store-bar__inner` 用 1224 + padding 居中放头像与店名；与下方 banner 间距 **36px**（真站实测）。
+2. **视频原生控件**：`ActivityVideo` 加 `controls`（进度条 / 播放暂停 / 音量 / 时间），去掉自定义点击切换；
+   实测 `controls=true, autoplay, muted, duration 23.4s`，hover 后控件条可见（0:19 / 0:23）。
+3. **店铺页不折叠**：`visibleProducts` / `hasMore` 对 `kind === 'store'` 直接返回全部、不出按钮，桌面与移动端同步。
+   实测：15 张商品卡全部展示、`View more` 按钮数 = 0。
+
+## 0d1. 活动页折叠/间距/店铺页结构 + 购物车小计（2026-11-26 凌晨）
+
+用户一次提了 9 组问题，逐条处理：
+
+1. **购物车小计不随勾选变化**：`pages/cart/index.vue` 原来直接用后端 `subtotal`（全车合计）。
+   新增 `selectedSubtotal`（勾选中的有效行 × 数量求和），桌面小计与移动端 `subtotal-text` 都改用它；
+   同时修掉「取消全选后任何刷新又自动全选」——加 `selectionInitialised` 标记，首次全选、之后只剔除失效行。
+   实测：308.99 →（取消 89.99 行）219.00 →（该行 +1）398.98 →（全不选）0.00，且 1.5s 后仍为 0。
+2. **查看更多规则**：真站默认只露一行。`FIRST_BATCH` 15 → **5**（移动端 10 → 4），
+   所有 PRODUCTS 楼层 `show_more=True`；剩余 1 个也显示按钮（7Uw 5→6 验证）。
+3. **7Uw 页**：真站 TOP DEAL 是**一张图片**（1125×54，带左右红线），顺序是
+   `banner → TOP DEAL 图 → banner(BLACK FRIDAY) → 商品 → banner`。已下载该图并重建 section 顺序，
+   商品楼层标题置空，默认一行 + 查看更多。
+4. **首层紧贴**：真站带色条的楼层标题紧贴上方模块（295t/4ZXg/3Yu5 gap=0），纯文字标题留 40px（24EG）。
+   前端 `isFlush()`：有 `title_background` 且是首层 / 紧跟 banner·carousel 时 `margin-top: 0`；
+   24EG、3GBTW 的 `title_background=#ffffff` 已改为空（真站视觉就是纯文字）。
+5. **3Yu5「Ready to play?」**：真站是深色块 + 主标题 + 副标题 `Explore our picks`。
+   新增 `section.extra.subtitle`，前端渲染副标题（16/400）。
+6. **店铺页补齐**：`ActivitySection` 新增 `CAROUSEL`（auto 轮播 5s、hover 出左右箭头、圆点）与
+   `VIDEO`（静音自动循环，点击暂停），新增 `extra` JSON 字段；`ActivityPage` 新增 `logo_image`。
+   `/store/100000744` 重建为：黑色 storeHeader 条（头像 40 圆形 + 店名，无 Store/Products tab）→
+   4 图轮播 → 视频1 → 视频2 → 商品（15）→ 底部两张图（素材 `public/images/activity/pages/100000744/`、
+   `public/videos/activity/100000744/`，视频 3.7MB + 5.6MB）。
+7. **89Hg 无标题楼层**：补 20 个家居/小家电商品（12 家居 + 8 小家电，随机固定 seed），
+   默认 5 个、点查看更多加载剩余 15（3 行）。
+8. **295t / 4ZXg**：首层紧贴已生效（gap=0），其余楼层 40px。
+9. **商品卡图区底色**：真站是 **#f5f5f5 灰底 + 透明底商品图**，我们的主图是白底 JPG 且 1:1 铺满，
+   只改容器背景看不到灰（白底盖住了）。最终方案：容器 `background:#f5f5f5` +
+   图片 `mix-blend-mode: multiply`——白底与灰底相乘后「消失」，产品颜色几乎不变
+   （实测图区内侧像素 rgb(245,245,245)、圆角外仍是卡片白）。移动端同步。
+
+验证：全 9 个页面楼层默认 5 张、有剩余才出按钮、点击后展开（89Hg 5→15、7Uw 5→6、其余 5→23/25）；
+轮播 hover 前箭头隐藏、hover 后可见、点击位移 -1224px；eslint 0 问题；活动页单测 5/5。
+
+## 0d0. 楼层标题其实是「通栏标题条」+ 字体确认 Barlow（2026-11-26）
+
+用户指出 TLgE 页的 `Cosy home top picks` 与真站不一样（我们仍显示红色文字）。查明：**真站所有楼层标题
+都是 `flex_cube floorTitle` 模块**（不是纯文字），配色按页面单独配置 —— 白底页是砖红字，深色页是白字配
+深红/炭黑通栏条。从已抓 HTML 的 emotion CSS 里直接提取（无需渲染，`extract_title_styles.py`）：
+
+| 页面 | 标题条底色 | 字色 |
+|---|---|---|
+| 24EG | #ffffff | #a33838 |
+| 3GBTW | #ffffff | #000000 |
+| 295t | #7c2c0b | #ffffff |
+| 4ZXg | #ac0305 | #ffffff |
+| 89Hg | #474747 | #ffffff |
+| jnSk | #461010 | #ffffff |
+| TLgE | #661414 | #ffffff |
+| 3Yu5 | #1a1a1a | #ffffff |
+
+全部 28px/700、padding 16px 0（条高 72）、条到卡片 24（TLgE 实测）。
+
+实现：
+- `content.ActivitySection` 增 `title_color` / `title_background`（migration 0023/0024，32 位以容纳 rgba 写法）；
+- 公开 payload 与管理端 detail 输出这两个字段；`create_section` / `update_section` 支持写入（`_clean_colour` 只放行 #hex 与 rgb()/rgba()）；
+- 前端 `ActivityPageView.vue` / `MobileActivityPage.vue`：有底色 → 通栏条（padding + `line-height:40px` 让条高 72）+ 白字/黑字，无底色 → 纯文字砖红；
+- 数据回填 `update_title_styles.py`（按 HTML class 规则写库，30 个 section）；管理端 `ActivityPagesView` 分区表单加「标题字色 / 标题底色」两项。
+
+字体：项目本来就是自托管 Barlow（`storefront/public/fonts/barlow-{400,500,600,700}.woff2` + `assets/css/base.css` 的
+@font-face，`--font-stack` 首位是 'Barlow'）。实测页面 `document.fonts.check('700 28px Barlow') === true`，
+标题 computed `font-family` 为 `Barlow, "Segoe UI", ...`，无需再换。
+
+## 0cz. 楼层标题对齐真站：28px / #A33838 / 行高 35（2026-11-26）
+
+用户指出活动页楼层标题「我们是红色」，与真站不一致。CDP 实测真站（`var/home_modules_20261125/probe_floor_title.py`，
+注意页面里同名文本有两处：顶部锚点 tab 是白字 16px，内容区标题才是楼层标题）：
+
+| 属性 | 真站 | 我们（改前） | 现在 |
+|---|---|---|---|
+| 颜色 | `rgb(163,56,56)` = **#A33838**（砖红） | `#A81810`（偏正红） | #A33838 |
+| 字号 | **28px** | 26px | 28px |
+| 行高 | **35px** | 1.3（≈34px） | 35px |
+| 字重/对齐 | 700 / center | 同 | 同 |
+| 宽度 | 1224（容器满宽） | 同 | 同 |
+| 标题底 → 卡片顶 | **45px** | 24px | 45px |
+
+改动：`components/activity/ActivityPageView.vue` 的 `.activity-floor-title`（margin-bottom 24→45）、
+`components/mobile/MobileActivityPage.vue` 的 `.m-activity__title`（20→22px，颜色同步 #A33838）。
+本地复测输出 `rgb(163,56,56) / 28px / 700 / 35px / width 1224 / gapToCard 45`，与真站逐项一致
+（`shot_title_local.mjs`）。
+
+## 0cy. 【View more】按钮对齐真站（2026-11-26）
+
+用户反馈按钮样式与真站不一致。用 DrissionPage + CDP 实测真站（`var/home_modules_20261125/probe_viewmore.py`）：
+
+| 属性 | 真站 | 我们（改前） | 现在 |
+|---|---|---|---|
+| 背景/文字 | 黑底 `#000` / 白字 | 白底 + 1px 黑描边 | 黑底白字 |
+| padding | 12px 40px（实际 144×45） | 0 24px（min 140×40） | 12px 40px |
+| radius | 24px | 20px | 24px |
+| 字号/字重/行高 | 14px / 400 / 21px | 14px / 500 | 14px / 400 / 21px |
+| 父容器 | flex center，margin-top 32px | 同 | 同 |
+
+改动：`components/activity/ActivityPageView.vue` 的 `.activity-more__btn`、`components/mobile/MobileActivityPage.vue`
+的 `.m-activity__more button`（移动端同色系，padding 10/32、radius 22）。hover 改为 `#333`（真站未测到 hover 态）。
+本地复测：144×45、radius 24、黑底白字、14/400，与真站逐项一致（`shot_viewmore_local.mjs`）。
+
+## 0cx. 活动页楼层末行不满：多规格去重 + 食品豁免上架（2026-11-25 深夜）
+
+用户反馈 `/active/89Hg…` 的 `Fridges and freezers` 及以下楼层一行只有 4 个。排查结论：
+**不是布局问题**（网格固定 5 列 225.6px），是楼层商品数据不足，原因是三类：
+
+1. **同 SPU 多规格被去重**：真站同一款的不同尺寸/包装各占一卡（不同链接），我们按 SPU 去重
+   → 89Hg 末层 5→4、store 页 15→9、295t 末层 20→16、TLgE 25→22。
+2. **食品已下架**：活动页楼层里含食品（可乐、费列罗、Volvic 等），上一轮整体下架 → 楼层缺件
+   （295t `Big pack` 5→1、`More treats` 5→3、24EG `Food and drinks` 5→3、TLgE `Cosy winter treats` 5→2）。
+3. **采集超时**：jnSk `Flash sale` 的 BOYA 麦克风详情页 `TimeoutError`，已单独补采（job `6f969466`）。
+
+用户拍板：**只修多规格去重 + 食品在活动页豁免上架（搜索/分类仍不可见）**。改动：
+
+- `content.ActivitySectionProduct` 增 `sku` 可空 FK，唯一约束改 `(section, spu, sku)`（migration `0022`）；
+- `content/activity_services.py`：新增 `_prices_for_skus` 与 `serialize_section_items`（按位次出卡，
+  价格优先取该规格报价；`item_key` 供前端 key、`sku_public_id` 进 PDP 链接 `?sku=`）；
+  `serialize_page_products` 保留为 SPU 级兼容入口；
+- 前端两处 `v-for` key 改 `product.item_key || product.spu_public_id`（同 SPU 多卡否则 key 冲突）；
+- `var/home_modules_20261125/fill_products.py`：映射改 `source_id → (spu, sku)`，SPU 级优先、SKU 级兜底，
+  去重键改 `(spu, sku)`；
+- `var/home_modules_20261125/exempt_activity_food.py`：活动页引用的 13 个非 ACTIVE SPU 恢复
+  （SPU/SKU/Offer → ACTIVE、`removed_by_platform=False`），**不重建搜索文档**，类目仍在隐藏的
+  「世界食品」下 → 搜索/分类不可见。
+
+结果：10 个页面全部 `missing=0`，楼层满行；仅 `3Yu5` 的 `Advent calendars`（真站 2 个）与
+`7Uw` 的 `TOP DEAL`（真站 6 个）本身不是 5 的整数倍，属忠实复刻。验证：`/api/v1/search?q=Lindt`
+与 `?q=Coca-Cola` 均 `total=0`，`/s?category=home-living` 无食品；单测 5/5。
+
+## 0cw. 修复：点卡片进页面显示「暂不可用」/ 店铺页空 + banner 空白（2026-11-25 深夜）
+
+三条真实缺陷，均已修并实测：
+
+1. **`/active`、`/store` 从首页点进去显示「该页面暂不可用」**（直接输 URL 却正常）。
+   原因：`storefront/composables/useActivityPage.js` 客户端也用 `config.apiBaseInternal`
+   （`http://127.0.0.1:8000`），SPA 导航时浏览器跨域被拦 → data 空 → 走降级分支。
+   修法：按项目惯例区分 `import.meta.server ? apiBaseInternal : /api/v1`（dev 走 nitro devProxy、生产走 Nginx）。
+   验证：真 Chrome 逐个从首页点击 10 张卡，`ok=10 missing=0 api errors=0`（脚本 `var/home_modules_20261125/click_all_cards.mjs`）。
+
+2. **`/store/100000744` 商品 0 件**。首轮清单把带 `?requestIdentity=` 的卡片链接当 0 商品（上轮已修 `_product_id_from_href` 剥 query）。
+   本轮单独起补采任务 `店铺页补采-100000744 20261125`（run `826ffccf…`）：清单 15 件、11 件入库（7 件 `IMPORT_SOURCE_CONFLICT` = 商品已绑定别的 SPU，属正常）、页面回填 8 件并上架。
+
+3. **店铺页顶部整块空白 + 破图**。`hero.webp` 是 0 字节：seed 时 hero 取到的是语言切换的 60x42 国旗小图。
+   修法：`parse_store_page` 优先取内容图床 `jfsintlpro-000-da/`（排除 `s48x48_`/`s96x96_` 头像缩略图）；重新下载真 banner（1206x678）转 webp 覆盖。
+
+4. **并行采集端口/profile 冲突**（为此改）：`pages_run.py` 的 devtools 端口与 Chrome profile 改为按 `run.pk` 派生
+   （`9357 + run.pk % 40` 起找空闲端口、profile 名 `page_capture_<run.pk>`），否则两个 run 同时跑抢 9357 且共用 user-data-dir 起不来。
+
+## 0cv. 首页「为你推荐」10 模块复刻真站 + /active、/store 页面 + 页面采集任务（2026-11-25，🚧 功能已就绪，采集仍在后台跑）
+
+### 我们在做什么
+用户口径（grill 会话确认，逐条）：
+1. 首页【为你推荐】10 张卡换成真站首页推荐区模块（真站 12 张：Welcome Offers 排除，按顺序取前 10 → 9 张 `/campaign/active/<id>` + 1 张 `/store/100000744`；
+   实际弃掉最后一张 `wFrrGPpx…`「Winter wellness essentials」）；
+2. 每张卡点击后的落地页也要复刻：`/active/<真站 id>` 走**管理后台可配置**（banner + 多楼层 + 选品），`/store/<真站 id>` 一次性快照（共用同一模型，kind=STORE，无【店铺】【商品】tab）；
+3. 页面**逐像素对齐**（容器 1224、卡 225/图 209、标题 26/700 #A81810、卡标题 14/500、价格 18/700 #E1251B、网格 5 列 gap 32/24），倒计时/优惠码**一律不渲染**，价格用库内正常售价；
+4. 商品库里没有的**走正常爬虫入库**（进搜索/分类），已有的复用；每个页面只点一次【查看更多】；
+5. 采集用**账号池账号**，扩 CrawlJob 体系（`job_kind=PAGE_SET`）、尽量 Scrapy、**不改动现有品类爬虫脚本**；
+6. **两段式**：先冻结「商品链接清单」（CrawlPageManifest），再按清单采商品；失败「尽力完成 + 失败清单」；一次性快照，不追真站后续更新。
+
+### 已完成（代码 + 数据）
+1. **数据模型**（`content/models.py` + 迁移 0020/0021）：`ActivityPage`（kind ACTIVITY/STORE、external_id 唯一、hero/底色/enabled）、`ActivitySection`（BANNER / PRODUCTS，columns/show_more）、`ActivitySectionProduct`（排序位次）。
+2. **服务层** `content/activity_services.py`：页面/分区/选品 CRUD + 公开 payload（商品卡带本地图、库内价、`/p/<public_id>`）；仅 ACTIVE 商品出现在页面。
+3. **公开接口** `/api/v1/activity-pages/<active|store>/<id>`（`content/views.py` + `config/urls.py`），停用/不存在 404。
+4. **管理接口** `merchant_ops/views_activity_pages.py` + `merchant_ops/urls.py`（列表/新建/详情/改/删/分区 CRUD/选品 PUT，权限复用 `cms.campaign.*`，写审计）。
+5. **管理后台 UI**：`admin-web/src/views/ActivityPagesView.vue`（活动页/店铺页两个 tab；新建/编辑 hero、标题、店铺名；分区增删改；商品池搜索选品），路由 `/activity-pages` + 侧栏「活动页 / 店铺页」。
+6. **商城页面**：`pages/active/[id].vue`、`pages/store/[id].vue` + `components/activity/ActivityPageView.vue`、`ActivityProductCard.vue` + `components/mobile/MobileActivityPage.vue`（双端，按 m. host 切换）；i18n 新增 `activity.viewMore/notFound/backHome` 五语。
+7. **爬虫**：CrawlJob 新增 `job_kind`/`page_urls` + `CrawlPageManifest`（迁移 0012，`page_url` 255 避免 MySQL 索引超长）；`crawler_control/services.py` 的 `normalize_page_urls` / `create_page_crawl_job`；`common/admin_views.py` 建任务支持 PAGE_SET；`crawler/joybuy_crawler/spiders/pages_run.py`（渲染→清单→按清单采详情，**复用** `JoybuyRunSpider.parse_detail` 与 StagingPipeline，原 spider 未改）；`parsers/joybuy_pages.py`（结构解析）；`runner.py` 按 job_kind 选 spider + 页面任务专用设置。
+8. **首次配置**：`var/home_modules_20261125/seed_pages.py`（下载 10 张卡图与 hero/banner 图到 `storefront/public/images/activity/…`、建 10 个页面与分区、覆盖更新首页 10 张 `HomeCampaignCard`）；`fill_products.py`（按清单顺序回填选品）；`publish_page_products.py`（沿用 `_activate_offers_on_publish` 上架 + 刷新搜索文档）。
+
+### 当前状态（重要）
+- 首页 10 张卡已生效（SSR 验证：`/active/*` ×9 + `/store/100000744`，图全部本地）。
+- `/active/24EG…` 等页面 SSR 正常；桌面端实测：容器 1224、hero 1224×306、网格 5 列 gap 32/24、卡 225.6、标题 26/700 `rgb(168,24,16)`；手机版（m. host）同数据 2 列渲染正常。
+- **采集仍在后台跑**：run `7e39938e-8803-4a1b-afdb-1f88f678ca78`（job「首页推荐10模块-活动页采集 20261125」，账号池账号 77 组 `数据抓取08`）。清单 337 个唯一商品，已入库 185、已上架 167+；页面选品按 run 进度增量回填。
+- **店铺页 `/store/100000744` 目前只有 hero**：首轮渲染时 `_product_id_from_href` 没去掉 `?requestIdentity=…`，清单 0 商品（已修，离线复测 15 个）。下一轮 run 会重新渲染并入库该页 15 个商品。
+- 完成剩余工作的命令（顺序执行即可，均为幂等脚本）：
+  1. `cd backend && .venv/Scripts/python.exe ../var/home_modules_20261125/publish_page_products.py`
+  2. `… fill_products.py`（回填选品；页面即时生效）
+  3. 若店铺页仍空：再发一轮 run（会复用已冻结清单、只重渲染店铺页）后再跑 1、2。
+
+### 验证（按验证纪律仅针对性验证）
+- 后端：`manage.py check` 通过；`manage.py test content.tests.test_activity_pages` = **5/5 OK**（新建/分区/选品顺序/公开 payload/404）；ruff 新文件 0 问题。
+- 前端：`npx eslint` 新旧文件 0 问题；`cd admin-web && npx vite build` 通过。
+- 接口：`curl /api/v1/activity-pages/active/24EG…` 返回 hero + 6 个楼层（商品按 ACTIVE 过滤）。
+- 商城：首页 SSR 含 10 个新链接与本地卡图；活动页桌面/手机 SSR 与截图（`var/home_modules_20261125/final_active.png`）逐项对齐实测值。
+- 爬虫：清单冻结 10 页 / 337 商品（`PAGE_MANIFEST_FROZEN`/`PAGE_PRODUCTS_FROZEN` 事件）；断点续采（`PAGE_MANIFEST_REUSED`、`PAGE_SKIP_IMPORTED`）实测生效。
+
+### 踩坑（新会话必读）
+1. **Playwright 打开真站活动页一律 403**（WAAP 判风险，headless/有头都一样）；可用通道是「真 Chrome + 独立 profile + `--headless=new` + DrissionPage 连接 + 账号池 cookie」。
+2. DrissionPage 4.1.1 在本机**自动拉起浏览器失败**（只会连固定端口），必须自己 `subprocess` 起 Chrome（绝对路径、`--remote-debugging-port`、独立 `--user-data-dir`）再 `set_address` 连接；非交互会话下**不能开有头窗口**。
+3. DrissionPage 的 `page.run_js()` 在 Chrome 158 返回 None；测量用 `page.run_cdp('Runtime.evaluate', expression=…, returnByValue=True)`。
+4. 现有 spider 对每个商品会追加 `/dg/`（移动详情）+ 变体价格链；Scrapy 同优先级 FIFO，`/dg/` 排在全部详情之后 → 首批 360 商品 20 分钟 0 个 item。页面任务已关闭这两段（`JOYBUY_MOBILE_DETAIL_ENABLED/VARIANT_PRICES_ENABLED=False`）。
+5. `AUTOTHROTTLE_TARGET_CONCURRENCY=1.0` 会把并发压回单并发；页面任务已 `AUTOTHROTTLE_ENABLED=False` + 并发 6。
+6. **`_spawn_run_executor` 的 DETACHED 进程在本环境会立即消失**（日志 0 字节、进程不存在）；本地可用 `run_crawl_run` 的后台 shell 任务执行，生产（systemd）不受影响。
+7. 店铺页卡片链接带 `?requestIdentity=…`，解析商品 id 必须先剥 query；店铺页 `<img>` 里还有 facebook 像素，hero 只认 `joy-sourcing.com` 图床。
+8. `message.js` 法语字符串含撇号，插入 i18n 必须用双引号包裹（否则 Vite transform 失败整站 500）。
+9. `--noreload` 的 dev backend 改了模型/路由必须**重启**，否则新接口 404、旧模型 `ActivitySection has no public_id`。
+10. MySQL 唯一索引字段别超 255（utf8mb4 × 4 字节 > 3072），`page_url` 一开始写 1000 导致迁移失败。
+
+
+## 0cu. furniture 42 个 DRAFT SPU 上架（2026-11-25，✅ 已执行 + 针对性验证，未 commit）
+
+### 我们在做什么
+用户确认把 0ct 试水任务 `数据抓取04-家具`（pk=131，07 组，run `5591e819`）导入的 **42 个 DRAFT SPU 全部上架**。**只做这一件事**：不启动补货队列、不改业务代码、不碰 9334/FB、未 commit。
+
+### 已完成
+- 脚本 `var/publish_furniture_20261125/publish.py`：结构照抄 `var/publish_all_20261124/publish.py`（DRY_RUN 默认 / `--apply` / `--rollback [--apply]` / `--docs-only` / 分批 500 / 写库前备份先落盘 / 重建搜索文档），差异：
+  - 目标限定 `Spu.objects.filter(status='DRAFT', local_category__slug='furniture')`；
+  - **不排除** 143 个源站下架清单（furniture 里 0 命中），只做交叉核对：命中即阻断并报错；
+  - 新增 `--expect-count`（默认 42，数量不符直接 `exit 2`，先报告再动手）。
+- **DRY_RUN（实测零写库）**：目标 42、可上架 42、阻断 0（零 Offer 0 / 缺零售价 0 / 商家非接单 0 / 平台下架留痕 0 / 下架清单命中 0）；Offer 全量 93（DRAFT 20 / ACTIVE 73 / INACTIVE 0）；将激活 DRAFT Offer **20**；22 个 SPU 本来就有 ACTIVE 报价、上架不改报价；激活时价格无需改写（0 个 current_price≠retail_price）。DRY_RUN 后复查 furniture 仍 ACTIVE 0 / DRAFT 42，且目录内无 backup 文件 → 确认无写入。
+- **apply 结果**：furniture ACTIVE **0 → 42**、DRAFT **42 → 0**；上架 42 SPU、激活 20 Offer、失败 0、重建 42 条搜索文档（备份 31.9KB / 42 SPU / 93 Offer 已先落盘再写库）。
+- **三个计数变化（apply 前后同进程实测）**：
+  | 计数 | before | after | Δ |
+  | --- | --- | --- | --- |
+  | 全库 Spu ACTIVE | 14,515 | 14,557 | +42 |
+  | 全库 Spu DRAFT | 430 | 388 | -42 |
+  | 全库 Spu INACTIVE | 4,229 | 4,229 | 0 |
+  | furniture ACTIVE / DRAFT | 0 / 42 | 42 / 0 | +42 / -42 |
+  | Offer ACTIVE / DRAFT | 22,034 / 182 | 22,054 / 162 | +20 / -20 |
+  | 可搜文档 (is_searchable) | — | 14,557（furniture 42 条全可搜） | — |
+  - 注意：期间**另一个会话仍在爬取导入**，全库 DRAFT 会后继续小幅上涨（收尾时实测 389，多出的 1 个是无类目 DRAFT），与本次上架无关；判断本次效果只看 furniture 品类数 0→42。
+### 验证（按验证纪律仅针对性验证，未跑全量、未跑 e2e）
+- `var/publish_furniture_20261125/verify.py`（只读，Django test client，不开浏览器）→ **ALL OK**，报告 `verify_report.json`：
+  - PDP 抽查 3 个（GB 市场）：`775d5738…`（White Freestanding Tall Slim Bathroom Cabinet，£14.18，gallery 10）、`b7437f9d…`（JOYFURNOS Hallway Coat Rack Bench Mirror，£69.99，gallery 6）、`6572503a…`（Novilla 25cm Hybrid Mattress 4FT6，6 SKU，£119.99/74.99/189.99，gallery 9）→ 全部 **200 + 有价 + purchasable + gallery 非空且本地文件 0 缺失**。
+  - 搜索抽查 2 个：`Panelled` → total 1、目标 p1#1；`Mattress` → total 16、目标 p1#15；两个的标题短语也都 p1 命中，`doc.searchable=True`。
+- `publish.py --rollback`（干跑）→ 报告「需还原 SPU 42 个（缺失 0）+ Offer 状态 20 个」，与备份一致（未写库）。
+
+### 备份与回滚
+- 备份：`var/publish_furniture_20261125/backup_before.json`（42 SPU / 93 Offer 原值：Spu.status + Offer status/current_price/cost_price/listed_at/removed_at/removed_by_platform）。
+- 汇总：`var/publish_furniture_20261125/summary.json`；验证报告：`var/publish_furniture_20261125/verify_report.json`。
+- 回滚（Git Bash、仓库根目录；先干跑再 apply）：
+  ```
+  .venv/Scripts/python.exe -I var/publish_furniture_20261125/publish.py --rollback
+  .venv/Scripts/python.exe -I var/publish_furniture_20261125/publish.py --rollback --apply
+  ```
+
+### 对 0ct「补到 50」计划的影响（本轮不做，留给下一步）
+- furniture 现在 ACTIVE 42，距 50 **仍差 8**；pk=131 已 COMPLETED 不能原地重跑（见 0ct 结论 2），若要把 furniture 补到 50，需要**新建**一个 `target_imported_count=8` 的 furniture 任务（或从 55 个待跑清单里把它换成「先上架 42、再补爬 8」）。本轮按用户要求**只上架、未建任何任务、未启动队列**。
+
+## 0ct. 「类目总数补到 50」抓取模式 + 57 品类落地 + cat-food 上架补货（2026-11-25，⚠ 部分执行：⏸ 其余 55 个等用户说「启动」）
+
+### 我们在做什么
+用户要求把 57 个「在售不足 50」的二级品类**补到 50**，且必须真的是「每次入库 50 个」，不能「入队 50 个但实际只入库 30 个」。本轮做了三件事：
+1. 给 `CrawlJob` 加 **`target_imported_count`（目标入库数）** 模式：蜘蛛按 `CrawlRun.succeeded_count`（真实入库数）翻页，而不是按入队候选数；为空时行为与旧版完全一致。
+2. 57 个品类落地成任务（**38 复用已有二级专用 READY + 19 新建**），账号组按可用号轮转。
+3. **只跑确认过的试水**（cat-food 因历史脏数据无效 → 换 furniture），**其余 55 个只备好不启动**；cat-food 改为「上架已有 DRAFT」，kettles-toasters 改为「先上架 4 个、再爬 45 个」。
+
+### 已完成 1：取消 pk=243「批次BB-3 UK143补抓 20261124」（源类目 Beverages，食品）
+- 脚本 `var/topup50_20261125/cancel_243.py`（默认 DRY_RUN；`--apply`；`--rollback`；另加 `--close-runs`）。
+- 结果：READY **70 → 69**，pk=243 `READY → CANCELED`（行保留）。备份 `var/topup50_20261125/cancel_243_backup.json`，执行记录 `cancel_243_result.json`。
+- **顺带收尾僵尸 run**：pk=243 上有一个 2026-11-24 12:41 起就一直 `RUNNING`、0 事件、进程已死的 run `ad040a64`，已 `cancel_run` → CANCELED（`cancel_243_runs.json`）。这正是 0cs 的踩坑条款：取消有 open run 的任务必须同时收尾 run。
+- 回滚：`.venv/Scripts/python.exe var/topup50_20261125/cancel_243.py --rollback`（只还原 status，不复活 run）。
+
+### 已完成 2：`target_imported_count` 模式（业务代码 + 迁移 + 测试）
+改的文件（全部 ruff check/format 通过、py_compile 通过）：
+| 文件 | 改动 |
+| --- | --- |
+| `backend/crawler_control/models.py` | `CrawlJob.target_imported_count = PositiveIntegerField(null=True, blank=True)` |
+| `backend/crawler_control/migrations/0011_crawljob_target_imported_count.py` | 加列（已在本地 MySQL 库执行 `migrate crawler_control`） |
+| `backend/crawler_control/services.py` | `create_crawl_job(target_imported_count=...)`（正整数/null 校验）、`_job_params_snapshot` 带上该字段 |
+| `backend/common/admin_views.py` | 建任务接口接受该字段（`_as_optional_int`），列表/详情返回 `target_imported_count` |
+| `admin-web/src/views/CrawlersView.vue` | 建任务表单「目标入库数（可选）」+ 详情抽屉展示（prettier/eslint 通过） |
+| `crawler/joybuy_crawler/spiders/joybuy_run.py` | 目标模式翻页 + 入队节流 + shortfall 文案 + 跳过已入库看 SKU 身份 |
+| `backend/crawler_control/tests/test_crawler_rebuild.py` | 新增 `TargetImportedFieldTests` / `TargetImportedPaginationTests` + 变体跳过用例 |
+
+蜘蛛逻辑（关键，别改错）：
+- `_resolve_target_imported`：参数快照优先 → 任务字段；空/非法视为未开启。
+- **翻页条件**：目标模式下 `keep_going = succeeded_count < target_imported`（每页从 DB 重读 `succeeded_count/failed_count`），且本页有新内容、未到 `JOYBUY_MAX_LISTING_PAGES`(25)；**不再用 `collected < limit`**。
+- **入队节流**（实测后加，必须保留）：`pending = collected - succeeded - failed`，本页只入队 `gap = max(0, target - succeeded - pending)` 个，同时受 `product_limit`（=入队安全上限）约束。原因：列表页 1 秒一页、详情页 30 秒一个，不节流会在几秒内把预算吃光（实测第一版：0 入库就入队 148 个）。
+- **入队安全上限**：`enqueue_cap = max(product_limit, target × 4)`；计划里统一 `product_limit=200`，所以上限 200。
+- **shortfall 文案**（达到目标时不发）：`类目「X」目标 N 个，实际入库 M 个，差 K 个（已入队 …/上限 …；翻页结束时仍在队列中的详情页可能继续入库，最终以 run 统计为准）：<原因>`。
+- **跳过已入库改为同时看 `SpuSourceIdentity` 和 `SkuSourceIdentity`**：Joybuy 列表把同一商品的各变体当独立卡片（每个变体有自己的 product id），导入父商品时已把变体 SKU 身份绑到父 SPU；只查 SPU 身份会让变体页再入队 → 详情抓完必撞 `IMPORT_SOURCE_CONFLICT`。
+
+### 已完成 3：57 品类计划 apply（38 reuse / 19 create）
+- `var/topup50_20261125/plan.py`（默认 DRY_RUN、`--apply`、`--rollback`、`--task-list`）；产物 `plan.json` / `plan.csv` / `backup.json`。
+- **口径**：`need = max(0, 50 - 该二级 ACTIVE 数)`；`target_imported_count=need`、`skip_imported_products=True`、`allow_pagination=True`、`product_limit=200`。
+- **reuse = 38**：只复用「二级专用」READY（job 解析出的二级集合只有它自己）。
+- **create = 19**：12 个本来没有 READY + 7 个只被**频道级**任务覆盖。
+- **频道级 READY 不参与、也不改动**：`pk=238`(Home-Living) `pk=239`(Pets) `pk=240/241/242`(outdoor) 的 source 是 depth-0 minihome，一个 run 跨多个二级，无法设单一目标入库数。它们保持原状态原参数（已核验 target 仍为 NULL）。
+- **账号组**（可用号 01=9、03=10、06=8、07=10、08=4，按比重轮转）：01=12、03=14、06=11、07=14、08=6。
+- **need 合计 2225**（与 `under50.csv` 缺口合计一致）。
+- 核验脚本 `var/topup50_20261125/verify_plan.py` → `OK: all 57 categories match the plan; no run was started by apply.`（57 任务 target/组/开关全对，READY 69→88，apply 未起任何 run）。
+- 回滚：`.venv/Scripts/python.exe var/topup50_20261125/plan.py --rollback`（reuse 还原原参数；create 无 run 则删除）。
+
+### 已完成 4：cat-food 上架补货 + kettles-toasters 拆分（用户/协调者 2026-11-25 决定）
+**原因**：cat-food 早已抓过、只是全部停在 DRAFT（列表 0 件在售），重抓必然全部撞 `IMPORT_SOURCE_CONFLICT`；正确做法是把已有 DRAFT 上架。
+- 脚本 `var/topup50_20261125/publish_drafts.py`（默认 DRY_RUN；`--spec slug=N` 可重复；`--apply`；`--rollback`；支持 `--backup/--summary`）。逻辑照抄 `var/publish_all_20261124/publish.py`：排除 143 个「源站 404 已要求下架」SPU、跳过平台下架留痕、`_activate_offers_on_publish` + `Spu.status=ACTIVE` + 重建搜索文档。
+- **cat-food**：上架 **50** 个（激活 34 个 DRAFT Offer，重建 50 条搜索文档，0 失败）→ ACTIVE **0 → 50**，DRAFT 142。备份 `publish_catfood_backup.json`，汇总 `publish_catfood_summary.json`。挑选排序=画廊图片数/规格表/图文区块多的优先。
+- **kettles-toasters**：上架 **4** 个（offer 本来就是 ACTIVE，激活 0，重建 4 条）→ ACTIVE **1 → 5**，DRAFT 4 → 0。备份 `publish_kettles_backup.json`。
+- **replan**：`var/topup50_20261125/replan.py`（DRY_RUN/`--apply`/`--rollback`）→ 重算 need：**cat-food 移出爬取清单**（job pk=246 的 run 已 SUCCEEDED，job 变 COMPLETED，未强行改状态）、**kettles-toasters target 49 → 45**；`task_list.json` 变成 **56 个任务、need 合计 2171**（组分布 07=13、01=12、03=14、06=11、08=6）。备份 `replan_backup.json`。
+
+### 已完成 5：试水（只用 1 个正式试水，其余不启动）
+**试水 A（无效，数据污染）：cat-food pk=246**（07 组，target 50）
+- 结果：enqueued **77**（>50，翻页到第 17 页才停）、imported **39**、failed **38**、16 页、25.7 分钟、0 风控信号；shortfall 文案正常输出（「目标 50 个，实际入库 2 个，差 48 个…」，这是翻页结束瞬间的快照，最终 39）。
+- 38 个失败**全部**是 `IMPORT_SOURCE_CONFLICT`：cat-food 有 165 个历史 DRAFT SPU 只有 SKU 身份、没有 SPU 身份 → 已按第 4 条改走上架。**这个 run 证明的是目标模式翻页/节流/shortfall 生效，不作为达标验收**；数据未清理（按用户要求不动）。
+
+**试水 B（正式）：furniture pk=131**（07 组干净池，target 50，0 件）
+- 第 1 次被手动终止（验证节流问题）：未节流时 **0 入库就入队 148**，据此加了入队节流，job 重置 READY 后重跑。
+- 第 2 次终态：`SUCCEEDED`，**enqueued 50（节流到刚好缺口）、imported 42、failed 8、downloaded 50、25 页（撞 25 页上限）、27.7 分钟**；`RISK_CONTROL_FALLBACK` **0 次**；`PRODUCTS_SKIPPED_IMPORTED` 21；`ACCOUNT_ROTATED` 8 次（07 组轮换，未触发风控）。
+- **达标判定：不达标，差 8（42/50）**；8 个失败全部 `IMPORT_SOURCE_CONFLICT`，且全部是「同一商品的不同尺寸/颜色变体页被列表当成独立商品」：父商品先导入建了 10 个变体 SKU（如 SPU `bc26b0a5…` 的 Size=King/Double/Beige…），后续变体卡片再建 SPU → 撞已有 SKU 身份。
+- 已经在代码里修掉「跨页/跨 run 的变体页」：`_imported_source_ids` 现在也查 `SkuSourceIdentity`（新增用例 `test_skips_variant_source_ids_already_bound_as_sku`，全套 63 个测试通过）。**同批次内**（同一页入队的父+变体）仍可能撞冲突，所以目标模式下会有 ~10-20% 的残留缺口。
+- 42 个新导入 SPU 全部是 **DRAFT**（导入从不直接上架，必须再走发布）；**2026-11-25 已按用户确认全部上架，见 0cu**（furniture ACTIVE 0 → 42）。
+- 报告：`var/topup50_20261125/run_one_report_246.json` / `run_one_report_131.json`、控制台 `trial_246_console.log` / `trial_131_console.log`。
+
+### 关键结论（放量前必须知道）
+1. **`target_imported_count` 的翻页/节流/shortfall 逻辑可用**：入队按缺口走、入库按 succeeded_count 判定，furniture 实测 50 入队 → 42 入库 → 8 冲突缺口，行为完全可解释。
+2. **两个会让「补到 50」打不满的坑**：
+   - 导入永远是 **DRAFT**，必须在跑完后 `publish_drafts.py` 上架，ACTIVE 才会涨（cat-food 已验证 50 上架 → ACTIVE 50）。
+   - **变体页冲突**：同批次入队的父/变体页仍会撞 `IMPORT_SOURCE_CONFLICT`（furniture 8/50）。解决方式二选一：① 跑完后对缺口再建一个 target=缺口 的补跑任务（推荐，不超额）；② 把入队节流余量放大（`gap × 1.2`，会超额）。**放量前建议对每个任务接受 1 次补跑**。
+   - 任务一旦 run SUCCEEDED 就 `COMPLETED`（`JOB_TRANSITIONS[COMPLETED]` 为空），**不能原地重跑**；补跑要新建任务或手工把 status 改回 READY（本次试水就是这么重置的）。
+3. 试水没有风控信号，07 组池子干净；但这只代表 1 个 run，不代表 56 个全安全。
+
+### 数据问题（只记录，本轮不修）
+- **9,415 个 SKU 来源身份没有对应的 SPU 来源身份**（全库 SKU 身份 28,301 / SPU 身份 18,962，2026-11-25 实测）。后果：①「跳过已入库」如果只看 SPU 身份会漏判（已修）；② 这些商品的变体页再抓必撞 `IMPORT_SOURCE_CONFLICT`；③ 同一来源商品可能同时存在 DRAFT SPU（无 SPU 身份）+ 新 SPU（有 SPU 身份），库存统计会重复。
+- 全库 SPU（2026-11-25 22:44 上架 furniture 后实测）：ACTIVE **14,557** / DRAFT 388 / INACTIVE 4,229（DRAFT 会被另一个仍在爬取的会话继续推高，收尾时 389）。DRAFT 分布：cat-food 142、mens-clothing 140、cameras-photo 95、无类目 8、electronics-accessories 2、clothing-accessories 1、construction-toys 1（furniture 已清零）。**其余 55 个待爬品类都是 0 SPU，没有存量可上架，爬取是必要的**（kettles 4 个已上架）。
+- `Spu.image_urls` 是废弃字段（全库只有 2 个非空）；商品图片在 `media.MediaUsage`(role=gallery)，判断完整性别用 `image_urls`（本次踩过）。
+
+### 验证（按验证纪律仅针对性验证，未跑全量）
+- `manage.py test crawler_control.tests.test_crawler_rebuild --keepdb` → **63 passed**（含新加的目标模式/节流/变体跳过用例）。
+- `manage.py test crawler_control.tests.test_crawl_jobs_api crawler_control.tests.test_crawler_account_binding --keepdb` → **26 passed**（admin 建任务接口）。
+- `ruff check` + `ruff format --check`：`models.py` / `services.py` / `migrations/0011…` / `admin_views.py` / `joybuy_run.py` / `test_crawler_rebuild.py` 全通过；`py_compile` 全通过。
+- 前端：`npx eslint admin-web/src/views/CrawlersView.vue`、`npx prettier --check` 通过。
+- `verify_plan.py` 通过；`plan.py` DRY_RUN 实测不写库（target 全 0、无「补货50-*」任务）。
+- 未跑全量后端测试、未跑 e2e。
+
+### 备份与回滚（都在 `var/topup50_20261125/`）
+| 动作 | 备份/记录 | 回滚 |
+| --- | --- | --- |
+| 取消 pk=243 + 收尾 run | `cancel_243_backup.json` / `cancel_243_runs.json` | `cancel_243.py --rollback` |
+| 57 品类 apply | `backup.json` / `apply_result.json` | `plan.py --rollback` |
+| cat-food 上架 50 | `publish_catfood_backup.json` | `publish_drafts.py --rollback --apply --backup var/topup50_20261125/publish_catfood_backup.json` |
+| kettles 上架 4 | `publish_kettles_backup.json` | 同上换 backup 路径 |
+| replan（cat-food 移出、kettles 45） | `replan_backup.json` | `replan.py --rollback` |
+
+### ⏸ 当前状态：等用户说「启动」
+- **已就绪但一个都没启动**：`var/topup50_20261125/task_list.json` 里 **56 个任务**（need 合计 2171），`batch_queue.py` 已备好（全局并发 ≤5、同组串行、单 run 超时 240 分钟、熔断含 `RISK_CONTROL_FALLBACK`、`MEDIA_BACKEND=local`、`CRAWL_VARIANT_PRICES=true`、`CRAWL_VARIANT_PRICE_LIMIT=0`、坏 run 连续 3 次停派发）。注意：furniture（pk=131）已在清单里但已是 COMPLETED，队列会自动跳过它 → **实际会跑 55 个**。
+- **启动命令**（用户说启动时原样跑，Git Bash、仓库根目录）：
+  ```
+  .venv/Scripts/python.exe var/topup50_20261125/batch_queue.py
+  ```
+  进度 `var/topup50_20261125/progress.json`，终态 `final_summary.json`，每个 run 的日志在 `var/logs/crawl_runs/<run_id>.log`。
+- **跑完必须做的两件事**：① `publish_drafts.py --spec <slug>=<上架数> --apply` 把新导入的 DRAFT 上架（否则类别 ACTIVE 不涨）；② 对缺口品类用「target=缺口」再建补跑任务（见第 5 条结论）。
+- furniture（pk=131）当前 COMPLETED、**42 个 DRAFT 已于 2026-11-25 全部上架（ACTIVE 42，见 0cu）**；cat-food（pk=246）COMPLETED、ACTIVE 50。
+
+### 踩坑（新会话必读）
+- **脚本不能叫 `queue.py`**：会遮蔽 stdlib `queue`，`concurrent.futures` 导入时炸（`ImportError: cannot import name 'settings'`）。已改名 `batch_queue.py`（0cs 的 `inspect.py` 同款坑）。
+- **`create_crawl_job` 的 `source_catalog` 必须用该类目自己的 catalog**：这 57 个映射都挂在 `joybuy_uk`(pk=2)，写死 `joybuy`(pk=1) 会报「A selected category belongs to a different catalog.」，且 `apply` 在事务里全回滚（本次踩过，重跑才成功）。
+- **DRY_RUN 必须无写入**：plan.py 的 DRY_RUN 只写 plan.json/csv，不写库；apply 才写 backup。
+- **`psycopg`/MySQL 无所谓，本地库就是 MySQL 127.0.0.1:33060**，迁移已执行（0011）。
+- **试水/队列只挑 07/08 干净组**：03 组今晚被风控打穿过多次，别用它判断「逻辑问题 vs 风控问题」。
+- 全库现有 2 个历史僵尸 RUNNING job（pk=2 首页 demo、pk=3 bestsellers demo，2026-11-03/04）与另一个会话的 pk=293（首页推荐10模块，run 全 FAILED 但 job RUNNING）——**不要动**，与本批次无关。
+- `var/*` 在 .gitignore：本轮所有脚本/备份/报告都不进 git status，交付靠路径转述。**未 commit**。
+
+
+## 0cs. 取消 10 个食品爬虫任务 + 导出「二级品类在售 < 50」清单（2026-11-25，✅ 已执行 + 针对性核对，未 commit）
+
+### 我们在做什么
+用户要求两件事：①**把食品相关的爬虫任务去掉**（只取消 READY，不删记录，保留历史）；②导出「二级品类商品数不足 50」清单 CSV（不含食品），作为后续补货/补抓依据。**本轮未 commit、未改业务代码（脚本全在 var/）、未启动任何抓取、未碰 9334/FB。**
+
+### 已完成 1：取消 10 个食品 READY 任务
+脚本 `var/cancel_food_jobs_20261125/cancel.py`（默认 **DRY_RUN**；`--apply` 写库；`--rollback` 按 backup.json 还原）。只把 `CrawlJob.status` READY→CANCELED（`crawler_control/services.py` 的 `JOB_TRANSITIONS[READY]` 本来就允许 → CANCELED），**不删行**。
+
+| pk | 任务名 | 原状态 | 现状态 |
+| --- | --- | --- | --- |
+| 23 | 数据抓取04-烹饪调料 | READY | CANCELED |
+| 29 | 数据抓取04-米面杂粮 | READY | CANCELED |
+| 35 | 数据抓取04-苏打水和浓缩果汁 | READY | CANCELED |
+| 41 | 数据抓取04-烈酒 | READY | CANCELED |
+| 107 | 数据抓取04-冰块与冰淇淋 | READY | CANCELED |
+| 125 | 数据抓取04-日本食品 | READY | CANCELED |
+| 196 | 数据抓取03-高端烈酒 | READY | CANCELED |
+| 197 | 数据抓取04-世界烈酒 | READY | CANCELED |
+| 236 | 数据抓取02-冷冻甜品-续跑20261119 | READY | CANCELED |
+| 264 | 数据抓取01-冷冻派对食品（重跑20261125） | READY | CANCELED |
+
+**READY 80 → 70**（CANCELED 35 → 45；COMPLETED 156 / RUNNING 2 未动）。这 10 个任务此前从未跑过（DB 里 0 条 CrawlRun、全库 0 条 PENDING run），取消不会留孤儿 run。10/10 都是 READY，无跳过项。
+
+按用户明确要求**保留**（不要在新会话里"顺手"取消）：
+- `pk=252 数据抓取01-电子烟（重跑20261125）` 仍 READY —— Electronic cigarette 属 World Foods > Tobacco Alternatives，但**不是食品**。
+- `pk=243 批次BB-3 UK143补抓 20261124` 仍 READY —— 源类目 `Beverages` 且已完成目标（此次不在用户给的 10 个清单内），**是否属食品范畴待用户确认**。
+- `pk=266 数据抓取01-狗零食（重跑20261125）` 仍 READY —— 宠物零食（pet-supplies/dog-treats），非人类食品。
+
+### 已完成 2：under50 CSV
+- 路径：`var/under50_categories_20261125/under50.csv`（UTF-8 BOM，Excel 直接开；按在售商品数升序）
+- 脚本：`var/under50_categories_20261125/export_under50.py`；列 = `一级类目, 二级类目, slug, 在售商品数, 缺口(50-数量), 是否有READY任务, 最近任务状态`
+- 口径：`Spu.status='ACTIVE'` 按 `local_category`（depth=1）计数，**排除 World Foods（pk=237, slug=world-foods）下的 48 个食品二级**；二级类目共 193（食品 48 + 非食品 145）
+- 结果 **57 行**（0 件 28 个 + 1~49 件 29 个，与预期完全一致），合计缺口 **2,225 件**：
+  | 一级类目 | 不足50的二级数 | 合计缺口 | 其中 0 件 |
+  | --- | ---: | ---: | ---: |
+  | 家居生活 home-living | 13 | 424 | 6 |
+  | 家用电器 small-home-appliances | 9 | 373 | 4 |
+  | 美妆 beauty-personal-care | 6 | 222 | 2 |
+  | 母婴童玩 baby-toddler | 5 | 245 | 4 |
+  | 电子产品 electronics | 5 | 186 | 1 |
+  | 宠物 pet-supplies | 4 | 200 | 4 |
+  | 游戏 games-accessories | 4 | 95 | 1 |
+  | 计算机与配件 computers-accessories | 4 | 187 | 2 |
+  | 健康保健 health-wellness | 3 | 130 | 2 |
+  | 服装与配饰 clothing-accessories | 3 | 136 | 2 |
+  | 户外运动 outdoor-sports | 1 | 27 | 0 |
+  | 合计 | 57 | 2225 | 28 |
+- 汇总文档 `var/under50_categories_20261125/under50_summary.md`（按一级汇总 + 分组明细）。其中 **45 个二级已有 READY 任务**，12 个没有（最近任务为 COMPLETED 或 CANCELED）。
+- **食品商品本次未动**：World Foods 下 48 个二级共 **4,227 个 SPU，全部 INACTIVE**（全库 ACTIVE 14,461 / DRAFT 397 / INACTIVE 4,229），食品下架在 0cm 那轮已完成。
+- 顺带查到的全库分布（写报告时别再用错分母）：ACTIVE 14,461 中按二级类目 13,959、挂在一级类目上 409、**无类目 93**（这 93 件不进任何二级清单）。
+
+### 验证（按验证纪律仅针对性验证，未跑全量）
+- DRY_RUN 真的没写库：跑完 var/cancel_food_jobs_20261125/ 下只有 cancel.py / survey_jobs.py，无 backup.json。
+- `cancel.py --apply` 输出 `READY: 80 -> 70`；`var/cancel_food_jobs_20261125/verify.py` 复核：10 个目标任务全 CANCELED、status counts `{COMPLETED:156, READY:70, CANCELED:45, RUNNING:2}`、252/243/1 仍 READY、READY 名单里唯一含食品关键词的只剩「狗零食」（宠物）。
+- `var/under50_categories_20261125/verify_under50.py`：BOM=true、57 行、升序、缺口公式全对、**逐行重数 57/57 与 DB 一致**、与「深度1 非食品且 ACTIVE<50」集合比对无漏无多、CSV 内无食品 slug。
+- 本轮无业务代码改动，无需 lint/单测；未跑全量测试。
+
+### 备份与回滚
+- 备份：`var/cancel_food_jobs_20261125/backup.json`（10 行 pk / name / status_before / source_category / updated_at_before，`ready_count_before=80`）
+- 执行记录：`var/cancel_food_jobs_20261125/result.json`（applied_at、ready_count_before/after、逐行 action）
+- 回滚：`.venv/Scripts/python.exe var/cancel_food_jobs_20261125/cancel.py --rollback`（按 backup.json 还原，名字不一致的行会跳过）
+
+### 踩坑（新会话必读）
+- **食品任务已经无法用映射识别**：0cm 那轮删掉了 48 个食品类目的 `CategoryMapping`，所以这 10 个任务的 `source_category` 全部「无映射」。按 `source_category → CategoryMapping(is_primary) → LocalCategory.parent=world-foods` 判定会得到「食品相关 READY = 0」的**假象**；今后判食品任务只能看任务名/源类目名。
+- **「最近任务状态」不能直接取 MAX(updated_at)**：重跑成功后原任务会改名 `... [RETRIED_BY_JOB_<pk>]` 且 `updated_at` 比重跑任务晚几微秒，直接取最大值会把「已重跑」的 CANCELED 存根当成当前状态（本次 dog-treats / notebooks 就踩到）。under50 导出已显式跳过这类存根（名字含 `[RETRIED_BY_JOB_`）。
+- 脚本文件名不能叫 `inspect.py`：会遮蔽 stdlib `inspect`，`django.setup()` 直接循环导入报错（已改名 survey_jobs.py）。
+- 取消动作只翻 status，不处理 run：本次因这 10 个任务 0 条 CrawlRun 所以无副作用；**若以后取消有 RUNNING/PENDING run 的任务，必须同时收尾 run（参考 0cp/0co 的僵尸 run 处置）**。
+- `var/*` 在 .gitignore 里：本轮产出不会出现在 git status，交付物只能靠路径转述。
+
+### 下一步
+- 待用户确认 `pk=243 批次BB-3 UK143补抓（Beverages）` 是否需要一并取消。
+- 补货优先级建议：28 个 0 件二级（家居生活 6 / 家用电器 4 / 母婴童玩 4 / 宠物 4 / 美妆 2 / 计算机 2 / 健康 2 / 服装 2 / 电子 1 / 游戏 1），其中 45 个二级已有 READY 任务，跑完即可回填大部分缺口。
+
+## 0cr. DO 生产规范域切换裸域 → https://www.joyfumi.com（2026-11-25，✅ 已切换 + 全矩阵验证通过，未 commit）
+
+### 我们在做什么
+把 DO 生产站点（161.35.23.231，/srv/joybuy @ 8e5ad99）的规范域从裸域 `joyfumi.com` 切换为 `https://www.joyfumi.com`，与用户在 Google 控制台注册的回调 URI（`https://www.joyfumi.com/api/v1/auth/buyer/oauth/google/callback`）逐字对齐，然后全链路验证。**主入口以后就是 www.joyfumi.com；裸域与 http 一律 301 到 https://www。**
+
+### 收官追加（2026-11-25）
+- **Google OAuth 端到端 ✅ 用户实测通过**（真实 Google 账号登录成功，buyer_identity 首次绑定闭环）。
+- **Crisp 正式域名实测 ✅ 无需任何后台改动**：www.joyfumi.com 上自研【客服】按钮触发 Crisp 聊天窗正常弹出、收发消息正常——**推翻了此前"必须把域名加进 Crisp 后台"的判断**（Crisp 默认不限制域名，Website ID 对任何加载页生效；此前判断未实测）。Crisp 后台 Website URL 字段改成正式域名仅是规范修正，可选。**新判断纪律：涉及三方服务"是否需要配置"的结论，先实测再写文档。**
+
+### nginx 变更（改前备份 /etc/nginx/sites-available/joybuy.bak.www20261125）
+1. 443 主块 `server_name` 改为只有 `www.joyfumi.com`（不再直接服务裸域 https）。
+2. 新增 443 server 块：`server_name joyfumi.com;` + 同一张 LE 双域证书 + `return 301 https://www.joyfumi.com$request_uri;`（带 $request_uri，路径保留）。
+3. certbot 80 块：www 保持 `301 https://$host$request_uri`（$host 即 www）；裸域的 if 分支改为 `return 301 https://www.joyfumi.com$request_uri;`。
+4. **IP default_server 块（80 端口，http://161.35.23.231/ 直接 200）原样保留，未动**——上次 certbot 抢 default_server 的坑没有再踩。
+5. `nginx -t` 通过后 `systemctl reload nginx`。
+
+### .env 变更（改前备份 /srv/joybuy/.env.bak.www20261125，保持 chmod 600、ASCII 无 CRLF）
+- `STOREFRONT_BASE_URL=https://www.joyfumi.com`（sed 精确替换）
+- `OAUTH_REDIRECT_BASE_URL=https://www.joyfumi.com`
+- `DJANGO_ALLOWED_HOSTS` 与 `DJANGO_CSRF_TRUSTED_ORIGINS` 已含 www/apex 两者，未动；cookie Secure 强制未动。
+- `systemctl restart joybuy-api joybuy-storefront`，两者均 active。
+
+### 验证矩阵（curl，服务器侧 + 本地 Git Bash 各跑一遍，结果一致）
+| 请求 | 结果 |
+| --- | --- |
+| https://www.joyfumi.com/ | 200 |
+| https://www.joyfumi.com/api/v1/categories | 200 |
+| https://www.joyfumi.com/admin/ | 200 |
+| https://www.joyfumi.com/api/v1/health | 200 |
+| https://joyfumi.com/ | **301 → https://www.joyfumi.com/** |
+| http://www.joyfumi.com/ | 301 → https://www.joyfumi.com/ |
+| http://joyfumi.com/ | 301 → https://www.joyfumi.com/ |
+| http://161.35.23.231/ | 200（IP 直连未受影响） |
+| /api/v1/auth/buyer/session Set-Cookie | 仍含 `Secure` ✅ |
+| OAuth start（curl -D -） | 302 Location `redirect_uri=https%3A%2F%2Fwww.joyfumi.com%2Fapi%2Fv1%2Fauth%2Fbuyer%2Foauth%2Fgoogle%2Fcallback` —— **与用户 Google 控制台注册值逐字一致 ✅** |
+| https://www.joyfumi.com/media/products/derived/card/00/09/0009ec57…7405579e.webp（sync.log 首行 key） | 200 image/webp |
+
+### Playwright 冒烟（脚本 var/tls_www_20261125/smoke_www_20261125.mjs，7/7 PASS）
+- admin：https://www.joyfumi.com/admin/ 用 ops-do@joybuy.local 登录 → 落地 /admin/merchants、页面内容可见、**console error 0**。截图 `admin_login_www_20261125.png` / `admin_merchants_www_20261125.png`（已人工目检确认渲染正常）。
+- Google 授权页实测：https://www.joyfumi.com/auth/login → 点 Continue with Google → **真实到达 accounts.google.com/v3/signin/identifier 「Sign in to continue to joyfumi.com」登录页（不再 Access blocked！）**，页面无 invalid_client、console error 0；落地 URL 中 `redirect_uri=https://www.joyfumi.com/api/v1/auth/buyer/oauth/google/callback`。按要求到授权页即停，未登录真实 Google 账号。截图 `google_auth_page_www_20261125.png`（已目检）、页面文本 `google_auth_body.txt`、登录页 `storefront_login_www_20261125.png`。
+- 坑（脚本层面，非产品问题）：AuthForm 的 oauth 按钮 href 是**相对路径** `/api/v1/auth/buyer/oauth/google/start`，别断言它含绝对 www 域名——正确性由浏览器最终落到的 accounts.google.com URL 里的 redirect_uri 证明。
+
+### 给用户的说明
+- 以后主入口 = **https://www.joyfumi.com**（含 /admin/、/media/、API）；裸域 joyfumi.com（http/https）与 http://www 都自动 301 到 https://www.joyfumi.com 且保留路径；IP 直连行为不变。
+- Google OAuth 登录现在可以走到 Google 登录页了（上一节 0cl 的「Access blocked」已解除）；剩下一步是用户用真实 Google 账号走完授权 → 回调 → 建号/登录，才能验证完整闭环。
+- 本地仓库 backup 文件：nginx 与 .env 的服务器备份见上文路径；仓库内本次新增 var/tls_www_20261125/（脚本+截图）。git 未 commit（HANDOFF 也不 commit）。
+
 ## 0cq. 品类发现 hover 与真站逐项对齐（2026-11-25，✅ 已复刻 + 针对性验证，未 commit）
 
 > 协调者要求的编号 `0co` 已被「0co. 重跑批次中断恢复」占用、`0cp` 已被「干净暂停」占用，故按 0cn/0cj 先例改用 `0cq`。
@@ -162,6 +788,14 @@
    - 删 `ChannelModuleProduct` 引用食品 SPU 的楼层位次 11 条（都在 `UK-Mini-HP-Health-and-Wellness` 模块；否则 `_fallback_product` 兜底会渲染无价死卡）；
    - 报告 `var/home_living_20261125/moved_spus_20261125.csv`（4227 行：spu_id/public_id/status/原食品二级 slug，可回溯）。
 2. **代码** `backend/catalog/joybuy_menu_crosswalk.py`：`CHANNEL_PARENT` 的 Joymart/World-Foods → None；48 个食品 source_id 进 `NODE_UNMAPPED`；docstring 更新（推翻 2026-11-11「食品归 home-living」口径）。**这样 future `sync_local_categories_from_joybuy` 不会把食品类目重新置回 ACTIVE 或挂回家居生活**（`--dry-run` 实测：新建 0/更新 0/未映射 65/错误 0）。
+
+### 追加（同日晚）：管理后台爬虫任务品类树选择器同步过滤食品
+用户要求：管理后端爬虫任务里的品类树页（建任务选择器）子品类同步更新。实现：
+1. `backend/catalog/joybuy_menu_crosswalk.py`：48 个食品 source_id 提取为具名常量 **`FOOD_SOURCE_IDS`**（frozenset），并入 `NODE_UNMAPPED`（`NODE_UNMAPPED = {...} | FOOD_SOURCE_IDS`，语义不变、65 个节点）。
+2. `backend/crawler_control/tree_sync.py`：新增 **`prune_food_nodes(payload)`**——对 `tree_to_payload` 的结果剔除 `FOOD_SOURCE_IDS` 节点，子节点被剔空的频道整棵隐藏（原本无子节点的频道保留）；只动选择器 payload，冻结的历史任务快照不动。
+3. `backend/common/admin_views.py` `AdminCrawlerSourceTreeView.get`：改调 `prune_food_nodes(tree_to_payload(...))`。
+4. 对真实发布树（joybuy-uk-20261111-441f4b04）验证：**Joymart（29 子全食品）、World-Foods（8 子全食品）整棵隐藏**；Home-Living 36→25（剔除 11 个食品节点）；payload 无任何食品节点；其余 12 个频道子节点数不变。
+5. 新增单测 `TreeSyncTests.test_prune_food_nodes_hides_food_pickers`（食品频道隐藏/Home-Living 剔食品留厨具/无子频道保留/冻结原始 payload 不被改）；`manage.py test crawler_control.tests.test_crawler_rebuild.TreeSyncTests --keepdb` = 6/6 OK（全套 test_crawler_rebuild 51/51 OK）；ruff 3 个改动文件 0 问题。
 
 ### 验证（按验证纪律仅针对性验证）
 - `/api/v1/categories`：home-living children=21（13 个频道页家居类 + 7 个清洁纸品 + 雨伞雨具），无食品 slug，world-foods 根不可见；`var/home_living_20261125/verify_cleanup.py` 全过。
@@ -7371,3 +8005,47 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **验证（针对性）**：eslint/prettier 过；vitest AccountNav+MobileWishlist 8/8；backend activity+wallet 9/9（--keepdb）。端到端：注册买家→收藏 SPU 898aef58（有画廊图）→ SSR /account/favourites 渲染出 `fav-card__media` img（/media/products/...webp）+ 标题 + 价格；登录态 Playwright 截图 `var/profile_resurvey_20261125/local_favs_card_1896.png` 目检卡片正常（imgLoaded=true）。**坑：重启后端时旧 --noreload 进程没杀干净（kill 循环 awk 取 PID 失败一次），新 runserver 绑不上端口静默退出，API 一直回旧代码——改后端后验证 404/字段缺失时先核对端口上的进程是否真的是新代码。**
 
 **已知差异（暂不处理）**：① 用户 17:41 提供的真站截图显示侧栏新增「礼品卡/定期购」两项（真站 10+ 项），我们未做——待用户明确要不要加；② 价格符号随站点货币 formatter（curl 默认环境显示 $6.99，与订单/购物车同口径），非收藏页特有。
+
+### 2026-11-25（晚）DO 生产站域名+TLS 一条龙完成：joyfumi.com 全绿上线
+
+**在做**：DO 生产站（ssh joybuy-do，/srv/joybuy @ 8e5ad99）接入域名 joyfumi.com / www.joyfumi.com 并完成 TLS 全链路（certbot 签发 + http→https 跳转 + cookie Secure 回滚兑现 + OAuth BASE_URL 切 https + 全站验证）。**已完成，全部验证通过。**
+
+**证书**：certbot 2.9.0（apt certbot python3-certbot-nginx 新装）。`certbot --nginx -d joyfumi.com -d www.joyfumi.com --non-interactive --agree-tos -m Joybuyfumi@gmail.com --redirect` 一次成功。证书 `/etc/letsencrypt/live/joyfumi.com/`：CN=joyfumi.com，issuer=Let's Encrypt YE2（US），有效期 **2026-11-25 11:04:00 GMT → 2027-02-23 11:03:59 GMT**。续期：certbot.timer 在跑（下次 2026-11-26 00:52 UTC），`certbot renew --dry-run` 实测 **"Congratulations, all simulated renewals succeeded"**。⚠️ 坑：非交互续期自带最长 ~8 分钟随机延迟（本次 470s），日志见 "Non-interactive renewal: random delay of … seconds"——等结果别误判卡死；另 SSH 断连后 certbot 进程会残留在服务器上持有锁（/var/lib/letsencrypt/.certbot.lock），重连先 `ps aux | grep certbot` 清残留再跑。
+
+**nginx**（/etc/nginx/sites-available/joybuy 重写为 3 个 server 块，改前备份 `.bak.tls20261125`、certbot 改后备份 `.bak.tls20261125.postcertbot`；nginx -t 过、ASCII/LF 核对）：
+1. 443 ssl 主块（server_name joyfumi.com www.joyfumi.com，certbot 管理的证书行，全部 location 不变：/media/ Spaces 反代+缓存、/api/→8000、/admin/ 静态、/→3000）；
+2. certbot 80 重定向块（host 匹配两域名 → 301 https）——**已去掉 certbot 塞的 default_server**；
+3. 新增 80 default_server 块（server_name 161.35.23.231 _，完整 location 副本）保 IP 直访。
+⚠️ **大坑（本次抓到并修复）**：certbot --nginx 会把它生成的 80 重定向块设为 default_server 且兜底 `return 404`，装完证书 `http://161.35.23.231/` 立即从 200 变 404——已把 default_server 移到独立 IP 服务块恢复。**今后任何 certbot/nginx 变更后必须复测 IP 直访。**
+
+**/srv/joybuy/.env 变更清单**（改前备份 `.env.bak.tls20261125`；改后 chmod 600/ASCII 核对，diff 确认仅 6 处）：
+- `DJANGO_ALLOWED_HOSTS=161.35.23.231,localhost,127.0.0.1,joyfumi.com,www.joyfumi.com`（追加两域名，保留 IP）；
+- `DJANGO_CSRF_TRUSTED_ORIGINS=http://161.35.23.231,https://joyfumi.com,https://www.joyfumi.com`（追加，保留原 http IP 条目）；
+- **删除 `DJANGO_SESSION_COOKIE_SECURE=false` 与 `DJANGO_CSRF_COOKIE_SECURE=false` 两行**——2026-11-19 http 裸奔期的临时降级（dde07ae 加的 env 开关）至此回滚兑现，settings production 默认恢复强制 Secure，无需改代码；
+- `STOREFRONT_BASE_URL=https://joyfumi.com`、`OAUTH_REDIRECT_BASE_URL=https://joyfumi.com`（原 http IP 值替换）。
+- 重启 `systemctl restart joybuy-api joybuy-storefront` → 双 active，本机 8000/3000 各 200。
+
+**验证矩阵（服务器侧 curl/openssl 地面真值，另本地 Playwright 走 VPN 实测）**：
+| 项 | 结果 |
+|---|---|
+| openssl 证书（:443 SNI joyfumi.com） | Let's Encrypt YE2，2026-11-25 → 2027-02-23 ✓ |
+| https://joyfumi.com/ | 200 ✓ |
+| https://www.joyfumi.com/ | 200 ✓ |
+| http://joyfumi.com/ | 301 → https://joyfumi.com/ ✓ |
+| http://www.joyfumi.com/ | 301 → https://www.joyfumi.com/ ✓ |
+| http://161.35.23.231/（IP 直访保留） | 200 ✓ |
+| https://joyfumi.com/api/v1/categories | 200 真实 JSON（双语类目）✓ |
+| https://joyfumi.com/api/v1/health | 200 ✓ |
+| https://joyfumi.com/admin/ | 200 ✓ |
+| cookie Secure（/api/v1/auth/buyer/session Set-Cookie） | csrftoken 含 `Secure` ✓ |
+| OAuth start Location redirect_uri | `https://joyfumi.com/api/v1/auth/buyer/oauth/google/callback`（PKCE S256+state 在位）✓ |
+| https://joyfumi.com/media/products/derived/card/03/7a/037a…f7.webp | 200 image/webp（Spaces 反代链路）✓ |
+| 续期 dry-run | all simulated renewals succeeded ✓ |
+
+**admin 登录 Playwright 冒烟（本地经 VPN TUN 访问 https 域名）**：`var/tls_20261125/admin_smoke.mjs` 5/5 + `admin_smoke2.mjs` 4/4 PASS。ops-do@joybuy.local 登录 → 落地 /admin/merchants 已登录态（右上账号+左下 Ops DO platform_admin），商家表格渲染真实数据（44 页），**全部 cookie Secure=true**（`joybuy_staff_session(path=/api/v1/,secure=true)` + `csrftoken(path=/,secure=true)`；⚠️ 小坑：staff 会话 cookie path=/api/v1/，Playwright `ctx.cookies(url)` 按 URL 过滤拿不到，要无参 `ctx.cookies()`），console error 0。截图 `var/tls_20261125/01~04*.png`（登录页/登录态/https 首页/数据加载后的商家管理页）。
+
+**给用户的两个手动项（我们做不了，不做完不影响本节其他成果）**：
+1. **Google Cloud Console（Google Auth Platform → Clients）**：Authorized redirect URIs 更新为 `https://joyfumi.com/api/v1/auth/buyer/oauth/google/callback`（逐字一致）并删除旧的 `http://161.35.23.231/...` 条目。未更新前点真实 Google 登录按钮会到 Google 报 redirect_uri_mismatch——**这是预期中的控制台侧未同步，不是我们的故障**；我方声明值已实测为 https 正确格式。更新后 Google 登录即全通，可复测。
+2. **Crisp 后台 Website 设置**：把 joyfumi.com / www.joyfumi.com 加进域名列表，否则挂件在正式域名不弹出。
+
+**后续注意**：nginx 已 3 块结构，再跑 certbot 类工具改配置后 diff 检查 default_server 归属；.env 回滚备份在服务器 `.env.bak.tls20261125`（勿删，回滚锚点）。本节按纪律未 commit git、未跑全量验证。

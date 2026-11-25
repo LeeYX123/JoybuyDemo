@@ -59,7 +59,11 @@ test.describe('frontend foundations', () => {
     await page.fill('input[type="email"]', 'auditor@joybuy.test')
     await page.fill('input[type="password"]', 'Joybuy-Staff-2026!')
     await page.click('button[type="submit"]')
-    await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible({ timeout: 10000 })
+    // A01（登录后进入第一个有权限的模块）：auditor 只有 audit.logs 权限，
+    // 登录落地页是「操作日志」而不是仪表盘。
+    await expect(page.getByRole('heading', { name: '操作日志' }).first()).toBeVisible({
+      timeout: 10000,
+    })
 
     const response = await page.goto('http://127.0.0.1:5173/missing-route')
     expect(response?.status()).toBe(200)

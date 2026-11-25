@@ -154,11 +154,15 @@ describe('CmsRenderer', () => {
       '/media/discovery/home.png',
     )
     expect(cards[0].attributes('href')).toBe('/s?category=home-living')
-    // Brand row (14.4): a single static list (no duplicated marquee track),
-    // circular logos only, never clickable.
+    // Brand row (14.4): a marquee track with the list rendered twice so the
+    // scroll loops seamlessly; the duplicate segment is aria-hidden so the
+    // brands are announced once. Logos stay non-clickable.
     expect(wrapper.find('.brand-row').exists()).toBe(true)
-    expect(wrapper.find('.brand-row__list').exists()).toBe(true)
-    const brands = wrapper.findAll('.brand-card')
+    const segments = wrapper.findAll('.brand-row__list')
+    expect(segments).toHaveLength(2)
+    expect(segments[0].attributes('aria-hidden')).toBeUndefined()
+    expect(segments[1].attributes('aria-hidden')).toBe('true')
+    const brands = segments[0].findAll('.brand-card')
     expect(brands).toHaveLength(1)
     expect(brands[0].find('img').attributes('src')).toBe('/media/brands/midea.png')
     expect(brands[0].find('.brand-card__name').text()).toBe('Midea')

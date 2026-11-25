@@ -69,20 +69,22 @@ test.describe('buyer auth (email-first)', () => {
     await expect(page.getByRole('alert')).toBeVisible()
   })
 
-  test('the login page shows Google and Facebook side by side and a language selector', async ({
+  test('the login page shows only configured providers and a language selector', async ({
     page,
   }) => {
     await gotoHydrated(page, '/auth/login')
 
-    // 两个按钮并排出现，不藏在 View more options 后面
-    const buttons = page.locator('[data-testid="oauth-button"]')
-    await expect(buttons).toHaveCount(2)
-    await expect(buttons.nth(0)).toContainText('Continue with Google')
-    await expect(buttons.nth(1)).toContainText('Continue with Facebook')
+    // Google 已配置 → 必现；Facebook 未配置 → 整条隐藏（配置后会自动出现）
+    const google = page.locator('[data-testid="oauth-button"]', {
+      hasText: 'Continue with Google',
+    })
+    await expect(google).toHaveCount(1)
+    await expect(google).toHaveAttribute('href', /\/api\/v1\/auth\/buyer\/oauth\/google\/start/)
 
-    const google = buttons.nth(0)
-    if ((await google.getAttribute('href')) !== null) {
-      await expect(google).toHaveAttribute('href', /\/api\/v1\/auth\/buyer\/oauth\/google\/start/)
+    if (process.env.FACEBOOK_OAUTH_CONFIGURED !== '1') {
+      await expect(
+        page.locator('[data-testid="oauth-button"]', { hasText: 'Continue with Facebook' }),
+      ).toHaveCount(0)
     }
 
     // 地区行显示语言名，不再显示国家名/国旗

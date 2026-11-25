@@ -7,35 +7,53 @@ import { clickUntil } from './helpers'
 test.describe('purchase funnel', () => {
   test.setTimeout(90_000)
   test('browses, signs in, carts an item and places a pending order', async ({ page }) => {
-    const email = `funnel-${Date.now()}@joybuy.test`
-
-    // 1. Search finds the seeded product.
+    // 1. Search finds catalog products. The funnel subject is whatever the
+    // search returns first — the catalog is real crawled data now, so a fixed
+    // product name rots (the old "Wireless Earbuds Pro" seed no longer exists).
     await page.goto('/search?q=earbuds')
-    await expect(page.getByRole('heading', { name: 'Wireless Earbuds Pro' }).first()).toBeVisible()
+    const firstTitleLink = page.locator('a.product-card__title-link').first()
+    await firstTitleLink.waitFor({ state: 'visible', timeout: 15000 })
+    const productTitle = (await firstTitleLink.textContent()).trim()
+    expect(productTitle.length).toBeGreaterThan(0)
 
-    // 2. Open the detail page from the listing.
-    await page.getByRole('link', { name: 'Wireless Earbuds Pro' }).first().click()
-    await expect(page.getByRole('heading', { name: 'Wireless Earbuds Pro' })).toBeVisible()
-    await expect(page.getByText(/in stock/).first()).toBeVisible()
+    // 2. Open the detail page from the listing. Real crawled products carry
+    // no stock line any more (requirement 11.7: real PDP has no inventory
+    // row), so assert on the price block instead of the old "in stock" text.
+    await firstTitleLink.click()
+    await expect(page.getByRole('heading', { name: productTitle }).first()).toBeVisible()
+    await expect(page.locator('.detail__price').first()).toBeVisible()
 
-    // 3. Register through the auth flow.
-    await page.goto('/auth/register')
-    await page.getByLabel('Email address').fill(email)
-    await page.getByRole('button', { name: 'Send code' }).click()
-    await expect(page.getByText('Development mode')).toBeVisible()
-    await page.getByLabel('Password').fill('Funnel-passw0rd!')
-    await page.getByRole('button', { name: 'Create account' }).click()
-    await expect(page.getByRole('heading', { name: 'Your account' })).toBeVisible()
-
-    // 4. Add to cart from the detail page.
-    await page.goto('/search?q=earbuds')
-    await page.getByRole('link', { name: 'Wireless Earbuds Pro' }).first().click()
-    // Explicitly pick a variant so a specific offer is bound.
-    const whiteButton = page.getByRole('button', { name: 'White', exact: true })
-    if (await whiteButton.count()) {
-      await whiteButton.click()
-      await page.waitForTimeout(300)
+    // 3. Register through the auth flow (direct email+password form from the
+    // third-party-login batch). Dev-mode hydration can reset freshly filled
+    // inputs, so refill in a retry loop with a fresh email per attempt;
+    // success lands on /account.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const email = `funnel-${Date.now()}-${attempt}@joybuy.test`
+      await page.goto('/auth/register', { waitUntil: 'networkidle' })
+      // Let Vue hydrate before filling: a fill that lands pre-hydration is
+      // silently discarded and the submit fires with an empty form.
+      await page.getByRole('button', { name: 'Create account' }).waitFor({ state: 'visible' })
+      await page.waitForTimeout(600)
+      await page.getByLabel('Email', { exact: true }).fill(email)
+      await page.getByLabel('Create a password').fill('Funnel-passw0rd!')
+      await page
+        .getByRole('button', { name: 'Create account' })
+        .click()
+        .catch(() => {})
+      try {
+        await page.waitForURL(/\/account/, { timeout: 5000 })
+        break
+      } catch {
+        // form may have been reset by late hydration; refill and retry
+      }
     }
+    await expect(page).toHaveURL(/\/account/)
+
+    // 4. Add to cart from the detail page. The default offer binds on page
+    // load; real crawled products may or may not expose variant buttons, so
+    // no fixed colour is picked here.
+    await page.goto('/search?q=earbuds')
+    await page.locator('a.product-card__title-link').first().click()
     page.on('console', (msg) => {
       if (msg.type() === 'error' || msg.type() === 'warning') {
         console.log('BROWSER-CONSOLE', msg.type(), msg.text().slice(0, 200))
@@ -61,16 +79,25 @@ test.describe('purchase funnel', () => {
     // 5. Cart shows the line (the button label reverts after 2s).
     await page.waitForTimeout(800)
     await page.goto('/cart')
-    await expect(page.getByText('Wireless Earbuds Pro')).toBeVisible()
+    await expect(page.getByText(productTitle).first()).toBeVisible()
 
     // 6. Checkout with the docs/12 3-field address form, Save -> payment step.
     // Dev-mode hydration can reset freshly filled inputs or swallow the first
     // submit; refill + save in one self-healing loop until Pay now appears.
     test.setTimeout(150_000)
     await page.goto('/checkout')
-    await clickUntil(page, page.getByRole('button', { name: 'Add a new address' }), (p) =>
-      p.getByPlaceholder('First name and surname').waitFor({ state: 'visible', timeout: 800 }),
-    )
+    // A fresh account has no addresses: the address form is already open
+    // (showNewForm defaults to true when the list is empty) and the button
+    // reads "Cancel". Only click "Add a new address" when the form is closed.
+    try {
+      await page
+        .getByPlaceholder('First name and surname')
+        .waitFor({ state: 'visible', timeout: 3000 })
+    } catch {
+      await clickUntil(page, page.getByRole('button', { name: 'Add a new address' }), (p) =>
+        p.getByPlaceholder('First name and surname').waitFor({ state: 'visible', timeout: 800 }),
+      )
+    }
     for (let attempt = 0; attempt < 6; attempt += 1) {
       await page.getByPlaceholder('First name and surname').fill('Funnel Buyer')
       await page.getByPlaceholder('Phone number').fill('+447000000123')
@@ -89,16 +116,17 @@ test.describe('purchase funnel', () => {
     }
     await expect(page.getByRole('button', { name: 'Pay now' })).toBeVisible()
     await clickUntil(page, page.getByRole('button', { name: 'Pay now' }), (p) =>
-      p.getByRole('heading', { name: 'Your orders' }).waitFor({ state: 'visible', timeout: 800 }),
+      // i18n batch renamed the orders page heading to "My orders".
+      p.getByRole('heading', { name: 'My orders' }).waitFor({ state: 'visible', timeout: 800 }),
     )
     await expect(page.getByText('Pending payment')).toBeVisible()
 
-    // 7. Pay attempt surfaces the region-unsupported business error.
-    page.once('dialog', (dialog) => {
-      expect(dialog.message()).toContain('Payment is not available')
-      dialog.dismiss()
-    })
-    await page.getByRole('button', { name: 'Pay now' }).click()
+    // Step removed (2026-11-24): the old flow retried payment from the orders
+    // page and surfaced the region-unsupported dialog ("Payment is not
+    // available"). The orders list/detail no longer render a Pay now entry —
+    // the only payment trigger is the checkout button used in step 6, whose
+    // pay attempt returns the region-unsupported 422 while the order stays
+    // Pending payment (verified by the assertion above).
   })
 })
 
@@ -114,6 +142,18 @@ test.describe('visual baselines', () => {
       await page.goto('/')
       // The campaign floor has no heading (docs/12); its tiles carry the links.
       await expect(page.getByRole('link', { name: /Welcome Offers/ })).toBeVisible()
+      // The page is very tall and product images lazy-load; scroll through the
+      // full page first so the fullPage screenshot does not race pop-in images
+      // ("failed to take two consecutive stable screenshots" otherwise).
+      await page.evaluate(async () => {
+        const total = document.body.scrollHeight
+        for (let y = 0; y < total; y += 600) {
+          window.scrollTo(0, y)
+          await new Promise((resolve) => setTimeout(resolve, 60))
+        }
+        window.scrollTo(0, 0)
+      })
+      await page.waitForTimeout(1000)
       await expect(page).toHaveScreenshot(`home-${width}.png`, {
         fullPage: true,
         maxDiffPixelRatio: 0.02,
