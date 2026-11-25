@@ -234,6 +234,9 @@ MEDIA_S3_REGION = os.getenv("MEDIA_S3_REGION", "eu-central-1")
 # DigitalOcean Spaces). Empty = AWS virtual-host style URLs and the default
 # boto3 endpoint; non-empty = path-style URLs against this endpoint.
 MEDIA_S3_ENDPOINT = os.getenv("MEDIA_S3_ENDPOINT", "").strip().rstrip("/")
+# Canned ACL sent on every put_object (e.g. "public-read" so nginx can
+# anonymously proxy the bucket). Empty = no ACL argument, behaviour unchanged.
+MEDIA_S3_ACL = os.getenv("MEDIA_S3_ACL", "").strip()
 if MEDIA_BACKEND not in {"local", "s3"}:
     raise ImproperlyConfigured("MEDIA_BACKEND must be local or s3")
 

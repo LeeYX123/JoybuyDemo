@@ -51,11 +51,12 @@ class FakeS3Client:
     def _error(code, operation):
         return ClientError({"Error": {"Code": code, "Message": "Not Found"}}, operation)
 
-    def put_object(self, Bucket, Key, Body, ContentType=""):
+    def put_object(self, Bucket, Key, Body, ContentType="", **extra):
+        # ``extra`` captures optional arguments such as ``ACL`` (MEDIA_S3_ACL).
         payload = bytes(Body)
-        self.put_calls.append(
-            {"Bucket": Bucket, "Key": Key, "ContentType": ContentType, "Body": payload}
-        )
+        call = {"Bucket": Bucket, "Key": Key, "ContentType": ContentType, "Body": payload}
+        call.update(extra)
+        self.put_calls.append(call)
         self.objects[Key] = {"body": payload, "content_type": ContentType}
 
     def get_object(self, Bucket, Key):
@@ -156,6 +157,29 @@ class S3StoreBytesTests(S3BackendTestCase):
         self.assertEqual(len(self.fake.delete_calls), 1)
         self.assertNotIn(f"media/{asset.relative_path}", self.fake.objects)
         self.assertFalse(stored_file_exists(asset.relative_path))
+
+
+class S3AclTests(S3BackendTestCase):
+    """MEDIA_S3_ACL wiring: canned ACL on put only when configured."""
+
+    def test_put_object_sends_acl_when_configured(self):
+        with override_settings(MEDIA_S3_ACL="public-read"):
+            payload = make_png(color=(31, 32, 33))
+            asset, created = store_bytes(payload, kind="CMS", mime_type="image/png")
+
+        self.assertTrue(created)
+        self.assertEqual(len(self.fake.put_calls), 1)
+        self.assertEqual(self.fake.put_calls[0]["ACL"], "public-read")
+        self.assertEqual(self.fake.put_calls[0]["Key"], f"media/{asset.relative_path}")
+
+    def test_put_object_omits_acl_when_unset(self):
+        # Default settings leave MEDIA_S3_ACL empty: no ACL key reaches put_object.
+        self.assertEqual(settings.MEDIA_S3_ACL, "")
+        payload = make_png(color=(41, 42, 43))
+        asset, _ = store_bytes(payload, kind="CMS", mime_type="image/png")
+
+        self.assertEqual(len(self.fake.put_calls), 1)
+        self.assertNotIn("ACL", self.fake.put_calls[0])
 
 
 class S3VariantTests(S3BackendTestCase):

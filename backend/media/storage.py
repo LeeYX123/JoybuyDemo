@@ -115,12 +115,17 @@ def store_file_bytes(relative_path: str, data: bytes, *, content_type: str = "")
     """
 
     if s3_enabled():
-        get_s3_client().put_object(
-            Bucket=settings.MEDIA_S3_BUCKET,
-            Key=s3_key(relative_path),
-            Body=data,
-            ContentType=content_type or "application/octet-stream",
-        )
+        put_kwargs = {
+            "Bucket": settings.MEDIA_S3_BUCKET,
+            "Key": s3_key(relative_path),
+            "Body": data,
+            "ContentType": content_type or "application/octet-stream",
+        }
+        if settings.MEDIA_S3_ACL:
+            # Canned ACL (e.g. "public-read") so bucket objects stay readable
+            # through the anonymous nginx /media/ proxy.
+            put_kwargs["ACL"] = settings.MEDIA_S3_ACL
+        get_s3_client().put_object(**put_kwargs)
         return
     full_path = resolve_media_path(relative_path)
     full_path.parent.mkdir(parents=True, exist_ok=True)
