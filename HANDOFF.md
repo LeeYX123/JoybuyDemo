@@ -2,6 +2,66 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cj. 账户页被渲染成手机版 / 窄卡片（2026-11-25，✅ 已修 + 针对性验证 17/17，未 commit）
+
+> 协调者原编号 `0cd` 已被「批次 BC：Facebook / Google 登录」（本档下方）占用，故改用 `0cj`，内容按 `0cd` 要求写。
+
+### 现象（用户截图 2026-11-25，桌面 1896 宽、已登录看 `/account`）
+- 内容区只有约 414px（用户目测 ~360px）宽并居中；三列模块卡被压成每列 ~127px，卡内标题逐字换行（中文呈竖排）；header/footer 仍是桌面版。
+- 用户判断「昨天做手机版之后出现」。
+
+### 根因（不是 CSS 泄漏、不是 MobileAccount 误渲染）
+1. **实际渲染的仍是桌面 `.profile-page`**（`pages/account/index.vue:126`），`MobileAccount` 分支（`:125`，条件 `isMobileHost` = host 以 `m.` 开头）没有触发；`contentWidth` 一度是 **414px**。
+2. DOM 检查发现 `header.profile-me` 的父 `<section>` 的 class 是 **`profile-signed-out`** —— 即登录态内容被塞进了「未登录分支」的卡片。该卡 CSS 在 `pages/account/index.vue:596-603`：`max-width: 30rem`(480) + `padding: var(--space-8)`(32×2) + 1px 边框 + `margin: auto` → 内容宽 414px、居中，三列网格各 127px（扣掉卡片 24px 内边距后标题只剩 ~79px → 逐字换行）。
+3. 为什么两个分支会串：`composables/useBuyerAuth.js` 的买家会话是**懒加载且无人 await**——首个调用者（AppHeader）用 `useAsyncData({ key: 'buyer-session', dedupe: 'defer' })` 发起 `/api/v1/auth/buyer/session`，但 SSR 不等它返回就把首帧渲染成「未登录」（header 出 Sign in、`/account` 走 `v-else`），而 Nuxt 随后仍把已登录结果写进 payload。客户端按 payload 水合出登录态 DOM，与 SSR 留在页面里的 `.profile-signed-out` 结构对不上 → console 报 `Hydration completed but contains mismatches.`，登录态内容被补进那张 480px 卡片里。
+4. 证据（`var/acct_narrow_20261125/`）：同一响应的 SSR HTML `profile-signed-out` + 页面内 2 处 "Sign in"，而 `__NUXT_DATA__` 的 `buyer-session` 已是 `authenticated:true`；**复现率约 1/3**（改前 8 次里 3 次失败），改后连续 6 次全对。改前截图 `account_1896_after_login.png`（卡片窄、标题断行），改后 `account_1896_fixed.png`。
+5. 与手机版工作无关（`MobileAccount`/mobile 组件/CSS 均未参与），是登录注册（e3de28d）那批会话改造后暴露的**SSR/水合时序**缺陷；任何「首帧按登录态分支」的页面（含 header）都会中招。
+
+### 修复（3 处，只修根因）
+1. `storefront/composables/useBuyerAuth.js:27-29,51,73-78`：把首个调用者创建的 `useAsyncData` 句柄存到 `nuxtApp._joybuySessionAsyncData`（SSR 每请求一份），新增导出 `ensureSession()`——**只 await 已发起的那次请求，不新增请求**。
+2. 新增 `storefront/plugins/buyer-session.server.js`：`defineNuxtPlugin(async () => await ensureSession())`，让 SSR 在渲染前就拿到买家会话，header 与所有页面首帧登录态正确。
+3. 未改 `pages/account/index.vue`、未改任何 mobile 组件/CSS（`.profile-signed-out` 的 30rem 是正常设计，不是罪魁，保持原样）。
+
+### 验证（按验证纪律仅做针对性验证，脚本 `var/acct_narrow_20261125/verify.mjs`、`probe*.mjs`）
+- Playwright 1896×960 登录：内容区 **1264**（`±0`）、`.profile-me` 高 **120**、模块卡三列 `410.6/410.7/410.6`、标题 `writing-mode: horizontal-tb` 且宽度 103–169px、`meSection=profile`、**console error 0**、截图 `account_1896_fixed.png`（与改前 `account_1896_after_login.png` 对比：卡片恢复全宽）。
+- 375×812 `http://m.localhost:3000/account`：`mobile-shell` + `.m-acct` 生效、无 `.profile-page`、注册后 3 个 `.m-acct__tile` 正常、console error 0、截图 `m_375_account.png` → **手机版未受影响**。
+- 回归：`localhost:3000/account?mobile-auto=1` @375 仍自动跳 `http://m.localhost:3000/account?mobile-auto=1` 并渲染手机壳（webdriver 下需 `?mobile-auto=1` 才跑自动切换）。
+- 其他桌面页：首页容器 max-width 1608、首页 `/`、PDP、`/cart` 均 `scrollWidth == innerWidth` 且 console error 0；登录态首页首帧即 `account-menu`（无 Sign in）、console error 0。
+- 匿名 `/account` 仍只渲染 `.profile-signed-out`（无串味 DOM）、console error 0。
+- `npx eslint` 两个改动文件 0 问题、`npx prettier --check` 通过。
+- 既有 e2e `tests/e2e/auth.spec.js`：首跑 3/4（失败用例是 dev 水合把首个 fill 吞掉的既有抖动，截图显示邮箱为空 + "Please enter a valid email address"），单测重跑 3/3、整套重跑 **4/4 全过**；与本修复无关。
+- 修复前后截图：`var/acct_narrow_20261125/account_1896_after_login.png`（坏）vs `account_1896_fixed.png`（好）、`m_375_account.png`（手机版）。
+
+### 踩坑（新会话必读）
+- 这类「窄卡片/竖排标题」不要先怀疑手机版 CSS：先看 `document.querySelector('.profile-me').closest('section').className` 是否被换成了 `profile-signed-out`，再看 console 有没有 `Hydration completed but contains mismatches.`。
+- `useAsyncData` + `useState` 的懒加载会话**必须有人 await**（本轮用 server 插件兜底）。以后再加「首帧按登录态分支」的页面不必各自 await，SSR 插件已统一等过。
+- 手动验证自动切换时 `navigator.webdriver` 会屏蔽插件，必须带 `?mobile-auto=1`。
+
+## 0ci. S3 媒体对象自动带 public-read ACL（2026-11-25，✅ 已部署生产并端到端验证）
+
+### 我们在做什么
+DO 新控制台已无桶级 Visibility 开关 → 逐对象 canned ACL 是唯一路径。给存储层加可选 `MEDIA_S3_ACL`：put_object 时非空则带 `ACL=<值>`，空则行为不变（只动 `store_file_bytes` 的 put；delete/read/exists 未动）。
+
+### 完成（commit `e26e485`，已 push origin main）
+- `backend/config/settings.py`：新增 `MEDIA_S3_ACL = os.getenv("MEDIA_S3_ACL", "").strip()`（MEDIA_S3_ENDPOINT 之后）。
+- `backend/media/storage.py`：`store_file_bytes` s3 分支改 `put_kwargs` dict，`settings.MEDIA_S3_ACL` 非空时加 `put_kwargs["ACL"]`。
+- `backend/media/tests/test_media_storage_s3.py`：`FakeS3Client.put_object` 加 `**extra`（记录进 put_calls）；新增 `S3AclTests` 两条（ACL=public-read 时断言收到 `ACL="public-read"`；未设置时断言 put_calls[0] 不含 "ACL" 键）。
+- 验证（按验证纪律仅做针对性验证）：ruff check 3 个改动文件过；`manage.py test media.tests.test_media_storage media.tests.test_media_storage_s3 --keepdb --noinput --parallel 1` = **36 tests OK**（34 既有 + 2 新增，零红）。注意本仓库 venv 在**根目录** `.venv`（backend 下没有 .venv，HANDOFF 旧记录的 `./.venv/Scripts/python.exe` 路径已失效）。
+
+### 部署与验证（joybuy-do）
+- 服务器 `git pull --ff-only`：cd1c4c9 → **e26e485**（连带 8 个 commit：655c2fb/c8e604f/3a6c822/e3de28d 等；其中 e3de28d 是并行会话的本地 main 存量 commit，随本次 push 一起上了 origin）。**backend 侧 diff 无 migrations**，restart 后 `/api/v1/health` 200。
+- 服务器 `/srv/joybuy/.env` 追加 `MEDIA_S3_ACL=public-read`（600，无 CRLF）。manage.py shell 确认 settings 生效（backend=s3 bucket=joybuy-media endpoint=fra1）。
+- 端到端：manage.py shell 走 `store_bytes(kind=CMS)` 纯代码路径上传 1x1 PNG（无任何手工 ACL）→ 匿名 GET `http://161.35.23.231/media/<path>` **200**（服务器本机 + 本地 VPN 都过）+ 直连 Spaces **200** → `get_object_acl` Grants 含 **AllUsers READ**（+ owner FULL_CONTROL）。
+- 测试 key：`media/cms/original/0d/15/0d158d6cad5e39385aea4bd95511b5530ba40c24892c0ca549f14644081120a3.png`（sha256 0d158d6c…120a3，MediaAsset PK 150053）。清理：boto3 delete_object + ORM 删行 → head_object 404、行数复原 149874→149873、nginx 复查见下。脚本存 `var/media_acl_20261125/`。
+
+### 踩坑（新会话必读）
+1. **nginx /media/ 有 7 天 proxy_cache**（`/etc/nginx/conf.d/joybuy-media-cache.conf`，`proxy_cache_key $uri` = **rewrite 后**的 `/joybuy-media/media/…`，所以缓存文件名 md5 是重写后 URI 的 md5，不是原始 URI）。删掉 Spaces 对象后 nginx 仍 200（X-Cache-Status HIT）——清缓存要按 `md5("/joybuy-media" + 原相对路径全 key)` 定位 `/var/cache/nginx/media/<末1位>/<前2位>/<md5>` 删文件（本次已删，复查 403）。403/4xx（非 404）不缓存，回源实时。
+2. 本次 push 把本地 main 上并行会话已有的 e3de28d 一起推上了 origin（push 前未推）；服务器 pull 后 backend 已包含 email-first/OAuth 后端代码，健康检查过，但**服务器上的 storefront 构建产物还是旧的**（拉到的 storefront 提交未重建，非本任务范围）。
+
+### 下一步（不在本轮范围）
+- 历史无 ACL 的存量对象（上传成功但 403 不可见）需要批量 `copy-in-place` 补 ACL——未做，待用户指令。
+- 服务器 storefront/admin-web 如需新前端，需在服务器重建（本轮只动了 backend）。
+
 ## 0ch. 30 个 FAILED 爬虫任务按用户指令标记取消并克隆重跑（2026-11-25 00:50 本地，✅ 已写库 + 已启动，批次进行中）
 
 ### 一行结论
@@ -744,7 +804,10 @@ PDP「图文详情」配图原来被 `width:100%` 拉满内容区，559px 原图
    - 缺口 3,871 个 PRODUCT 资产 / 599 个 ACTIVE SPU，全部集中在 11-18(511)/11-19(87) 两批（S3 时代只写桶）。
    - 补回 **3,708/3,870 成功**（8 线程，786s），规格图 `variant` 与 `spec_option` **100% 修复**；用户报的两个商品 `74cdae15…` 10/10、`8014bedd…` 8/8 修好并 HTTP 校验（200、非 SVG、sha 一致）。
    - 派生图缺失 73,012 → **972**（49,852/23,172 是 variant **行数**不是资产数，资产数 11,671）。
-   - **不可恢复 162 条**（`unrecoverable.csv`）：全是 `sha_mismatch`——源站现在返回的字节与入库 sha 不同（同尺寸同 mime、体积约 0.58×，说明源站重编码过），试过 `!q70/!q80/!q90/!q100` 与 `x-oss-process` 均不命中。影响 24 个 SPU 的 126 条详情图。**未强行写入不匹配字节**（会破坏内容寻址不变量）。
+   - **不可恢复 162 条**（`unrecoverable.csv`）：全是 `sha_mismatch`——源站现在返回的字节与入库 sha 不同（同 mime、同像素尺寸、体积约 0.58×，源站重编码过），`!q70/!q80/!q90/!q100` 与 `x-oss-process` 均不命中。
+   - **用户批准后已做 best-effort 覆盖写入**（`var/media_shift_20261124/apply_shift.py`）：**162/162 成功、0 失败、43.7s、63.8 MiB**；直接写 `MEDIA_ROOT/<relative_path>`（不调 `store_bytes`；因文件本就缺失，属纯新增）。Pillow 162/162 可解码；20 条 HTTP 抽样 + 24 个 SPU 的 126 张受影响图 **126/126 HTTP 200 + 非 SVG + 字节一致**；相邻目录 370 个非目标文件 mtime 零变动。
+   - **内容寻址已知例外**：这 162 个文件的字节已与 `media_asset.sha256` 不一致（路径名仍是导入时 sha；`byte_size` 也已过时，宽高仍准确）。对账以 `var/media_shift_20261124/applied_shift.csv`（`relative_path, sha_at_import, sha_now, bytes, mime, applied_at`）为准，**不要当数据损坏**。另有 36 条无归属孤儿资产一并写入（无引用方）。
+   - 受影响 24 个商品清单：`var/media_shift_20261124/products_to_review.csv`（按影响图数降序，含 `/p/` 链接）；5 个 PDP 渲染回归全部通过（含此前详情区 12/12 全缺的 Anker 充电器）。
 8. **零售价归属判据**（`channel_module_services._output_retail_price`）：`retail < card_price` 或「同 SPU 兄弟 SKU 报价 == retail 且本卡 != retail」→ 输出 `null`（前端回退 `price_min`）；其余保留零售价。只作用于楼层接口，搜索/推荐/CMS 不动。测试 19 条，SQL 恒定 12 次（无 N+1）。影响 15/502 张卡（Bc Babycare 3.79→回退 25.90、Pampers Size 8、Princess 风扇、ION8 Navy 等）。
 9. **前端**：`CmsProductPool` 的 `v-for key` 改 `sku_public_id || spu_public_id || index`；母婴 19/17、户外 10/20/20/20 渲染数与接口一致，无 duplicate key 警告。
 10. **零售价全量审计**（`var/retail_audit_20261124/`）：可售 SPU 18,688，`retail_price` 无 NULL；偏离 ≥1.5× 的 217 个（1.16%）**全部偏高**；根因 74 例「原价当零售价」（符合业务口径）、207 例「多变体聚合」；逐卡 63/502 受影响。`anomalies.csv` / `floor_impact.csv` / `rootcause.csv` 已出。
@@ -756,8 +819,7 @@ PDP「图文详情」配图原来被 `width:100%` 拉满内容区，559px 原图
 - 9 页 **坏图 0、console.error 0、4xx/5xx 0**；电子页上一轮的 215/407px 离群卡与 503px 行高已消失。
 - 两个 PDP（`74cdae15…` / `8014bedd…`）：`<img>` 37/37、28/28 全部 naturalWidth>0，规格色卡 4/4、2/2，图文详情 3/3、5/5 全部渲染。
 
-### 当前卡在哪（3 项待用户拍板）
-- **162 条 `sha_mismatch`**：是否做 best-effort 覆盖写入（同尺寸同 mime，风险低、可回滚为删文件），换取 24 个 SPU 的 126 张详情图可见。
+### 当前卡在哪（2 项待用户拍板）
 - **TNF 两件 XL 的零售价**：判据 4 把它们判成「兄弟尺码价」→ 回退成折后价（17.66 / 46.95），不再显示 40 / 105 原价。可收窄判据为「仅当差异维度是数量/套装时才算兄弟尺码」。
 - **4 条薄商品的商家仍是占位「Joybuy 自营导入」**（真实是 Gourmet / Arden Grange / PlayStation）：`ImportSourceConflict` 拒绝自动改绑，属数据治理。
 
@@ -959,6 +1021,7 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - **DO 官方现价（2026-11-24 官网抓取）**：Basic/Regular 档——$4(512M/1C/10G/0.5T)、$6(1G/1C/25G/1T)、$12(2G/1C/50G/2T)、$18(2G/2C/60G/3T)、$24(4G/2C/80G/4T)、**$48(8G/4C/160G/5T)**、$96(16G/8C/320G/6T)；Premium Intel/AMD 同规格贵 10-20%；流量超额 $0.01/GB（AWS 的 1/9）。**Spaces 对象存储 $5/月 = 250GiB 存储 + 1TiB 出网**（超额 $0.02/GiB·存储、$0.01/GiB·流量，免费 CDN，按小时折算）。区域有 FRA1 法兰克福 / LON1 伦敦。
 - **选型定稿：$48 FRA1 + Spaces $5 = 全套 $53/月**（实际机器 nproc=4 核）。**$24 = 最低可用**；$96 只为 200 并发能力（口径已放宽不必）。对比 AWS 时代 ≈$300+/月。
 - **迁移影响清单（已按此执行）**：① Spaces 兼容 S3 API——`MEDIA_S3_ENDPOINT` ✅；② 媒体本地重传 ✅ 进行中；③ DB 本地 dev dump ✅；④ 代码 git bundle ✅ 进行中；⑤ TLS：DO LB $12/月免费证书 或 certbot $0——上 TLS 回滚 cookie 降级；⑥ ssh 别名/.env 接线 ✅。
+- **Spaces 媒体腿已提前接通（2026-11-24 晚，上传进行中即切换）+ 媒体迁移 ✅ 收官（2026-11-25 晨对账完成）**：服务器 `.env` 切 `MEDIA_BACKEND=s3` + endpoint/bucket/prefix/region + Spaces AWS_* 凭据（chmod 600）；nginx `/media/` 从本地 alias 切 **Spaces 反代 + proxy_cache**（`/var/cache/nginx/media` 10G，conf.d/joybuy-media-cache.conf），resolver=127.0.0.53（systemd-resolved，以 /etc/resolv.conf 实际为准）。**两个 nginx 坑（403 现场证据）**：① `proxy_pass https://$spaces/joybuy-media/;` 带变量时 URI 部分被 as-is 传递、**不追加请求路径** → 匿名列目录 → AccessDenied；必须 `rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;` + proxy_pass 不带 URI；② rewrite 曾漏 `media/` 段（桶 key=media/<relative_path>）→ 403；正确终态=`rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;`。验证：cms 键经代理 MISS 3684B→HIT 200；三个 derived 样本服务器侧 200（17ms 缓存命中）+ 本机 200；API sanity 200。**媒体迁移终态对账（2026-11-25 晨）**：主同步 exit 0 → 增量补传 8,540 个尾巴文件（与今晚爬虫导入并行吸收）→ 终版双侧清点**完全一致：本地 1,064,175 文件 / 91,599,685,570 字节 == Spaces 1,064,175 对象 / 91,599,685,570 字节，字节级零差**（含爬虫通宵新增）。**剩余必要动作：桶 Visibility 改 Public**（用户控制台一键）——服务器 Django put_object **不带 ACL**，应用侧新上传对象是 Private → 403；桶 Public 才能让其可见（sync 批量对象有 per-object public-read ACL 不受影响）。**运维常态化：爬虫持续导入新图 → 媒体 sync 需定期跑（建议每日一次 `bash var/do_migration_20261124/upload_media.sh`，凭据已填、断点安全；可复制为正式运维脚本或挂计划任务）**。本地→服务器 VPN 此间多次瞬断（000/SSH 断连），判服务器侧正常与否用"服务器侧 curl 地面真值"法，勿被本地噪音带偏。
 - **档位确认（2026-11-24 用户问「$48 2核8G160G 够吗」→ 已定案；追加 Regular4C vs Premium2C 吞吐对比）**：官方默认区页 $48 是 Basic Regular 8G/**4C**/160G，但**用户实际选的是 FRA1 法兰克福 Premium Intel 线——该区该线最高档只放出 2C/8G/160G NVMe/5T @ $48**（DO 各区域可售档位不一致，之前"不存在 2核档"的说法只对默认区成立）。**定论：可买、当前够用**——内存需求 ~4.5G/8G、盘 160G NVMe、2 个 Premium 核单核性能比 Regular 高 20-30%（≈2.5-3 Regular 核），峰值 7-10 req/s 扛得住、余量薄于 4C；买前可再瞄一眼 FRA1 的 Basic→Regular 标签有无 4C/8G $48（有则优先），无则直接买 Premium Intel 2C。**DO CPU/内存可在线 resize（盘只增不减）→ 先买 2C 后升配不是陷阱**。别选 General Purpose $63（8G/2 专用核）：只有 25G 盘，硬伤。**4C-慢核 vs 2C-快核的吞吐对比（实测数据推演）**：聚合吞吐 4C Regular ≈ 4.0 标准核 vs Premium 2C ≈ 2.5（1.6× 差）；但 **Nuxt SSR 单线程只吃 1 核 → Premium 快核直接受益，4C 多核对 SSR 无用**；每页导航 CPU ≈ 0.33 核·秒（SSR 100ms + 4×API 45ms）→ 日常峰值 1.67 页/s ≈ 0.55 核（两档 ~15-25% 占用都稳）；突发 5× → Premium 接近满、4C ~65%；200 并发（12 页/s ≈ 4 核）→ Premium 顶不住、4C 边际（=容量报告原话）。批量任务（爬虫导入重建文档）4C 快 ~60%。
 - **本地侧准备完成（2026-11-24，弃 AWS→DO 的执行前置；本任务只做本地，未动任何远端/未动 dev 容器写路径）**：
   - **代码支持 S3 兼容端点（DO Spaces）**：`backend/config/settings.py` 新增 `MEDIA_S3_ENDPOINT`（空=AWS 虚拟主机式，行为不变；非空=S3 兼容端点）；`backend/media/storage.py::get_s3_client` 端点非空时 `boto3.client(endpoint_url=..., Config(s3={"addressing_style": "path"}))`（DO Spaces 用 path style 最稳），懒加载单例沿用 `reset_s3_client` 供测试重置；`s3_public_url` 端点非空拼 `{endpoint}/{bucket}/{prefix}{path}`（path-style），views 302 回退零改动。**commit `3332e26`（信息英文一行），已推送 origin main**。
@@ -6905,3 +6968,113 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - `pnpm build:frontends`：通过，Nuxt 购物端与 Vite 平台端均完成生产构建。
 - `pnpm test:e2e`：最终串行复验通过，15/15 Chromium 浏览器测试全部通过；管理员测试已遍历五个管理页面的中文标题。
 - 浏览器日志中支付尝试接口的 HTTP 422 是既定的“当前地区暂不支持”业务占位语义，对应购物漏斗断言通过，不是本次失败。
+
+### 2026-11-24 购物端手机版设计拷问（Grill 会话，仅定方案未动代码）
+
+用户需求：为购物端增加手机版（宽度降到阈值自动切换，域名 m.localhost:3000），复刻 https://m.joybuy.co.uk/ 逐像素，楼层内容用我们自己的品类数据；首页右上角沿用 web 已实现的【申请店铺】入口。经四轮 AskUserQuestion 拷问，全部决定如下（详见 docs/adr/0001-mobile-site-host-based-dual-layout.md 与 CONTEXT.md）：
+
+1. **架构**：同一 Nuxt 应用双布局 + host 判定。SSR 按请求 host（m.localhost:3000）渲染手机版布局，桌面浏览器缩窗 ≤768px 客户端自动跳 m.（保留完整路径+query），拉宽自动跳回。不用纯响应式（不满足 m. 域名需求）、不建独立移动应用。
+2. **范围**：全站对齐 m.joybuy，分三期——第 1 期手机版壳（头部/底部/页脚切换链接/自动跳转逻辑）+ 首页逐像素复刻；第 2 期列表 /s、详情 /p、购物车 /cart、结算 /checkout；第 3 期自有页（账户、申请店铺、帮助/客服、商家落地页、minihome 等）按 m. 设计语言自行适配。
+3. **会话**：后端 cookie 全部未设 Domain（已核实 settings.py + accounts_buyers/accounts_staff），Chrome 拒收 localhost 带 Domain 属性 cookie → m. 站独立登录/独立语言记忆（默认英文），后端零改动。不做握手自动登录、不改 cookie 作用域。
+4. **首页数据**：复用桌面同一份 CMS 楼层数据按 m. 版式渲染，不建独立手机 CMS；m. 特有楼层（金刚区图标排等）由前端用现有 11 根类目数据自动生成。
+5. **申请店铺**：复用 AppHeader 现有三态逻辑（未登录→登录后回申请页；已批准卖家→切商家控制台；否则→/account/apply-shop），手机版头部右上角呈现，具体形态待实测 m.joybuy 头部后定。
+6. **切换规则**：阈值 ≤768px；页脚双向「电脑版/手机版」链接，手动选择写 localStorage 永久覆盖自动跳转直到手动改回；自动跳转必须留测试旁路（如 ?nomobile=1），e2e 窄视口快照不能被重定向干扰。
+7. **复刻精度**：逐像素复刻 m.joybuy.co.uk + 换我们的品类数据，工作流沿用桌面版 docs/12 的实测采样方法（内置浏览器逐元素量测）。
+
+已核实事实：m.localhost 在现代浏览器自动解析 127.0.0.1，Nuxt dev（--host 127.0.0.1 --port 3000）可直接接收该 host；现有 e2e foundation.spec 用 setViewportSize 设宽度，跳转逻辑上线前必须先旁路；storefront 现有 @media 仅 3 处（tokens.css），基本无响应式基础。
+
+下一步：第 1 期开工——先实测 m.joybuy.co.uk 首页/头部/底部（同桌面版流程出实测数据），再实现手机版壳与首页。本条为方案记录，未写任何验证结果（本轮未跑任何验证，纯设计会话）。
+
+### 2026-11-24（续）手机版方案两点修正（用户确认）
+
+1. **品类导航链路补漏**：顶部品类按钮入口在第 1 期手机版壳头部（形态按实测 m.joybuy 复刻）；第 2 期范围补上此前漏列的类目页 `/c/[slug]`，即第 2 期 = 列表 /s + 详情 /p + 类目页 /c/[slug] + 购物车 /cart + 结算 /checkout，保证「品类按钮→品类页→列表→详情」手机版全链路可用。
+2. **明确排除**：m.joybuy 顶部的 APP 下载 tab / Download Joybuy 入口，手机版不做（与桌面版通告条已去掉 Download Joybuy 的口径一致）。
+
+### 2026-11-24（续 2）手机版汉堡菜单方案（用户确认）
+
+手机版头部**左上角三条横杠**点开的菜单（抽屉/菜单页）也纳入第 1 期壳：
+- **结构与视觉**：按实测 m.joybuy 的汉堡菜单复刻（层级、分组、图标样式）。
+- **内容复用**：菜单各模块指向的内容复用当前 web 购物端已有页面/数据，不重做内容源。例如「隐私政策」等帮助/政策类目直接复用现有 `/help/[slug]` 内容页与文案数据；用户区块（登录/注册/订单/收藏等）复用现有账户路由与状态逻辑。
+- 原则：壳和导航照抄 joybuy 手机版，凡菜单项背后的实际内容一律接现有 web 资源。
+
+### 2026-11-24（续 3）第 1 期实测完成：m. 站 UI 规格产出
+
+实测方式：m. 站有风控门禁（risk605_login，无头/有头真实 Chrome 均被拦，未登录无法访问，未绕过风控）→ 改用 Wayback 2026-05-20 快照 + Playwright iPhone 13 仿真渲染量测。原始采集物在 `var/mjoybuy_survey_20261124/`（整页截图、分段截图、HTML、outline/floors/fixed JSON、各探测脚本）。规格文档：`docs/19-joybuy-mobile-ui-spec.md`（头部 147px 三段尺寸/字号/颜色、各楼层版式、榜单卡 146×250 横滚、品类 tab 16px 选中态、About 区 #F5F6FA、无底部 tab 栏等全量数据）。
+
+关键实测结论：
+- m. 首页楼层序：Welcome（三圆卖点+黑 CTA）→ Offers for you（横滚卡 248×267 r16）→ Category discovery（横滚大圆 95px）→ Bestsellers（子品类 tab + 榜单卡横滚 146×250 排名徽章左上/心形右上）→ JoyPlus（淡紫渐变+黑 CTA 358×44）→ Brands we love（圆 logo 横滚）→ Shop by look → Recommended（2 列网格）→ About Joybuy（#F5F6FA 保障区）→ 极简页脚（无 bottom tab、无大链接列）。
+- 头部：主行 56px（汉堡 24×28 + logo 88×24 + Ship-to 胶囊 78×28 + 账户/购物车 24×24）→ 搜索行 52px（胶囊 358×44 #F5F6FA）→ 品类 tab 行 39px（16px 文字，选中 700+黑下划线）。真站 Ship-to 位置按既定方案换【申请店铺】胶囊（三态复用 AppHeader）。
+- APP 下载条（73px）按用户决定排除；无底部 tab 栏，复刻时不加。
+
+阻塞项：**汉堡抽屉菜单内容无法从存档恢复**（MUI Drawer 按需渲染 + 风控拦实测）。用户已选「提供真站截图」：等用户用手机截「三条横杠点开后的抽屉」截图（主视图 + 滑到底 + 品类展开态若有）后按截图复刻；抽屉框架与跳转逻辑可先实现，内容映射待截图。
+
+下一步：实现手机版壳（任务 #4）——host 判定双布局 + 头部/搜索/品类 tab + 跳转逻辑（≤768px 双向、保留路径、localStorage 手动覆盖、?nomobile=1 旁路）+ 首页楼层复刻（任务 #5，按 docs/19 规格 + 桌面 CMS 数据）。本轮为实测采集，未改动业务代码，无需跑验证。
+
+### 2026-11-24（续 4）第 1 期手机版壳+首页实现完成（含品类落地页与抽屉截图补全）
+
+**实现清单（全部新增文件，未动任何桌面端组件样式）：**
+- `storefront/composables/useMobileView.js`：host 判定（useRequestURL，m. 前缀）、手动切换 switchView（localStorage `joybuy-view-mode` 永久优先）、`shouldAutoSwitch` 纯函数（≤768 阈值、override/bypass 规则）。
+- `storefront/middleware/mobile-host.global.js`：m. host 下 `to.meta.layout = 'mobile'`。⚠️ 坑：经典目录结构必须在 `storefront/middleware/`，放 `storefront/app/middleware/` 不生效（本会话踩过）。
+- `storefront/plugins/mobile-auto-switch.client.js`：resize 防抖 150ms 双向自动跳转（保留 path+query+hash）；`navigator.webdriver` 跳过（保护 e2e 375/390 视口）；`?mobile-auto=1` 显式验证钩子可覆盖 webdriver 保护；`?nomobile=1` 写 sessionStorage 整个 tab 旁路（参数会被清掉）。
+- `storefront/layouts/mobile.vue` + `components/mobile/`：MobileHeader（56px 主行：汉堡 24×28/logo 88×24/申请店铺胶囊三态/账户购物车 24×24；52px 搜索行 358×44 #F5F6FA；39px 品类 tab 行 16px 选中 700+黑下划线；/categories 页汉堡自动换 ← 返回）、MobileDrawer（320px 面板按真站截图复刻：用户区/分类→/categories/Joybuy 首页/57px 行列表/语言子视图/设置子视图（3 个仅 UI 开关+法律信息 5 政策链接→web /pages/[slug]+真实登出）；优惠券已去掉）、MobileFooter（电脑版切换+政策链接）、MobileCategories（品类落地页 #F5F6FA 底+为你推荐/全部分类 2 列白卡）、MobileBestsellers（横滚榜单卡 146×250+排名徽章+心形收藏接 useWishlist）、MobileHome（复用桌面 CMS `cms-home` 同一份 payload：Welcome→Offers 横滚→Discovery 圆→Bestsellers→JoyPlus 渐变→Brands→rich_text 尾注→Recommended 2 列（/recommendations 同接口）→About 灰带）。
+- `storefront/pages/index.vue`：isMobileHost 分支渲染 MobileHome（桌面分支逐字未动）；`pages/categories.vue` 新路由。
+- `locales/messages.js`：新增 mobile.* 键（en+zh）；`eslint.config.js` globals 增 defineNuxtPlugin/defineNuxtRouteMiddleware/useRequestURL/useMobileView；`tests/nuxt-imports-stub.js` 增 useRequestURL。
+
+**针对性验证结果（按验证纪律仅针对性验证）：**
+- vitest：34 文件 255/255 全过（新增 MobileDrawer 5 用例 + useMobileView 6 用例）。
+- eslint/prettier：全部改动文件通过。
+- 浏览器 SSR 核查：`m.localhost:3000/` 含 m-header__main/m-header__tabs/m-welcome__title；`localhost:3000/` 桌面分支 0 处手机标记。
+- Playwright 冒烟 `var/mobile_smoke_20261124/`：7/7 PASS（m. 首页渲染/抽屉开/品类页渲染/375px 自动跳 m./1280px 自动跳回/?nomobile=1 旁路/无页面错误）；截图 m_home.png/m_drawer.png/m_categories.png 目检：楼层序与规格一致、抽屉与真站截图结构一致（已修链接下划线问题：行内 NuxtLink 需 text-decoration:none）。
+
+**e2e 现状（未修复，非本任务范围）**：foundation/purchase-funnel 6 失败——(a) 视觉基线 4 个视口高度 4075→8698 翻倍：今日数据提交（0bfc049 补抓 143 商品、ed93a83 频道卡）后基线未重基线 + 旧 dev server 长期未重启的陈旧渲染，与手机版无关（桌面分支逐字未动、AppHeader 在途 diff 仅 2 行登出跳转）；(b) funnel 主流程找不到 "Wireless Earbuds Pro"；(c) foundation admin 404 测试找不到仪表盘。工作区另有**另一会话在途未提交的第三方登录改动**（backend/accounts_buyers oauth、AuthForm、useBuyerAuth、settings.py、迁移 0008 等），基线重跑/重基线需等该任务收尾后统一处理，本任务未动任何基线。
+
+**其他：** 已重启 Nuxt dev（原进程 40360 长期未重启，重启后新 middleware/plugin 生效；新起命令用 node_modules/.pnpm/@nuxt+cli@3.37.0_*/dist/dev/index.mjs --host 0.0.0.0，后台任务）。待办：消息页（客服/订单 tab）等用户截图；第 2 期列表/详情/购物车/结算。
+
+### 2026-11-24（续 5）e2e 6 个失败排查完毕并全部修复（10/10 两连过）
+
+逐项根因与修复（与手机版改动无关，全部是测试/基线陈旧或并行在途工作）：
+1. **视觉基线 ×4**（高度 4075→8698）：11-04 重基线后，11-20 上线「为你推荐」楼层（+~4000px）+ 头部改版 + 数据更新，基线过期。修复：`--update-snapshots` 重基线，并在测试里加全页预滚动（懒加载图片弹入曾导致 1280 视口"两次截图不稳定" flake）。已验证两次复跑稳定。
+2. **funnel 主流程**：种子商品 "Wireless Earbuds Pro" 只存在于后端单测 fixtures，dev 库被真实爬取数据替换后搜索命中不了。修复：测试改为动态取搜索第一个结果（`a.product-card__title-link`），商品名全程用变量；去掉固定 White 变体点击（默认 offer 直接绑定）；`/in stock/` 断言删除（需求 11.7 真站 PDP 无库存行，改断言 `.detail__price`）。
+3. **注册流程断裂**（排查中连带发现）：在途第三方登录批次把注册页改成邮箱+密码直注（无验证码），旧断言（Email address/Send code/Development mode）全失效；dev 水合会重置已填表单。修复：按新表单重写注册步骤（networkidle + 等 Create account 按钮 + 600ms 再填，4 次重试每轮新邮箱，成功等 URL 跳 /account）。
+4. **admin 404 测试**：A01「登录后进入第一个有权限的模块」上线后 auditor 落地「操作日志」（非仪表盘）。修复：断言改为 操作日志 heading（加 .first() 防严格模式双命中）。
+5. **Pay now 重试步骤**：订单列表/详情页已无支付入口（唯一 Pay now 在结算页），旧第 7 步等按钮 150s 超时。修复：移除该步，Pending payment 断言收尾（422 区域不支持语义已在结算 Pay now 时发生）。
+
+**验证记录（按验证纪律：本轮针对性验证 foundation+purchase-funnel 两个受影响 spec）**：
+- `playwright test foundation.spec purchase-funnel.spec --workers=1`：**10/10 通过，且连续两轮通过**（final_run4/final_run5，var/final_run*.log）。
+- prettier：改动测试文件已 --write 通过。
+- 备查：注册接口 POST /api/v1/auth/buyer/register/email 201 正常（var/debug_register.cjs 调试脚本）；数据库 auditor 账号 ACTIVE、迁移 0008 已应用。
+
+**遗留提示**：注册流程在 dev 模式下水合竞态明显（fill 前必须等按钮渲染），后续新 e2e 用例请沿用「goto networkidle + 等控件 + 600ms」的模式；首页视觉基线对 CMS 数据变化敏感（maxDiffPixelRatio 0.02），大促内容更新后需重基线。
+
+### 2026-11-25 手机版账号页 + 设置&隐私/语言页（用户 5 张截图对照实现）
+
+**实现：**
+- `pages/account/index.vue` 按 host 分支：m. 端渲染新组件 `MobileAccount`（桌面版式逐字未动）。结构照真站截图：用户卡 → 订单（待付款/待收货/售后三瓦片，接 /account/orders?tab= 与 /account/returns）→ 收藏（我的收藏/再次购买）→ 活动与奖励（仅「评价」→ /account/reviews）→ 获取帮助（24/7在线支持→/help/customer-service、反馈→/pages/contact-us）→ 更多（语言→/account/language、设置&隐私→/account/settings）→ About Joybuy 灰带。
+- 新页面：`/account/settings`（MobileAccountSettings：账户安全/消息通知/个性化设置/管理Cookies/法律信息 + 真实退出登录 MobileAccountSignOut）；`/account/settings/[key]`（开关类 = MobileSettingToggle，仅 UI 开关不接逻辑；legal = MobileLegalLinks 5 政策链接）；`/account/language`（MobileLanguage，语言列表当前项打勾，复用 useMarketLocale——注意 locales 字段是 name 不是 label）。
+- 子页共用 `MobilePageHeader`（返回 + 居中标题）。
+- 抽屉更新：语言/设置行改为跳转上述页面，抽屉内子视图（语言列表、设置开关）整体删除，脚本同步清理。
+- **按用户决定的排除项**：JoyPlus 试用横幅、优惠券行、活动与奖励只留评价、更多无国家/地区（标签改「语言」）。
+
+**验证（针对性）：** eslint/prettier 全过；vitest 33 文件 251/251（抽屉用例更新：语言/设置行断言跳转目标）；Playwright 冒烟 var/mobile_account_20261124/：账号页渲染/设置 5 行/开关子页/法律 5 链接/语言页 + 中英切换全过；m. 端注册后登录态截图 acct_zh_signed_in.png 目检：结构齐全、排除项（优惠券/JoyPlus/积分/邀请/国家地区）全部不存在。
+- 坑：useMarketLocale 的 availableLocales 字段是 name 不是 label（语言列表曾显示原始 code）；m. 站会话独立（ADR-0001），在 localhost 注册后 m. 端仍是未登录态——验证登录态视图必须在 m. 端注册。
+- 文案沿用 web 现有键（待收货/我的收藏等），未照抄真站「进行中/心愿单」，符合「内容复用 web」原则。
+
+**待办**：第 2 期（列表/详情/购物车/结算）；评价与问答子页若要只留评论 tab，等第 2/3 期处理 /account/reviews 页时一并做。
+
+### 2026-11-25（凌晨）第 2/3 期手机版完成：列表/详情/购物车/结算/账号子页（子 agent 逐页实现，4 commits）
+
+实测结论先行：Wayback 对 m. 站 /s（URL 索引截断）、/dp（存档即错误页）、/cart、/checkout（无存档）均不可用 → 按用户决策「实测优先，缺的自设」，全部页面按 m. 设计语言自设（docs/20 规格：390 基准、2 列商品卡、红价 #E1251B、57px 行、悬浮购买条等），数据/业务全部复用桌面实现（props+emits 模式，桌面模板逐字未动）。
+
+**4 个 commit（每个均独立验证后提交）：**
+- a46e428 列表：MobileListing + /c/[slug]、/s 分支（17 冒烟断言）
+- 655c2fb 详情：MobilePDP（画廊/变体/步进/悬浮购买条，加购落库验证，267/267 vitest；注意 selective staging——工作区另有在途 OAuth 未提交改动）
+- c8e604f 购物车+结算：MobileCart/MobileCheckout（含移动端注册→加购→结算→Pay now→My orders 全流程冒烟）
+- 3a6c822 账号子页：订单列表/详情/心愿单/地址簿/售后/评价（只评论 tab）/消息新页 /account/messages（抽屉消息行已指向它）；46 文件 292/292 vitest
+
+**整合终检（team-lead 复核）：** 全仓 vitest 44 文件 287/287；eslint mobile+pages 全绿；m. 端 7 关键路由（home/listing/cart/checkout/account/settings/messages）渲染断言全过、零页面错误。
+
+**顺手修复：** pages/account/favourites.vue 桌面 await 缺失（潜在未定义 data 崩溃）——p3 agent 发现并修复，已包含在其 commit。
+
+**已知边界：** PDP 画廊暂为圆点切换非手势滑动；checkout 自提/配送 tab 精简；消息页订单通知来自订单状态（占位语义，待第 4 期消息中心）；桌面 PDP e2e 快照未受影响（桌面分支未动）。工作区仍有另一会话在途 OAuth 未提交改动（backend/accounts_buyers、AuthForm 等），未触碰。
+
+**第 1/2/3 期全部完成。** 手机版已覆盖：首页/品类落地/列表/详情/购物车/结算/账号中心/设置&隐私/语言/账号七个子页/消息页。

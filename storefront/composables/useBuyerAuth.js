@@ -1,5 +1,12 @@
 import { computed } from 'vue'
-import { useAsyncData, useCookie, useRequestHeaders, useRuntimeConfig, useState } from '#imports'
+import {
+  useAsyncData,
+  useCookie,
+  useNuxtApp,
+  useRequestHeaders,
+  useRuntimeConfig,
+  useState,
+} from '#imports'
 
 // Buyer session state backed by WP-05 cookie sessions. SSR fetches Django
 // directly (forwarding cookies); the client uses the same-origin proxy.
@@ -17,6 +24,9 @@ const OAUTH_DATA_KEY = 'buyer-oauth-providers-data'
 
 export function useBuyerAuth() {
   const config = useRuntimeConfig()
+  // useAsyncData 的句柄挂在 nuxtApp 上（SSR 时每个请求一份），供 ensureSession()
+  // 从任何调用方 await 到「首个调用者」发起的那次请求。
+  const nuxtApp = useNuxtApp()
   const csrfCookie = useCookie('csrftoken')
   // 共享的会话数据（服务端 → payload → 客户端水合；客户端刷新时原地更新）。
   const session = useState(SESSION_DATA_KEY, () => null)
@@ -38,7 +48,7 @@ export function useBuyerAuth() {
 
   if (!started.value) {
     started.value = true
-    useAsyncData(
+    nuxtApp._joybuySessionAsyncData = useAsyncData(
       SESSION_KEY,
       async () => {
         const response = await $fetch(authUrl('/session'), {
@@ -53,6 +63,19 @@ export function useBuyerAuth() {
       },
       { dedupe: 'defer' },
     )
+  }
+
+  // 2026-11-25 缺陷修复（桌面 /account 被压成 480px 卡片）：会话是懒加载的，
+  // 谁先调用 useBuyerAuth 谁发起请求，但没人 await 它 → Nuxt 可能在 /session
+  // 返回前就把首帧渲染成「未登录」（header 出 Sign in、/account 走 v-else 的
+  // .profile-signed-out），而 payload 里已是已登录 → hydration mismatch，
+  // 客户端把登录态内容补进 SSR 留下的 .profile-signed-out 卡片里。
+  // ensureSession() 只 await 已经发起过的那次请求（不会新增请求），供 SSR 侧
+  // 需要在首帧按登录态分支渲染的入口（plugins/buyer-session.server.js）使用。
+  async function ensureSession() {
+    const pending = nuxtApp._joybuySessionAsyncData
+    if (pending) await pending
+    return session.value
   }
 
   // 三方登录渠道按需拉取（登录页在 SSR 阶段 await 它，避免首屏没按钮、水合后
@@ -163,6 +186,7 @@ export function useBuyerAuth() {
     purchaseWhitelisted,
     oauthProviders,
     loadOAuthProviders,
+    ensureSession,
     refresh,
     sendVerificationCode,
     register,
