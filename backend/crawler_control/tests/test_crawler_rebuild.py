@@ -79,6 +79,66 @@ class TreeSyncTests(CrawlerControlTestBase):
         self.assertEqual(len(payload["categories"]), 1)
         self.assertEqual(payload["categories"][0]["children"][0]["source_id"], "cid2:1416")
 
+    def test_prune_food_nodes_hides_food_pickers(self):
+        """2026-11-25 食品撤出商城：选择器 payload 剔除食品节点与整棵食品频道。"""
+        from crawler_control.tree_sync import (
+            MenuNode,
+            latest_published_tree,
+            prune_food_nodes,
+            sync_category_tree,
+            tree_to_payload,
+        )
+
+        catalog = self._catalog()
+        sync_category_tree(
+            catalog,
+            [
+                # Joymart：全部子节点都是食品 → 整棵频道隐藏
+                MenuNode(
+                    "Joymart",
+                    "minihome:UK-Mini-HP-Joymart",
+                    children=[MenuNode("Chocolate & Sweets", "l2:1277")],
+                ),
+                # 家居生活：食品子节点剔除，非食品保留
+                MenuNode(
+                    "Home & Living",
+                    "minihome:UK-Mini-HP-Home-Living",
+                    children=[
+                        MenuNode("Wine", "l2:1329"),
+                        MenuNode("Kitchen & Dining", "l2:1572"),
+                    ],
+                ),
+                # 本来就没有子节点的频道：保留
+                MenuNode("Bare Channel", "minihome:UK-Mini-HP-Bare"),
+            ],
+            publish=True,
+        )
+        latest = latest_published_tree(catalog)
+        payload = prune_food_nodes(tree_to_payload(latest))
+
+        sources = [root["source_id"] for root in payload["categories"]]
+        self.assertNotIn("minihome:UK-Mini-HP-Joymart", sources)
+        self.assertIn("minihome:UK-Mini-HP-Home-Living", sources)
+        self.assertIn("minihome:UK-Mini-HP-Bare", sources)
+        living = next(
+            root
+            for root in payload["categories"]
+            if root["source_id"] == "minihome:UK-Mini-HP-Home-Living"
+        )
+        child_ids = [child["source_id"] for child in living["children"]]
+        self.assertNotIn("l2:1329", child_ids)
+        self.assertIn("l2:1572", child_ids)
+        # 冻结版本本身不被改动：原始 payload 仍含食品节点
+        raw = tree_to_payload(latest)
+        self.assertIn(
+            "l2:1329",
+            [
+                child["source_id"]
+                for root in raw["categories"]
+                for child in root.get("children", [])
+            ],
+        )
+
     def test_sync_reports_removed_ids_against_previous_version(self):
         from crawler_control.tree_sync import MenuNode, sync_category_tree
 
@@ -1066,6 +1126,38 @@ class SkipImportedProductsTests(CrawlerControlTestBase):
         self.assertEqual(len(requests), 2)
         self.assertEqual(spider.targets[0]["collected"], 2)
 
+    def test_skips_variant_source_ids_already_bound_as_sku(self):
+        """变体页（SKU 身份已绑在父 SPU 上）也要跳过，否则必然 IMPORT_SOURCE_CONFLICT。
+
+        2026-11-25 试水：列表把同一沙发的不同尺寸变体当独立商品卡片，
+        父商品导入后这些变体页各自再建 SPU → 8/50 冲突失败。
+        """
+        from catalog.product_services import (
+            get_or_create_sku_from_source,
+            get_or_create_spu_from_source,
+        )
+        from crawler_control.models import CrawlRunEvent
+
+        spu, _ = get_or_create_spu_from_source(
+            source_system="joybuy", source_id="104001", title="Parent sofa"
+        )
+        get_or_create_sku_from_source(
+            spu=spu,
+            source_system="joybuy",
+            source_id="104002",
+            specification={"Size": "King"},
+            skip_attribute_validation=True,
+        )
+        spider, run = self._spider(skip=True)
+
+        requests = list(spider.parse_listing(self._response(spider)))
+
+        # 两个卡片都被跳过（一个 SPU 身份、一个 SKU 身份），无详情请求。
+        self.assertEqual(requests, [])
+        self.assertIn("104002", spider.seen_product_ids)
+        event = CrawlRunEvent.objects.get(run=run, code="PRODUCTS_SKIPPED_IMPORTED")
+        self.assertIn("跳过 2 个", event.message)
+
     def test_skip_flag_is_frozen_into_run_snapshot(self):
         job = self.make_job(name="Snapshot job", product_limit=5, skip_imported_products=True)
         run = start_run(job)
@@ -1257,6 +1349,179 @@ class PaginationTwoPageRelayTests(CrawlerControlTestBase):
         fetched = CrawlRunEvent.objects.filter(run=run, code="LISTING_FETCHED")
         self.assertEqual(fetched.count(), 2)
         self.assertFalse(CrawlRunEvent.objects.filter(run=run, code="LISTING_SHORTFALL").exists())
+
+
+class TargetImportedFieldTests(CrawlerControlTestBase):
+    """目标入库数字段（2026-11-25）：任务字段 + 参数快照 + 校验。"""
+
+    def test_target_stored_and_frozen_into_run_snapshot(self):
+        job = self.make_job(name="Target job", product_limit=200, target_imported_count=50)
+        self.assertEqual(job.target_imported_count, 50)
+
+        run = start_run(job)
+
+        self.assertEqual(run.params_snapshot["target_imported_count"], 50)
+
+    def test_null_target_keeps_legacy_snapshot(self):
+        job = self.make_job(name="Legacy job", product_limit=5)
+        self.assertIsNone(job.target_imported_count)
+
+        run = start_run(job)
+
+        self.assertIsNone(run.params_snapshot["target_imported_count"])
+
+    def test_invalid_target_rejected(self):
+        from crawler_control.services import CrawlJobParamsInvalid
+
+        for bad in (0, -1, True, "50"):
+            with self.subTest(value=bad):
+                with self.assertRaises(CrawlJobParamsInvalid):
+                    create_crawl_job(
+                        name="Bad target",
+                        market=self.market,
+                        source_catalog=self.catalog,
+                        source_category=self.l2,
+                        product_limit=10,
+                        target_imported_count=bad,
+                    )
+
+
+@unittest.skipUnless(SCRAPY_AVAILABLE, "scrapy is not installed")
+class TargetImportedPaginationTests(CrawlerControlTestBase):
+    """目标入库模式（2026-11-25）：翻页看数据库里的 succeeded_count。
+
+    旧行为按「入队候选数」停翻页（入队 50 但实际只入库 30）；目标模式下必须
+    继续翻页直到 run.succeeded_count 达到 target_imported_count。
+    """
+
+    CARD = (
+        '<div class="style_UK_product_card__x"><div class="style_UK_content_wrapper">'
+        '<a class="style_UK_image_wrapper" href="/dp/k/{pid}">'
+        '<img alt="K" src="//images4.joy-sourcing.com/k.webp"/></a>'
+        '<div class="style_title__x">K {pid}</div></div></div>'
+    )
+
+    def _spider(self, *, target, product_limit=200, allow_pagination=True):
+        from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+
+        run = start_run(
+            self.make_job(
+                name=f"Target job {target}",
+                product_limit=product_limit,
+                target_imported_count=target,
+                allow_pagination=allow_pagination,
+            )
+        )
+        return JoybuyRunSpider(run_public_id=str(run.public_id)), run
+
+    def _listing(self, start_id, count):
+        return "".join(self.CARD.replace("{pid}", str(start_id + i)) for i in range(count))
+
+    def _response(self, spider, page, html):
+        import types
+
+        return types.SimpleNamespace(
+            url=f"https://www.joybuy.co.uk/s?k=Kettles&page={page}",
+            status=200,
+            body=html.encode("utf-8"),
+            text=html,
+            meta={"target": spider.targets[0], "page": page, "download_latency": 1.0},
+        )
+
+    def _set_succeeded(self, run, value, failed=0):
+        # 直接写库，模拟 pipeline 已经把 N 个商品导入成功（spider 必须重新读库）。
+        CrawlRun.objects.filter(pk=run.pk).update(succeeded_count=value, failed_count=failed)
+
+    def test_keeps_paginating_while_imported_below_target(self):
+        """目标 5、第一页 10 个候选、只入库 2 个 → 必须继续请求 page=2。"""
+        spider, run = self._spider(target=5)
+        self._set_succeeded(run, 2)
+
+        requests = list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 10))))
+
+        detail = [r for r in requests if "/dp/" in r.url]
+        next_page = [r for r in requests if "page=2" in r.url]
+        # 只补缺口（5-2=3），不是把整页 10 个都拿去抓；仍继续翻页。
+        self.assertEqual(len(detail), 3)
+        self.assertEqual(len(next_page), 1)
+        self.assertFalse(CrawlRunEvent.objects.filter(run=run, code="LISTING_SHORTFALL").exists())
+
+    def test_throttles_enqueue_by_gap_instead_of_burning_budget(self):
+        """在途已够缺口时本页不入队，但仍继续翻页等入库结果。"""
+        spider, run = self._spider(target=5)
+        self._set_succeeded(run, 0)
+
+        page1 = list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 10))))
+        self.assertEqual(len([r for r in page1 if "/dp/" in r.url]), 5)  # 只补 5 个
+        self.assertEqual(spider.targets[0]["collected"], 5)
+
+        # 模拟这 5 个都还在途（未入库/未失败）→ 缺口 0，不应再入队，但翻页照旧。
+        page2 = list(spider.parse_listing(self._response(spider, 2, self._listing(104101, 10))))
+        self.assertEqual([r for r in page2 if "/dp/" in r.url], [])
+        self.assertTrue(any("page=3" in r.url for r in page2))
+        self.assertEqual(spider.targets[0]["collected"], 5)
+
+    def test_failure_frees_room_and_keeps_filling(self):
+        """在途里有失败（已处理）时，缺口重新出现，可以继续入队补足。"""
+        spider, run = self._spider(target=5)
+        self._set_succeeded(run, 0)
+        list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 5))))
+        # 2 个成功、3 个失败 → pending 0，缺口 3。
+        self._set_succeeded(run, 2, failed=3)
+        page2 = list(spider.parse_listing(self._response(spider, 2, self._listing(104101, 10))))
+        self.assertEqual(len([r for r in page2 if "/dp/" in r.url]), 3)
+
+    def test_stops_at_target_without_requesting_next_page(self):
+        """目标 3、已入库 3 个 → 停止翻页、也不再入队新候选。"""
+        spider, run = self._spider(target=3)
+        self._set_succeeded(run, 3)
+
+        requests = list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 10))))
+
+        self.assertEqual(requests, [])
+        self.assertFalse(CrawlRunEvent.objects.filter(run=run, code="LISTING_SHORTFALL").exists())
+
+    def test_shortfall_reports_target_actual_and_gap(self):
+        """翻页结束时未达标：shortfall 文案含目标/实际/缺口。"""
+        spider, run = self._spider(target=5)
+        spider._max_listing_pages = lambda: 1  # 只能抓第一页
+        self._set_succeeded(run, 2)
+
+        list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 10))))
+
+        event = CrawlRunEvent.objects.get(run=run, code="LISTING_SHORTFALL")
+        self.assertIn("目标 5 个", event.message)
+        self.assertIn("实际入库 2 个", event.message)
+        self.assertIn("差 3 个", event.message)
+
+    def test_enqueue_budget_is_four_times_target_but_not_below_product_limit(self):
+        spider, _run = self._spider(target=50, product_limit=200)
+        self.assertEqual(spider.enqueue_cap, 200)
+        self.assertEqual(spider.targets[0]["limit"], 200)
+        self.assertEqual(spider.targets[0]["target_imported"], 50)
+
+        small, _run2 = self._spider(target=5, product_limit=2)
+        self.assertEqual(small.enqueue_cap, 20)  # max(2, 5*4)
+
+    def test_null_target_keeps_legacy_enqueue_based_pagination(self):
+        """回归：target 为空时行为与旧版完全一致（按入队数停，不看入库数）。"""
+        from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+
+        run = start_run(self.make_job(name="No target", product_limit=3, allow_pagination=True))
+        self._set_succeeded(run, 99)  # 入库数再大也不影响旧逻辑
+        spider = JoybuyRunSpider(run_public_id=str(run.public_id))
+
+        self.assertIsNone(spider.target_imported)
+        self.assertEqual(spider.enqueue_cap, 3)
+        self.assertIsNone(spider.targets[0]["target_imported"])
+
+        page1 = list(spider.parse_listing(self._response(spider, 1, self._listing(104001, 2))))
+        self.assertTrue(any("page=2" in r.url for r in page1))
+
+        page2 = list(spider.parse_listing(self._response(spider, 2, self._listing(104091, 2))))
+        # limit=3：第二页只入队 1 个，然后停止翻页。
+        self.assertEqual(len([r for r in page2 if "/dp/" in r.url]), 1)
+        self.assertFalse(any("page=3" in r.url for r in page2))
 
 
 class ListingEntryFallbackTests(TestCase):

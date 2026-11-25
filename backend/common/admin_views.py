@@ -37,6 +37,19 @@ def _as_bool(value) -> bool:
     return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
 
 
+def _as_optional_int(value):
+    """可空整数解析：空串/None -> None；非法值抛 ValueError 交给调用方报 400。"""
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("expected an integer")
+    text = str(value).strip()
+    if not text:
+        return None
+    return int(text)
+
+
 def _spawn_run_executor(run) -> None:
     """Launch the crawl executor for a run in a detached subprocess.
 
@@ -661,7 +674,11 @@ class AdminCrawlerSourceTreeView(StaffCsrfAPIView):
 
     def get(self, request):
         from catalog.models import SourceCatalog
-        from crawler_control.tree_sync import latest_published_tree, tree_to_payload
+        from crawler_control.tree_sync import (
+            latest_published_tree,
+            prune_food_nodes,
+            tree_to_payload,
+        )
 
         catalog = SourceCatalog.objects.filter(source_system="joybuy_uk").first()
         if catalog is None:
@@ -669,7 +686,9 @@ class AdminCrawlerSourceTreeView(StaffCsrfAPIView):
         tree_version = latest_published_tree(catalog)
         if tree_version is None:
             return Response({"version": None, "categories": []})
-        payload = tree_to_payload(tree_version)
+        # 2026-11-25：食品节点不再可勾选（商城已下架全部食品商品并撤出导航），
+        # 子节点被剔空的食品频道（Joymart / World-Foods）整棵隐藏。
+        payload = prune_food_nodes(tree_to_payload(tree_version))
         return Response({"version": payload["version_key"], **payload})
 
 
@@ -722,6 +741,7 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
                     "sync_mode": job.sync_mode,
                     "skip_imported_products": job.skip_imported_products,
                     "allow_pagination": job.allow_pagination,
+                    "target_imported_count": job.target_imported_count,
                     "review_target": job.review_target,
                     "account_group": job.account_group,
                     "account_label": job.account.label if job.account else "",
@@ -746,6 +766,77 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
 
         name = request.data.get("name")
         product_limit = request.data.get("product_limit")
+
+        # 页面采集任务（2026-11-25）：活动页/店铺页走独立分支——参数是页面 URL
+        # 清单，不进品类树。job_kind=PAGE_SET 或不传类目、只传 page_urls 时命中。
+        page_urls = request.data.get("page_urls") or []
+        job_kind = str(request.data.get("job_kind") or "").strip().upper()
+        if job_kind == "PAGE_SET" or (page_urls and not (request.data.get("source_ids"))):
+            if not name or not page_urls:
+                raise StaffApiError(
+                    business_code="PARAMS_MISSING",
+                    message="页面采集任务需要 name 与 page_urls。",
+                    status_code=400,
+                )
+            from catalog.models import SourceCatalog
+            from crawler_control.services import create_page_crawl_job
+
+            market = Market.objects.filter(code="GB", is_active=True).first()
+            catalog = SourceCatalog.objects.filter(source_system="joybuy_uk").first()
+            if market is None or catalog is None:
+                raise StaffApiError(
+                    business_code="MARKET_UNAVAILABLE",
+                    message="商城市场或来源目录未初始化。",
+                    status_code=503,
+                )
+            account = None
+            account_public_id = request.data.get("account_public_id")
+            if account_public_id:
+                account = CrawlerAccount.objects.filter(public_id=str(account_public_id)).first()
+                if account is None:
+                    raise StaffApiError(
+                        business_code="ACCOUNT_NOT_FOUND",
+                        message="指定的爬虫账号不存在。",
+                        status_code=404,
+                    )
+            try:
+                job = create_page_crawl_job(
+                    name=str(name),
+                    market=market,
+                    source_catalog=catalog,
+                    page_urls=page_urls,
+                    product_limit=int(product_limit) if product_limit else None,
+                    account_group=str(
+                        request.data.get("account_group")
+                        or (account.account_group if account else "default")
+                    ),
+                    account=account,
+                    created_by=request.staff_account,
+                )
+                mark_job_ready(job)
+            except Exception as exc:  # noqa: BLE001
+                raise StaffApiError(
+                    business_code="JOB_INVALID", message=str(exc), status_code=400
+                ) from exc
+            record_audit(
+                request=request,
+                actor=request.staff_account,
+                action="admin.crawljob.create",
+                target_type="crawler_control.CrawlJob",
+                target_id=str(job.public_id),
+                reason=str(request.data.get("reason") or "Created from admin"),
+                before_state={},
+                after_state={
+                    "status": job.status,
+                    "name": job.name,
+                    "job_kind": job.job_kind,
+                    "page_urls": [entry["url"] for entry in (job.page_urls or [])],
+                },
+            )
+            return Response(
+                {"public_id": str(job.public_id), "status": job.status}, status=201
+            )
+
         # 类目身份 = source_id（l2:1405 / minihome:...）；category_public_ids
         # 是旧字段名，值同样是 source_id（SourceCategory 无 public_id 列）。
         category_ids = (
@@ -850,6 +941,8 @@ class AdminCrawlJobsView(StaffCsrfAPIView):
                 source_catalog=selections[0]["category"].catalog,
                 source_categories=selections,
                 product_limit=int(product_limit),
+                # 目标入库数（2026-11-25）：可选；为空保持旧的「按入队候选数」行为。
+                target_imported_count=_as_optional_int(request.data.get("target_imported_count")),
                 listing_sort=request.data.get("listing_sort", CrawlJob.ListingSort.SOURCE_DEFAULT),
                 sync_mode=request.data.get("sync_mode", CrawlJob.SyncMode.INCREMENTAL),
                 # 布尔值严格解析：字符串 "false" 不能被 bool() 当成 True。
@@ -947,6 +1040,7 @@ class AdminCrawlJobDetailView(StaffCsrfAPIView):
                 "name": job.name,
                 "status": job.status,
                 "product_limit": job.product_limit,
+                "target_imported_count": job.target_imported_count,
                 "sync_mode": job.sync_mode,
                 "skip_imported_products": job.skip_imported_products,
                 "allow_pagination": job.allow_pagination,

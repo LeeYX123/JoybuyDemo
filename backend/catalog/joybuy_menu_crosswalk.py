@@ -10,8 +10,13 @@
   Joybuy 英文原文）；同一父类目下跨频道 union 出现的重名二级按
   ``NAME_OVERRIDES`` 消歧（如游戏频道的「显示器」→「游戏显示器」）。
 * **按二级拆分**：计算机硬件从「电子产品」拆到「计算机与配件」；个护家清
-  里个人护理归「美妆个人护理」、清洁归「家居生活」；食品归「食品杂货」
-  （即 home-living 一级）；汽车类不映射；大家电仍归「小家电」。
+  里个人护理归「美妆个人护理」、清洁归「家居生活」；汽车类不映射；大家电
+  仍归「小家电」。
+* **食品不进商城（2026-11-25，推翻 2026-11-11「食品归 home-living」口径）**：
+  Joymart（超市）/ World-Foods（世界美食）两个频道整体不映射，家居生活频道
+  自己的食品/酒水/烟草/冷冻节点也进 ``NODE_UNMAPPED``——食品一律不建/不激活
+  本地二级（历史已建的食品类目移入隐藏的「世界食品」一级、商品下架，由
+  2026-11-25 数据脚本处理）。
 * **只建两级**：Joybuy 菜单里偶发的 ``l3:*`` 节点在这里一律拍平成本地二级。
 * **退役**：被拆开的旧桶 slug 与 6 个不在 Joybuy 菜单里的基座二级
   （``RETIRED_LOCAL_SLUGS``）由同步命令在**无商品/无子类目/无商品类目/
@@ -24,6 +29,10 @@
 import re
 
 #: 频道 → 本地一级；None = 该类目暂不进入我们的 11 个一级。
+#: 2026-11-25：食品从家居生活撤出（用户口径：前期划分把食品混进了家居生活）。
+#: Joymart（超市）与 World-Foods（世界美食）两个频道整体不再映射——它们的
+#: 节点全是食品，改挂到任何 11 个一级都不对；future sync 不再创建/激活它们，
+#: 已隐藏的食品类目也不会被重新置回 ACTIVE。
 CHANNEL_PARENT = {
     "minihome:UK-Mini-HP-Home-Appliances": "small-home-appliances",
     "minihome:UK-Mini-HP-Electronics": "electronics",
@@ -31,14 +40,14 @@ CHANNEL_PARENT = {
     "minihome:UK-Mini-HP-TV": "electronics",
     "minihome:UK-Mini-HP-Beauty": "beauty-personal-care",
     "minihome:UK-Mini-HP-Gaming": "games-accessories",
-    "minihome:UK-Mini-HP-Joymart": "home-living",
+    "minihome:UK-Mini-HP-Joymart": None,
     "minihome:UK-Mini-HP-Home-Living": "home-living",
     "minihome:uk-mini-hp-everyday-essentials": "beauty-personal-care",
     "minihome:UK-Mini-HP-Toys-Baby-and-Kids": "baby-toddler",
     "minihome:uk-minihp-clothing-footwear-acc-": "clothing-accessories",
     "minihome:UK-Mini-HP-Health-and-Wellness": "health-wellness",
     "minihome:UK-Mini-HP-Automotive": None,
-    "minihome:UK-Mini-HP-World-Foods": "home-living",
+    "minihome:UK-Mini-HP-World-Foods": None,
 }
 
 #: 跨频道归属覆盖（按二级拆分）。
@@ -81,6 +90,73 @@ NODE_PARENT = {
     "l2:2621": "computers-accessories",  # 办公电子产品（计算机与配件分组）
 }
 
+#: 2026-11-25 食品撤出家（家居）生活：48 个食品/酒水/烟草/冷冻源节点。
+#: 语义：
+#: ① 本地不再映射（并入上面的 ``NODE_UNMAPPED``）：future sync 不会把它们
+#:    重新建类目/置回 ACTIVE/挂回家居生活——历史食品二级已移入隐藏的
+#:    「世界食品」一级（slug world-foods，status HIDDEN），商品已下架；
+#: ② 管理后台爬虫任务的品类树选择器（AdminCrawlerSourceTreeView）同样按
+#:    本集合过滤：食品节点不再可勾选，子节点被清空的食品频道
+#:    （Joymart / World-Foods）整棵隐藏。
+FOOD_SOURCE_IDS = frozenset({
+    # ① Joymart（超市）16 节点（巧克力糖果/零食坚果/酒水饮料/罐头调料/米面等）
+    "l2:1277",  # 巧克力与糖果
+    "l2:1285",  # 薯片、零食与坚果
+    "l2:1329",  # 葡萄酒
+    "l2:1302",  # 碳酸饮料
+    "l2:1300",  # 能量、运动与健康饮品
+    "l2:1312",  # 瓶装水
+    "l2:1338",  # 茶、咖啡与热饮
+    "l2:1315",  # 啤酒
+    "l2:1325",  # 烈酒
+    "l2:1317",  # 果酒
+    "l2:1297",  # 罐头食品
+    "l2:1295",  # 酱料、调味品与沙拉酱
+    "l2:1275",  # 早餐麦片
+    "l2:1278",  # 烹饪调料
+    "l2:1276",  # 饼干
+    "l2:1293",  # 米面杂粮
+    # ② World-Foods（世界美食）8 节点（韩/日/泰东南亚/印南亚/非加勒比/国际/
+    #    世界烈酒/中国食品）
+    "l2:1549",  # 韩国食品
+    "l2:1547",  # 日本食品
+    "l2:1557",  # 泰国及东南亚食品
+    "l2:1551",  # 印度及南亚食品
+    "l2:1555",  # 非洲 & 加勒比地区食品
+    "l2:2758",  # 国际风味
+    "l2:3983",  # 世界烈酒
+    "l2:1545",  # 中国食品
+    # ③ 家居生活频道的食品饮料烟草 15 节点（饼干脆面包/烘焙糖类/果酱/快手菜/
+    #    儿童午餐/浓缩果汁/预调鸡尾酒/低醇/汤力水/烟草/电子烟/烟草替代品/
+    #    冰鲜世界美食/高端烈酒/冷冻派对食品）
+    "l2:1280",  # 饼干与脆面包
+    "l2:1287",  # 家庭烘焙与糖
+    "l2:1289",  # 果酱与涂抹酱
+    "l2:1291",  # 快手菜套装
+    "l2:1306",  # 儿童与午餐盒
+    "l2:1310",  # 浓缩果汁
+    "l2:1319",  # 鸡尾酒与预调酒
+    "l2:1321",  # 低醇与无酒精
+    "l2:1327",  # 汤力水与调酒饮料
+    "l2:1538",  # 烟草
+    "l2:1539",  # 电子烟
+    "l2:1540",  # 烟草替代品
+    "l2:1559",  # 冷冻世界美食
+    "l2:3669",  # 高端烈酒
+    "l2:4376",  # 冷冻派对食品
+    # ④ 冷冻食品 9 节点（冷冻即食餐/甜品/披萨蒜香面包/冰淇淋/薯条/素食/
+    #    蔬果/海鲜/肉类禽类）
+    "l2:1505",  # 冷冻即食餐
+    "l2:1506",  # 冷冻甜点
+    "l2:1507",  # 冷冻披萨与蒜香面包
+    "l2:1508",  # 冰淇淋与冰块
+    "l2:1510",  # 冷冻薯条与薯类
+    "l2:1511",  # 冷冻素食
+    "l2:1512",  # 冷冻蔬果与香草
+    "l2:1513",  # 冷冻鱼类与海鲜
+    "l2:1514",  # 冷冻肉类与禽类
+})
+
 #: 不映射的节点：
 #: ①汽车相关——我们的 11 个一级里没有对应类目；
 #: ②2026-11-11 全频道对齐时发现的「Joybuy 深层节点」：它们在源树里仍存在
@@ -109,7 +185,7 @@ NODE_UNMAPPED = {
     "l3:1531",  # 厨房用纸（现网并入同上）
     "l3:1523",  # 虫害防治
     "l3:3121",  # 浇水和园艺工具（现网有「花园」区块）
-}
+} | FOOD_SOURCE_IDS
 
 #: 「活动商品」不是类目，是 Spu.is_activity 标记（见 catalog.models.Spu 注释）。
 #: 节庆装饰品不建本地二级；抓取/导入时直接标成活动商品。

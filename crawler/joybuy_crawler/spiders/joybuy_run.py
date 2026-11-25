@@ -100,6 +100,10 @@ def _fill_from_listing_entry(product, entry: dict) -> list[str]:
 class JoybuyRunSpider(scrapy.Spider):
     name = "joybuy_run"
 
+    #: 目标入库模式（target_imported_count）下的入队预算倍数：为了真正入库 N 个，
+    #: 允许最多入队 N*4 个候选详情页（详情解析/导入可能失败），防止无限翻页。
+    TARGET_ENQUEUE_FACTOR = 4
+
     def __init__(self, run_public_id: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.crawl_run_public_id = run_public_id
@@ -112,6 +116,16 @@ class JoybuyRunSpider(scrapy.Spider):
         self.product_limit = int(
             snapshot.get("product_limit") or self.job.product_limit
         )
+        # 目标入库数（2026-11-25）：有值时按 run.succeeded_count 翻页，而不是按
+        # 入队候选数；为空时保持旧的 product_limit 行为。
+        self.target_imported = self._resolve_target_imported(snapshot)
+        # 入队安全上限：目标模式下至少留 4 倍余量（详情页/导入会失败），
+        # product_limit 仍是绝对下限，避免小 limit 卡死达不到目标。
+        self.enqueue_cap = self.product_limit
+        if self.target_imported:
+            self.enqueue_cap = max(
+                self.product_limit, self.target_imported * self.TARGET_ENQUEUE_FACTOR
+            )
         self.targets = self._build_targets(snapshot)
         self.seen_product_ids: set[str] = set()
         self.fatal_error: str = ""
@@ -136,6 +150,42 @@ class JoybuyRunSpider(scrapy.Spider):
         self.last_listing_error = ""
 
     # -- planning -----------------------------------------------------------
+
+    def _resolve_target_imported(self, snapshot: dict) -> int | None:
+        """目标入库数：参数快照优先，其次任务字段；空/非法一律视为未开启。"""
+
+        raw = snapshot.get("target_imported_count")
+        if raw is None:
+            raw = getattr(self.job, "target_imported_count", None)
+        if raw in (None, ""):
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            logger.warning("忽略非法的 target_imported_count=%r", raw)
+            return None
+        return value if value > 0 else None
+
+    def _progress_counts(self) -> tuple[int, int]:
+        """从 DB 重新读取本轮（已入库, 已失败）计数（pipeline 逐商品更新）。"""
+
+        row = (
+            CrawlRun.objects.filter(pk=self.run.pk)
+            .values_list("succeeded_count", "failed_count")
+            .first()
+        )
+        if not row:
+            return 0, 0
+        return int(row[0] or 0), int(row[1] or 0)
+
+    def _succeeded_count(self) -> int:
+        return self._progress_counts()[0]
+
+    def _target_reached(self) -> bool:
+        return (
+            bool(self.target_imported)
+            and self._succeeded_count() >= self.target_imported
+        )
 
     def _build_targets(self, snapshot: dict) -> list[dict]:
         """One listing target per frozen category selection.
@@ -188,8 +238,9 @@ class JoybuyRunSpider(scrapy.Spider):
                     "source_url": safe_url,
                     "pagination_base": pagination_base,
                     "include_descendants": include_descendants,
-                    "limit": self.product_limit,
+                    "limit": self.enqueue_cap,
                     "collected": 0,
+                    "target_imported": self.target_imported,
                 }
             )
         return targets
@@ -197,23 +248,35 @@ class JoybuyRunSpider(scrapy.Spider):
     # -- crawling -----------------------------------------------------------
 
     def _imported_source_ids(self, source_ids: list[str]) -> set[str]:
-        """返回其中已入库（存在 ``SpuSourceIdentity``）的 source_id 集合。
+        """返回其中已入库的 source_id 集合（SPU 身份 **或** SKU 身份）。
 
         仅用于「跳过已入库」开关；一次 IN 查询，不逐个查库。
+
+        2026-11-25：必须同时看 ``SkuSourceIdentity``。Joybuy 列表会把同一商品的
+        各个变体当成独立商品卡片（每个变体有自己的 product id），而导入父商品时
+        已经把全部变体 SKU 身份绑到父 SPU 上；只查 SPU 身份会让这些变体页被当成
+        新商品入队，详情页抓完再撞 ``IMPORT_SOURCE_CONFLICT``（试水 50 个里 8 个，
+        全是这种情况）。
         """
 
-        from catalog.models import SpuSourceIdentity
+        from catalog.models import SkuSourceIdentity, SpuSourceIdentity
 
         if not source_ids:
             return set()
         system = str(self.job.source_catalog.source_system or "").strip().casefold()
         if not system:
             return set()
-        return set(
+        imported = set(
             SpuSourceIdentity.objects.filter(
                 source_system=system, source_id__in=source_ids
             ).values_list("source_id", flat=True)
         )
+        imported |= set(
+            SkuSourceIdentity.objects.filter(
+                source_system=system, source_id__in=source_ids
+            ).values_list("source_id", flat=True)
+        )
+        return imported
 
     @staticmethod
     def _robots_safe_listing_url(url: str) -> str:
@@ -361,40 +424,58 @@ class JoybuyRunSpider(scrapy.Spider):
         fresh = 0
         duplicates = 0
         over_limit = 0
-        candidates: list[tuple[object, str]] = []
+        skipped_by_target = 0
+        # 目标入库模式：本轮已入库达到目标后不再入队新候选，避免"整页超额"。
+        target_reached = self._target_reached()
+        # 1) 先收集本页**没入过队**的候选（不裁剪），用来判断"这页有没有新内容"。
+        unseen: list[tuple[object, str]] = []
         for entry in accepted_entries:
-            # collected 在候选全部收集后才统一递增（skip_imported 会先分流），
-            # 这里必须按「已收集 + 已入候选数」判断，否则跨页时会超过 limit。
-            if target["collected"] + len(candidates) >= target["limit"]:
-                over_limit += 1
-                continue
             match = UK_PRODUCT_URL_PATTERN.search(entry.source_url)
             if not match:
                 continue
             if match.group(1) in self.seen_product_ids:
                 duplicates += 1
                 continue
-            candidates.append((entry, match.group(1)))
+            unseen.append((entry, match.group(1)))
 
         # 跳过已入库（2026-11-12，任务级开关）：列表阶段先查来源身份，
         # 已入库商品不再请求详情页（因此不会刷新价格/库存/评分）。
         skipped_imported = 0
-        if self.skip_imported_products and candidates:
+        if self.skip_imported_products and unseen:
             existing = self._imported_source_ids(
-                [source_id for _entry, source_id in candidates]
+                [source_id for _entry, source_id in unseen]
             )
             if existing:
                 skipped_imported = sum(
-                    1 for _entry, source_id in candidates if source_id in existing
+                    1 for _entry, source_id in unseen if source_id in existing
                 )
-                for _entry, source_id in candidates:
+                for _entry, source_id in unseen:
                     # 计入 seen：同一商品在其它类目列表里也不再重复查询/抓取。
                     self.seen_product_ids.add(source_id)
-                candidates = [
+                unseen = [
                     (entry, source_id)
-                    for entry, source_id in candidates
+                    for entry, source_id in unseen
                     if source_id not in existing
                 ]
+
+        # 2) 入队数量控制。
+        #    旧模式：product_limit 是「入队候选上限」，行为与以前一致。
+        #    目标模式（2026-11-25）：列表页比详情页快得多，如果不节流，一页 20+ 个
+        #    候选会在几秒内吃光 target*4 预算、导致超额入库（试水实测 50 目标
+        #    入队 148）。这里只补「目标 - 已入库 - 在途」，让在途数量贴着缺口走。
+        if self.target_imported:
+            succeeded, failed = self._progress_counts()
+            pending = max(0, target["collected"] - succeeded - failed)
+            gap = max(0, self.target_imported - succeeded - pending)
+            cap = min(max(0, target["limit"] - target["collected"]), gap)
+            if target_reached:
+                cap = 0
+            candidates = unseen[:cap]
+            skipped_by_target = len(unseen) - len(candidates)
+        else:
+            remaining = max(0, target["limit"] - target["collected"])
+            candidates = unseen[:remaining]
+            over_limit = len(unseen) - len(candidates)
 
         for entry, source_id in candidates:
             self.seen_product_ids.add(source_id)
@@ -445,8 +526,18 @@ class JoybuyRunSpider(scrapy.Spider):
                 + f"）；解析出 {len(entries)} 张卡片，"
                 f"本轮入队 {fresh} 个商品，重复跳过 {duplicates} 个"
                 + (f"，超出上限 {over_limit} 个" if over_limit else "")
+                + (
+                    f"，按目标入库数节流跳过 {skipped_by_target} 个"
+                    if skipped_by_target
+                    else ""
+                )
                 + (f"，非商品卡片 {len(rejected_cards)} 个" if rejected_cards else "")
                 + f"；累计已入队 {target['collected']}/{target['limit']}。"
+                + (
+                    f"已入库 {self._succeeded_count()}/{self.target_imported}。"
+                    if self.target_imported
+                    else ""
+                )
             ),
             source_url=response.url,
         )
@@ -458,12 +549,21 @@ class JoybuyRunSpider(scrapy.Spider):
         # 列表翻页（2026-11-12，任务级开关默认开）：还有缺口且本页仍有新内容
         # （新入队，或因「跳过已入库」被跳过的新商品）时请求下一页；整页全是
         # 跨类目重复/无卡片 = 结果集到头，停止翻页。
+        # 目标入库模式（2026-11-25）：缺口看 DB 里的 succeeded_count 而不是入队数，
+        # 因为「入队 50」不代表「入库 50」（详情解析/导入会失败）。
         pagination_base = target.get("pagination_base") or ""
-        page_has_new = fresh > 0 or skipped_imported > 0
+        # 「本页有新内容」= 本页出现没入过队的新商品，或被跳过已入库的新商品；
+        # 不能用入队数判断——目标模式节流后很多页会「有新内容但入队 0 个」。
+        page_has_new = bool(unseen) or skipped_imported > 0
+        target_reached = target_reached or self._target_reached()
+        if self.target_imported:
+            keep_going = not target_reached
+        else:
+            keep_going = target["collected"] < target["limit"]
         can_paginate = (
             self.allow_pagination
             and bool(pagination_base)
-            and target["collected"] < target["limit"]
+            and keep_going
             and page_has_new
             and page_number < self._max_listing_pages()
         )
@@ -475,6 +575,13 @@ class JoybuyRunSpider(scrapy.Spider):
                 meta={"target": target, "page": page_number + 1},
                 dont_filter=True,
             )
+        elif self.target_imported:
+            if not target_reached:
+                self._emit_shortfall(
+                    target,
+                    page_number,
+                    pagination_ended=bool(self.allow_pagination and pagination_base),
+                )
         elif target["collected"] < target["limit"]:
             self._emit_shortfall(
                 target,
@@ -495,21 +602,40 @@ class JoybuyRunSpider(scrapy.Spider):
         from crawler_control.services import record_run_event
 
         if pagination_ended:
-            reason = (
-                f"翻页至第 {page_number} 页后没有更多结果"
-                f"（安全上限 {self._max_listing_pages()} 页）。"
-            )
+            if self.target_imported and target["collected"] >= target["limit"]:
+                reason = (
+                    f"入队已达安全上限 {target['limit']} 个"
+                    f"（目标 {self.target_imported} × {self.TARGET_ENQUEUE_FACTOR}），"
+                    "停止继续入队。"
+                )
+            else:
+                reason = (
+                    f"翻页至第 {page_number} 页后没有更多结果"
+                    f"（安全上限 {self._max_listing_pages()} 页）。"
+                )
         else:
             # 任务关闭了翻页：robots.txt 禁止 page=，只抓第一屏。
             reason = "任务未开启翻页，robots.txt 也不允许 page= 参数。"
+        if self.target_imported:
+            actual = self._succeeded_count()
+            gap = max(0, self.target_imported - actual)
+            message = (
+                f"类目「{target['category_name']}」目标 {self.target_imported} 个，"
+                f"实际入库 {actual} 个，差 {gap} 个"
+                f"（已入队 {target['collected']} 个，入队上限 {target['limit']} 个；"
+                "翻页结束时仍在队列中的详情页可能继续入库，最终以 run 统计为准）："
+                f"{reason}"
+            )
+        else:
+            message = (
+                f"类目「{target['category_name']}」最终只拿到 "
+                f"{target['collected']}/{target['limit']} 个商品：{reason}"
+            )
         record_run_event(
             self.run,
             level="INFO",
             code="LISTING_SHORTFALL",
-            message=(
-                f"类目「{target['category_name']}」最终只拿到 "
-                f"{target['collected']}/{target['limit']} 个商品：{reason}"
-            ),
+            message=message,
             source_url=target.get("pagination_base") or target.get("source_url", ""),
         )
 

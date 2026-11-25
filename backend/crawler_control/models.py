@@ -134,9 +134,25 @@ class CrawlJob(models.Model):
         on_delete=models.PROTECT,
         related_name="crawl_jobs",
     )
+    #: 任务形态（2026-11-25）：
+    #: - ``CATEGORY``：品类树选类目抓取（历史形态，默认）；
+    #: - ``PAGE_SET``：活动页/店铺页采集，参数是 ``page_urls``（一组真站页面 URL），
+    #:   不进品类树、不冻结 source_category。
+    class JobKind(models.TextChoices):
+        CATEGORY = "CATEGORY", "品类抓取"
+        PAGE_SET = "PAGE_SET", "页面采集"
+
+    job_kind = models.CharField(
+        max_length=16, choices=JobKind.choices, default=JobKind.CATEGORY, db_index=True
+    )
+    #: PAGE_SET 任务的页面清单：[{"url": ..., "kind": "active|store", "external_id": ...}]。
+    #: 第一阶段把每页的商品链接冻结成 CrawlPageManifest 清单，第二阶段按清单采商品。
+    page_urls = models.JSONField(default=list, blank=True)
     source_category = models.ForeignKey(
         "catalog.SourceCategory",
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="crawl_jobs",
     )
     # Optional snapshot binding; resolved and frozen onto each run.
@@ -153,6 +169,11 @@ class CrawlJob(models.Model):
         default=CategoryMode.INCLUDE_SUBCATEGORIES,
     )
     product_limit = models.PositiveIntegerField()
+    #: 目标入库数（2026-11-25）：为空时 ``product_limit`` 管的是「入队候选数」，
+    #: 列表页凑够候选就停翻页，实际入库数可能远小于它（入队 50 却只入库 30）。
+    #: 有值时蜘蛛改为按 ``CrawlRun.succeeded_count`` 翻页：达到该值才停，
+    #: ``product_limit`` 退化为「单次 run 最多入队」的安全上限。
+    target_imported_count = models.PositiveIntegerField(null=True, blank=True)
     listing_sort = models.CharField(
         max_length=24,
         choices=ListingSort.choices,
@@ -498,3 +519,38 @@ class CrawlRunEvent(models.Model):
 
     def __str__(self):
         return f"[{self.level}] {self.code or 'EVENT'}: {self.message[:60]}"
+
+
+class CrawlPageManifest(models.Model):
+    """页面采集任务的「商品链接清单」冻结表（2026-11-25）。
+
+    两段式采集的第一段产物：按页面 URL 记录真站活动页/店铺页的 banner、
+    楼层标题与商品链接（顺序）。第二阶段按清单逐个采商品详情——真站中途
+    换商品时清单不变，任务可断点续采、结果可回溯。
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    run = models.ForeignKey(
+        CrawlRun, on_delete=models.CASCADE, related_name="page_manifests"
+    )
+    # 255：URL 足够，且 (run, page_url) 唯一索引在 utf8mb4 下不超过 3072 字节
+    page_url = models.CharField(max_length=255)
+    page_kind = models.CharField(max_length=16, default="active")
+    external_id = models.CharField(max_length=64, default="")
+    title = models.CharField(max_length=200, blank=True, default="")
+    product_count = models.PositiveIntegerField(default=0)
+    #: {"hero": "...", "blocks": [...], "products": [{"source_id", "url", "title"}]}
+    data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "crawl_page_manifest"
+        ordering = ["run", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "page_url"], name="crawl_page_manifest_unique"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.page_url} ({self.product_count})"

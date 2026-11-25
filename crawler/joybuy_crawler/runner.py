@@ -123,6 +123,20 @@ def _run_settings(run) -> dict:
             "LOG_LEVEL": "INFO",
         }
     )
+    # 2026-11-25：页面采集任务（活动页/店铺页）只取商品卡需要的字段，跳过
+    # 「图文详情（/dg/）+ 变体价格链」两段附加抓取——否则每个商品会放大到
+    # 10+ 次请求，一次 360 商品的批次要跑数小时。品类任务的设置保持不变。
+    if getattr(job, "job_kind", "CATEGORY") == "PAGE_SET":
+        settings["JOYBUY_MOBILE_DETAIL_ENABLED"] = False
+        settings["JOYBUY_VARIANT_PRICES_ENABLED"] = False
+        # 页面采集是一次性命中一批商品（360 件量级），单并发 + 2s 延迟要跑数小时；
+        # 站点是静态详情页，4 并发 / 0.5s 延迟仍在既有礼貌抓取范围内。
+        settings["CONCURRENT_REQUESTS"] = 6
+        settings["CONCURRENT_REQUESTS_PER_DOMAIN"] = 3
+        settings["DOWNLOAD_DELAY"] = 0.3
+        # AUTOTHROTTLE_TARGET_CONCURRENCY 默认 1.0，会把上面的并发压回单并发
+        # （实测 1.7 件/分钟）；页面采集是一次性批次，这里显式关掉自适应节流。
+        settings["AUTOTHROTTLE_ENABLED"] = False
     return settings
 
 
@@ -146,6 +160,7 @@ def execute_run(run_public_id: str) -> None:
     )
 
     from joybuy_crawler.spiders.joybuy_run import JoybuyRunSpider
+    from joybuy_crawler.spiders.pages_run import PageRunSpider
 
     settings = _run_settings(run)
     if settings.get("CRAWL_PREFLIGHT_ENABLED", True):
@@ -180,8 +195,14 @@ def execute_run(run_public_id: str) -> None:
             complete_run_failed(run, reason=reason)
             return
 
+    # 2026-11-25：页面采集任务（活动页/店铺页）走独立 spider；品类任务不变。
+    spider_cls = (
+        PageRunSpider
+        if getattr(run.job, "job_kind", "CATEGORY") == "PAGE_SET"
+        else JoybuyRunSpider
+    )
     process = CrawlerProcess(settings, install_root_handler=False)
-    process.crawl(JoybuyRunSpider, run_public_id=run_public_id)
+    process.crawl(spider_cls, run_public_id=run_public_id)
     try:
         process.start()
     except Exception as exc:

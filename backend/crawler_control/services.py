@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import secrets
 from datetime import timedelta
 from pathlib import Path
@@ -608,6 +609,7 @@ def create_crawl_job(
     source_catalog,
     source_category=None,
     product_limit: int,
+    target_imported_count: int | None = None,
     source_categories: list[dict] | None = None,
     include_subcategories=None,
     listing_sort: str = CrawlJob.ListingSort.SOURCE_DEFAULT,
@@ -645,6 +647,12 @@ def create_crawl_job(
         raise CrawlJobParamsInvalid("A job name is required.")
     if isinstance(product_limit, bool) or not isinstance(product_limit, int) or product_limit < 1:
         raise CrawlJobParamsInvalid("product_limit must be a positive integer.")
+    if target_imported_count is not None and (
+        isinstance(target_imported_count, bool)
+        or not isinstance(target_imported_count, int)
+        or target_imported_count < 1
+    ):
+        raise CrawlJobParamsInvalid("target_imported_count must be a positive integer or null.")
     if isinstance(review_target, bool) or not isinstance(review_target, int):
         raise CrawlJobParamsInvalid("review_target must be an integer.")
     if not REVIEW_TARGET_MIN <= review_target <= REVIEW_TARGET_MAX:
@@ -740,6 +748,7 @@ def create_crawl_job(
             source_tree_version=source_tree_version,
             category_mode=category_mode,
             product_limit=product_limit,
+            target_imported_count=target_imported_count,
             listing_sort=listing_sort,
             random_seed=random_seed,
             sync_mode=sync_mode,
@@ -825,13 +834,19 @@ def _job_params_snapshot(job: CrawlJob) -> dict:
         "currency": job.currency.code if job.currency else job.market.default_currency.code,
         "locale": job.locale,
         "source_catalog": job.source_catalog.source_system,
-        "source_category_id": job.source_category.source_id,
+        # PAGE_SET 任务没有类目（2026-11-25）：快照里保留 job_kind/page_urls。
+        "job_kind": job.job_kind,
+        "page_urls": list(job.page_urls or []),
+        "source_category_id": job.source_category.source_id
+        if job.source_category
+        else None,
         "source_categories": selections,
         "source_tree_version": job.source_tree_version.version_key
         if job.source_tree_version
         else None,
         "category_mode": job.category_mode,
         "product_limit": job.product_limit,
+        "target_imported_count": job.target_imported_count,
         "listing_sort": job.listing_sort,
         "random_seed": job.random_seed,
         "sync_mode": job.sync_mode,
@@ -1203,3 +1218,85 @@ def purge_expired_raw_responses(*, now=None) -> int:
         row.save(update_fields=["file_deleted", "deleted_at"])
         purged += 1
     return purged
+
+
+PAGE_URL_RE = re.compile(r"^https?://(?:www\.)?joybuy\.co\.uk/(?:campaign/active|store)/([0-9A-Za-z]+)/?$")
+
+
+def normalize_page_urls(entries) -> list[dict]:
+    """校验/规范化页面采集清单（2026-11-25）。
+
+    只接受真站活动页 ``/campaign/active/<id>`` 与店铺页 ``/store/<id>``；
+    返回 ``[{"url", "kind", "external_id"}]``，去重保序。
+    """
+
+    normalized: list[dict] = []
+    seen = set()
+    for entry in entries or []:
+        raw = entry.get("url") if isinstance(entry, dict) else entry
+        url = str(raw or "").strip()
+        if not url:
+            continue
+        match = PAGE_URL_RE.match(url)
+        if not match:
+            raise CrawlJobParamsInvalid(
+                f"页面 URL 不合法（只接受 joybuy.co.uk 的 /campaign/active/<id> 或 /store/<id>）：{url}"
+            )
+        key = match.group(1)
+        kind = "store" if "/store/" in url else "active"
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"url": url, "kind": kind, "external_id": key})
+    if not normalized:
+        raise CrawlJobParamsInvalid("页面采集任务至少需要一个页面 URL。")
+    return normalized
+
+
+def create_page_crawl_job(
+    *,
+    name: str,
+    market,
+    source_catalog,
+    page_urls,
+    product_limit: int | None = None,
+    account_group: str = "default",
+    account=None,
+    created_by=None,
+    failure_strategy: str = CrawlJob.FailureStrategy.CONTINUE,
+    concurrency: int = 1,
+) -> CrawlJob:
+    """创建「活动页/店铺页采集」任务（job_kind=PAGE_SET）。
+
+    参数是页面 URL 清单而不是品类选择；商品链接清单在 run 的第一阶段冻结
+    （``CrawlPageManifest``），失败策略默认 CONTINUE（尽力完成 + 失败清单）。
+    """
+
+    if not name.strip():
+        raise CrawlJobParamsInvalid("A job name is required.")
+    pages = normalize_page_urls(page_urls)
+    limit = product_limit if product_limit is not None else max(50, len(pages) * 120)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise CrawlJobParamsInvalid("product_limit must be a positive integer.")
+    if failure_strategy not in CrawlJob.FailureStrategy.values:
+        raise CrawlJobParamsInvalid("Unknown failure strategy.")
+
+    with transaction.atomic():
+        return CrawlJob.objects.create(
+            name=name.strip(),
+            job_kind=CrawlJob.JobKind.PAGE_SET,
+            page_urls=pages,
+            market=market,
+            locale="en-GB",
+            source_catalog=source_catalog,
+            source_category=None,
+            source_tree_version=None,
+            product_limit=limit,
+            category_mode=CrawlJob.CategoryMode.CURRENT_ONLY,
+            account_group=account_group,
+            account=account,
+            failure_strategy=failure_strategy,
+            allow_manual_resume=True,
+            concurrency=concurrency,
+            created_by=created_by,
+        )

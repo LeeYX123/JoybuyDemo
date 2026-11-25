@@ -329,3 +329,33 @@ def tree_to_payload(tree_version: SourceCategoryTreeVersion) -> dict:
         else None,
         "categories": roots,
     }
+
+
+def prune_food_nodes(payload: dict) -> dict:
+    """管理端爬虫品类树选择器过滤（2026-11-25）。
+
+    商城已把食品撤出导航并把全部食品商品下架（见 HANDOFF 0cm），爬虫任务
+    的品类选择器同步隐藏这些源节点，避免再建产出无法上架商品的食品任务：
+
+    * ``catalog.joybuy_menu_crosswalk.FOOD_SOURCE_IDS``（48 个食品/酒水/
+      烟草/冷冻 ``l2:`` 节点）从各频道 children 里剔除；
+    * 子节点被剔空的频道（Joymart / World-Foods）整棵隐藏；原本就无子节点
+      的频道保留不动。
+
+    只影响选择器 payload；冻结的历史任务详情读各自版本快照，不受影响。
+    """
+
+    from catalog.joybuy_menu_crosswalk import FOOD_SOURCE_IDS
+
+    kept_roots = []
+    for root in payload.get("categories", []):
+        original_children = root.get("children") or []
+        children = [
+            child for child in original_children if child.get("source_id") not in FOOD_SOURCE_IDS
+        ]
+        if original_children and not children:
+            continue  # 整棵食品频道：全部子节点都是食品，隐藏
+        if children:
+            root = {**root, "children": children}
+        kept_roots.append(root)
+    return {**payload, "categories": kept_roots}

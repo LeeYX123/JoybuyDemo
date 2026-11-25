@@ -23,8 +23,15 @@ const tree = ref({ version: null, categories: [] })
 const selectedCategories = ref([])
 
 const createForm = reactive({
+  // 2026-11-25：任务形态。CATEGORY=品类树抓取（历史默认）；PAGE_SET=活动页/
+  // 店铺页采集（参数为页面 URL 清单，不进品类树）。
+  job_kind: 'CATEGORY',
+  page_urls: '',
   name: '',
   product_limit: 50,
+  // 目标入库数（2026-11-25）：留空=按「商品数量上限」的入队候选数停；
+  // 填写后按本轮实际入库数达标才停翻页（解决「入队 50 入库 30」）。
+  target_imported_count: null,
   listing_sort: 'SOURCE_DEFAULT',
   sync_mode: 'INCREMENTAL',
   // 跳过已入库：列表阶段先查来源身份，已入库商品不再请求详情页。
@@ -201,6 +208,35 @@ onBeforeUnmount(() => {
 async function submitCreate() {
   error.value = ''
   message.value = ''
+  if (createForm.job_kind === 'PAGE_SET') {
+    const urls = createForm.page_urls
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (!createForm.name || urls.length === 0) {
+      error.value = '页面采集任务需要任务名称与至少一个页面 URL。'
+      return
+    }
+    try {
+      const data = await adminWrite('/crawlers/jobs', {
+        name: createForm.name,
+        job_kind: 'PAGE_SET',
+        page_urls: urls.map((url) => ({ url })),
+        product_limit: Number(createForm.product_limit) || undefined,
+        account_public_id: createForm.account_public_id || null,
+        account_group: createForm.account_group || 'default',
+        reason: '从管理页面创建（页面采集）',
+      })
+      message.value = `页面采集任务「${data.public_id.slice(0, 8)}…」已创建，当前状态：${valueLabel(data.status)}。`
+      showCreate.value = false
+      createForm.name = ''
+      createForm.page_urls = ''
+      await loadJobs()
+    } catch (caught) {
+      error.value = caught.message
+    }
+    return
+  }
   if (selectedCategories.value.length === 0) {
     error.value = '请至少勾选一个 Joybuy 类目。'
     return
@@ -208,6 +244,10 @@ async function submitCreate() {
   const body = {
     name: createForm.name,
     product_limit: Number(createForm.product_limit),
+    target_imported_count:
+      createForm.target_imported_count === null || createForm.target_imported_count === ''
+        ? null
+        : Number(createForm.target_imported_count),
     listing_sort: createForm.listing_sort,
     sync_mode: createForm.sync_mode,
     skip_imported_products: createForm.skip_imported_products,
@@ -507,6 +547,19 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
           <input v-model.number="createForm.product_limit" type="number" min="1" required />
         </label>
         <label>
+          目标入库数（可选）
+          <input
+            v-model.number="createForm.target_imported_count"
+            type="number"
+            min="1"
+            placeholder="留空=按入队候选数停"
+          />
+          <span class="crawler-form__hint"
+            >填写后按「本轮实际入库数」判断：达到该值才停止翻页，商品数量上限退化为入队安全上限
+            （至少目标数×4）。用于「类目总数补到 N 个」，避免入队 50 但实际只入库 30。</span
+          >
+        </label>
+        <label>
           排序方式
           <select v-model="createForm.listing_sort">
             <option value="SOURCE_DEFAULT">来源默认排序</option>
@@ -569,7 +622,26 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
           所选账号组内挑可用账号并轮换。组内没有可用账号时按匿名抓取——只有「会话有效」的账号才真正
           带得上登录态。
         </p>
-        <div class="create-form__tree">
+        <label>
+          任务形态
+          <select v-model="createForm.job_kind">
+            <option value="CATEGORY">品类抓取（按 Joybuy 类目树）</option>
+            <option value="PAGE_SET">页面采集（活动页 / 店铺页 URL）</option>
+          </select>
+        </label>
+        <label v-if="createForm.job_kind === 'PAGE_SET'">
+          页面 URL（每行一个）
+          <textarea
+            v-model="createForm.page_urls"
+            rows="6"
+            placeholder="https://www.joybuy.co.uk/campaign/active/&lt;id&gt;"
+          ></textarea>
+          <span class="crawler-form__hint"
+            >只接受 joybuy.co.uk 的 /campaign/active/&lt;id&gt; 与 /store/&lt;id&gt;。任务先冻结
+            商品链接清单，再逐个采商品详情；失败策略为「尽力完成 + 失败清单」。</span
+          >
+        </label>
+        <div v-if="createForm.job_kind === 'CATEGORY'" class="create-form__tree">
           <p class="create-form__tree-title">
             选择 Joybuy 类目（树版本 {{ tree.version || '未同步' }}）
           </p>
@@ -662,6 +734,10 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
               <div>
                 <dt>商品上限</dt>
                 <dd>{{ detail.product_limit }}</dd>
+              </div>
+              <div>
+                <dt>目标入库数</dt>
+                <dd>{{ detail.target_imported_count ?? '未设置（按入队候选数停）' }}</dd>
               </div>
               <div>
                 <dt>同步模式</dt>
