@@ -2,6 +2,142 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cn. 首页两处回归：心选品牌不滚动 + 品类发现 hover 失效（2026-11-25，✅ 已修 + 针对性验证，未 commit）
+
+> 协调者要求的编号 `0ck` 已被「0ck. 生产同步 e26e485→8e5ad99」占用，故改用 `0cn`（同 0cj 先例）。
+
+### 我们在做什么
+用户报首页两处回归：①【心选品牌】不再滚动；②【品类发现】卡片 hover 特效（历史为白底 + 名称下划线）消失。本轮只修这两个模块，不动其他首页楼层、不动手机版、**未 commit**。
+
+### 根因（已提交的回归，非工作区未提交改动）
+- **两处都由 `98dd3b5`「Rounds 3-6 storefront parity」（2026-11-20）引入**，改动文件 `storefront/components/cms/CmsLinkGrid.vue`（唯一相关文件）：
+  1. **心选品牌**：该提交把 `600c127`/`4d35f15` 的 CSS 跑马灯（`.brand-marquee__track` + `@keyframes cms-brand-scroll` 48s linear infinite + `:hover` 暂停 + `prefers-reduced-motion` 关闭）整段删掉，换成一条**静态** `overflow-x: auto` 列表（`.brand-row__list`），无动画、无箭头 → 静置时位置不动（改前实测 3s 内 `scrollLeft` 恒 0、`animationName: none`、`transform: none`）。
+  2. **品类发现**：同一提交把 hover 的 `transform: translateY(-40px)`、相邻卡 `-8px` 波浪、`.discovery-card:hover .discovery-card__label { text-decoration: underline }` 删除，只留 `box-shadow` 加深 → 视觉上"特效没了"（改前实测 hover 前后 `background` 都是 `rgb(245,246,250)`、`textDecorationLine: none`、`transform: none`）。
+- `storefront/pages/index.vue` 当前未提交改动只加 `v-if="isMobileHost"` 分支（手机版），与这两处无关。
+- 真站核对（2026-11-25，cookies + color-api 打桩，`var/home_regress_20261125/probe_live*.mjs`）：心选品牌是 **JS 驱动 scrollLeft 自动滚动 ≈31px/s**（190→267 / 2.5s）、**hover 暂停**（悬停期间 284 恒定，移开恢复）、带 Prev/Next 箭头（一页 1344px，`transition: scroll-left 2s ease-out`）；品类发现卡 hover 在真站当前版本**只有阴影加深**（`box-shadow: 0 14px 38px rgba(0,0,0,.12)`，另有 `:focus-visible` 2px 蓝 outline），真站没有白底/下划线——白底+下划线是用户要求 + 本仓库 4d35f15 历史实现，故按用户要求恢复，位移取"轻微"（-6px）而非历史的 -40px 跳起。
+
+### 修复（`storefront/components/cms/CmsLinkGrid.vue`）
+1. **心选品牌恢复跑马灯**（模板 L87-122 / CSS L373-430）：
+   - `.brand-row` 加 `overflow: hidden`；新增 `.brand-row__track`（flex、gap 24、`width: max-content`、`animation: cms-brand-scroll 84s linear infinite`），内部渲染**两份** `.brand-row__list`，第二份 `aria-hidden="true"`（屏幕阅读器只读一次），第一份 `role="none"` 避免嵌套 list role。
+   - keyframes `translateX(calc(-50% - 12px))` = 一个段宽 + 24px 段间距，接缝无跳变；12 个品牌 → 循环 2616px / 84s ≈ **31px/s**（对齐真站实测速度；品牌数量变化时速度按比例变化，代码注释已写）。
+   - `.brand-row:hover .brand-row__track { animation-play-state: paused }` 对齐真站 hover 暂停。
+   - `prefers-reduced-motion: reduce`：关动画、隐藏重复段、`.brand-row` 改为可横滑（`overflow-x:auto` + 隐藏滚动条），保证不放动画的用户仍能看到全部品牌。
+2. **品类发现 hover**（CSS L241-316）：transition 加 `background-color`/`transform`；`:hover` 与 `:focus-visible` 统一为 `background: #fff` + `box-shadow: 0 14px 38px rgba(0,0,0,.12)` + `transform: translateY(-6px)`；label 在 `:hover` / `:focus-visible` 下 `text-decoration: underline`（键盘 Tab 聚焦有等价可见态，另有 base.css 全局 3px focus ring）。
+3. 同步更新 `storefront/components/cms/CmsRenderer.test.js` 品牌用例（断言两个 `.brand-row__list`、第二份 aria-hidden、第一份 1 张卡且不可点击）。
+
+### 验证（按验证纪律仅做针对性验证）
+- Playwright 桌面（脚本 `var/home_regress_20261125/probe_after.mjs` / `probe_focus.mjs` / `probe_reduced.mjs`）：
+  - 心选品牌 **1896**：track transform `-34.77 → -128.72`（3s，93.9px ≈ **31.3px/s**）；首卡 x `62.76 → 30.58`；**1440**：`-35.81 → -129.76`（≈31.3px/s），首卡 x `-81.76 → -113.93`；静置可见位置持续变化 ✅
+  - hover 暂停：悬停后 4 次采样（2s）transform 恒为 `-163.495`、`animationPlayState: paused`；移开 0.7s 后恢复为 `-185.815` ✅
+  - `doc.scrollWidth == innerWidth`（1896=1896、1440=1440），无页面横向滚动条 ✅
+  - 品类发现 hover（第 3 张卡）：`background #f5f6fa → #fff`、`box-shadow .08/10/30 → .12/14/38`、`transform none → translateY(-6px)`、label `none → underline`；移出后全部复原 ✅
+  - 键盘 Tab 聚焦到卡片：`matches(':focus-visible') = true`，白底 + underline + -6px + 全局 outline `solid 3px rgb(23,92,211) offset 3px` ✅
+  - `prefers-reduced-motion: reduce`：`animationName none`、transform 恒定、重复段 `display:none`、`.brand-row` 可手动滚（`scrollLeft 0→200`）✅
+  - console error **0**（1896/1440/移动全部 0）
+- 移动 375（`http://m.localhost:3000/`，`probe_mobile*.mjs`）：`mobile-shell` 生效、**不渲染**桌面 `.brand-row`/`.discovery-card`（手机版走 `MobileHome` 自己的 `.m-brands__row` 横滑 12 个 + `.m-discovery` 6 个），6 个品类 + 12 个品牌都在、`scrollWidth 375`、console error 0 → **手机版零影响**；桌面 `localhost:3000` 375 宽仍正常跑马灯（track 3432px），无溢出。
+- 单测：`npx vitest run --config storefront/vitest.config.js storefront/components/cms/CmsRenderer.test.js` → **13/13 通过**。
+- `npx eslint` 两个改动文件 0 问题；`npx prettier --check` 通过。
+- e2e 首页视觉基线（`npx playwright test tests/e2e/purchase-funnel.spec.js -g "home baseline at 1440px"`）：**仍失败，但与本次改动无关**——逐行比对差异从 **y=2845** 才开始（该行位于 `.home-reco` 推荐楼层），心选品牌区（1200–1560）与品类发现区（830–1196）截图与基线**逐像素一致**（Playwright 截图默认 `animations: disabled` 会取消无限 CSS 动画，跑马灯被复位 → 基线稳定）；失败原因是推荐楼层商品池与快照不一致（页高 5098 vs 5123，25px 差），属工作区其他未提交改动的既有漂移，未重基线。
+- 未做全量验证（按验证纪律）。
+
+### 踩坑（新）
+- 首页视觉基线依赖 Playwright 的 `animations: 'disabled'`：**CSS 动画**的跑马灯会被复位成确定状态，所以基线可复现；若改成 JS rAF 驱动 scrollLeft 会破坏全页截图基线（每次截图位置不同）——这也是本次选 CSS marquee 而非 JS auto-scroll 的关键原因。
+- 真站 `pc-new-brands-we-love` **不是** CSS marquee：`.brandsListBoxWrapper` 是 `overflow-x:auto` + JS 改 `scrollLeft`（`transition: scroll-left 2s ease-out`）+ 头部 Prev/Next 箭头 + hover 暂停；我们复刻其**可观察行为**（≈31px/s、hover 暂停），未加箭头（避免改动基线，且 194px 圆卡可用动画浏览）。
+- 真站风控仍需旧 cookies 才能进首页（裸访问 302 到 `/login?redirectReason=risk605_login`）；用 `var/channel_styles_20261123/cookies.json` + `.joybuy.co.uk` domain 注入可绕过。
+
+
+## 0cm. 家居生活食品类目清理：隐藏 48 个食品二级 + 下架 4227 商品 + 归档「世界食品」（2026-11-25，✅ 已执行并针对性验证）
+
+### 我们在做什么
+用户口径：前期二级品类划分把食品混进了【家居生活】。【分类】下拉与 `/s?category=home-living` 列表页二级条（同源：`/api/v1/categories` 树的 `children`）里食品类目要全部去掉；食品类目下的商品全部下架；商品标记属于【世界食品】。
+
+用户澄清记录（重要）：用户最初说去掉频道页的 `/c/kitchen-essentials`，后更正「说错了，应该是 /s?category=home-living 二级品类里面有食品相关的」——**kitchen-essentials（厨房与餐厅用品，45 件商品全是厨具）保留不动**。范围拍板：只隐藏 48 个食品类（清洁纸品 7 个 + 雨伞雨具保留在下拉，不严格对齐频道页 17 张卡）。
+
+### 48 个食品类目的来源构成
+① Joymart 超市 16（巧克力糖果/零食坚果/酒水/罐头/米面等）② World-Foods 8（韩日泰印非中/国际/世界烈酒）③ 家居生活频道自己的食品饮料烟草 15（烘焙/果酱/预调酒/烟草电子烟/冰鲜/高端烈酒/冷冻派对食品等）④ 冷冻食品 9（即食餐/甜品/披萨/冰淇淋/薯条/素食/蔬果/海鲜/肉禽）。完整 slug 清单见 `var/home_living_20261125/apply_food_cleanup.py` 的 `FOOD_SLUGS`。
+
+### 修改动作与结果（数据 + 代码各一处）
+1. **数据脚本** `var/home_living_20261125/apply_food_cleanup.py`（幂等，已跑两遍确认 0 变更）：
+   - 新建隐藏一级「世界食品」`world-foods`（pk=237，status=HIDDEN，sort_order=999）；
+   - 48 个食品二级 `move_local_category` 移到 world-foods 之下 + status=HIDDEN（家居生活二级 69→21，全部非食品）；
+   - 下架商品（对齐 admin `unpublish` 动作）：SPU 4227 → INACTIVE；级联下架 ACTIVE Offer 4636（`removed_by_platform=True`）；删除搜索文档 4227；
+   - 删 48 个食品节点的 `CategoryMapping`（48 条，防 future 爬虫导入把新食品商品挂进隐藏类目）；
+   - 删 `ChannelModuleProduct` 引用食品 SPU 的楼层位次 11 条（都在 `UK-Mini-HP-Health-and-Wellness` 模块；否则 `_fallback_product` 兜底会渲染无价死卡）；
+   - 报告 `var/home_living_20261125/moved_spus_20261125.csv`（4227 行：spu_id/public_id/status/原食品二级 slug，可回溯）。
+2. **代码** `backend/catalog/joybuy_menu_crosswalk.py`：`CHANNEL_PARENT` 的 Joymart/World-Foods → None；48 个食品 source_id 进 `NODE_UNMAPPED`；docstring 更新（推翻 2026-11-11「食品归 home-living」口径）。**这样 future `sync_local_categories_from_joybuy` 不会把食品类目重新置回 ACTIVE 或挂回家居生活**（`--dry-run` 实测：新建 0/更新 0/未映射 65/错误 0）。
+
+### 验证（按验证纪律仅针对性验证）
+- `/api/v1/categories`：home-living children=21（13 个频道页家居类 + 7 个清洁纸品 + 雨伞雨具），无食品 slug，world-foods 根不可见；`var/home_living_20261125/verify_cleanup.py` 全过。
+- `/s?category=home-living` SSR：二级品类条 21 张卡（`/c/furniture`、`/c/kitchen-essentials`…）无食品；频道页 `/minihome/UK-Mini-HP-Home-Living` 17 张卡不变、无降级。
+- 隐藏类目直链：`/api/v1/search?category=chocolate-sweets|wine|beer` → 404 `CATEGORY_NOT_FOUND`。
+- 下架商品：3 个样本 PDP `/api/v1/products/<public_id>` → 404；`/s?category=home-living` 仍有 1823 件非食品商品（未误伤）。
+- 单测：`manage.py test catalog.tests.test_joybuy_menu_crosswalk catalog.tests.test_standard_categories --keepdb --parallel 1` = **18/18 OK**；ruff 改动文件 0 问题；`resolve_node('l2:1277', Joymart)` → None、`l2:1572` → home-living。
+
+### 影响与恢复路径
+- 商城前台所有食品商品不可见/不可购（搜索、列表、频道楼层、推荐、PDP 全下架）；隐藏类目直链 404。`/minihome/UK-Mini-HP-Joymart`、`UK-Mini-HP-World-Foods` 两个频道页仍解析到 home-living（DB 里的频道 CategoryMapping 未删），内容与非食品家居页一致。
+- 恢复：把 world-foods 一级（及需要的二级）status 置回 ACTIVE + 商品重新 publish 即可；CSV 报告记录每件商品原来的食品二级。
+- 婴幼儿的 baby-milk/baby-food、宠物的 dog-food 等不在本次范围（分属别的根类目，用户未要求动）。
+
+### 踩坑（新会话必读）
+- **`sync_local_categories_from_joybuy` 每次运行会把所有已映射二级强制 `status=ACTIVE`**（`_apply` 的 values 里写死）——任何手工 HIDDEN 的类目，若其源节点还在 crosswalk 映射里，下次 sync 就会复活。手工隐藏必须同步改 crosswalk。
+- CMS 频道楼层（`channel_module_services`）对无搜索文档的 SPU 有 `_fallback_product` 兜底渲染——**只下架商品不清楼层位次会出「无价死卡」**；下架后要同步清理 `ChannelModuleProduct` 引用。
+- `manage.py shell < file` 在 Git Bash 下多行块会报 SyntaxError（stdin 逐行喂进 InteractiveConsole）；带 django.setup() 的独立 .py 脚本（放 var/ 下）才是可靠姿势。
+
+
+## 0cl. 生产配置 Google OAuth 凭据并实测授权流程（2026-11-25，✅ 我方全链路通，❌ Google 拒绝裸 IP http 回调，卡在需要域名+TLS）
+
+### 我们在做什么
+把用户提供的 Google OAuth 客户端凭据配置到 DO 生产服务器（`ssh joybuy-do`，/srv/joybuy @ 8e5ad99），重启 `joybuy-api`，用 curl + Playwright 实测买家端 Google 登录流程走到哪一步。**凭据明文只存在于服务器 `/srv/joybuy/.env`（chmod 600），不进 git、不写进本文档。**
+
+### 做了什么（修改动作 + 验证结果）
+1. **发现并补了一个缺口**：`/srv/joybuy/.env` 里原本**没有 `STOREFRONT_BASE_URL`**（settings 回落 `http://localhost:3000`）。而 OAuth 的成功回跳（`accounts_buyers/views.py:484` → `STOREFRONT_BASE_URL + next`）、失败回跳（`views.py:388` → `/auth/login?oauth_error=`）、商家 handoff（`merchant_ops/views_switch_mall.py:68`）都用它——不设的话 OAuth 成功后浏览器会被 302 到 `localhost:3000`。因此 .env 共追加 **4 行**（均 LF 无 CRLF，`systemd EnvironmentFile=/srv/joybuy/.env` 直接读）：
+   - `STOREFRONT_BASE_URL=http://161.35.23.231`
+   - `OAUTH_REDIRECT_BASE_URL=http://161.35.23.231`（redirect_uri 用这个，`oauth.py:147`）
+   - `GOOGLE_OAUTH_CLIENT_ID=678718496669-67dp4llem5o0bb2mrhnrgpe49vn4vnjb.apps.googleusercontent.com`
+   - `GOOGLE_OAUTH_CLIENT_SECRET=<明文在服务器 .env，此处不写>`
+   - 改前备份：`/srv/joybuy/.env.bak.oauth20261125`（备份的是改前文件，不含凭据）。
+2. `systemctl restart joybuy-api` → active，`curl 127.0.0.1/api/v1/health` → 200。
+3. **providers 端点**（服务器本机）：`curl http://127.0.0.1/api/v1/auth/buyer/oauth/providers` →
+   `{"providers":[{"provider":"google","enabled":true,"start_url":"/api/v1/auth/buyer/oauth/google/start"},{"provider":"facebook","enabled":false,"start_url":"/api/v1/auth/buyer/oauth/facebook/start"}]}` —— google 已点亮，facebook 未配凭据所以 enabled=false（前端渲染成点击提示不可用的按钮，符合设计）。
+4. **start 端点**：`curl -D - 'http://127.0.0.1/api/v1/auth/buyer/oauth/google/start?next=/account'` → 302，Location 为
+   `https://accounts.google.com/o/oauth2/v2/auth?client_id=678718496669-…apps.googleusercontent.com&redirect_uri=http%3A%2F%2F161.35.23.231%2Fapi%2Fv1%2Fauth%2Fbuyer%2Foauth%2Fgoogle%2Fcallback&response_type=code&scope=openid+email+profile&state=…&code_challenge=…&code_challenge_method=S256&prompt=select_account`
+   → 我们声明给 Google 的 **redirect_uri = `http://161.35.23.231/api/v1/auth/buyer/oauth/google/callback`**，client_id 与凭据一致，PKCE S256 在位。
+5. **Playwright 实测**（本地跑，脚本 `var/oauth_google_20261125/test_google_oauth.mjs`，仿 `var/do_sync_20261125/verify_prod.mjs` 写法）：
+   - 打开 `http://161.35.23.231/auth/login` → **"Continue with Google" 按钮已渲染**（`a[data-testid=oauth-button]`，href=`/api/v1/auth/buyer/oauth/google/start?next=%2Faccount`）→ 截图 `var/oauth_google_20261125/01_login_page_google_button.png`；
+   - 点击 → 浏览器经后端 302 到 accounts.google.com，**被 Google 拦在错误页**，未到达选账号/授权页：
+     - 页面原文：**"Access blocked: Authorization Error" / "You can't sign in to this app because it doesn't comply with Google's OAuth 2.0 policy for keeping apps secure." / "Error 400: invalid_request"**
+     - URL 里 `authError` 参数 base64 解码后的关键字段：error=`invalid_request`；违规字段 **`redirect_uri` = `http://161.35.23.231/api/v1/auth/buyer/oauth/google/callback`**；指向政策 `https://developers.google.com/identity/protocols/oauth2/policies#secure-response-handling`
+     - 截图 `var/oauth_google_20261125/02_google_result.png`、`03_google_error_details.png`。
+   - 按任务约束**未尝试登录真实 Google 账号**，到错误页即停。
+
+### 结论与下一步
+- **我方（后端+前端+凭据配置）全链路已通**：providers 返回 google 可点、start 正确生成带 PKCE 的 Google 授权 URL、按钮渲染正常。
+- **卡点在 Google 侧**：Google OAuth 2.0 安全政策要求 redirect_uri 必须 https（裸 IP + http 不接受；这是预期中的可能结论，已实测坐实）。**要在生产走通 Google 登录，必须给站点绑域名 + 上 TLS**，然后在 Google Cloud Console（Google Auth Platform → Clients）把 Authorized redirect URI 注册为 `https://<域名>/api/v1/auth/buyer/oauth/google/callback`（逐字一致），并把服务器 .env 的 `OAUTH_REDIRECT_BASE_URL`/`STOREFRONT_BASE_URL` 改成 `https://<域名>` 再 restart joybuy-api。本地/开发用 `http://localhost:*` 回调 Google 是放行的，可作开发期调试通道。
+- 用户侧可对齐的信息：Google 控制台若之前填了别的 redirect_uri，与我方声明值 `http://161.35.23.231/api/v1/auth/buyer/oauth/google/callback` 对不上只是次要问题——**根因是 http 裸 IP 本身违反 Google 政策**，加域名前填什么都会被拦。
+
+### 踩坑记录（新）
+- **生产 .env 一直缺 `STOREFRONT_BASE_URL`**（此前部署无人发现，因为其它功能不依赖它；OAuth 是第一个真正依赖它的功能）。下次任何「回跳商城同域」类功能（邮件链接、handoff、OAuth）都要先核对生产 .env 里这个值。
+- systemd `EnvironmentFile` 不认 CRLF；往 .env 追加行时用 `printf '%s\n'`（Git Bash 本地写文件再 scp 会有 CRLF 风险），追加后可用 `grep -c $'\r' .env` 自检。
+
+
+## 0ck. 生产同步 e26e485→8e5ad99（2026-11-25，✅ 已部署并验证，遇已提交树缺文件事故已处置）
+
+### 做了什么
+- 生产 `/srv/joybuy`（ssh joybuy-do）`git pull --ff-only`：e26e485 → **8e5ad99**（唯一 diff：`storefront/composables/useBuyerAuth.js` 改、`storefront/plugins/buyer-session.server.js` 新增、HANDOFF.md）。本地 54 个未提交 WIP 未动、未 commit。
+- migrate：发现 **`accounts_buyers.0008_buyeridentity_and_more` pending**（建 `buyer_identity` 表 = OAuth 身份表 + 调整 buyeraccount 约束；来自 e3de28d 登录批次，dev dump 之后才生成）。已 `migrate accounts_buyers --noinput` 应用 OK；catalog 0015-0019 那批**早已全部应用**，除此之外无 pending。
+- 重建范围：仅 storefront（`pnpm --filter @joybuy/storefront build`，exit 0，.output mtime 09:14 UTC）。backend 无改动但 migrate 有应用 → `joybuy-api` 一并 restart；`joybuy-storefront` restart。两服务 active。
+- 验证（按验证纪律仅针对性验证）：服务器本机 + 外网各四项 curl `/`、`/api/v1/categories`、`/admin/`、`/api/v1/health` **全 200**。
+- 8e5ad99 针对性验证（Playwright，脚本 `var/do_sync_20261125/verify_prod.mjs`，生产 `http://161.35.23.231`）：注册新买家 → 登录态访问 `/account` @1896×960，**10/10 全过**：`.profile-page` 渲染、meSection=`profile`（非 `profile-signed-out`）、无 Sign in 按钮、内容宽 **1264**、三列模块卡 410.6/410.7/410.6、标题横排 103–169px、无横向溢出、console error 0；**连续 6 次刷新 /account 0 次命中窄卡片**（改前复现率约 1/3）。截图 `var/do_sync_20261125/prod_account_1896_logged_in.png`。测试账号：`dosync-1795598112943@joybuy.test` / `E2E-passw0rd!`（留在生产库，仅用于验证）。
+
+### 事故与处置（必读，两个新坑）
+1. **已提交树不自洽**：3a6c822「手机版账号子页」等提交把 11 个已跟踪页面写成了 `import { useMobileView } from '../../composables/useMobileView'`，但 `storefront/composables/useMobileView.js` **至今是未提交 WIP**（工作区 `??` 状态）→ 生产从干净已提交树重建必然失败（`RollupError: Could not resolve "../../composables/useMobileView"`）。处置：把该文件 scp 到服务器（3628 字节，自洽单文件，只 import vue/#imports），**服务器工作区因此有 1 个未跟踪文件**，git 任何一侧都没 commit。**教训：并行会话提交「手机版」相关页面时必须把 useMobileView.js 一并 commit**；下次部署前先 `git grep useMobileView 8e5ad99` 之类核对已提交树的 import 是否都能在树内解析。
+2. **`nuxt build` 失败也会删 `.output`**：build 先跑 `nuxt cleanup`，第一次构建失败后生产 `.output` 整个消失，运行中的 Nitro 靠进程内存里的 chunk 继续出 200——**当时任何 restart 都会让 storefront 起不来**。靠补文件+立即重建恢复。教训：生产重建前先确认树可构建（或先把缺失文件补齐再 build）；若 build 失败且 .output 被删，第一优先级是补齐依赖重建，而不是排查别的。
+
+### 遗留
+- 服务器 `/srv/joybuy/storefront/composables/useMobileView.js` 为未跟踪文件，等并行会话把手机版工作 commit 后，下次 `git pull` 若带来同名文件会覆盖成已提交版本（内容可能演进，需留意 diff）。
+- 生产库新增测试账号 `dosync-1795598112943@joybuy.test`（含 buyer_identity/会话数据），如介意可手动清理。
+- 商家端仍不存在、admin-web/merchant-web 本次未涉及未重建（diff 不涉及）。
+
 ## 0cj. 账户页被渲染成手机版 / 窄卡片（2026-11-25，✅ 已修 + 针对性验证 17/17，未 commit）
 
 > 协调者原编号 `0cd` 已被「批次 BC：Facebook / Google 登录」（本档下方）占用，故改用 `0cj`，内容按 `0cd` 要求写。
@@ -223,6 +359,18 @@ Google+Facebook / 两页一起改 / email-first 两步 / 接真实后端 / **新
 - 实机验证：`probe_mobile_login.cjs`（390×844）在 `http://m.localhost:3000/auth/login` 走完
   email→密码→登录，落地 `/account`，**0 个 4xx / 0 pageerror**；截图 `var/auth_page_20261124/mobile_after_login.png`。
 - 提醒：`m.localhost` 走的是同一套 Nuxt + Django，**任何新增前端端口/主机名都要同时补 Origin 白名单**。
+
+### 四次调整（17:50，隐藏 Facebook 按钮）
+用户要求「先把 Facebook 登录按钮隐藏」。
+- `AuthForm.vue` 的 `providers` 计算属性改回只保留 `enabled === true` 且带 `start_url` 的渠道 →
+  Facebook 凭据为空时按钮整条不渲染；`.env` 填上 `FACEBOOK_OAUTH_APP_ID/SECRET`（后端 providers 报 enabled=true）后自动出现，无需改前端。
+- 同时删掉上一版「未配置渠道渲染成按钮 + 点击提示不可用」的 `handleProviderClick` 与 `<component :is>`，
+  恢复成普通 `<a>`，减少死代码。
+- 测试同步：组件 9 例（新增「只渲染已配置渠道」「两个都配置时才并排」）；e2e 改为断言 Google 必现、
+  Facebook 默认 0 个（设 `FACEBOOK_OAUTH_CONFIGURED=1` 时跳过该断言）。
+- 验证：`vitest auth-form` → 9 passed；`playwright test tests/e2e/auth.spec.js` → 4 passed；eslint 干净；
+  截图 `var/auth_page_20261124/local_login.png` 只剩 `Continue with Google`。
+- **未提交**（上一提交为 e3de28d）。
 
 ### 顺手修掉的跨批次故障（重要，非本批次引入）
 `storefront/composables/useMobileView.js` 里 `mobileCounterpartHost` / `desktopCounterpartHost` 是局部函数却**没 export**，
@@ -7078,3 +7226,51 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **已知边界：** PDP 画廊暂为圆点切换非手势滑动；checkout 自提/配送 tab 精简；消息页订单通知来自订单状态（占位语义，待第 4 期消息中心）；桌面 PDP e2e 快照未受影响（桌面分支未动）。工作区仍有另一会话在途 OAuth 未提交改动（backend/accounts_buyers、AuthForm 等），未触碰。
 
 **第 1/2/3 期全部完成。** 手机版已覆盖：首页/品类落地/列表/详情/购物车/结算/账号中心/设置&隐私/语言/账号七个子页/消息页。
+
+### 2026-11-25（下午）桌面版账号模块补齐（Grill 会话定方案 → 实现）
+
+**背景**：用户指出桌面 /account/ 子页面与真站 /profile/ 子页面有出入、缺模块。经 Grill 四轮拷问定案（CONTEXT.md 已固化术语：我的收藏/评价与问答/余额）：
+
+1. 侧栏补齐到真站 9 项（含「我的」hub 入口）+「申请店铺」保留底部（真站无，用户决定保留）。
+2. 路由保持 /account/*，不做 URL 级复刻。
+3. 余额页只读：余额大字 + BuyerWalletEntry 流水，充值仍走管理端（需求 8-6 口径）。
+4. 积分/优惠券无后端业务 → 按真站结构做诚实空态占位，不虚设数据。
+5. 现有子页与真站截图逐页比对；**地址页去掉「自提」tab**（真站有 配送/自提，用户决定去掉）。
+6. 收藏条目用我们的名称「我的收藏」（en Favourites），不照抄真站「心愿单」。
+
+**真站补采（2026-11-25，var/profile_resurvey_20261125/）**：11-16 的 session cookie 仍有效，Playwright+color-api 全量 stub 重访真站成功，9 页全采（/profile、my-orders、my-returns、my-reviews、my-address、wishlist、wallet、points-activity、coupons-discounts）。侧栏真实 URL：心愿单=/profile/wishlist、余额=/profile/wallet、积分=/profile/points-activity、优惠券=/profile/coupons-discounts。钱包页真站=标题+交易历史（空态纸飞机）；积分页=「积分与记录」+「您当前拥有 0 积分」+记录空态；优惠券页=可使用/历史记录 tab+卡列表+分页。订单/售后/评价三个子页结构与本地实现一致（真站订单数据区因风控显示网络错误，但 tab/骨架可见）。
+
+**实现清单**：
+- `storefront/components/account/AccountNav.vue`：重写为 10 项（home/orders/returns/reviews/favourites/balance/points/coupons/addresses + merchant），icon 改 ICONS 映射表。
+- 新页面 `pages/account/balance.vue`（余额+流水+空态；useFetch /api/v1/buyer/wallet）、`points.vue`（积分与记录 0+空态）、`coupons.vue`（可使用/历史记录 tab+空态）；三页均含 m. host 简版分支（MobilePageHeader，m. 站真站无这些模块，直链兜底）。
+- 后端 `accounts_buyers/activity_views.py` 新增只读 `wallet(request)`（GET，balance+分页流水，PAGE_SIZE=20）+ `config/urls.py` 路由 `api/v1/buyer/wallet` + 单测 `accounts_buyers/tests/test_wallet_api.py`（4 用例）。
+- `pages/account/addresses.vue`：tabs 只留 delivery，addButtonLabel 固定 addNew，pickup 空态分支删除（MobileAddresses 组件本身未动，tabs 是 prop）。
+- `pages/account/favourites.vue`：桌面模板从旧式 AppContainer narrow 改套 AccountShell（与其它模块页一致）。
+- `pages/account/index.vue`（hub）：权益磁贴对齐真站 11-16+11-25 口径改为 优惠券/我的收藏/积分 + 申请店铺保留；「售后/评价/最近浏览」磁贴移除（最近浏览页仍可直链）。订单条仍是 待付款/待收货/已完成——真站是 待付款/待收货/评论/售后，但 评论/售后 无后端数据可算，保持诚实计数（已知偏差）。
+- `locales/messages.js`：5 语言（en/zh/de/fr/nl）新增 accountMenu.home/favourites/balance/points/coupons + account.balance* / points* / coupons* / walletKind* 键；`accountMenu.wishlist`（en）改 'Favourites'、`mobile.drawer.wishlist` zh 改「我的收藏」（en Favourites）。
+- `tests/nuxt-imports-stub.js`：补 useNuxtApp stub——**修了一个在途改动遗留的既有失败**：e3de28d（登录注册 email-first）给 useBuyerAuth 加了 useNuxtApp 调用后，MobileDrawer 6 个用例因 stub 缺该函数全挂，之前无人重跑全套件没发现。
+
+**验证（按验证纪律：本轮针对账号子树 + 全局字典影响面）**：
+- vitest storefront 全量：**46 文件 293/293 通过**（新增 AccountNav 用例更新 + 修复的 MobileDrawer 6 例）；backend 单测 test_wallet_api 4/4 通过（--keepdb --noinput）。
+- eslint + prettier：全部改动文件通过（balance.vue 曾报 status 未使用已修）。
+- SSR 冒烟：/account/balance、/account/points、/account/coupons、/account、/account/addresses 全 200；侧栏含 Favourites/Joybuy balance/Points/Coupons，地址页 0 处 Pickup。
+- 钱包接口端到端：注册买家 201 → GET /api/v1/buyer/wallet 200（balance/entries 结构正确）；POST 405 由单测覆盖。
+- **坑：后端 8000 端口曾被一个 --noreload 的陈旧 runserver 占着，新路由 404**——已 kill（PID 47056/35396）并用 .venv python 重启 `backend/manage.py runserver 127.0.0.1:8000 --noreload`（日志 var/profile_resurvey_20261125/backend_dev.log）。改后端路由后若 404 先查端口上是不是陈旧 --noreload 进程。
+
+**已知边界/遗留**：
+- 订单条「评论/售后」计数无法诚实计算（无买家评价/售后业务），保持 待付款/待收货/已完成。
+- 流水 currency 字段默认 CNY，前端统一按 £ 展示（与结算页 Balance: £ 口径一致）；若未来出现非 GBP 流水需按 entry.currency 渲染。
+- 优惠券真站有卡列表+分页，我们只有空态（无业务）；积分类似。
+- e2e 未跑（本轮未动 e2e 断言覆盖的流程；hub 磁贴无 e2e 断言）。
+- Nuxt dev（PID 51312，0.0.0.0:3000）未重启，HMR 已生效（SSR 冒烟过）；后端已重启见上。
+
+### 2026-11-25（傍晚）我的收藏页改卡片网格（用户反馈）
+
+用户指出收藏页还是文字行列表，与真站心愿单卡（图+标题+价）不符。改动：
+
+- **后端** `accounts_buyers/activity_views.py` `_serialize_cards`：补 `image_path` 字段，复用 `content.channel_module_services._gallery_paths`（第一张 gallery 图，与 locale 无关）；收藏与最近浏览两个接口同时受益——**手机版心愿单此前 image_path 恒为空（潜在 bug），本次顺带修复**。
+- **前端** `pages/account/favourites.vue` 桌面模板：改卡片网格（`repeat(auto-fill, minmax(11rem,1fr))`，卡=图(aspect-ratio 1、mix-blend multiply)+心形移除按钮(右上角悬浮)+2 行截断标题+红色加粗价格 --colour-accent）。只渲染真实数据字段（无品牌/Plus 价/送达徽章，缺数据不虚设）。
+
+**验证（针对性）**：eslint/prettier 过；vitest AccountNav+MobileWishlist 8/8；backend activity+wallet 9/9（--keepdb）。端到端：注册买家→收藏 SPU 898aef58（有画廊图）→ SSR /account/favourites 渲染出 `fav-card__media` img（/media/products/...webp）+ 标题 + 价格；登录态 Playwright 截图 `var/profile_resurvey_20261125/local_favs_card_1896.png` 目检卡片正常（imgLoaded=true）。**坑：重启后端时旧 --noreload 进程没杀干净（kill 循环 awk 取 PID 失败一次），新 runserver 绑不上端口静默退出，API 一直回旧代码——改后端后验证 404/字段缺失时先核对端口上的进程是否真的是新代码。**
+
+**已知差异（暂不处理）**：① 用户 17:41 提供的真站截图显示侧栏新增「礼品卡/定期购」两项（真站 10+ 项），我们未做——待用户明确要不要加；② 价格符号随站点货币 formatter（curl 默认环境显示 $6.99，与订单/购物车同口径），非收藏页特有。

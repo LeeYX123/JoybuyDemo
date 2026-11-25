@@ -84,29 +84,41 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
         </span>
       </li>
     </ul>
-    <!-- Featured brands (心选品牌): one horizontal row of circular logos with
+    <!-- Featured brands (心选品牌): one marquee row of circular logos with
          fading edges, sampled from the live site (194px circles, 24px gap).
          Static display only — requirement 14.4 explicitly keeps it
-         non-clickable. -->
+         non-clickable. The track renders the items twice so translateX()
+         loops seamlessly; the duplicate is aria-hidden so the brand list is
+         announced once. -->
     <div
       v-else-if="props.payload.variant === 'brand_logos'"
       class="brand-row"
       role="list"
       :aria-label="heading || t('cms.featuredBrands')"
     >
-      <ul class="brand-row__list">
-        <li v-for="item in items" :key="item.label" class="brand-card" role="listitem">
-          <span class="brand-card__circle">
-            <img
-              v-if="item.icon_path"
-              :src="item.icon_path"
-              :alt="displayLabel(item)"
-              loading="lazy"
-            />
-          </span>
-          <span class="brand-card__name">{{ displayLabel(item) }}</span>
-        </li>
-      </ul>
+      <div class="brand-row__track">
+        <ul class="brand-row__list" role="none">
+          <li v-for="item in items" :key="item.label" class="brand-card" role="listitem">
+            <span class="brand-card__circle">
+              <img
+                v-if="item.icon_path"
+                :src="item.icon_path"
+                :alt="displayLabel(item)"
+                loading="lazy"
+              />
+            </span>
+            <span class="brand-card__name">{{ displayLabel(item) }}</span>
+          </li>
+        </ul>
+        <ul class="brand-row__list" aria-hidden="true">
+          <li v-for="item in items" :key="`dup-${item.label}`" class="brand-card">
+            <span class="brand-card__circle">
+              <img v-if="item.icon_path" :src="item.icon_path" alt="" loading="lazy" />
+            </span>
+            <span class="brand-card__name">{{ displayLabel(item) }}</span>
+          </li>
+        </ul>
+      </div>
     </div>
     <!-- Default pill grid (text tiles / brand wall). -->
     <ul v-else class="cms-link-grid__row" :class="variantClass">
@@ -239,7 +251,10 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   text-decoration: none;
   color: #1a1a1a;
   box-shadow: 0 10px 30px rgb(0 0 0 / 8%);
-  transition: box-shadow 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .cms-link-grid__row--tiles li:nth-child(1) {
@@ -279,8 +294,22 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   z-index: 12;
 }
 
-.discovery-card:hover {
+/* Hover / keyboard focus: white card + underlined label + deeper shadow.
+ * The live site's 2026-11-20 build only deepened the shadow (its
+ * `.style_card:hover` is shadow-only), but the earlier replica had a visible
+ * hover state and the 2026-11-25 regression report asks for the white card
+ * and label underline back. The 6px lift is the "轻微位移" from that report —
+ * deliberately smaller than the old deck's -40px jump. */
+.discovery-card:hover,
+.discovery-card:focus-visible {
+  background: #fff;
   box-shadow: 0 14px 38px rgb(0 0 0 / 12%);
+  transform: translateY(-6px);
+}
+
+.discovery-card:hover .discovery-card__label,
+.discovery-card:focus-visible .discovery-card__label {
+  text-decoration: underline;
 }
 
 .discovery-card__label {
@@ -341,12 +370,62 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   }
 }
 
-/* Featured brands (心选品牌, 14.4): measured from the live site
- * pc-new-brands-we-love module — one horizontally scrollable row of 194px
- * circles with 24px gaps and 194px edge fades; brand name 16px/600/20px. */
+/* Featured brands (心选品牌, 14.4): measured from the live site's
+ * pc-new-brands-we-love module — a row of 194px circles with 24px gaps and
+ * 194px edge fades. The live site auto-advances it at ~31px/s and pauses on
+ * hover (measured 2026-11-25: scrollLeft 190→267 in 2.5s, constant while
+ * hovered); a CSS marquee reproduces both. 12 items currently give a
+ * 2616px loop, so 84s ≈ 31px/s — if the CMS item count changes the speed
+ * scales with it. */
 .brand-row {
   position: relative;
+  overflow: hidden;
   margin-top: 24px;
+}
+
+.brand-row__track {
+  display: flex;
+  gap: 24px;
+  width: max-content;
+  animation: cms-brand-scroll 84s linear infinite;
+}
+
+/* Live-site behaviour: hovering the row freezes the marquee. */
+.brand-row:hover .brand-row__track {
+  animation-play-state: paused;
+}
+
+/* The track holds the same list twice; translating by one segment + the
+ * 24px inter-segment gap lines segment two up exactly with segment one. */
+@keyframes cms-brand-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(calc(-50% - 12px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No motion: drop the duplicate segment and let the row be swiped/rolled
+     through instead, so the hidden brands stay reachable. */
+  .brand-row {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .brand-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .brand-row__track {
+    animation: none;
+  }
+
+  .brand-row__list[aria-hidden='true'] {
+    display: none;
+  }
 }
 
 .brand-row::before,
@@ -373,14 +452,8 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
 .brand-row__list {
   display: flex;
   gap: 24px;
-  overflow-x: auto;
   padding: 0;
   list-style: none;
-  scrollbar-width: none;
-}
-
-.brand-row__list::-webkit-scrollbar {
-  display: none;
 }
 
 .brand-card {
