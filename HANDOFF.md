@@ -2,6 +2,103 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cq. 品类发现 hover 与真站逐项对齐（2026-11-25，✅ 已复刻 + 针对性验证，未 commit）
+
+> 协调者要求的编号 `0co` 已被「0co. 重跑批次中断恢复」占用、`0cp` 已被「干净暂停」占用，故按 0cn/0cj 先例改用 `0cq`。
+
+### 我们在做什么
+用户反馈首页【品类发现】（`CmsLinkGrid` 的 `tiles` 变体）hover 仍不像真站。上一轮（0cn）按用户口述加了「白底 + 名称下划线 + 阴影加深 + 上移 6px」。本轮先对真站做三态实测（默认/hover/移出），再按实测值改 `storefront/components/cms/CmsLinkGrid.vue`。只改这一个文件、不动 campaign 变体与心选品牌跑马灯、**未 commit**。
+
+### 真站实测（2026-11-25，Playwright + cookies + `**color-api**` 打桩，视口 1896 与 1440 各跑一遍）
+脚本：`var/category_hover_20261125/probe_live_hover.mjs`（三态 + 截图 + CSSOM）、`probe_live_curve.mjs`（rAF 30ms 采样动画曲线）。原始数据 `live_1896.json` / `live_1440.json` / `live_1896_curve.json`，截图 `live_{1896,1440}_{default,hover,after}.png`。
+
+| 属性 | 真站实测值（1440/1896 一致） |
+| --- | --- |
+| 卡片 background-color | `rgb(245,246,250)` 默认与 hover **都不变**（无白底） |
+| 卡片 border / border-radius | `0px` / `16px` |
+| 卡片 box-shadow 默认 | `rgba(0,0,0,.08) 0 10px 30px` |
+| 卡片 box-shadow hover | `rgba(0,0,0,.12) 0 14px 38px` |
+| 卡片 transform 默认/hover/移出 | `none` / `translateY(-40px)` / `none` |
+| 邻居卡片 transform | **±1 邻居 `translateY(-8px)`**，隔一个及更远 `none`（波浪） |
+| 卡片 CSS transition | 仅 `box-shadow .2s`（ease）；transform 无 CSS |
+| transform 动画来源 | **JS spring（framer-motion 式，内联 style `transform`）**：hover 后 296ms 达峰 1.066×（hover -42.4px / 邻居 -8.5px，超调 ~6%），~470ms 收敛；移出对称（257ms 反向超调 +2.45px，~440ms 归零） |
+| 卡片尺寸 | 279×366（1896 真站容器 1512 → 279；1440 → 279）；hover 后仍 279×366，**只有 y 变 -40px** |
+| cursor | `pointer` |
+| 名称文字 | `#1A1A1A` / 600 / 18px/24px；**text-decoration 恒为 none、transform none**（没有下划线） |
+| 卡片内图片 | 275×275，`transform: none`（**无放大**）、`filter: none`、`opacity: 1`，transition 无 |
+| overlay 伪元素 | 卡片/图片/文字均无 `::before/::after`（无遮罩） |
+| :focus-visible | `outline: blue solid 2px; outline-offset: 2px` + `box-shadow 0 14px 38px/.12`，**不抬升** |
+
+一句话：**真站 hover = 卡片弹簧抬升 40px（左右邻居 8px 波浪）+ 阴影 .08/10/30 → .12/14/38 过渡 0.2s；没有白底、没有下划线、图片不放大。**
+
+### 修改（`storefront/components/cms/CmsLinkGrid.vue`，唯一改动文件）
+- **删掉**上一轮自加的：hover/focus 的 `background: #fff`；label 的 `text-decoration: underline`；`transform: translateY(-6px)`；`transition` 里的 `background-color`。
+- **新增** `.cms-link-grid__row--tiles li:hover .discovery-card { box-shadow .12/14/38; transform: translateY(-40px) }`。
+- **新增波浪**：`li:hover + li .discovery-card` 与 `li:has(+ li:hover) .discovery-card` → `translateY(-8px)`（`:has()` 现代浏览器均支持）。
+- **transition**：`box-shadow .2s ease, transform .39s cubic-bezier(0.4, 0, 0.24, 1.38)`；bezier 是对实测 spring 的最小二乘拟合（对 16 个采样点误差 <1px，拟合峰值 1.066、本地实测峰时 298ms vs 真站 268ms；真站 transform 是 JS 驱动，我们用 CSS 近似，属**推定实现**）。
+- **`:focus-visible`** 与真站逐字对齐：`outline: 2px solid #00f; outline-offset: 2px; box-shadow: 0 14px 38px rgb(0 0 0 / 12%)`（真站键盘态不抬升；覆盖 base.css 的全局 3px ring）。
+- 未改 campaign/default/brand_logos 变体；未改模板与数据。
+
+### 验证（按验证纪律仅做针对性验证）
+- 本地三态实测脚本 `var/category_hover_20261125/probe_local_hover.mjs`（1896 + 1440 + 移动 375），逐项对比表：
+
+| 属性 | 真站 1440 | 本地 1440 |
+| --- | --- | --- |
+| 卡片底色 默认/hover | `rgb(245,246,250)` / 同 | 同 / 同 |
+| box-shadow 默认 → hover | `0 10px 30px/.08` → `0 14px 38px/.12` | 同 → 同 |
+| transform 默认/hover/移出 | `none` / `-40px` / `none` | `none` / `-40px` / `none` |
+| 邻居 hover | `[none,-8,-40,-8,none,none]` | `[none,-8,-40,-8,none,none]` |
+| 卡片尺寸 默认 → hover | 279×366 → 279×366 | 279×366 → 279×366 |
+| label 装饰/颜色/字重 | `none` / `#1A1A1A` / 600 | 同 |
+| 图片 transform/filter/宽 | `none`/`none`/279 | 同 |
+| 伪元素 overlay | 无 | 无 |
+| focus-visible | `2px blue offset 2` + `0 14px 38px/.12`，无抬升 | 同（`rgb(0,0,255)`） |
+
+- 动画曲线对比（rAF 采样，卡片 0..5 的 y）：真站 102ms `13.2`、169ms `32.1`、268ms 峰值 `42.43`、469ms 回 40；本地 99ms `7.98`、165ms `27.84`、298ms 峰值 `42.57`、~390ms 回 40 → 峰值偏差 **0.14px**、峰时晚 ~30ms（一帧级，可接受）。移出：本地 36→253ms 反向超调 +2.45 后归零，与真站对称。
+- 三态截图并排：`var/category_hover_20261125/compare_live_vs_local_1440.png`（`live_1440_{default,hover,after}.png` vs `local_1440_*`），视觉一致：第 3 张抬起、左右两张微抬、无白底/下划线/放大。
+- 键盘：Tab 到卡片 → `matches(':focus-visible')=true`、`outline solid 2px rgb(0,0,255) offset 2px`、shadow `.12/14/38`、transform `none`（`probe_focus_settled.mjs`；截图 `focus_state_1440.png`）。
+- 移动 375（`http://m.localhost:3000/`）：`.mobile-shell` 生效、桌面 `.discovery-card` 渲染 0 个、手机版 `.m-discovery` 6 个、`scrollWidth 375`、console error 0 → **手机版零影响**（截图 `local_375_mobile.png`）。
+- 心选品牌冒烟（`probe_brand_smoke.mjs`）：`animationName cms-brand-scroll-…`、84s、1.5s 内 `-31.14 → -78.89`、hover `paused`、console error 0 → 未被本次改动影响。
+- console：`networkidle` 正常加载 2 次，桌面 1896/1440 与移动均 **0 error**。
+- 单测 `npx vitest run --config storefront/vitest.config.js storefront/components/cms/CmsRenderer.test.js` → **13/13 通过**；`npx eslint` 与 `npx prettier --check` 该文件均通过。
+- 未跑全量（按验证纪律）。
+
+### 踩坑（新会话必读）
+1. **真站的抬升不在 CSS 里**：`.style_card__qbxxV` 的 hover 规则只有 box-shadow；`translateY(-40px)` 是内联 style（`z-index: 3; transform: translateY(-40px)`）由 JS spring 写入。**只扫 CSSOM 会得出「只有阴影」的错误结论**（0cn 就是这么写的）。测 hover 必须真 hover 后读 `getComputedStyle` + `el.style`。
+2. **cards 用负 margin 叠放（-105/-66/-32px）**，后一张画在前一张之上；hover 采样点必须先 `elementFromPoint` 验证落在目标卡内，否则量到的是邻居。
+3. 量「移出」时不要在同一事件循环里读，需按 ~30ms 采样；真站移出有 +6% 反向超调，是 spring 不是 ease。
+4. `:has()` 用于「左邻居」选中（`li:has(+ li:hover)`），Chromium/Firefox/Safari 现代版本均支持；无需 JS。
+5. 一次 `domcontentloaded` 后立即滚动的探测曾出现一次 `Hydration completed but contains mismatches`；`networkidle` 下两次复测均为 0，且切回 HEAD 版本同样 0，判定为与本次纯 CSS 改动无关的一次性水合时序噪声；若后续再出现需单独排查。
+
+### 已知差异（本次未动，超出 hover 范围）
+- 真站 1896 视口容器 1512 → 卡片 279 宽；本地容器上限 1440 → 卡片 307 宽（0cn 之前已定，未改）。1440 视口两者都是 279，逐项对齐。
+- 真站 transform 是 JS spring，本地用 CSS bezier 近似（峰时 +30ms、峰值 +0.14px）；若后续要求逐帧一致，可替换为 `linear()` 弹簧曲线（需查浏览器支持）。
+
+## 0cp. 重跑批次按用户指令干净暂停（2026-11-25 19:26 本地，✅ 已暂停、待恢复）
+
+### 一行结论
+用户指令暂停爬虫。已干净暂停 0co 恢复的重跑批次：taskkill 队列器进程树（6 个 python，含 venv shim 双层）→ ORM 转换 run 227/228 → FAILED（`RUN_FAILED` 事件注明 interrupted-by-user-pause + 中断前计数）、job 246/247 → READY。**当前无任何爬虫进程**；批次待恢复。
+
+### 关键事实
+- 暂停前计数：run 227（job 246 猫粮）imported=24/101 discovered；run 228（job 247 摄影摄像）imported=23/200 discovered。已导入部分保留，恢复重跑幂等去重。
+- 暂停后状态：crawl_job RUNNING 仅剩 demo 僵尸 job 2/3（用户知情未动）；crawl_run RUNNING 仅剩僵尸 run 1/2/220；273 任务 = COMPLETED 156 / CANCELED 35 / READY 80 / RUNNING 2。
+- 底档：`var/crawler_retry_20261124/`（cleanup_227_228_pause.py、progress_paused_20261125.json、queue2.log）；明细与恢复命令 → `CRAWLER_STATUS.md` §1.4「用户暂停」小节 + §4.2。
+- **恢复指令**（VPN TUN 确认后执行，Git Bash 后台）：
+  `cd /e/code/AgentProject/Joybuy && MEDIA_BACKEND=local PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1 .venv/Scripts/python.exe -I var/crawler_retry_20261124/retry_queue.py > var/crawler_retry_20261124/queue3.log 2>&1 &`
+  语义不变：读 mapping.json 派发，244/245 自动 SKIP（COMPLETED），其余按序；恢复后跑完核对 `final_summary.json` 并刷新 CRAWLER_STATUS §1/§4。
+
+## 0co. 重跑批次中断恢复：清僵尸 run 225/226 + 重启 retry_queue（2026-11-25 19:15 本地，✅ 已恢复运行）
+
+### 一行结论
+重跑批次（0ch 建，30 任务）于 11-25 01:50 本地被外部终止（run 225/226 + 队列器同时被杀，原因不明，机器未关机），停摆 17h 后按用户指令恢复：run 225/226 → FAILED（RUN_FAILED 事件注明 interrupted-by-external-kill + 中断前计数）、job 246/247 → READY（均走合法状态机），11:15:04 UTC 重启 `retry_queue.py`（queue2.log，并发 2、240min 超时、`CRAWL_MEDIA_DOWNLOAD_WORKERS=2` 维持）。
+
+### 关键事实
+- 中断前已导入：job 246 猫粮 129/200、job 247 摄影摄像 72/200（保留，导入幂等去重，重跑不脏；本轮 run 227 discovered=83 / run 228=43 正是 skip_imported 跳过已入库的表现）。
+- 恢复后：244/245 自动 SKIP（COMPLETED）；**run 227**（job 246）/ **run 228**（job 247）11:15:04 UTC 启动，观察 >3 分钟正常（翻页/详情 200、ConnectionLost=0）。
+- 当前 RUNNING：run 1/2/220（demo/243 僵尸，用户知情未动）+ 227/228；剩余 26 个 READY 由队列继续派发。
+- 明细与批次记录 → `CRAWLER_STATUS.md` §1.4（中断+恢复小节）与 §4.6 新坑（后台队列可能被外部杀，恢复流程已验证）；脚本底档 `var/crawler_retry_20261124/`（cleanup_225_226.py、queue2.log、progress_batch1_interrupted.json）。
+- 批次跑完后核对 `final_summary.json` 并刷新 CRAWLER_STATUS.md §1/§4。
+
 ## 0cn. 首页两处回归：心选品牌不滚动 + 品类发现 hover 失效（2026-11-25，✅ 已修 + 针对性验证，未 commit）
 
 > 协调者要求的编号 `0ck` 已被「0ck. 生产同步 e26e485→8e5ad99」占用，故改用 `0cn`（同 0cj 先例）。

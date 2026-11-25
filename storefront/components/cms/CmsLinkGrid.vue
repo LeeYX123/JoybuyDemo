@@ -251,10 +251,12 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   text-decoration: none;
   color: #1a1a1a;
   box-shadow: 0 10px 30px rgb(0 0 0 / 8%);
+  /* Live site (2026-11-25 measurement): the card CSS only transitions
+     box-shadow 0.2s; the transform lift is a JS spring (framer-motion), which
+     is reproduced below as a spring-shaped CSS transition. */
   transition:
-    background-color 0.2s ease,
     box-shadow 0.2s ease,
-    transform 0.2s ease;
+    transform 0.39s cubic-bezier(0.4, 0, 0.24, 1.38);
 }
 
 .cms-link-grid__row--tiles li:nth-child(1) {
@@ -294,22 +296,40 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   z-index: 12;
 }
 
-/* Hover / keyboard focus: white card + underlined label + deeper shadow.
- * The live site's 2026-11-20 build only deepened the shadow (its
- * `.style_card:hover` is shadow-only), but the earlier replica had a visible
- * hover state and the 2026-11-25 regression report asks for the white card
- * and label underline back. The 6px lift is the "轻微位移" from that report —
- * deliberately smaller than the old deck's -40px jump. */
-.discovery-card:hover,
-.discovery-card:focus-visible {
-  background: #fff;
+/* Hover, measured on the live site (2026-11-25 three-state Playwright probe,
+ * var/category_hover_20261125/live_{1896,1440}.json + live_1896_curve.json):
+ * - the card keeps #F5F6FA (background never changes), the label keeps
+ *   18px/600/#1A1A1A with no underline, and the 275px image keeps
+ *   transform: none (no zoom) and filter: none;
+ * - the hovered card lifts translateY(-40px) and its two immediate
+ *   neighbours lift translateY(-8px) (a wave), animated by a JS spring:
+ *   peak 1.066× the distance at ~296ms, settled by ~470ms, with the leave
+ *   path symmetric (peak +6% around 257ms). The box-shadow deepens from
+ *   0 10px 30px/.08 to 0 14px 38px/.12 over 0.2s ease.
+ * The spring is reproduced with a fitted cubic-bezier (max deviation <1px);
+ * transform-only, so the 366px card box never changes size and nothing shifts
+ * in layout.
+ */
+.cms-link-grid__row--tiles li:hover .discovery-card {
   box-shadow: 0 14px 38px rgb(0 0 0 / 12%);
-  transform: translateY(-6px);
+  transform: translateY(-40px);
 }
 
-.discovery-card:hover .discovery-card__label,
-.discovery-card:focus-visible .discovery-card__label {
-  text-decoration: underline;
+/* Wave: only the cards directly left/right of the hovered one rise 8px. */
+.cms-link-grid__row--tiles li:hover + li .discovery-card,
+.cms-link-grid__row--tiles li:has(+ li:hover) .discovery-card {
+  transform: translateY(-8px);
+}
+
+/* Keyboard parity with the live rule
+ * `.style_card:hover/:focus-visible { box-shadow: 0 14px 38px rgba(0,0,0,.12) }`
+ * and `:focus-visible { outline: blue solid 2px; outline-offset: 2px }` — the
+ * live site raises only on pointer hover, so focus gets shadow + outline
+ * rather than the lift. */
+.discovery-card:focus-visible {
+  outline: 2px solid #00f;
+  outline-offset: 2px;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 12%);
 }
 
 .discovery-card__label {
