@@ -2,6 +2,81 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cw. 批次 DA：变体档案 + PDP 切规格切换数据（2026-11-27，✅ 已写库 / ⚠️ Hypershell 样例无法覆盖 / 未 commit）
+
+> 范围：**只做已合并的 486 组 / 1196 SKU**；未合并的 223 组只出候选 CSV（不建族、不改列表）。产物目录 `var/variant_archive_20261127/`：`backfill_report.json`（回填台账）、`verify.json`（校验）、`variant_family_candidates.csv`（223 组候选）、脚本 `verify.py` / `gen_family_candidates.py`。
+
+### 我们在做什么
+批次 CB2 合并后，PDP 切 SKU 只变价格/库存/规格；画廊/评分/已售/图文详情/标题都是保留 SPU 级共享。本批按用户 2026-11-27 拍板实现「合并商品切规格换整套数据」：新建变体档案表并从 `backup_merge.json` 一次性回填，详情接口支持 `?sku=`，前端按 `share_metadata` 决定是否整套切换；切规格写 URL（`router.replace`）保证可分享/刷新一致。
+
+### 已完成（全部实跑）
+1. **模型** `catalog.SpuVariantArchive`（迁移 `0019_spuvariantarchive`，**已 apply dev MySQL**）：`spu`(keep) / `sku` / `source_spu_public_id` / `axis_label` / `gallery_manifest`(JSON 相对路径，按原 sort_order) / `detail_spu`(归档 SPU，SET_NULL) / `rating_snapshot` / `sold_snapshot` / `title_snapshots`(JSON {locale:title}) / `share_metadata` / `share_metadata_reason` / `created_at`+`updated_at`；唯一键 `(spu, sku)`。
+2. **回填命令** `backend/catalog/management/commands/backfill_variant_archive.py`（默认 DRY_RUN；`--apply`；`--backup/--report/--group-id`）。只读备份、幂等 upsert。
+   - 结果：**1196 行** = 486 个 keep 各自的 1 个 SKU + 710 个归档成员 SKU；`gallery_manifest` 覆盖 **710** 个来源 SPU / **4810** 张图（**含**合并时按 asset 去重的共享图，按原 sort_order 还原原始画廊）；`detail_spu` **710**；评分/已售/标题快照 710 组。
+   - `share_metadata`：**201 行 True（83 组）** / **995 行 False（403 组）**；行级原因 `size_like` 194、`uncertain_default` 7、`colour_word` 609、`axis_text` 386。
+   - 幂等：重跑 `created=0 updated=0 unchanged=1196`。
+   - 判定规则在 `backend/catalog/variant_archive_services.py`：去掉颜色词后全是尺码/数量且族内颜色种类 ≤1 → True（`Multicoloured` 这类全族统一描述不算维度）；族内 ≥2 种颜色 → False；Colour/Style 轴含描述词 → False；其余 → True（`uncertain_default`，保守不换）。**纯尺码例**：A-0103 胶原蛋白粉 140g/300g/600g、A-0011 XXL/S/M/L 全为 True；**整套切换例**：A-0002 Flamingo/Jungle、B2-0478 22.83 inch/58 为 False。
+3. **详情接口** `GET /api/v1/products/<keep>?sku=<sku_public_id>`：新增 `variant_archive`（无参数/无档案 = `null`），**既有字段全部不变**；契约：
+   ```
+   variant_archive = null | {
+     sku, source_spu_public_id, axis_label,
+     share_metadata: bool, share_metadata_reason: str,
+     gallery: [{sha256,url,variants}...],      # 空数组 = 档案缺图（前端回退 keep 图）
+     review_summary: {average,count,distribution,source:"variant_archive"} | null,
+     sale_amount: str | null,                  # 档案空串 → null（前端回退顶层）
+     title: str | null,                        # 归档 SPU 的标题快照（按请求 locale → en-GB）
+     detail: {content_sections, specification_tables, specifications,
+              ai_summary, ai_summary_title, ai_summary_tags,
+              detail_translated, detail_language} | null
+   }
+   ```
+   未知 sku / 非本商品 sku / 未合并商品 → `null`；别名旧 id + `?sku=` 也可用（`canonical_public_id` 仍在）。
+4. **前端** `storefront/pages/p/[id].vue` + `storefront/utils/variantArchive.js`：`selectVariant` 选中后 `router.replace({query:{...route.query, sku}})`；URL 的 `?sku=` 是选中规格事实来源（首次 SSR 由 `watch([publicId,purchasableSkus],...,{immediate:true})` 同步，否则会落到 SKUs[0]）；`useFetch` 的 key **不含 sku**、`watch:false`，sku 变化用 `watch(requestedSkuId)` 手动 `refresh()`（避免整页 data 清空闪白）。桌面与移动端（`displayData` 覆盖 title/review/sold/detail）都生效；移动端画廊下标在媒体列表变化时重置（避免旧下标超出新画廊变空白）。
+
+### 切换字段矩阵（前端行为）
+| 字段 | `share_metadata=true`（纯尺码） | `share_metadata=false`（型号/颜色等） |
+|---|---|---|
+| 价格/库存/可购性/加购 offer | 切（既有行为） | 切 |
+| 规格文本/选中态 | 切（既有行为） | 切 |
+| 主图 + 画廊 | **不切** | 切（档案 `gallery`；空则回退 keep 图） |
+| 评分/评价数/星级分布 | **不切** | 切（档案 `rating_snapshot`；无评分回退顶层） |
+| 已售 | **不切** | 切（档案 `sold_snapshot`；空回退顶层） |
+| 图文详情/规格表/AI 摘要 | **不切** | 切（`detail_spu.detail` + 该 locale 译文；缺则回退顶层） |
+| 标题 | **不切** | 切（档案 `title_snapshots`；keep 自身 SKU 即 base 标题） |
+| 视频/页头类目/面包屑 | 不切 | 不切（本批没做变体视频快照） |
+
+### 未合并族候选（批次 DB 第 1 步，只出数据）
+`var/variant_archive_20261127/gen_family_candidates.py` → `variant_family_candidates.csv`：**220 个族覆盖 223 条 skip 记录**（3 个 slug 各被 2 条 skip 记录覆盖，`group_ids`/`skip_reasons` 都保留）。族键 = 源站 slug（`source_system=joybuy_uk` 的 `/dp/<slug>/<source_id>`）；成员 = 全库同 slug SPU；轴值候选 = 标题词级公共前缀去掉后的剩余串，再机械抽取「数字+单位 / 颜色词 / 尺码词 / 型号词」；置信度 high 84 / medium 9 / low 127（low = 标签为空或重复，如 A-0018/A-0058，需人工命名）。规则全文写在脚本 `RULES` 与 CSV `extraction_rules` 列。**未建族、未改列表/搜索。**
+
+### 验证（按验证纪律仅做针对性验证）
+- 回填：DRY_RUN → `created=1196`；`--apply` → 1196 行；重跑 → `unchanged=1196`（幂等）。
+- 校验 `var/variant_archive_20261127/verify.py`（只读）：`expected_rows=1196 db_rows=1196 unique=1196`、`archived_gallery_rows=710`、`gallery_paths_checked=4810`、`gallery_files_missing=0`、`snapshot_mismatch=0`、`failure_count=0`；抽 10 个 SKU 全部 `gallery_matches_backup=true` 且首图物理存在（明细 `verify.json`）。
+- 后端：`manage.py test catalog.tests.test_variant_archive --keepdb` = **10 OK**（分类规则/回填幂等/DRY_RUN/`?sku=` 契约/无档案 null/别名+sku）；针对性回归 `test_product_detail_api` + `test_spu_alias` + `test_product_detail_extras` = **26 OK**；`manage.py check` 0 issue、`makemigrations --check` 无变化；ruff check/format 改动文件全过。
+- 前端：`vitest run --config storefront/vitest.config.js storefront/tests/variantArchive.test.js storefront/components/mobile/MobilePDP.test.js` = **16 passed**（含批次 DA 新增 14 条切换规则 + 移动端回归 2 条）；eslint + prettier 改动文件全过。
+- Playwright `tests/e2e/variant-switch.spec.js` = **2 passed / console error 0**：
+  1. B2-0478 火盆（share=false）：切 `22.83 inch/58` 后 **标题/$199.99→$69.99/4.4→5.0/1.4k+→100+/12→10 张图/首段详情变**；`?sku=` 写入 URL；`reload` 保持变体；`goBack` 回到首页、`goForward` 回到变体 URL+内容。
+  2. A-0103 胶原蛋白粉（share=true）：切 `300g` 后 **只 $14.99→$22.99**，标题/评分 4.5/已售 5.9k+/11 张图/首段详情全不变。
+
+### 当前卡在哪里 / 遗留（下一批）
+1. **Hypershell 样例无法覆盖**：`/p/d88b76fd-432c-495e-966b-57d0aac6a150`（X Ultra S）与 `/p/25885e24-9dd5-4a3c-9b9c-700215f8ca58`（X Max S）**都还是独立 ACTIVE SPU**，源站 slug 不同（`…hypershell-x-ultra` vs `…hypershell-x-max`），**不在 486 合并备份、也不在 223 skip 组** → 没有 keep/变体关系可写档案，本批机制覆盖不到。需要下一批「人工登记族 + 族内跳转」处理（两 id 已记录）。
+2. **keep 自己的 SKU 无法反拆原始画廊**：`backup_merge.json` 没记录 keep 自身的 `media_usages`（只记 merged 成员）→ 这类档案 `gallery_manifest=[]`，前端回退 keep 的**并集**画廊；从变体切回默认规格时主图仍是并集，不是 keep 原始图。要精确需另做一次抓取/备份。
+3. **变体视频未做快照**：整套切换时 `mediaItems` 不混入 base 视频（否则主图仍是旧视频）；变体自己的视频当前不展示。
+4. **`share_metadata=false` 含少量「其实只是规格不同」的族**（如 `Spray 100ml` vs `50 ml` 判为 axis_text）：按用户「名称像、规格不同必须整套切换」口径宁可多换、不少换；如需收紧可改 `classify_share_metadata` 后重跑回填（幂等）。
+5. **列表去重/223 组建族/兄弟跳转未做**（下一批）；本批未改 `search_services`/`ProductSearchDocument`。
+6. 未做 AWS、未 commit；工作区还有并行 Agent 的改动。
+
+### 踩坑（不要再踩）
+1. **后端 `runserver --noreload`**：改 `catalog/models.py`/`detail_views.py` 后必须杀 :8000 让 keepalive 重启，否则 `?sku=` 仍返回旧响应（本次已踩）。
+2. **`useFetch` 的 key 不能包含 `?sku=`**：包含会让切规格时新 key 把 `data` 置空、整页闪白；本批 key 只含 productId+market/locale+offer，sku 变化手动 `refresh()`（`watch:false`）。
+3. **首次 SSR 必须从 URL 同步 `selectedSkuId`**：否则 `resolveSelectedSku` 回落到 SKUs[0]，`variant_archive` 的 sku 对不上、档案不生效。
+4. **备份 `media_usages.object_id` 是成员 SPU 的 pk**（不是 public_id）：回填/校验要用 `merged[].spu_id` 映射（`verify.py` 第一版因此全 mismatch，已修）。
+5. **share_metadata 不要「出现颜色词就 false」**：`Multicoloured` 全族统一描述会误判；先剔颜色词看尺码，只有族内出现 ≥2 种颜色才算颜色维度。
+6. **`router.replace` 不新增历史**：Playwright 测后退要先把首页留在历史里（`goto('/')` → `goto('/p/...')`），否则 `goBack` 直接离开站点。
+
+### 本次改动文件（提交时只挑这些）
+- 新增：`backend/catalog/migrations/0019_spuvariantarchive.py`、`backend/catalog/management/commands/backfill_variant_archive.py`、`backend/catalog/variant_archive_services.py`、`backend/catalog/tests/test_variant_archive.py`、`storefront/utils/variantArchive.js`、`storefront/tests/variantArchive.test.js`、`tests/e2e/variant-switch.spec.js`、`var/variant_archive_20261127/*`（脚本 + CSV + JSON 产物；`_html/` 是临时 SSR 取样，可不入库）。
+- 修改：`backend/catalog/models.py`、`backend/catalog/detail_views.py`、`storefront/pages/p/[id].vue`、`storefront/components/mobile/MobilePDP.vue`（移动端画廊下标重置）。
+
 ## 0cuc. 调研：列表同款只出一卡 + PDP 切规格换整套数据（2026-11-27，✅ 只读调研完成 / 未写库、未改业务代码、未 commit）
 
 > 用户需求（新）：「同款多规格在列表页只展示一个商品；进 PDP 后展示规格选择，切规格时画廊/主图/评分/已售/详情/价格都换成所选规格的数据（用户说 Joybuy 就是这样）」。涉及两类：已合并的 486 组 + `skip_underivable.csv` 的 223 组（483 SPU，未合并）。
@@ -6054,3 +6129,13 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **验证**：Playwright 实测渲染值 = 真站模型（28/700/黑/lh35/元素高 72/pad 16+21/margin 0；header 底→标题文字顶 25px = 真站 25px）；页面 padding-top 9px 白底；截图 `cc_4VQ7_desktop_v2.png`；eslint 通过；骨架单测 2/2。按验证纪律未跑全量。
 
 **注意**：`--mod` 变体由 `extra.mod` 驱动，只影响新管线建的三页；10 个老页面走旧间距模型不受影响。后续批次建页统一带 `extra.mod`。
+
+## 频道卡落地页夜批：爬取任务交接给执行 agent（2026-11-27 01:40 本地）
+
+剩余 31 个落地页（28 活动 + 3 店铺）的爬取**交给另一个 agent 执行**，双方通过根目录 `CRAWL_COORDINATION.md` 沟通（双向请求区 + 自动进度段）。
+
+- **建任务方（本会话）已完成**：31 个 PAGE_SET 任务 job#388~418 全部 READY、账号预分配（已剔除演示账号）；任务清单 `var/home_modules_20261125/overnight/job_list.json`。
+- **执行 agent 只需一条命令**：`.venv/Scripts/python.exe var/home_modules_20261125/overnight/run_crawl_queue.py`（3 并发、失败自动换账号重试 ≤3 次、DETACHED 执行器、状态写 `crawl_state.json`、进度自动追加到协同文档）。
+- **硬性约束**（写在协同文档第三节）：不改业务数据、不改任务配置、大量风控降级要停并在请求区留言。
+- **建任务方（本会话）接下来的动作**：轮询 `crawl_state.json`，≥25 个 SUCCEEDED 后统一建页选品 + 上架 + 绑卡 + 验收（复用 `scripts/build_channel_card_pages.py` 逻辑泛化版），并响应执行方在请求区提出的请求。
+- 首批 3 页已上线（见上节）；本次 31 页不包含它们。
