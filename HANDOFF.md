@@ -2,6 +2,110 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cua. 缺评分在售商品随机生成评分（2026-11-27，✅ 完成 / 未 commit）
+
+> 任务书写的编号 `0cu` 已被 2026-11-25「furniture 42 个 DRAFT SPU 上架」占用（0ca~0cz 全部已用），本批顺延为 `0cua`。
+
+### 我们在做什么
+用户要求「缺评分的商品按之前（2026-11-23）的方式随机生成评分」。本批只处理**在售**商品，规则完全沿用 0bl，未新增规则。**未 commit、未改前端、未改业务代码、未做 AWS、未打断爬虫。**
+
+### 复用与新增脚本（全部在 `var/ratings_seed_20261127/`）
+- `generate_ratings.py`：**复用 `var/gen_rating_20261123/generate.py`** 的纯函数与约束（`generate_rating_distribution/format_sold/parse_sold/calibrate_distribution`、N∈[50,1500]、1~5 星区间、强制 1/2 星、均分 4.1~4.6、销量只补不足、`comment_count_display`），只做三处改动：
+  1. 目标集合从「全部 `rating_count=0`」收紧为「**在售**」（`Spu.status=ACTIVE` 且 ≥1 条 `Offer.status=ACTIVE`），不再依赖会过期的 20261121 下架清单；
+  2. 产出本目录 `dry_run.json` / `backup.json` / `result.csv` / `search_refresh.json`；
+  3. 搜索文档重建改为**逐条捕获异常并统计成败**（不再一失败就中断整批）。
+  - DRY_RUN 默认（全程只读），`--apply` 才写；`--seed 20261127 --batch 2000`。
+- `rollback_ratings.py`：读 `backup.json` 恢复（评分行恢复 5 个字段、脏分布行恢复分布），恢复后重建这批 SPU 的搜索文档；DRY_RUN 默认。
+- `verify.py`：只读核对，产出 `verify.json` + `pdp_pages/`；`report.md` 是本批完整报告。
+
+### 前置核查（搜索文档评分断链）
+`backend/catalog/search_services.py::rebuild_search_document` **已含 `SpuDetail` 回退**（第 147–153 行：本地 ACTIVE 评价为 0 时取 `spu.detail.rating_average/rating_count`），与 `catalog/detail_views.py` 的 `review_summary` 同口径；测试 `backend/catalog/tests/test_generated_rating_shape.py` 存在并已实跑 `manage.py test catalog.tests.test_generated_rating_shape --keepdb --noinput` → **Ran 10, OK**。**本批未再改任何业务代码。**
+
+### 实际执行结果（seed=20261127，2000/批，exit=0）
+- DRY_RUN（`dry_run.json`）：在售 18,411；`rating_count=0` 全库 3,053；其中在售 **2,767**；跳过（下架/无 ACTIVE Offer）286；需重算销量 2,766；销量串无法解析 0；在售脏分布 51 条（空 0 / 合计≠count 51）。
+- 写库（`apply.log`）：评分/销量 **2,767**（2 批）、脏分布 **51**、搜索文档重建 **2,767 条，成功 2,767 / 失败 0**（`search_refresh.json`）。
+- 备份 `backup.json` 1.9 MB：`rating_rows` 2,767（before/after 均含 `rating_count/rating_average/rating_distribution/sale_amount/comment_count_display`）+ `dirty_rows` 51。
+- 前后：在售 `rating_count=0` **2,767 → 0**；全库 `rating_count=0` **3,053 → 286（全部非在售）**；在售已评分 15,518 → 18,285；搜索文档 `rating_count>0` **15,476 → 18,243**；目标 2,767 条文档与 SpuDetail 评分逐条一致、仍为 0 的 0 条。
+- **残留**：126 个在售商品**没有 `SpuDetail` 行**（本次无行可写，未创建），故「在售缺评分」残留 **126 = 0.68%**（<1% 目标，不是漏跑）。对照 11-26 CSV 的 2,912：19 条执行前已非在售、126 条无 detail 行、其余 2,767 全部写入。
+- 分布实测：1 星 0~1.00%（N=100~124 的 49 条超 0.8%，强制规则优先，同 0bl 结论）、2 星 0~2.00%、3 星 8.02~18.00%、4 星 22.00~34.00%、5 星 46.43~65.00%；均分 **4.23~4.55**；均分直方图 4.2-4.3=139 / 4.3-4.4=1,069 / 4.4-4.5=1,336 / 4.5-4.6=223。
+
+### 验证（按验证纪律仅做针对性验证）
+- `verify.py` 全量复核 2,767 行：count/均分/分布合计/星级阶梯/均分区间/强制 1&2 星/销量≥N/评价数展示 **全部 0 异常**；在售脏分布剩余 **0**。
+- PDP 实抓 5 个（`pdp_pages/`）：HTTP 200，`reviews__average`/`reviews__count`（N reviews）/五档 `reviews__dist-count` 与 DB 完全一致（如 ST SEB602PY 415、4.48、252/121/36/3/3）。
+- 搜索实证：`GET /api/v1/search?q=Belling%20BI703MFC` → `rating_average=4.37, rating_count=970`（本批生成值）；`/c/kitchen-appliances` 该卡片 `Rated 4.37 out of 5`。
+- 未改动既有评分：非目标在售商品 15,476 条「文档 vs SpuDetail」评分 **0 差异**（这些文档未被重建，可反证）；抽 2 个原已评分商品（detail id=39 N=2/5.00、id=229 N=1,302/4.44）不在 backup 内、分布合计 = count。
+- 下架未处理：非在售 `rating_count=0` 286 条保持原样，backup 中 **0 条**下架行。
+- 回滚 DRY_RUN：评分行 **2,767/2,767**、脏分布 **51/51** 可回滚，drift 0。
+- 针对性单测：`catalog.tests.test_generated_rating_shape` **Ran 10, OK**（其余测试未跑，遵守验证纪律）。
+
+### 坑 / 结论（新会话必看）
+1. **「在售」必须运行时查库**（`Spu.status=ACTIVE` + `Exists(Offer ACTIVE)`），不要用 11-26 CSV：本次 CSV 有 19 条已下架/无 Offer，且 CSV 的「缺评分」含 126 条根本没有 `SpuDetail` 行的商品。
+2. **126 个在售商品无 `SpuDetail` 行**：本次未创建（创建会新增详情壳，属另一批范围），它们 PDP 仍无评分；要清到 0 需另开批建 detail 行。
+3. **`ProductSearchDocument` 的评分字段是 `rating_count`**，但 `storefront/components/ProductCard.vue` 绑的是 `product.review_count` → **所有列表/搜索卡片的评价数都显示 `(0)`**（既有前端绑定缺口，非本批引入；星级均值正常显示）。**2026-11-27 已在前端修复**（详见下方「0cua 后续修复」），现在统一绑 `rating_count`。
+4. `Spu` 没有 `title` 字段（标题在 `SpuTranslation`）；`ProductSearchDocument` 反查 `SpuDetail` 只能用 `spu__detail__rating_count`，**没有** `spu__detail_id` 这个 lookup（`FieldError`）。
+5. `bulk_update` 不触发 `auto_now`，`SpuDetail.updated_at` 不能用来判断「本批是否改过」；核对未改动请用「backup 成员资格 + 非目标文档一致性」。
+6. 跑后端测试要加 `--keepdb --noinput`，否则 MySQL 测试库存在时会卡在交互式确认（`EOFError`）。
+7. 复跑本脚本天然幂等（只取 `rating_count=0`）：爬虫新入库的缺评分商品直接再跑一遍即可，已有评分不会被改。
+
+### 产物
+`var/ratings_seed_20261127/`：`dry_run.json`、`backup.json`、`result.csv`（2,818 行 = 2,767 评分 + 51 脏分布）、`rollback_ratings.py`、`report.md`、`generate_ratings.py`；附 `verify.py`/`verify.json`、`search_refresh.json`、`apply.log`、`pdp_pages/`、`cat_kitchen_appliances.html`。
+
+### 0cua 后续修复：商品卡评分数量显示 `(0)`（2026-11-27，✅ 完成 / 未 commit）
+
+**根因确认（接口字段名）**：`GET /api/v1/search?q=Belling%20BI703MFC` 的 `items[]` 实际返回 `rating_average`（十进制字符串，如 `"4.37"`）与 `rating_count`（整数，如 `970`），**没有 `review_count`**；`/api/v1/recommendations`、`/search?category=...` 同构（`serialize_search_row`）。`ProductCard.vue` 旧绑定 `Number(product.review_count ?? 0)` 在真实数据上恒为 `0` → 所有卡片 `(0)`。PDP 的 `review_summary` 是 `average/count` 且按需求 23.1-2 不展示条数，不受影响。
+
+**改动文件（仅前端 + 测试，未改后端、未改促销/折扣展示）**
+- `storefront/components/ProductCard.vue`：新增 `ratingValue`/`ratingCount`/`showRatingStars`；数量改绑 `product.rating_count`（缺失或 ≤0 时不传 `show-count`）；均分 ≤0/null 时整行星级不渲染。
+- `storefront/components/BaseRatingStars.vue`：新增 `hasCount` 守卫，`count` 为 0/缺失时**不显示 `(0)`**（宁可不显示数量）。
+- 测试：`storefront/components/BaseComponents.test.js`（count=0/缺失不出括号）、`storefront/tests/minihome-channel-page.test.js`（fixture `review_count`→`rating_count`，新增 `rating_count=970` 显示 `(970)`、0 数量不显示、无评分不渲染的用例）。
+- 受影响页面均复用 `ProductCard`：`/search`、`/c/[slug]` 列表、首页推荐/热销、频道页/CMS 商品池、`ChannelPickedForYou`（频道页 + 购物车）、`/marketing`。频道楼层与精选好物按既有设计 `showRating=false`（无评分行，不是 `(0)`）；商家店铺页与活动页是自定义卡、本来无评分；PDP 只显示均分。
+- 未改：`storefront/pages/promo/best-seller.vue:42` 的 `items[0].review_count` 是「people viewed」合成占位（非评分展示，promo 页展示按约定不动），该字段恒 undefined、数值恒定；`backend/content/schemas.py` 的 legacy CMS `review_count` 可选字段属后端，未动（若管理端老 CMS 商品池只带 `review_count`，现在会隐藏数量而不是显示 0）。
+
+**验证（按验证纪律仅做针对性验证）**
+- 修复前后截图与 DOM 证据：`var/rating_display_fix_20261127/{before,after}/` + `evidence.json`；7 个页面 console error 全为 0。
+- 抽 3 个本批生成评分商品（`result.csv`）：`1d38896a…` 125/4.38、`5248b826…` 856/4.48、`c6ff3a8f…` 385/4.47。搜索页修复前均 `(0)`，修复后 `(125)`/`(856)`/`(385)`，与 DB/API 一致。
+- 品类列表 `/c/home-living?sort=rating_desc`：修复前 24 张卡全 `(0)`；修复后 `(28)/(28)/(26)/(18)/(13)…`，与 API `rating_count` 逐条一致。
+- 无评分商品 `898aef58…`（C&S 卫生纸，rating_average=null/count=0）：修复前后都不出星级、不出现 `(0)`（页面 `bodyHasZero=false`）。
+- 频道页 `/minihome/UK-Mini-HP-Home-Living`：44 张楼层卡按设计无评分行，`bodyHasZero=false`；商家店铺页（`/merchants/source-961fbe…`）卡片无评分、无 `(0)`。
+- `npx vitest run --config storefront/vitest.config.js`（BaseComponents + minihome-channel-page + ChannelPickedForYou + CmsRenderer）：**4 files / 63 tests passed**；`npx eslint` 4 个改动文件 0 问题；`npx prettier --check` 全部通过。
+- 坑：dev server 在并发改动（`utils/pdpAlias.js` 未跟踪）时可能临时 500 `Cannot find module 'E:\storefront\utils\pdpAlias'`，重试请求即恢复，不要误判为本次改动。
+
+## 0ct. 商品「详情缺失 / 评分缺失」全库清单（2026-11-26，✅ 完成 / 只读任务，未写库、未改代码、未 commit）
+
+### 我们在做什么
+用户要抽检「没有商品详情 / 没有评分」的商品，需要全库清单（SPU + 商品链接页）。本会话纯只读统计，产物全部在 `var/missing_detail_20261126/`（`var/*` 被 gitignore，仓库零改动）。
+
+### 口径（复跑必须一致）
+- **在售** = `Spu.status=ACTIVE` 且有 ≥1 条 `Offer.status=ACTIVE`（同 `catalog/search_services.py` 与前台可见）；全库对照另算。
+- **缺详情** = 无 `SpuDetail` 行，或 `content_sections` 为空，或区块只有标题、无正文无图片。
+- **缺评分** = PDP 有效评分条数为 0：PDP 先取本地 ACTIVE 评价、没有再回退 `SpuDetail.rating_count`（`catalog/detail_views.py`）。本库本地评价仅 3 条覆盖 1 个 SPU，故实际等价 `rating_count=0`；本库 `rating_count=0` 时 `rating_average` 全为 NULL。
+- 规格表（`specification_tables`）缺失单列，不计入「缺详情」。
+- PDP 链接 `http://localhost:3000/p/<spu_public_id>`。
+
+### 结果（快照 2026-11-27T00:03，爬虫在跑，数字会涨）
+- 全库 SPU 23039；在售 **18411**。
+- 在售需抽检 **2976**（16.16%）：只缺详情 64 / 只缺评分 2778 / 两者都缺 134；缺详情合计 **198**（1.08%）、缺评分合计 **2912**（15.82%）。
+- 全库对照：需抽检 3294（65 / 3031 / 198）；缺详情 263、缺评分 3229。
+- 规格表缺失 6076/18411（33.00%）。
+- 最重一级品类：户外运动（缺评分 41.01%）、未分类（缺详情 10.26%）、家用电器（缺评分 26.15%）；最重二级：户外运动>园艺 & 庭院工具 135、户外运动>体育与休闲 126、宠物>宠物美容护理 96。
+
+### 产物
+`var/missing_detail_20261126/`：`missing_detail.csv`（在售 2976 行）+ `missing_detail_offline.csv`（不在售对照 318 行）、`missing_detail.md`（中文摘要 + 一级品类表 + Top20 品类/商品 + 自检）、`summary.json`、`selfcheck.json`、`pdp_pages/*.html`、`export.py` / `check_pdp.py` / `report.py`（可复跑）。
+
+### 验证（按验证纪律仅做针对性验证）
+- 抽样 curl（`check_pdp.py`，种子 20261126）：随机 3 个「两者都缺」+ 1「只缺详情」+ 1「只缺评分」+ 1 正常对照，6/6 通过——both 样本 HTTP 200 且无 `detail-heading`/`detail__content`/`detail__description`、评分渲染 `—`；对照有详情且评分 4.3。结果在 `selfcheck.json`。
+- 复跑命令：`.venv/Scripts/python.exe -I var/missing_detail_20261126/export.py` → `check_pdp.py` → `report.py`（顺序固定，report 读 export 与 selfcheck 的输出）。
+- CSV 自查：2976 行无重复、`has_active_offer` 恒 1、`both 且 rating_count>0` 为 0 条。
+
+### 坑（不要重踩）
+1. `JSON_LENGTH` 注解必须显式 `output_field=IntegerField()`，否则 `F(json 字段)` 推断出 JSONField，converter 把 int 当 JSON 解码直接 `TypeError`。
+2. 198 个缺详情商品**全部**没有 `description` 兜底（0 个），页面上「商品详情」区块整体消失；但其中 2 个（`a3fa0973-63c8-40cf-a675-7934acb6cc67`、`2f3ff3d2-5031-49be-a104-480d9df8ad24`）是只有标题的空壳，页面**仍会**渲染 `id="detail-heading"` 的空区，抽检别用 heading 判断有无详情。
+3. 用 Python `subprocess` 调 curl 抓 PDP 首次可能不落盘（nuxt dev 瞬时/连接被重置，返回码仍可能异常），`check_pdp.py` 已加 3 次重试；别误判成数据问题。
+4. 爬虫持续入库，不同分钟重跑数字会变（本次观察到 23027→23039）；md 的 `generated_at` 才是快照时间，别拿两个数字对不上当 bug。
+
+### 下一步 / 遗留
+无代码遗留。用户按 `missing_detail.csv`（按 `both → detail → rating`、类目、标题排序）成批抽检即可。
+
 ## 0cr. 批次 CA（2026-11-26 文案样式/后台搜索/白名单默认/分类卡，✅ 完成 / 未 commit）
 
 ### 我们在做什么

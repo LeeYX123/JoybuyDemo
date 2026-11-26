@@ -18,6 +18,8 @@ const props = defineProps({
 })
 
 const filledStars = computed(() => Math.round(Math.min(5, Math.max(0, props.rating))))
+// 数量缺失/为 0 时不渲染「(0)」（2026-11-27）：真实接口没有评价数就宁可不显示。
+const hasCount = computed(() => Number.isFinite(props.count) && props.count > 0)
 const formattedCount = computed(() => props.count.toLocaleString('en-GB'))
 </script>
 
@@ -32,7 +34,9 @@ const formattedCount = computed(() => props.count.toLocaleString('en-GB'))
         >★</span
       >
     </span>
-    <span v-if="props.showCount" class="rating-stars__count">({{ formattedCount }})</span>
+    <span v-if="props.showCount && hasCount" class="rating-stars__count"
+      >({{ formattedCount }})</span
+    >
   </span>
 </template>
 

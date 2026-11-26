@@ -89,6 +89,21 @@ const viewed = computed(() => {
   return count > 0 ? `${count} people viewed in 72 hours` : ''
 })
 
+// 评分口径（2026-11-27）：搜索/推荐/CMS 接口返回 rating_average（十进制字符串）
+// 与 rating_count（整数）。旧绑定 review_count 在真实接口数据上恒为 undefined，
+// 导致卡片显示「(0)」。数量缺失或为 0 时不显示括号数字，绝不用 0 顶替；无评分
+// 商品 rating_average 为 null，星级整行也不渲染。
+const ratingValue = computed(() =>
+  Number(props.product.rating_average ?? props.product.rating ?? 0),
+)
+const ratingCount = computed(() => {
+  const count = Number(props.product.rating_count)
+  return Number.isFinite(count) && count > 0 ? count : 0
+})
+const showRatingStars = computed(
+  () => props.showRating && props.rank === 0 && ratingValue.value > 0,
+)
+
 const badge = computed(() => {
   // Marketing labels (新客福利/优惠x%/送达/满减/自营) never render (req 5-6);
   // delivery-estimate and discount/promotion labels are suppressed by the
@@ -149,14 +164,10 @@ function toggleWishlist() {
       </h3>
       <p v-if="viewed" class="product-card__viewed">{{ viewed }}</p>
       <BaseRatingStars
-        v-if="
-          props.showRating &&
-          props.rank === 0 &&
-          (props.product.rating || props.product.rating_average)
-        "
-        :rating="Number(props.product.rating_average ?? props.product.rating ?? 0)"
-        :count="Number(props.product.review_count ?? 0)"
-        show-count
+        v-if="showRatingStars"
+        :rating="ratingValue"
+        :count="ratingCount"
+        :show-count="ratingCount > 0"
       />
       <div class="product-card__footer">
         <p
