@@ -60,6 +60,7 @@ describe('AppCategoryPanel', () => {
     ])
     // Strict linkage (requirement 1-2): only the selected root's children.
     expect(wrapper.findAll('.category-tile__name').map((item) => item.text())).toEqual([
+      'View all Home & Living',
       'Kitchen Essentials',
       'Bedding & Textiles',
     ])
@@ -68,12 +69,15 @@ describe('AppCategoryPanel', () => {
     // well; the hovered/active row is bold black, never the accent red.
     await wrapper.findAll('.category-panel__root')[1].trigger('mouseenter')
     expect(wrapper.findAll('.category-tile__name').map((item) => item.text())).toEqual([
+      'View all Electronics',
       'Soundbars & Home Cinema',
     ])
-    expect(wrapper.findAll('.category-tile')[0].attributes('href')).toBe('/c/soundbars-home-cinema')
+    expect(wrapper.findAll('.category-tile')[0].attributes('href')).toBe('/c/electronics')
+    expect(wrapper.findAll('.category-tile')[1].attributes('href')).toBe('/c/soundbars-home-cinema')
 
     await wrapper.findAll('.category-panel__root')[0].trigger('click')
     expect(wrapper.findAll('.category-tile__name').map((item) => item.text())).toEqual([
+      'View all Home & Living',
       'Kitchen Essentials',
       'Bedding & Textiles',
     ])
@@ -93,7 +97,7 @@ describe('AppCategoryPanel', () => {
   it('renders children as tile cards: image on top, name below (Joybuy style)', () => {
     const wrapper = mountPanel()
     const cards = wrapper.findAll('.category-tile')
-    expect(cards).toHaveLength(2)
+    expect(cards).toHaveLength(3)
     for (const card of cards) {
       // Card anatomy: one square image + one name label, both inside the tile.
       const image = card.find('.category-tile__image')
@@ -109,10 +113,12 @@ describe('AppCategoryPanel', () => {
   it('takes card images from the local manifest and never renders missing slugs', () => {
     const wrapper = mountPanel()
     const images = wrapper.findAll('.category-tile__image')
+    // 批次 CA：「查看全部」卡用常量固定图（home-living → home-decor）。
+    expect(images[0].attributes('src')).toBe('/images/categories/home-decor.webp')
     // Manifest hit: local asset path from assets/category-images.js.
-    expect(images[0].attributes('src')).toBe('/images/categories/kitchen-essentials.webp')
+    expect(images[1].attributes('src')).toBe('/images/categories/kitchen-essentials.webp')
     // No manifest entry: local placeholder fallback (layout must not break).
-    expect(images[1].attributes('src')).toBe('/images/categories/_placeholder.svg')
+    expect(images[2].attributes('src')).toBe('/images/categories/_placeholder.svg')
     for (const image of images) {
       expect(image.attributes('src')).not.toMatch(/^https?:/)
       expect(image.attributes('src')).not.toContain('joy-sourcing')

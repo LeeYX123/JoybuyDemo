@@ -20,6 +20,8 @@ def _buyer_payload(account: BuyerAccount) -> dict:
         "account": account.email or account.phone_e164 or "",
         "email": account.email,
         "phone": account.phone_e164,
+        # 批次 CA：用户名（购物端展示昵称；不唯一，仅用于展示与搜索）。
+        "display_name": account.display_name,
         "name": account.email or account.phone_e164 or "买家",
         # 迭代02：登录渠道（Facebook / Google / 邮箱）。
         "auth_provider": account.auth_provider or BuyerAccount.AuthProvider.EMAIL,
@@ -72,7 +74,13 @@ class AdminBuyersView(OpsAPIView):
             queryset = queryset.filter(status=status_filter)
         query = (request.query_params.get("q") or "").strip()
         if query:
-            condition = Q(email__icontains=query) | Q(phone_e164__icontains=query)
+            # 批次 CA：用户名（display_name）也参与模糊搜索，与邮箱/电话并列（OR）。
+            # 用户名不唯一（购物端设置昵称不做唯一校验），命中多条属预期。
+            condition = (
+                Q(email__icontains=query)
+                | Q(phone_e164__icontains=query)
+                | Q(display_name__icontains=query)
+            )
             try:
                 import uuid as uuid_module
 

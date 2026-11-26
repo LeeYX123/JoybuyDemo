@@ -42,6 +42,29 @@ describe('CategoryTileGrid', () => {
     }
   })
 
+  it('renders the fixed all-card first and gives it the selected state', () => {
+    const allCard = {
+      label: 'All',
+      image: '/images/categories/mobile-phones.webp',
+      to: '/c/electronics',
+      active: true,
+    }
+    const wrapper = mountGrid({ allCard })
+    const tiles = wrapper.findAll('.category-tile')
+    expect(tiles).toHaveLength(3)
+    expect(tiles.map((tile) => tile.attributes('href'))).toEqual([
+      '/c/electronics',
+      '/c/mobile-phones',
+      '/c/tablets',
+    ])
+    expect(tiles[0].find('.category-tile__name').text()).toBe('All')
+    expect(tiles[0].find('.category-tile__image').attributes('src')).toBe(
+      '/images/categories/mobile-phones.webp',
+    )
+    expect(tiles[0].classes()).toContain('category-tile--active')
+    expect(tiles[1].classes()).not.toContain('category-tile--active')
+  })
+
   it('marks only the active category as selected', () => {
     const wrapper = mountGrid({ activeSlug: 'tablets' })
     const tiles = wrapper.findAll('.category-tile')

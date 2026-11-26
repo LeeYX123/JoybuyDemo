@@ -1,10 +1,10 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 
 import { useLocale } from '../../composables/useLocale'
 
 // 需求 12.1：关于我们 = 真站 /promo/welcome（"Get to know Joybuy" 落地页）
-// 的结构复刻：面包屑 + hero + 三支柱 + 8 个楼层 + T&C 手风琴。
+// 的结构复刻：面包屑 + hero + 三支柱 + 楼层。
 // EN 文案取自真站实测（var/footer_rework_20261119/measurement.md §4，替换规则已生效），ZH 为翻译。
 definePageMeta({ layout: 'footer-page' })
 
@@ -14,7 +14,6 @@ const T = computed(() => {
   const en = {
     breadcrumb: 'Welcome to Joybuy',
     heroTitle: 'Welcome to Joybuy',
-    heroSign: 'Sign-in / Sign-up',
     pillarMore: 'Learn more',
     pillars: [
       {
@@ -122,7 +121,6 @@ const T = computed(() => {
             p: "Catch new deals every single day. Each offer includes a special discount and a real-time status bar, so you can see exactly how many items are left, and spot when a popular deal is nearly sold out. Deals are refreshed daily and stock is limited. From tech and home essentials to everyday favourites, there’s always something worth discovering. See something you like? Grab it quickly before it's gone!",
           },
         ],
-        cta: "Today's offers",
       },
       {
         id: 'returns',
@@ -178,75 +176,11 @@ const T = computed(() => {
           cards: ['American Express', 'VISA', 'Mastercard', 'Maestro'],
         },
       },
-      {
-        id: 'invite',
-        title: 'Invite friends, Earn rewards!',
-        img: '/images/about/invite.png',
-        blocks: [
-          {
-            h: 'Bring a friend, join the party',
-            p: 'Share Joybuy with your friends and earn rewards you can enjoy side by side.',
-          },
-        ],
-        how: {
-          title: 'How it works?',
-          steps: [
-            {
-              icon: '/images/about/step-code.png',
-              t: 'Share your invite code',
-              d: 'Go to your Personal Profile to view your exclusive invite code. Simply copy the code or share the link directly to invite your friends.',
-            },
-            {
-              icon: '/images/about/step-order.png',
-              t: 'Your friend places an order',
-              d: 'Once your friend registers a Joybuy account, they can enter your invite code on the checkout page of their first order to redeem an exclusive discount (only applicable to orders placed inside the Joybuy app).',
-            },
-            {
-              icon: '/images/about/step-reward.png',
-              t: 'Earn your reward',
-              d: "Your points reward will be automatically issued once your friend's first order is successfully delivered. There is no limit to the rewards.",
-            },
-          ],
-        },
-        cta: 'Invite now',
-      },
     ],
-    joyplus: {
-      title: 'JoyPlus, more than just a membership',
-      h: 'More than just a membership',
-      rows: [
-        'Enjoy unlimited free shipping on millions of items – fast and reliable. No minimum spend required.',
-        'Earn exclusive points. Every purchase adds up! Redeem for discounts on future orders.',
-        'Extra savings and exclusive prices on new products every day.',
-      ],
-      cta: 'Join JoyPlus now',
-    },
-    tc: {
-      title: 'Terms & conditions',
-      items: [
-        {
-          q: 'Where can I find my welcome offer?',
-          a: "Within 30 days of registration, visit the 'New Customer Limited-Time Benefits' zone to enjoy the exclusive new customer price on any one item of your choice! One-time use & best deal applied automatically: this benefit can be enjoyed only once per new user. Items already enjoying the new customer price cannot be combined with other coupons or promotional activities but can still use shipping coupons. App-exclusive offer: this welcome offer is only available through the app.",
-        },
-        {
-          q: 'How do JoyPoints work?',
-          a: 'JoyPoints are reward points earned on every purchase. They add up automatically and can be redeemed for discounts on future orders.',
-        },
-        {
-          q: 'How do I make sure my payment is successful?',
-          a: "We want your experience with Joybuy to be smooth and worry-free! Make sure your personal details are correct and match those registered to your bank account; if you're pre-ordering, make sure your card will still be valid on the release date and your billing address is correct; sign up to a card authentication scheme such as Visa Secure or Mastercard SecureCode. Planning a high-value order? Let your bank know in advance.",
-        },
-        {
-          q: 'What is JoyPlus membership?',
-          a: "JoyPlus is Joybuy's membership program designed to make everyday shopping more rewarding. Members enjoy unlimited free shipping and member-only prices on eligible products during their active membership period, along with automatic JoyPoints on every purchase, helping you save more the more you shop.",
-        },
-      ],
-    },
   }
   const zh = {
     breadcrumb: '欢迎来到 Joybuy',
     heroTitle: '欢迎来到 Joybuy',
-    heroSign: '登录 / 注册',
     pillarMore: '了解更多',
     pillars: [
       {
@@ -350,7 +284,6 @@ const T = computed(() => {
             p: '每天捕捉新优惠。每个优惠都包含专属折扣和实时库存进度条，您可以清楚看到剩余件数，及时发现热门优惠即将售罄。优惠每日更新，库存有限。从数码家电到居家好物，总有意想不到的值得发现。看到喜欢的？趁它还在赶紧下手！',
           },
         ],
-        cta: '今日优惠',
       },
       {
         id: 'returns',
@@ -403,74 +336,10 @@ const T = computed(() => {
           cards: ['American Express', 'VISA', 'Mastercard', 'Maestro'],
         },
       },
-      {
-        id: 'invite',
-        title: '邀请好友，赚奖励！',
-        img: '/images/about/invite.png',
-        blocks: [{ h: '带上朋友，一起狂欢', p: '好友分享 Joybuy，一起赚取奖励。' }],
-        how: {
-          title: '使用方法',
-          steps: [
-            {
-              icon: '/images/about/step-code.png',
-              t: '分享您的邀请码',
-              d: '前往个人主页查看您的专属邀请码。复制邀请码或直接分享链接给好友。',
-            },
-            {
-              icon: '/images/about/step-order.png',
-              t: '好友下单',
-              d: '好友注册 Joybuy 账户后，在其首单结账页输入您的邀请码即可兑换专属折扣（仅限 Joybuy App 内订单）。',
-            },
-            {
-              icon: '/images/about/step-reward.png',
-              t: '赢取奖励',
-              d: '好友首单签收成功后，积分奖励将自动发放。奖励不设上限。',
-            },
-          ],
-        },
-        cta: '立即邀请',
-      },
     ],
-    joyplus: {
-      title: 'JoyPlus，不止是会员',
-      h: '不止是会员',
-      rows: [
-        '百万商品不限次免邮——快速可靠，无消费门槛。',
-        '专享积分。每笔消费都在累积！可在未来订单中抵扣。',
-        '每日新品额外优惠与会员专享价。',
-      ],
-      cta: '立即加入 JoyPlus',
-    },
-    tc: {
-      title: '条款与条件',
-      items: [
-        {
-          q: '在哪里可以找到迎新优惠？',
-          a: '注册后 30 天内，请访问「新客限时福利」专区，即可任选一件心仪商品，享受专属新客价！新客福利仅限一次，系统自动应用最优折扣；已享受新客价的商品不能与其他优惠券或促销活动叠加使用，但仍可使用运费券。App 专享优惠：此迎新优惠仅限 App 内使用。',
-        },
-        {
-          q: 'JoyPoints 积分如何使用？',
-          a: 'JoyPoints 是每笔消费均可获得的奖励积分，自动累积，可在未来订单中抵扣使用。',
-        },
-        {
-          q: '我如何确保付款成功？',
-          a: '我们希望您在 Joybuy 的体验顺畅无忧！请确保您的个人信息正确，并与您在银行预留的信息一致；如果正在预购商品，请确保银行卡在发售日当天仍然有效，并核对账单地址；注册并使用 Visa Secure 或 Mastercard SecureCode 等银行卡安全认证服务。计划大额消费？请提前告知您的银行。',
-        },
-        {
-          q: '什么是 JoyPlus 会员？',
-          a: 'JoyPlus 是 Joybuy 的会员计划，让日常购物更超值。会员在有效期内享受符合条件商品的无限次免邮和会员专享价，每笔消费自动累积 JoyPoints 积分，买得越多省得越多。',
-        },
-      ],
-    },
   }
   return locale.value === 'zh' ? zh : en
 })
-
-const openFaq = ref(0)
-
-function toggleFaq(index) {
-  openFaq.value = openFaq.value === index ? -1 : index
-}
 
 useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Everyday Deals` })
 </script>
@@ -487,7 +356,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
       <section class="about-hero">
         <div class="about-hero__text">
           <h1 class="about-hero__title">{{ T.heroTitle }}</h1>
-          <NuxtLink class="about-hero__sign" to="/auth/login">{{ T.heroSign }}</NuxtLink>
         </div>
         <img
           class="about-hero__img"
@@ -527,9 +395,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
                 <h3 class="about-block__h">{{ block.h }}</h3>
                 <p class="about-block__p">{{ block.p }}</p>
               </div>
-              <button v-if="floor.cta" class="about-floor__cta" type="button">
-                {{ floor.cta }}
-              </button>
             </div>
           </div>
           <div v-if="floor.how" class="about-how">
@@ -610,37 +475,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
           </div>
         </section>
       </div>
-
-      <!-- JoyPlus 楼层 -->
-      <section class="about-joyplus">
-        <h2 class="about-floor__title">{{ T.joyplus.title }}</h2>
-        <h3 class="about-joyplus__h">{{ T.joyplus.h }}</h3>
-        <ul class="about-joyplus__rows">
-          <li v-for="row in T.joyplus.rows" :key="row" class="about-joyplus__row">{{ row }}</li>
-        </ul>
-        <button class="about-floor__cta about-floor__cta--primary" type="button">
-          {{ T.joyplus.cta }}
-        </button>
-      </section>
-
-      <!-- T&C 手风琴 -->
-      <section class="about-tc">
-        <h2 class="about-floor__title">{{ T.tc.title }}</h2>
-        <div v-for="(item, index) in T.tc.items" :key="item.q" class="about-tc__item">
-          <button
-            class="about-tc__q"
-            type="button"
-            :aria-expanded="openFaq === index"
-            @click="toggleFaq(index)"
-          >
-            {{ item.q }}
-            <span class="about-tc__chevron" aria-hidden="true">{{
-              openFaq === index ? '−' : '+'
-            }}</span>
-          </button>
-          <p v-show="openFaq === index" class="about-tc__a">{{ item.a }}</p>
-        </div>
-      </section>
     </div>
   </div>
 </template>
@@ -687,12 +521,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
   margin: 0 0 var(--space-3);
   font-size: var(--font-size-3xl);
   font-weight: var(--font-weight-bold);
-}
-
-.about-hero__sign {
-  color: var(--colour-accent);
-  text-decoration: underline;
-  font-weight: var(--font-weight-semibold);
 }
 
 .about-hero__img {
@@ -786,27 +614,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
   margin: 0 0 var(--space-4);
   color: #505259;
   line-height: 1.7;
-}
-
-.about-floor__cta {
-  min-height: 44px;
-  padding: var(--space-2) var(--space-6);
-  border: 1px solid #1a1a1a;
-  border-radius: var(--radius-sm);
-  background: var(--colour-surface);
-  color: #1a1a1a;
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-}
-
-.about-floor__cta--primary {
-  background: #1a1a1a;
-  color: var(--colour-surface);
-}
-
-.about-floor__cta:hover {
-  background: #000;
-  color: var(--colour-surface);
 }
 
 /* How it works 步骤 */
@@ -957,67 +764,6 @@ useHead({ title: () => `Get to know Joybuy | Fast Delivery, Trust Brands & Every
   margin: 0;
   color: #505259;
   font-size: var(--font-size-sm);
-}
-
-/* JoyPlus 楼层 */
-.about-joyplus {
-  margin-top: var(--space-8);
-  padding: var(--space-6);
-  border-radius: var(--radius-md);
-  background: #f5f6fa;
-}
-
-.about-joyplus__h {
-  margin: 0 0 var(--space-4);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-}
-
-.about-joyplus__rows {
-  margin: 0 0 var(--space-5);
-  padding-left: var(--space-5);
-}
-
-.about-joyplus__row {
-  margin-bottom: var(--space-2);
-  color: #505259;
-  line-height: 1.6;
-}
-
-/* T&C 手风琴 */
-.about-tc {
-  margin-top: var(--space-8);
-}
-
-.about-tc__item {
-  border-bottom: 1px solid var(--colour-border);
-}
-
-.about-tc__q {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  width: 100%;
-  min-height: 56px;
-  padding: var(--space-3) 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-}
-
-.about-tc__chevron {
-  color: var(--colour-muted);
-  font-size: var(--font-size-xl);
-}
-
-.about-tc__a {
-  margin: 0 0 var(--space-4);
-  color: #505259;
-  line-height: 1.7;
 }
 
 @media (max-width: 48rem) {

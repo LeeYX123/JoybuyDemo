@@ -2,6 +2,183 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cr. 批次 CA（2026-11-26 文案样式/后台搜索/白名单默认/分类卡，✅ 完成 / 未 commit）
+
+### 我们在做什么
+购物端文案/样式收尾（联系我们、无障碍、销售条款、关于我们、登录页）+ 新注册买家默认非白名单 + 平台管理端「用户端管理」按用户名搜索 + 分类下拉「查看全部 X」卡。全部按任务清单逐条实现并针对性验证；**未 commit**。
+
+### 本次改动（逐条）
+1. **`/pages/contact-us`（`storefront/pages/pages/contact-us.vue`）**
+   - 供应商那条 CTA 由链接改为**纯文本**：EN `To apply for partnership, please contact us: Joybuyfumi@gmail.com`；ZH `需要申请合作的请联系我们： Joybuyfumi@gmail.com`（不可点、无 href）。
+   - 商家那条 CTA 改为 `<NuxtLink>`：已登录 → `/account/apply-shop`；未登录 → `/auth/login?next=/account/apply-shop`（沿用 AppHeader 的 next 约定）。
+   - 样式按真站实测重写（见下「真站实测值」）。
+2. **无障碍声明**（`storefront/content/help/accessibility-statement.js`）：删掉「9. Joybuy 无障碍VPAT合规报告」整节（EN 3 个 block、ZH 2 个 block，含 iOS/Android 两个 joyfumi 链接）；第 8 节保留，编号本就到 8，无需重排。
+3. **销售条款**（`storefront/content/help/terms-conditions.js`）：只删 ZH 正文的 3.4（含 `https://www.joyfumi.com/help/terms-conditions`）与 5.7（30 天交付条），其余条款与编号原样（未重排）。**注意：EN 版是另一套无编号写法，本来就没有 3.4/5.7 这两个条目，无需改。**
+4. **关于我们**（`storefront/pages/pages/about-us.vue`）：删除「今日优惠」按钮（模块保留，cta 数据与通用按钮模板一并移除）、「邀请好友，赚奖励！」整层、「JoyPlus，不止是会员」整层、「条款与条件」手风琴整层；顶部 `Sign-in / Sign-up`（ZH 登录/注册）按钮删除，hero 只留标题+图（无空位）。顺手清掉随之不再使用的 `openFaq/toggleFaq/ref` 与 joyplus/tc/cta/heroSign 的 CSS。
+5. **登录页**（`storefront/components/AuthForm.vue`）：删迎新横幅（`auth.promoPrefix/Discount/Suffix` 那个 `<p class="auth-promo">`）与 `View more options` 按钮（`.auth-more`）；为不丢注册路径，第一屏 submit 下方新增 `<NuxtLink to="/auth/register">{{ t('auth.createAccount') }}</NuxtLink>`（key 五语言已有，未新增 key）。原 promo/viewMore 的 i18n key 保留在 messages.js（未删，避免五语言键集合动刀）。
+6. **新注册买家默认非白名单**：`accounts_buyers/views.py` 的 `BuyerRegisterView`（验证码注册）与 `BuyerEmailRegisterView`（邮箱密码注册）、`accounts_buyers/oauth.py` 的 `_create_account`（三方首登建号）三处显式 `purchase_whitelisted=False`。**模型默认值仍是 True、无迁移**（老账号与后台手工建号不受影响）。门禁现状核查：`cart/services.py:90` 加购、`orders/order_services.py:52` 下单均有 `NOT_WHITELISTED` 拦截；购物端 PDP 还有前端拦截弹窗（`gate.message`），checkout 用 `gate.messageWhitelist`。
+   - 测试：`test_auth_api.py` 现有邮箱/手机注册用例补断言 `False`；新增 `BuyerPurchaseWhitelistDefaultTests`（直邮注册建号 False + 返回体 False；老账号默认 True 且登录不重置）。`test_oauth_api.py` 原先断言 FB 无邮箱账号 `purchase_whitelisted is True`（注释「白名单默认开启」），按本批口径改为 `False`。
+7. **管理端用户名搜索**：`merchant_ops/views_buyers.py` 的 `q` 条件加 `Q(display_name__icontains=query)`（与 email/phone/uuid 并列 OR，用户名不唯一、多条命中是预期）；`_buyer_payload` 新增 `display_name` 字段。`admin-web/src/views/BuyersView.vue`：搜索框 placeholder →「用户名 / 邮箱 / 手机号 / 用户 ID」，列表账号列副行显示用户名、详情抽屉新增「用户名」。测试：`test_admin_round2.py` 新增 `BuyerSearchTests`（同前缀两条命中 + 邮箱命中、大小写不敏感、空关键词仍返回全部）。
+8. **分类下拉「查看全部」卡**：新增 `storefront/utils/categoryAllCards.js`（11 个一级 slug → 固定本地图常量，缺省 placeholder）。`CategoryTileGrid.vue` 新增 `allCard` prop（`{label,image,to,active}`，非 channel 变体渲染为第一张卡）；`AppCategoryPanel.vue` 传 `查看全部 <L1名>`（key `categoryPanel.viewAll`）+ 常量图 + `/c/<L1-slug>`；`CategoryTileCarousel.vue` 透传、`ProductListing.vue` 在品类条首张插「全部」（key `categoryPanel.all`，`props.slug === root.slug` 时选中）。`messages.js` 五语言各加 `categoryPanel.viewAll` / `categoryPanel.all`（精确锚点插在 `categoryPanel.close` 后）。
+   - 测试：`CategoryTileGrid.test.js` 新增首卡位置/label/图片/选中态用例；`AppCategoryPanel.test.js` 断言更新为首卡「View all <L1>」+ href `/c/<L1>` + 常量图。
+
+### 真站实测值（`var/ca_20261126/`，Playwright 1.64.1 + 登录态 cookies + color-api 打桩，站点未被风控挡住）
+- 原始数据：`contact_dump.json`（EN/ZH 结构树）、`contact_partner_dump.json`、`contact_cta_style.json`；截图 `real_contact_en_full.png` / `real_contact_zh_full.png` / `real_contact_partner_en.png`。对照我们页面的截图：`local_contact_en.png` / `local_contact_zh.png`。
+- 灰带 `detail_detailWrapper`：整宽 `#f5f6fa`、`padding 32px 0`；主体 `detail_mainWrapper` max 1264（1440 视口左右各 88）。
+- 左菜单：240 宽、白底、`padding 4px 12px`、radius 8、内层 nav `padding 8px 0`；item `padding 16px 16px 20px`、16px/400/24px、选中色 `rgb(255,15,35)`（≠ 之前用的 #E1251B）。
+- 右卡：1008 宽、`margin-left 16px`、`padding 24px 36px`、radius 8、白底。
+- 标题 32px/700/32px、无外边距；正文 16px/400/24px、段落间距 10px、分区小标题（真站是 `<strong>`）16px/700、与前文 44px。
+- 链接色：真站正文链接是**浏览器默认蓝** `rgb(0,0,238)` + underline（仅 “here” 二字是链接）。
+- 推定项（真站未测到）：左菜单 item hover 态（本页取 hover 变红 `255,15,35`）；联系我们 tab 各段之间的空行我们用 `margin-bottom 34px` 近似（真站用一个空 `<br>` 行）；<1312px 视口的左右内边距沿用站点 `--container-pad`。
+
+### 验证（按验证纪律只做针对性验证；全部实跑）
+- 后端：`manage.py test accounts_buyers merchant_ops.tests.test_admin_round2` = 85 例，**2 例红且与本批无关**（`NotificationApiTests.test_review_*`：现网 `views_notifications.py:102` 要求 REVIEW 通知带 `order_id`，陈旧用例未跟上，`FIELD_REQUIRED`，属**既有红**，已单独复跑确认确定性）；本批新增的 `BuyerSearchTests`、`BuyerPurchaseWhitelistDefaultTests` 与 orders 白名单用例全绿（`accounts_buyers merchant_ops.tests.test_admin_round2.BuyerSearchTests orders.tests.test_wp42_place_order` = **71/71 OK**）。`ruff check` 改动文件 0 问题；`ruff format` 仅改动本批新增/编辑段（revert 掉它顺手重排的 3 处无关行）；`makemigrations --check --dry-run` → **No changes detected**。
+- 前端单测：storefront `vitest run` = **48 文件 / 309 例全绿**（含更新的 `auth-form`、`AppCategoryPanel`、`CategoryTileGrid`、`help-pages`）；admin-web = **3 文件 / 9 例全绿**。ESLint / Prettier 改动文件全过。
+- Playwright（三个脚本 + 一个已登录补充，产物在 `var/ca_20261126/`）：
+  1. `verify_content.cjs` = **64/64 PASS**：contact-us 两条文案（纯文本/链接）、点击未登录跳 `/auth/login?next=/account/apply-shop`、实测样式断言（标题 32/700/32、正文 16/400/24、菜单 240+4px12px+r8、选中色 255,15,35、右卡 24px36px+r8、灰带 #f5f6fa+32px0）、无障碍无 9 节仍有 8 节、terms 无 3.4/5.7 且无 joyfumi 链接句、about-us 四模块/按钮与顶部登录按钮全无、login 无两句与 View more options 且注册入口可打开 `/auth/register`；EN/ZH 各 console error 0。
+  2. `verify_buyer.cjs` = **7/7 PASS**：UI 注册新买家（`ca-register-ui@example.test`）→ 会话 `purchase_whitelisted=false`；PDP 点加购弹门禁提示；后端 `POST /api/v1/cart/items` → 400 `NOT_WHITELISTED`「当前账号不在购买白名单内，无法加购。」；DB 复核 `purchase_whitelisted=False`。
+  3. `verify_admin_category.cjs` = **21/21 PASS**：管理端按用户名片段 `caverify` 命中 2 条同前缀买家、`CAVERIFY-ALPHA` 大小写不敏感命中、placeholder 含「用户名」；分类下拉**实际展示 9 个一级品类**（`visible_in_nav !== false` 过滤）每个首卡都是「查看全部 <名称>」且图片等于该 L1 常量图；点首卡进 `/c/home-living`，该页品类条首卡「全部/All」+ 同图 + 唯一选中态；EN/ZH 各 console error 0。
+  4. `verify_cta_logged_in.cjs` = **2/2 PASS**：已登录点商家 CTA 直接落 `/account/apply-shop`（不带 next）。
+- 清理：临时平台账号 `ca-verify@joybuy.test`、两个同前缀买家、UI 注册买家全部删除；复核 `buyer/staff/session/role_assignment` 中 `ca-` 前缀 **0 残留**。
+
+### 踩过的坑 / 注意
+1. **后端是 `--noreload`**（`var/run_backend_keepalive.sh`）：改 `accounts_buyers` 代码后必须杀 :8000 让看护重启，否则注册仍是老行为（本次第一轮验证就被这个坑骗过一次）。看护 5s 内拉起。
+2. **删掉 accessibility 第 9 节后页面不再含任何 `www.joyfumi.com` 链接**，`help-pages.test.js` 原来「五个政策页都必须出现该域名」的断言因此变红；已改为 accessibility-statement 例外（其余 4 页仍强校验）。
+3. **tests 里 `NotificationApiTests` 2 例既有红**（REVIEW 通知要求 `order_id`），不是本批引入，勿误判。
+4. 分类下拉只渲染 `visible_in_nav !== false` 的 9 个一级品类，别按 API 的 11 个写断言；`/c/<L1>` 的品类条第一张「全部」与下拉首卡共用同一常量图，改图只改 `storefront/utils/categoryAllCards.js`。
+5. 用户名不唯一是既定口径，搜索命中多条不要加唯一约束；`display_name` 为空的老账号搜不到属正常。
+6. `messages.js` 只做精确锚点 Edit（并行 Agent 在用），本次 5 处插入都锚在 `categoryPanel.close` 行后。
+
+### 遗留 / 下一步
+- `auth.promoPrefix/promoDiscount/promoSuffix/viewMoreOptions` 四个 key 已无人引用（保留未删，五语言键集合不变）；如需清理建议单独批次一起删五语言。
+- contact-us 仍有我们自加的「返回首页」链接（真站没有），属历史保留项。
+- 真站 contact-us 左菜单 hover、联系我们 tab 段间空行属推定/近似（见上），若后续拿到真站 hover 截图再精修。
+- 本批 HANDOFF 未 commit；工作区还有并行 Agent 的改动（`config/settings.py`、`infra/compose.dev.yml`、`content/*`、`apply-shop.vue`、`merchant_ops/urls.py`、`views_activity_pages.py` 等），提交时注意只挑本批文件。
+- 新增文件 `storefront/utils/categoryAllCards.js` 目前是 untracked，提交时别漏。
+- 键集合观察（**非本批引入**）：脚本核对 en 656 / zh 657 / de·fr·nl 各 580，de/fr/nl 各缺 77 个 key（`header.home`、`mobile.account.*` 等，疑似并行批次只同步了 en/zh）。本批新增的 `categoryPanel.viewAll` / `categoryPanel.all` 五语言齐全。
+
+## 0ct. 爬虫出站代理「默认化」+ 节点自动轮换守护（2026-11-27，✅ 完成 / 未 commit）
+
+### 我们在做什么
+用户提问「检查是否有爬虫在跑；WorkBuddy 那边过一会可能执行爬虫任务；如果有运行了，帮我自动切 VPN 节点」。目标：让爬虫不再长时间固定 IP 直连，并在有任务运行时自动轮换出口节点。
+
+### 现场事实（23:53 检查）
+- **有 3 个 run 在跑**：`crawl_run` 404/405/406 → `crawl_job` **382/383/384**（「补采-xxx 全楼层更多 20261126」，`account_group=05`、`product_limit=300`、`skip_imported=1`、`allow_pagination=1`），23:45 本地启动（DB 里是 UTC `15:45`）。
+- 这 3 个是**直连**：无 `PROXY_CONFIGURED` 事件；进程连接里没有 7997；VERGE 的 `tun.enable=false` → 走真实本地出口 IP（正是用户不想要的「固定 IP 长跑」）。
+- **独立 mihomo 实例当时是停的**（7997/9098 无监听）；Clash Verge 自己的 `verge-mihomo.exe` 服务在跑，只提供系统代理 7897、无 TCP 控制 API（旧结论仍成立）。
+
+### 本次改动
+1. `var/clash_crawler_proxy/start_instance.py` 启动实例（pid 36832，起始节点 `TW丨台湾3`，`--verify` 通过：出口 IP 111.243.68.126 + 详情页 `real_data=true`）。
+2. **根 `.env` 增加**：
+   ```
+   CRAWL_HTTP_PROXY=http://127.0.0.1:7997
+   CRAWL_HTTPS_PROXY=http://127.0.0.1:7997
+   ```
+   `backend/config/settings.py` 会 `load_dotenv(REPOSITORY_ROOT/".env")`，`crawler/joybuy_crawler/settings.py` 读 `os.getenv`，所以**之后由任何会话 `manage.py run_crawl_run` 起的 run 默认走 7997**；`load_dotenv` 默认 `override=False`，单次运行若显式传 `CRAWL_HTTPS_PROXY=`（空）仍可退回直连。
+3. 新增 `var/clash_crawler_proxy/watch_rotate.py`（常驻守护）：
+   - 保活实例（API 挂了自动 `start_instance.start()`）；
+   - 只在存在 `status='RUNNING' AND started_at > UTC_TIMESTAMP()-INTERVAL 48 HOUR` 的 run 时才动节点（滤掉 11-03/11-04 的僵尸 RUNNING 1/2）；
+   - 触发：近 `--risk-window`(10min) 出现 `RISK_CONTROL_FALLBACK`/`LOGIN_WALL_FALLBACK`/`ACCOUNT_POOL_EXHAUSTED`，或距上次切换 ≥ `--rotate-every`(20min) 主动轮换；两次切换最小间隔 `--cooldown`(90s)；
+   - 切换后立即 `verify_current()`（出口 IP + 详情页真数据），不可用继续跳下一个候选；
+   - 产物：`watch_log.jsonl`、`watch_state.json`、`watch_stdout.log`；停止：`python watch_rotate.py --stop-flag`。
+
+### 验证（按验证纪律只做针对性验证）
+- `python watch_rotate.py --once` **实跑通过**：识别到 3 个进行中任务 → 主动轮换 `TW丨台湾3` → `JP丨日本1`（出口 IP 89.116.88.131，`real_data=true`），`state.switches=1`。
+- 守护已后台常驻（`watch_stdout.log` 有启动行 `守护启动 interval=60s rotate_every=20min 当前节点 JP丨日本1`），60s 轮询。
+- 复核 run 仍在推进：404 = 25 成功 / 9 失败，405 = 20/10，406 = 20/10（失败绝大多数是 `IMPORT_SOURCE_CONFLICT` 变体同页冲突，属已知口径）。
+
+### 踩过的坑（勿重复）
+- venv 里**没有 `MySQLdb`**，Django 走 `pymysql`；守护脚本直接 `import pymysql`。
+- **DB 时间戳是 UTC**：`started_at=15:45` 就是本地 23:45，别当成「8 小时没动静/卡死」。
+- `crawl_run` 1/2 是 11-03/11-04 的僵尸 `RUNNING`，任何「是否在跑」判断都要加时间窗过滤。
+- 切节点只影响**新起进程**：已经在跑且没带 env 的 run 不会被改道，需要 kill+重启才生效。
+
+### 待用户决定 / 下一步
+- 当前 3 个补采 run **仍是直连**（改 `.env` 只管新进程）。要不要 kill 后用代理重启，取决于用户是否愿意打断 WorkBuddy 会话这一批（未擅自操作）。
+- 机器重启后需手动跑一次 `start_instance.py` 并重新拉起守护。
+
+## 0cs. 申请开店页按设计稿重做（桌面 + 手机，2026-11-26，✅ 完成 / 未 commit）
+
+### 我们在做什么
+用户给了 4 份新设计稿（根目录 `申请开店页面/`：申请开店-电脑版/手机版、待审核-电脑版/手机版），要求按稿重做购物端 `/account/apply-shop` 的视觉：桌面版式与 PENDING 展示重做，m. host 新增手机版实现；**业务逻辑、7 项字段、上传/提交/重申/驳回/通过接口与后端契约全部不变**。
+
+### 设计稿提取的关键数值（实测 DOM 与设计稿逐一相符）
+- 配色：canvas `#f5f6f8`、paper `#fff`、ink `#191e2b`、muted `#5a6373`、line `#dce0e7`、red `#bd113b`、rose `#fff5f7`、提交按钮 `#c5103b`、页底 `#edf0f4`；待审核横幅 `#fff3df`/文字 `#753d00`/图标底 `#f8dfb1`。
+- 字体 `14px/1.5 "Microsoft YaHei","PingFang SC",sans-serif`；标题 28px/720（桌/手机同）；label 13px/650（必填 `*` 红色，单独元素，不在 i18n 文案里）；输入/选择/上传 13px、圆角 8、边框 1px `#dce0e7`；hint 11px。
+- 桌面：外层 max 1100 + padding 16 → 卡片 1068，卡片 padding 24/32、圆角 14、边框、阴影 `0 10px 30px #161b2620`，内容列 840；白色面板 padding 22、圆角 15；表单两列 gap 16/22；输入 min-height 38；上传按钮虚线/rose 底/红线/650、max-width 360（证件照不限宽）；邀请码整行且输入 max-width 240；证件分组整行两列 + 上下 1px 分隔线 + padding-block 16；地址 textarea 58；提交整行右对齐、min-width 148、高约 38、圆角 10。
+- 手机：外层 max 480、padding 12（375 下卡片 351），卡片 padding 16；全部单列；面板 padding 22/14；输入/选择/上传/提交 **min-height 44**；提交整行等宽；证件分组的上下分隔线保留、padding-inline 0。
+- 待审核：状态横幅（时钟图标 + 18px 标题 + 13px 说明）→ 两列 dl 回显 8 行，顺序 = 店铺logo / 用户名字 / 店铺名称 / 手机号码 / 个人证件(+证件照缩略) / 个人居住地址 / 邀请码（选填） / 申请时间；行 42% label 列、min-height 54、分隔线，最后两行（手机版最后一行）不画线；logo 缩略 44×44、证件缩略 70×44。
+- 手机版 dl 折成单列（设计稿 `.details` 改单列），但**行内仍是 label 42% / 值两栏**。
+
+### 实现方式（仓库内文件）
+- `storefront/pages/account/apply-shop.vue`（改写模板与 scoped CSS；脚本逻辑除上传处理拆成 `startLogoUpload/startDocUpload(file)` 外未改；新增 `useMobileView`、`mobileForm`、`onMobileField`、`merchantPendingDeposit`）。
+- `storefront/components/mobile/MobileApplyShop.vue`（新）：m. host 手机版，展示型组件；props 收状态、emit `field/logo-file/doc-file/submit/reapply/open-merchant`，业务状态仍全部在页面（与 MobileAddresses 同款 ADR 0001 约定）。
+- `storefront/components/account/ShopApplicationDetails.vue`（新）：桌面/手机共用的申请信息 dl（`mobile` prop 切单列与分隔线规则；`show-status/show-reviewed-at` 给已通过/未通过追加状态与审核时间两行，设计稿只定义待审核 8 行）。
+- `storefront/locales/messages.js`：7 个必填 label 去掉尾部 `*`（红色星号改为模板里 `<b aria-hidden>`），新增 `shopApply.chooseImage`、`shopApply.idDocumentsGroup`（五语言各 57 个 `shopApply.*` 键，完全一致）；zh 上传提示对齐设计稿「支持 JPG、PNG、WebP，不超过2MB。」。
+- 无障碍：`label[for]`/`fieldset+legend` 关联、`aria-required`/`aria-describedby`/`role="alert"`、文件框与单选芯片为「视觉隐藏但可聚焦」+ `:focus-within` 描边、Tab 顺序与设计字段顺序一致、方向键切证件类型。
+- 图标全部内联 SVG（时钟/对勾/警告/占位方框），无任何第三方 CDN。
+
+### 验证（按验证纪律只做针对性验证）
+- `npx eslint`（上述 5 个文件）→ 0 problem；`npx prettier --check` → 全部通过。
+- `npx vitest run --config storefront/vitest.config.js storefront/tests/mobile-apply-shop.test.js storefront/tests/auth-form.test.js storefront/tests/use-locale.test.js` → **24 passed**（新增 `storefront/tests/mobile-apply-shop.test.js` 12 例：字段顺序、label/for 关联、field 事件、证件单选、错误 role=alert、上传中态、待审核 8 行顺序与缩略图、已通过保证金提示、驳回重申按钮、五语言 `shopApply.*` 键集合一致）。
+- Playwright 真实浏览器（`var/apply_shop_redesign_20261126/capture.mjs`，`results.json` 记录 14 张截图 + metrics）：
+  - 桌面 1440/1896：未申请、填写中（两张上传预览）、PENDING、REJECTED、APPROVED、驳回后重新申请回填（值 + 2 张预览均回填成功）；
+  - 手机 375（`m.localhost:3000`）：同 6 张；`m-apply__card` 351px、控件 44px；
+  - metrics 实测：卡片 1068、标题 28/720、label 13/650、面板 22/15px/白、输入 38/13/8、上传 dashed `#fff5f7`/`#bd113b`、提交 148/10px/`#c5103b`/650、邀请码输入 240、地址 58（与设计稿数值一致）；
+  - 设计稿对照并排图：`sxs_desktop_1440_unsubmitted/pending.png`、`sxs_desktop_1896_*`、`sxs_mobile_375_*`。
+  - **14/14 截图 console error = 0**；`verify_en.mjs`：EN 桌面/手机 console 0 error、`documentElement.scrollWidth == innerWidth`（无横向溢出）、移动提交按钮 44px 且点击后成功进入 PENDING。
+  - 键盘实测：Tab 顺序 logo→用户名→店名→手机→邀请码→证件单选组→证件照→地址→提交；证件单选方向键可切换且芯片有 focus 描边。
+- 测试数据清理：删 12 个测试买家（`e2e-applyshop*` 8 个 + `probe-1795708*`/`probe3-`/`probe4-`/`probe-kb-` 4 个）、7 张申请、4 个 MediaAsset 与对应 `var/media/merchants/original/**` 文件；复查申请 0、media 0、`buyer_identity/session/favourite/recently_viewed/wallet` 孤儿 0（`merchant_application` 仅剩 1 条非本任务数据）。
+
+### 与旧版差异
+- 布局从窄栏（34rem、AppContainer）改为 1068 卡片 + 840 内容列，字段由单列竖排改为桌面两列（logo/用户名、店名/手机），邀请码/证件组/地址/按钮整行。
+- 必填星号从 i18n 文案移到红色 `<b>`；上传从原生文件框改为虚线「↑ 选择图片」块（内含预览缩略 28×28）。
+- 证件类型从原生 radio 行改为设计稿的 ◉/○ 芯片（选中 rose 底 + 红边）；提交按钮改为设计稿红色块（桌面右对齐 148 宽 / 手机整行 44 高）。
+- PENDING 从「badge + 旧 dl」改为设计稿「状态横幅 + 8 行两列 dl（含缩略图）」，去掉旧版 PENDING 的状态/审核时间行；APPROVED/REJECTED 同步改用同一套卡片与横幅（保留状态/审核时间两行 + 去商家中心/重新申请按钮）。
+- m. host 原本直接渲染桌面模板（同页换壳），现在 375 下渲染专属手机稿。
+
+### 坑（不要重踩）
+1. **设计稿手机版 dl 是单列**：`.details` 在手机稿里 `grid-template-columns:1fr`，但每行仍是 42% label + 值两栏；只把外层改单列、别把 `.row` 也改单列。
+2. **设计稿桌面 `.details` 最后两行不画线，手机稿只有最后一行不画线**（手机 CSS 把 `nth-last-child(2)` 的边框加回来）——共用组件必须按 `mobile` 分支处理。
+3. 设计稿把必填星号画在 label 内（`店铺logo*`），但真实表单要把它拆成独立红色 `<b aria-hidden>` + `aria-required`，否则 i18n 文案带 `*` 会污染所有语言的 dt/标签。
+4. Playwright **fullPage 截图会把 `position:fixed` 的 skip-link 按当前滚动位置画进长图**（DOM 中它其实在 viewport 外），截图前先 `window.scrollTo(0,0)`（`capture.mjs` 的 `shot()` 已处理）。
+5. m. host 与桌面 host **cookie 按 host 隔离**，截图脚本必须给两个 host 各注册一个买家；`m.localhost` 需 Playwright 启动参数 `--host-resolver-rules=MAP m.localhost 127.0.0.1`。
+6. 申请图片走内容寻址（sha256 去重），同一 fixture 两次上传只落一个 MediaAsset；清理时要按申请行里回显的 URL 反查 MediaAsset，删行同时删 `var/media/.../*.png` 文件。
+7. 设计稿里的 `◷/▣/▤` 字形用内联 SVG 替代（字体依赖不可控），不要引外部图标 CDN。
+
+### 遗留
+- APPROVED「前往商家中心」按钮未端到端实测（需要 `merchant` 关联与 MERCHANT_WEB_URL，测试买家 merchant 为 null，只验证了按钮渲染）。
+- PENDING→APPROVED/REJECTED 的状态切换是直接改 DB 模拟管理端审核（接口契约未动、未新增字段）。
+- 手机版 375 下右下角「客服」悬浮按钮会盖住表单右侧一小块（全站既有组件，非本页引入），未处理。
+- 本轮未 commit；改动的 2 个文件 + 3 个新文件均在 storefront。
+
+## 0d52. 本地开发环境冷启动（2026-11-26 22:22，用户重启电脑后，✅ 完成 / 仓库零改动）
+
+### 我们在做什么
+用户在 **22:20 重启电脑**后要求启动本地开发环境。本会话是专职「启动服务」的会话，流程固定：Docker → migrate → 两条脱管看护（后端 + storefront）→ 管理端/商家端 vite → 验证。
+
+### 动作（全部实跑）
+1. Docker Desktop（`D:/Docker/Docker Desktop.exe`）→ 引擎 15s 就绪；三容器自动起来且 **端口仍是 `0.0.0.0`（33060/63790/1025/8025）**——上一轮写进容器配置的绑定重启后保留，无需再改 compose。
+2. `migrate --noinput` → `No migrations to apply`。
+3. `bash var/start_keepalives_detached.sh` → 后端 + storefront 两条脱管看护（`runserver 0.0.0.0:8000`、`nuxt dev --host 0.0.0.0`）。
+4. `npx vite --port 5173 --host 0.0.0.0`、`npx vite --port 5174 --host 0.0.0.0`。
+
+### 验证（按验证纪律仅针对性验证）
+- 七端口全部 `0.0.0.0` LISTENING：3000=3080、5173=27220、5174=2064、8000=33284、8025/33060/63790=28712。
+- `/api/v1/health` → `ok`（database + cache）。
+- **本机 + 局域网双通**：`localhost:3000`、`192.168.1.165:3000/5173/5174/8025/8000` 全部 200。
+- **网络类型重启后仍是 Private**（以太网），防火墙 `Joybuy*` 四条规则持久化生效。
+- MySQL 经局域网 `-h192.168.1.165:33060` → `lan-ok`；Redis 经局域网 `PING` → `+PONG`。
+- 数据：`spu=22975 offer=34475 sku=35985`（较昨日 21170/31149/32539 增长，属爬虫/导入正常增量）。
+
+### 坑 / 注意
+- 127.0.0.1 上仍有一份 `wslrelay.exe`（PID 变化）占着 33060/63790/8025，是 WSL/Docker 回环转发，**不是残留 bug，不影响访问**，别当故障处理。
+- 判断「看护是否活着」仍要数 `bash` 进程 + 看 `CreationDate`（检查命令自身的临时 shell 会被算进去）。
+- 开机后 Docker 引擎没起时，`docker ps` 报 `dockerDesktopLinuxEngine` 管道不存在属正常，先启动 Docker Desktop。
+
+### 下一步
+无遗留。爬虫/翻译任务由用户自行恢复；若需重启后端，杀 runserver 即可，看护 5s 内拉起（脚本改动后需连看护循环一起重启）。
+
 ## 0d51. 证书扩 5 域 + m 站 443 + 商家中心（merchant-web）挂载生产（2026-11-26，✅ 完成 / HANDOFF 未 commit）
 
 ### 我们在做什么
@@ -5536,6 +5713,16 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
   - **与并发 Agent 的边界（勿越界）**：本任务只拥有 `AppHeader.vue` 的头像下拉；「申请店铺」在个人中心/左侧账号导航的入口、以及 APPROVED 后「切换商家端」的接口与逻辑归另一 Agent。若后续要在下拉里真正触发切换商家端，应接对方接口，不要在本文件里自造跳转。
   - **坑（不得再踩）**：①`messages.js` 只能精确 Read→Edit 字符串替换，另一 Agent 同时在改，整文件 Write 会覆盖对方改动；②`request.newContext({ baseURL: '.../api/v1' })` 再用 `/auth/...` 前导斜杠会丢掉 `/api/v1` 前缀、请求落到 SPA 返回 HTML（本轮踩过，改为 baseURL 不带路径 + 全路径）；③临时买家的 `MerchantApplication` 由 `buyer` OneToOne CASCADE，删买家即删申请，无需单独清理；④状态请求必须 catch 降级，否则后端 403/网络失败会让整个下拉菜单渲染卡住。
   - **未做/下一步**：①APPROVED 态只在单测覆盖，浏览器未实测（需管理端审核通过，属另一 Agent 的端到端范围）；②中文买家账号名过长时仍按原 ellipsis 处理；③**git 未提交**。
+
+- **上一任务（2026-11-26，zh 第二轮 batch6..35 共 30 批 6000 商品，✅ 完成，数据留在库里，未 commit）**：衔接第一轮的 30 批计划（batch7 半途经两次基础设施中断恢复后跑完）。
+  - **总账**：本轮 **6000 商品 / 11,996 units done / 0 failed**（retried 5）；墙钟 13h27m（含两次用户中断 ~13min + 风控纪律暂停 10min），模型时间 12.09h。全局 zh-CN 标题行 **7053**、zh 术语 done **9536**、spec_write_log 8181。**剩余候选 7,530**（每 1000 ≈ 100 分钟）。回滚 id 集 `round2_all_ids.txt`（未执行）。
+  - **终局 verify**：11 项全 PASS（units=14014、spec fields=145839、sku coverage 6311/6311）；过程 10 次 verify，26/29 两次 FAIL 均为香水品牌纯音译（Jean Paul Gaultier/Montblanc），compare-and-swap 补拉丁名后 PASS，无代码改动。
+  - **修补 39 条/39 SPU**（`title_fixes_round2.log` + fixes_round2_*.json 留痕）：单位重复 25（cm英寸/kg磅/L升）、型号幻觉（CM3050-2→"2种水类型"）、`Absorb→ABS材料`、`W→马力`、粤语 4、英文残留 2；未修在案：源标题自带 slug、`N Pack` token、品牌保留（正确策略）。
+  - **爬虫共存**：Threads_connected 峰值 125/127（>120 即等回落——MySQL 调优到 500 前提下的保守线仍保留）；风控尖峰 41–49/30min 伴随爬虫自身 RENDER_FAILED/ACCOUNT_POOL_EXHAUSTED，按纪律暂停 10min 后恢复；翻译全程 0 失败。
+  - **交付物**：`var/zh_translate_20261126/report_round2.md`（含回滚命令）、`titles_zh_sample_round2.md` 30 条、batch_stats_round2.jsonl、verify 日志 10 份、新工具 batch_status.py/check_pending.py/scan_defects_round2.py/apply_fix_round2.py。
+  - **新坑记录**：①launch 与 watch 必须拆两个后台任务（同任务停 watcher 会连 run 一起杀，batch10 教训）；②MSYS `$!` 不是 Windows PID，判进程用 wmic/Get-CimInstance；③`&` 后回显无条件执行；④`python -I` 吞 PYTHONIOENCODING；⑤CRLF 正则需 `
+?`。
+  - **待办**：剩余 7,530 候选（≈15–16h）等用户发话续跑；de/fr/nl 未碰；全量完成后重建本地化搜索文档；`refresh_spu_search_documents` 只刷 en-GB 的限制仍在。
 
 - **当前任务（2026-11-26，中文批量翻译第一轮 1033 商品，✅ 完成（数据留在库里），爬虫全程共存未受影响，未 commit）**：用户指令「爬虫优先，先把商品翻成中文，其他语言后续；商品放宽到早于 24h 前」。
   - **zh 语言接线**：`agent/settings.py` 增 `TARGET_LOCALES["zh"]=("zh-CN",)` 与 `LANGUAGE_NAMES["zh"]="Chinese"`；`agent/prompts.py DEFAULT_GLOSSARY` 增 zh 种子（免费配送/保修/颜色/材质/容量）；其余管线（术语注入/specs/verify CJK 档）复用。

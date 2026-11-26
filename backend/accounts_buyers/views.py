@@ -172,7 +172,12 @@ class BuyerRegisterView(BuyerCsrfAPIView):
             )
             with transaction.atomic():
                 now = timezone.now()
-                account = BuyerAccount(**{identifier_field: data["target"]}, last_login_at=now)
+                account = BuyerAccount(
+                    **{identifier_field: data["target"]},
+                    last_login_at=now,
+                    # 批次 CA：新注册买家默认不进购买白名单（后台可手动加入）。
+                    purchase_whitelisted=False,
+                )
                 account.set_password(data["password"])
                 if identifier_field == "email":
                     account.email_verified_at = now
@@ -255,6 +260,8 @@ class BuyerEmailRegisterView(BuyerCsrfAPIView):
                     last_login_at=now,
                     auth_provider=BuyerAccount.AuthProvider.EMAIL,
                     email_verified_at=now,
+                    # 批次 CA：新注册买家默认不进购买白名单（后台可手动加入）。
+                    purchase_whitelisted=False,
                 )
                 account.set_password(password)
                 account.save()

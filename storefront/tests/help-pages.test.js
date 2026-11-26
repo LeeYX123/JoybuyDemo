@@ -382,7 +382,11 @@ describe('helpPages data', () => {
         expect(href).not.toMatch(/joybuy\.(com|co\.uk)/i)
       }
       // 真站域名出现过的页面必须已换成 www.joyfumi.com（第三方外链不受影响）。
-      expect([text, ...hrefs].join('\n')).toContain('www.joyfumi.com')
+      // 批次 CA：accessibility-statement 删掉第 9 节 VPAT 后已不含任何 joyfumi 链接，
+      // 这里只对仍有外链的页面要求域名替换，不再强求每个政策页都必须出现域名。
+      if (slug !== 'accessibility-statement') {
+        expect([text, ...hrefs].join('\n')).toContain('www.joyfumi.com')
+      }
     }
   })
 

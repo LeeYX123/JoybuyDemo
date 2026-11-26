@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>申请开店-手机版</title>
+<style>
+#shop-design{color-scheme:light dark;--canvas:light-dark(#f5f6f8,#23232b);--paper:light-dark(#fff,#19191f);--ink:light-dark(#191e2b,#f4f2f6);--muted:light-dark(#5a6373,#b7b4c1);--line:light-dark(#dce0e7,#44434e);--red:light-dark(#bd113b,#ff89a5);--rose:light-dark(#fff5f7,#38242e);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;padding:22px;align-items:start;font:14px/1.5 "Microsoft YaHei","PingFang SC",sans-serif;color:var(--ink)}
+#shop-design *{box-sizing:border-box}
+#shop-design article{background:var(--canvas);border:1px solid var(--line);border-radius:22px;padding:22px;min-width:0;box-shadow:0 10px 30px #161b2620}
+#shop-design h2{font-size:25px;font-weight:720;margin:0 0 5px}
+#shop-design p{margin:0;color:var(--muted);font-size:13px}
+#shop-design .panel{background:var(--paper);border:1px solid var(--line);margin-top:15px;padding:16px;border-radius:15px}
+#shop-design .field+.field{margin-top:10px}
+#shop-design .label{font-size:13px;font-weight:650;margin:0 0 4px}
+#shop-design .label b{color:var(--red)}
+#shop-design .input,#shop-design .upload,#shop-design .choices span{border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:var(--muted);font-size:13px}
+#shop-design .address{min-height:48px}
+#shop-design .upload{border-style:dashed;background:var(--rose);color:var(--red);font-weight:650}
+#shop-design .upload span{margin-right:6px}
+#shop-design small{display:block;margin-top:3px;color:var(--muted);font-size:11px}
+#shop-design .choices{display:flex;gap:6px;flex-wrap:wrap}
+#shop-design .choices span{flex:1;text-align:center;white-space:nowrap}
+#shop-design .choices .selected{color:var(--red);background:var(--rose);border-color:var(--red)}
+#shop-design .submit{margin-top:12px;border-radius:10px;background:#c5103b;color:white;text-align:center;padding:9px;font-weight:650}
+#shop-design .status{display:flex;gap:12px;align-items:center;border-radius:14px;margin-top:15px;padding:14px;background:light-dark(#fff3df,#382b1b);color:light-dark(#753d00,#ffd38c)}
+#shop-design .status strong{font-size:18px}
+#shop-design .status p{color:inherit;margin-top:2px}
+#shop-design .clock{border-radius:11px;padding:8px;display:grid;place-items:center;background:light-dark(#f8dfb1,#533b20)}
+#shop-design dl{margin-bottom:0}
+#shop-design .row{display:grid;grid-template-columns:minmax(98px,40%) minmax(0,1fr);align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+#shop-design .row:first-child{padding-top:0}
+#shop-design .row:last-child{border:0;padding-bottom:0}
+#shop-design dt{color:var(--muted)}
+#shop-design dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+#shop-design .thumb{display:grid;place-items:center;width:44px;height:44px;border-radius:8px;background:var(--rose);color:var(--red);border:1px solid var(--line)}
+#shop-design .document{width:70px;height:44px;margin-top:5px;background:var(--canvas);color:var(--muted)}
+@media(max-width:660px){#shop-design{grid-template-columns:minmax(0,1fr);padding:12px;gap:14px}#shop-design article{padding:15px}#shop-design .panel{padding:12px}}
+</style>
+<style>
+#shop-design.desktop{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding:16px}
+#shop-design.desktop article{border-radius:14px;padding:24px 32px}
+#shop-design.desktop .desktop-content{max-width:840px;margin:auto}
+#shop-design.desktop h2{font-size:28px}
+#shop-design.desktop .desktop-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 22px;padding:22px}
+#shop-design.desktop .desktop-form .field{margin:0}
+#shop-design.desktop .invitation,#shop-design.desktop .identity-fields,#shop-design.desktop .address-field,#shop-design.desktop .actions{grid-column:1/-1}
+#shop-design.desktop .identity-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 22px;padding-block:16px;border-block:1px solid var(--line)}
+#shop-design.desktop .identity-fields .upload{max-width:none}
+@media(max-width:590px){#shop-design.desktop .identity-fields{grid-template-columns:minmax(0,1fr)}}
+#shop-design.desktop .input,#shop-design.desktop .upload,#shop-design.desktop .choices span{min-height:38px;padding:8px 12px}
+#shop-design.desktop .upload{max-width:360px}
+#shop-design.desktop .choices span{flex:0 1 auto}
+#shop-design.desktop .address{min-height:58px}
+#shop-design.desktop .actions{border-top:1px solid var(--line);padding-top:14px;display:flex;justify-content:flex-end}
+#shop-design.desktop .submit{margin:0;min-width:148px}
+#shop-design.desktop .status{padding:16px 20px}
+#shop-design.desktop .details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:24px;padding:10px 22px}
+#shop-design.desktop .row{grid-template-columns:minmax(98px,42%) minmax(0,1fr);min-height:54px;padding:10px 0}
+#shop-design.desktop .row:nth-last-child(-n+2){border-bottom:0}
+@media(max-width:590px){#shop-design.desktop{padding:8px}#shop-design.desktop article{padding:16px}#shop-design.desktop .desktop-form,#shop-design.desktop .details{grid-template-columns:minmax(0,1fr);padding:14px}#shop-design.desktop .row:nth-last-child(2){border-bottom:1px solid var(--line)}}
+</style>
+<style>
+html{color-scheme:light dark}
+body{margin:0;background:light-dark(#edf0f4,#16161c)}
+#shop-design.desktop{max-width:1100px;margin:24px auto}
+#shop-design .offline-icon{display:inline-grid;place-items:center;font-size:20px;font-style:normal;font-family:"Segoe UI Symbol",sans-serif;line-height:1}
+@media(max-width:590px){#shop-design.desktop{margin:8px auto}}
+</style>
+<style>
+#shop-design.desktop{width:100%;max-width:480px;margin:0 auto;padding:12px;box-sizing:border-box}
+#shop-design.desktop article{padding:16px}
+#shop-design.desktop .desktop-form,#shop-design.desktop .details,#shop-design.desktop .identity-fields{grid-template-columns:minmax(0,1fr);padding-inline:14px}
+#shop-design.desktop .identity-fields{padding-inline:0}
+#shop-design.desktop .choices span{flex:1 1 auto}
+#shop-design.desktop .actions{display:block}
+#shop-design.desktop .submit,#shop-design.desktop .upload,#shop-design.desktop .choices span{min-height:44px;display:flex;align-items:center;justify-content:center}
+#shop-design.desktop .upload{max-width:none;justify-content:flex-start}
+#shop-design.desktop .row:nth-last-child(2){border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<main id="shop-design" class="desktop">
+<article aria-label="申请开店表单"><div class="desktop-content">
+<h2>申请开店</h2>
+<p>提交开店申请，平台审核通过后即可经营店铺。</p>
+<div class="panel desktop-form">
+<div class="field"><div class="label">店铺logo<b>*</b></div><div class="upload"><span aria-hidden="true">↑</span> 选择图片</div><small>支持 JPG、PNG、WebP，不超过2MB。</small></div>
+<div class="field"><div class="label">用户名字<b>*</b></div><div class="input"></div></div>
+<div class="field"><div class="label">店铺名称<b>*</b></div><div class="input"></div></div>
+<div class="field"><div class="label">手机号码<b>*</b></div><div class="input"></div></div>
+<div class="field invitation"><div class="label">邀请码（选填）</div><div class="input"></div><small>填写邀请商家的推荐码。</small></div>
+<div class="identity-fields" role="group" aria-label="证件资料"><div class="field"><div class="label">个人证件<b>*</b></div><div class="choices"><span class="selected">◉ 身份证</span><span>○ 护照</span><span>○ 驾照</span></div></div>
+<div class="field"><div class="label">证件照片<b>*</b></div><div class="upload"><span aria-hidden="true">↑</span> 选择图片</div><small>支持 JPG、PNG、WebP，不超过2MB。</small></div>
+</div>
+<div class="field address-field"><div class="label">个人居住地址<b>*</b></div><div class="input address"></div></div>
+<div class="actions"><div class="submit">提交申请</div></div>
+</div>
+</div></article>
+</main>
+</body>
+</html>

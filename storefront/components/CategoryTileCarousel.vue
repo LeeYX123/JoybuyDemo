@@ -47,6 +47,11 @@ const props = defineProps({
     type: String,
     default: 'column',
   },
+  // 批次 CA：分类页 carousel 第一张「全部」卡（见 CategoryTileGrid.allCard）。
+  allCard: {
+    type: Object,
+    default: null,
+  },
 })
 
 const scroller = ref(null)
@@ -106,6 +111,7 @@ onBeforeUnmount(() => {
         :columns="props.variant === 'channel' ? Math.max(props.rows, 1) : 0"
         :per-row="props.variant === 'channel' ? props.perRow : 0"
         :fill="props.fill"
+        :all-card="props.allCard"
       />
     </div>
     <div v-if="overflowing" class="category-carousel__nav">

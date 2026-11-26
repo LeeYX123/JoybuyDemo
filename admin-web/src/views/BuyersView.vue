@@ -115,7 +115,7 @@ onMounted(load)
         <input
           v-model="state.q"
           type="search"
-          placeholder="账号 / 邮箱 / 手机号 / 用户 ID"
+          placeholder="用户名 / 邮箱 / 手机号 / 用户 ID"
           @keyup.enter="load(true)"
         />
         <select v-model="state.whitelisted" @change="load(true)">
@@ -154,7 +154,9 @@ onMounted(load)
             <tr v-for="row in state.items" :key="row.id">
               <td>
                 <b>{{ row.account || '—' }}</b>
-                <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
+                <span class="cell-sub">
+                  {{ row.display_name ? `${row.display_name} · ` : '' }}{{ row.id.slice(0, 8) }}
+                </span>
               </td>
               <td>
                 <span
@@ -231,6 +233,10 @@ onMounted(load)
           <div>
             <dt>账号</dt>
             <dd>{{ detail.account }}</dd>
+          </div>
+          <div>
+            <dt>用户名</dt>
+            <dd>{{ detail.display_name || '—' }}</dd>
           </div>
           <div>
             <dt>邮箱</dt>

@@ -19,6 +19,7 @@ import { useLocale } from '../composables/useLocale'
 
 import CategoryTileCarousel from './CategoryTileCarousel.vue'
 import { resolveCategoryContext } from '../utils/categoryContext'
+import { allCardImage } from '../utils/categoryAllCards'
 import { categoryHref } from '../utils/categoryLinks'
 import { buildPageList } from '../utils/pagination'
 
@@ -40,6 +41,19 @@ const currentRoot = computed(() => categoryContext.value.root)
 // Only set in the L2 view; the L1 view keeps the sidebar collapsed and the
 // selection on the root itself.
 const currentChild = computed(() => categoryContext.value.child)
+
+// 批次 CA：品类条第一张固定为「全部」卡（同一级品类下拉里那张，图片取常量）；
+// 当前就是该一级品类页时显示选中态。
+const categoryAllCard = computed(() => {
+  const root = currentRoot.value
+  if (!root) return null
+  return {
+    label: t('categoryPanel.all'),
+    image: allCardImage(root.slug),
+    to: `/c/${root.slug}`,
+    active: props.slug === root.slug,
+  }
+})
 
 // The filter list only ever contains the 11 roots: an L2 page highlights its
 // parent root (never expands the children in the sidebar).
@@ -212,6 +226,7 @@ useHead(() => ({ title: heading.value }))
               class="listing-category-strip"
               :items="currentRoot.children"
               :active-slug="props.slug"
+              :all-card="categoryAllCard"
             />
           </template>
           <header class="listing-head">

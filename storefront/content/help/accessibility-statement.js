@@ -381,38 +381,6 @@ const en = [
       },
     ],
   },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: '9. Joybuy Accessibility Conformance VPAT Report',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: 'iOS Version: ',
-      },
-      {
-        t: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-IOS',
-        href: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-IOS',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: 'Android Version: ',
-      },
-      {
-        t: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-Android',
-        href: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-Android',
-      },
-    ],
-  },
 ]
 
 const zh = [
@@ -839,37 +807,6 @@ const zh = [
     segments: [
       {
         t: '本无障碍声明在京东的一般服务条款中被引用，并构成其一部分。建议用户查阅服务条款，以进一步了解无障碍性如何融入我方服务交付。',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: '9. Joybuy 无障碍VPAT合规报告',
-        b: 1,
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: 'iOS 版本请参考:',
-      },
-      {
-        t: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-IOS',
-        href: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-IOS',
-      },
-      {
-        br: 1,
-      },
-      {
-        t: 'Android 版本请参考:',
-      },
-      {
-        t: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-Android',
-        href: 'https://www.joyfumi.com/help/AccessibilityConformanceReport-Android',
       },
     ],
   },

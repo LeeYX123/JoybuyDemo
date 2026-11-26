@@ -64,6 +64,12 @@ const props = defineProps({
     type: String,
     default: 'column',
   },
+  // 批次 CA：插在最前面的「查看全部 X / 全部」卡（分类下拉与 /c 页共用）。
+  // { label, image, to, active }；不传则不渲染。
+  allCard: {
+    type: Object,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['select'])
@@ -143,6 +149,19 @@ const tileStyle = computed(() => {
       </li>
     </template>
     <template v-else>
+      <!-- 批次 CA：第一张固定为「查看全部 X / 全部」卡 -->
+      <li v-if="props.allCard" class="category-tiles__all">
+        <NuxtLink
+          class="category-tile"
+          :class="{ 'category-tile--active': props.allCard.active }"
+          :to="props.allCard.to"
+        >
+          <span class="category-tile__media">
+            <img class="category-tile__image" :src="props.allCard.image" alt="" loading="lazy" />
+          </span>
+          <span class="category-tile__name">{{ props.allCard.label }}</span>
+        </NuxtLink>
+      </li>
       <li v-for="item in items" :key="item.slug">
         <NuxtLink
           class="category-tile"

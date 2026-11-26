@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useLocale } from '../composables/useLocale'
 
 import CategoryTileGrid from './CategoryTileGrid.vue'
+import { allCardImage } from '../utils/categoryAllCards'
 
 // Categories dropdown (docs/12 §2): left column = 11 standard roots, right
 // column = children of the selected root only (strict parent/child linkage).
@@ -29,6 +30,19 @@ const { t, categoryName } = useLocale()
 
 const selectedIndex = ref(0)
 const selectedRoot = computed(() => props.categories[selectedIndex.value] || null)
+
+// 批次 CA：右侧二级区域第一张固定为「查看全部 <一级品类名>」，图片取常量
+// （不随接口数据变化），点击进入该一级品类的全部商品页。
+const allCard = computed(() => {
+  const root = selectedRoot.value
+  if (!root) return null
+  return {
+    label: `${t('categoryPanel.viewAll')} ${categoryName(root)}`,
+    image: allCardImage(root.slug),
+    to: `/c/${root.slug}`,
+    active: false,
+  }
+})
 
 watch(
   () => props.open,
@@ -74,6 +88,7 @@ function select(index) {
             v-if="selectedRoot?.children?.length"
             class="category-panel__children"
             :items="selectedRoot.children"
+            :all-card="allCard"
             @select="emit('close')"
           />
         </div>
