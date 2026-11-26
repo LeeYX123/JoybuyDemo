@@ -11,8 +11,26 @@ import { useWishlist } from '../../composables/useWishlist'
 import { formatDisplayPrice } from '../../utils/display'
 import { categoryHref } from '../../utils/categoryLinks'
 import { findSkuForOffer, resolveSelectedSku } from '../../utils/offerSelection'
+import {
+  familyMembers,
+  memberLabel,
+  merchantLabel,
+  merchantOffers,
+  preferredOfferId,
+  resolveActiveOffer,
+  siblingTarget,
+} from '../../utils/variantFamily'
 import { resolveProductCategoryCrumbs } from '../../utils/pdpBreadcrumb'
 import { ratingAverageLabel, soldCountLabel } from '../../utils/pdpDisplay'
+import {
+  resolveVariantArchive,
+  variantDetailField,
+  variantGallery,
+  variantQuery,
+  variantReviewSummary,
+  variantSoldAmount,
+  variantTitleText,
+} from '../../utils/variantArchive'
 
 // Product detail aligned to docs/12 §6: breadcrumb row, full-width 24px/700
 // title, thumb rail + 591px-class main image + buy panel (Buy now / Add to
@@ -24,27 +42,47 @@ const { t, categoryName } = useLocale()
 const publicId = computed(() => String(route.params.id || ''))
 // 需求 20.1/20.3：商家店铺页链接带 ?offer=<offer_id>&from=merchant。
 const requestedOfferId = computed(() => String(route.query.offer || ''))
+// 批次 DA：切规格后 URL 带 ?sku=<sku_public_id>（单 URL 可分享；刷新/前进
+// 后退都能还原所选规格）。服务端按它返回 variant_archive。
+const requestedSkuId = computed(() => String(route.query.sku || ''))
 const fromMerchant = computed(() => route.query.from === 'merchant')
 const config = useRuntimeConfig()
 const { apiQuery } = useMarketLocale()
+// 只含市场/语言与商家 offer：作为 useFetch 的缓存 key。切规格不改 key，
+// 由 watch(requestedSkuId) 手动 refresh()，避免 data 被清空导致整页闪白。
 const productQuery = computed(() => {
   const params = new URLSearchParams(apiQuery.value)
   // 带上 offer 让后端返回该商家自己的 offer（同款多商家时默认 first 会串商家）。
-  if (requestedOfferId.value) params.set('offer', requestedOfferId.value)
+  // 用 offerForRequest（不是 requestedOfferId）：切换商家不重取。
+  if (offerForRequest.value) params.set('offer', offerForRequest.value)
   return params.toString()
 })
+const requestQuery = computed(() => {
+  const params = new URLSearchParams(productQuery.value)
+  if (requestedSkuId.value) params.set('sku', requestedSkuId.value)
+  return params.toString()
+})
+// 批次 DB：商家轴切换不应触发整页 re-fetch（否则 data 被清空、整页闪白，与
+// 批次 DA 的 ?sku= 同一类坑）。fetch key 里的 offer 只在**商品变化**时更新；
+// 商家切换只改本地 activeOfferId + URL，价格/库存直接用 skus[].offers 算。
+const offerForRequest = ref(requestedOfferId.value)
+watch(publicId, () => {
+  offerForRequest.value = String(route.query.offer || '')
+})
 
-const { data, error } = await useFetch(
+const { data, error, refresh } = await useFetch(
   () =>
     import.meta.server
-      ? `${config.apiBaseInternal}/products/${publicId.value}?${productQuery.value}`
-      : `/api/v1/products/${publicId.value}?${productQuery.value}`,
+      ? `${config.apiBaseInternal}/products/${publicId.value}?${requestQuery.value}`
+      : `/api/v1/products/${publicId.value}?${requestQuery.value}`,
   {
     // Reactive key: a template-string key is frozen at setup, so the payload
     // cache keeps serving the first locale after the header switches
     // market/language (same bug class as useActivityList). The key must track
-    // publicId + market/locale query to trigger the refetch.
+    // publicId + market/locale query to trigger the refetch. 切规格的 ?sku=
+    // 不进 key（见 requestQuery），由下面的 watcher 显式 refresh()。
     key: computed(() => `product-${publicId.value}-${productQuery.value}`),
+    watch: false,
   },
 )
 
@@ -117,9 +155,65 @@ const offerFallbackNotice = computed(
     purchasableSkus.value.length > 0,
 )
 
-const offer = computed(() => selectedSku.value?.offer || null)
+// 批次 DA：URL 的 ?sku= 是所选规格的事实来源（分享/刷新/前进后退一致）。
+function syncSelectedSkuFromQuery() {
+  const skuId = requestedSkuId.value
+  if (!skuId) {
+    selectedSkuId.value = null
+    return
+  }
+  if (purchasableSkus.value.some((sku) => sku.public_id === skuId)) {
+    selectedSkuId.value = skuId
+  }
+}
+watch(requestedSkuId, (value, oldValue) => {
+  syncSelectedSkuFromQuery()
+  // 只有 sku 变化才重取；商品/语言变化由 useFetch 的 key 负责。
+  if (value !== oldValue) void refresh()
+})
+// 首次渲染（含 SSR）与商品/语言切换后 data 重新到达时，按 URL 对齐选中 SKU，
+// 否则 ?sku= 分享链接首次渲染会退回默认规格、档案不生效。
+watch([publicId, purchasableSkus], syncSelectedSkuFromQuery, { immediate: true })
+
+// 批次 DB（Q9/Q10）：商家轴。selectedSku.offers 是该规格的全部商家 offer，
+// activeOfferId 来自 URL ?offer= 或用户点选；命中不了时回退后端默认 offer。
+const activeOfferId = ref(String(route.query.offer || ''))
+watch(requestedOfferId, (value) => {
+  activeOfferId.value = value
+})
+const offer = computed(() => resolveActiveOffer(selectedSku.value, activeOfferId.value))
+const skuMerchants = computed(() => merchantOffers(selectedSku.value))
+const hasMerchantAxis = computed(() => skuMerchants.value.length > 1)
+const familyMemberList = computed(() => familyMembers(data.value))
+const hasFamilyAxis = computed(() => familyMemberList.value.length > 1)
+const familyAxisName = computed(
+  () => String(data.value?.variant_family?.axis_hint || '').trim() || t('detail.modelAxis'),
+)
+
+function selectMerchant(offerEntry) {
+  if (!offerEntry?.public_id || activeOfferId.value === offerEntry.public_id) return
+  activeOfferId.value = offerEntry.public_id
+  // 写回 URL（可分享、刷新后仍是该商家）；不触发 re-fetch（key 用 offerForRequest）。
+  void router.replace({ query: { ...route.query, offer: offerEntry.public_id } })
+}
+
+function goToFamilyMember(member) {
+  if (!member?.spu_public_id || member.is_current) return
+  const target = siblingTarget(member, offer.value, route.query)
+  void navigateTo(target)
+}
 // Business rule: one original price only — no strikethrough list price.
 const price = computed(() => (offer.value ? formatDisplayPrice(offer.value.price) : null))
+
+const router = useRouter()
+
+// 批次 DA：当前所选规格的「整档切换」档案。只有 share_metadata=false 且
+// 档案 sku 与当前选中 SKU 一致时才生效；其余情况返回 null，页面保持旧行为
+// （只切价格/库存/规格，不换画廊/评分/详情/标题）。
+const variantArchive = computed(() =>
+  resolveVariantArchive(data.value, selectedSku.value?.public_id),
+)
+const displayTitle = computed(() => variantTitleText(variantArchive.value, data.value?.title))
 
 // 需求 20.3：PDP 右下角【联系商家】。仅「已登录 + 白名单 + 来自商家店铺页
 // 且能从 offer 确定商家」时显示；面板必须绑定该商品 offer 的商家，不能用
@@ -191,7 +285,7 @@ const variantAxes = computed(() => {
   // 爬虫给出 spec_options 时优先用它：保留源站维度顺序、系列在前，
   // 并带上 s96 规格图与 SKU 映射；历史商品回退到 SKU 规格推导。
   if (specOptions.value.length) {
-    return specOptions.value
+    const fromSpecOptions = specOptions.value
       .filter((option) => Array.isArray(option.values) && option.values.length)
       .map((option) => ({
         name: option.name,
@@ -204,6 +298,10 @@ const variantAxes = computed(() => {
           .filter((value) => resolvesToPurchasableSku(option.name, value)),
       }))
       .filter((axis) => axis.values.length)
+    // 同款多规格合并（批次 CB2）后，保留 SPU 的 spec_options 可能仍是源站
+    // 单规格残留（或详情译文行残留），过滤后一个可购规格值都不剩。此时必须
+    // 回退到 SKU 规格反推，否则多 SKU 商品规格区一片空白、无法切换。
+    if (fromSpecOptions.length) return fromSpecOptions
   }
   const axes = new Map()
   for (const sku of purchasableSkus.value) {
@@ -237,6 +335,7 @@ function selectVariant(axisName, optionValue) {
   if (!candidates.length) return
   // 多维商品：优先保留当前 SKU 在其它维度上的选择，避免只换一个维度
   // 就跳到完全不相关的组合。
+  let target = candidates[0]
   const current = selectedSku.value
   if (current) {
     const currentSpec = matchSpec(current) || {}
@@ -245,28 +344,41 @@ function selectVariant(axisName, optionValue) {
         ([name, specValue]) => name === axisName || String(specValue) === String(currentSpec[name]),
       ),
     )
-    if (matching.length) {
-      selectedSkuId.value = matching[0].public_id
-      return
-    }
+    if (matching.length) target = matching[0]
   }
-  selectedSkuId.value = candidates[0].public_id
+  if (selectedSkuId.value === target.public_id) return
+  selectedSkuId.value = target.public_id
+  // 批次 DB：切规格时尽量停在同一个商家（该商家卖这个规格才切过去），
+  // 否则清掉 offer 回到后端默认商家。
+  const nextOfferId = preferredOfferId(target, offer.value)
+  activeOfferId.value = nextOfferId
+  // 批次 DA：把所选规格写进 URL（保留 offer/from 等其它参数），触发上面的
+  // watcher refresh() 重取带 ?sku= 的详情；URL 因此可分享、可前进/后退。
+  const query = variantQuery(route.query, target.public_id)
+  if (nextOfferId) query.offer = nextOfferId
+  else delete query.offer
+  void router.replace({ query })
 }
 
-const gallery = computed(() => (Array.isArray(data.value?.gallery) ? data.value.gallery : []))
+const baseGallery = computed(() => (Array.isArray(data.value?.gallery) ? data.value.gallery : []))
+// 档案有图用档案图；档案缺图（如合并时全部去重）回退保留 SPU 的图。
+const gallery = computed(() => variantGallery(variantArchive.value, baseGallery.value))
 const videos = computed(() => (Array.isArray(data.value?.videos) ? data.value.videos : []))
 
 // 画廊媒体：视频排在图片前面（Joybuy 详情页顺序），图片保持原顺序。
+// 变体档案没有视频快照，整套切换时不混入保留 SPU 的视频（否则主图仍是旧视频）。
 const mediaItems = computed(() => {
   const items = []
-  videos.value.forEach((video, index) => {
-    items.push({
-      key: `video-${index}`,
-      type: 'video',
-      url: video.url,
-      poster: video.poster || '',
+  if (!variantArchive.value) {
+    videos.value.forEach((video, index) => {
+      items.push({
+        key: `video-${index}`,
+        type: 'video',
+        url: video.url,
+        poster: video.poster || '',
+      })
     })
-  })
+  }
   gallery.value.forEach((asset, index) => {
     items.push({ key: `image-${index}-${asset.url}`, type: 'image', url: asset.url })
   })
@@ -274,6 +386,13 @@ const mediaItems = computed(() => {
 })
 
 const activeMediaKey = ref('')
+// 切规格换画廊后回到第一张（旧 key 可能在新画廊里不存在）。
+watch(
+  () => variantArchive.value?.sku,
+  () => {
+    activeMediaKey.value = ''
+  },
+)
 const currentMedia = computed(() => {
   if (!mediaItems.value.length) return null
   const selected = mediaItems.value.find((item) => item.key === activeMediaKey.value)
@@ -406,12 +525,22 @@ const { isMobileHost } = useMobileView()
 const selectedSkuSpec = computed(() => matchSpec(selectedSku.value))
 
 const contentSections = computed(() =>
-  Array.isArray(data.value?.content_sections) ? data.value.content_sections : [],
+  variantDetailField(
+    variantArchive.value,
+    'content_sections',
+    Array.isArray(data.value?.content_sections) ? data.value.content_sections : [],
+  ),
 )
 const specificationTables = computed(() =>
-  Array.isArray(data.value?.specification_tables) ? data.value.specification_tables : [],
+  variantDetailField(
+    variantArchive.value,
+    'specification_tables',
+    Array.isArray(data.value?.specification_tables) ? data.value.specification_tables : [],
+  ),
 )
-const aiSummaryText = computed(() => data.value?.ai_summary || '')
+const aiSummaryText = computed(
+  () => variantDetailField(variantArchive.value, 'ai_summary', data.value?.ai_summary || '') || '',
+)
 
 // Breadcrumb from the shared category tree: root -> child -> product title
 // (the API returns the product's own category slug; every level links to its
@@ -456,9 +585,27 @@ const breadcrumbNodes = computed(() => {
 // 需求 22.1-5 / 23.1-2：商品名下方「评分 | 已售 x+ 件」，评价条数不展示。
 // 评分用 review_summary（本地评价优先、爬虫快照兜底）；销量用后端已落库的
 // sale_amount，接口返回 null 时才用确定性展示占位值（见 utils/pdpDisplay.js）。
-const reviewSummary = computed(() => data.value?.review_summary || null)
+// 批次 DA：share_metadata=false 的档案优先用自己的评分/已售快照（缺数据回退）。
+const reviewSummary = computed(() =>
+  variantReviewSummary(variantArchive.value, data.value?.review_summary || null),
+)
 const ratingAverage = computed(() => ratingAverageLabel(reviewSummary.value))
-const soldCount = computed(() => soldCountLabel(publicId.value, data.value?.sale_amount))
+const soldAmount = computed(() => variantSoldAmount(variantArchive.value, data.value?.sale_amount))
+const soldCount = computed(() => soldCountLabel(publicId.value, soldAmount.value))
+// 移动端复用同一份 payload：把档案里的标题/评分/已售/详情覆盖进去，避免
+// MobilePDP 读 base data 时「桌面变了、手机没变」。
+const displayData = computed(() => {
+  if (!variantArchive.value) return data.value
+  return {
+    ...(data.value || {}),
+    title: displayTitle.value,
+    review_summary: reviewSummary.value,
+    sale_amount: soldAmount.value,
+    content_sections: contentSections.value,
+    specification_tables: specificationTables.value,
+    ai_summary: aiSummaryText.value,
+  }
+})
 // 需求 23.1-3：已售图标 tooltip，hover 与键盘 focus 都显示。
 const soldTipOpen = ref(false)
 
@@ -537,13 +684,13 @@ function changeQuantity(delta) {
   quantity.value = Math.max(1, Math.min(99, quantity.value + delta))
 }
 
-useHead(() => ({ title: data.value?.title || 'Product' }))
+useHead(() => ({ title: displayTitle.value || 'Product' }))
 </script>
 
 <template>
   <MobilePDP
     v-if="isMobileHost"
-    :data="data"
+    :data="displayData"
     :error="error"
     :media-items="mediaItems"
     :offer="offer"
@@ -559,11 +706,16 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
     :wish-pending="wishPending"
     :content-sections="contentSections"
     :specification-tables="specificationTables"
+    :family-members="familyMemberList"
+    :family-axis-name="familyAxisName"
+    :merchants="skuMerchants"
     @select-variant="selectVariant"
     @change-quantity="changeQuantity"
     @add-to-cart="onAddToCart"
     @buy-now="onBuyNow"
     @toggle-wishlist="toggle(publicId)"
+    @select-merchant="selectMerchant"
+    @go-family-member="goToFamilyMember"
   />
   <div v-else class="detail-page-bg">
     <AppContainer>
@@ -590,10 +742,10 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             <span v-else class="detail__crumb">{{ node.label }}</span>
           </template>
           <span class="detail__crumb-sep" aria-hidden="true">/</span>
-          <span class="detail__crumb detail__crumb--current">{{ data?.title }}</span>
+          <span class="detail__crumb detail__crumb--current">{{ displayTitle }}</span>
         </nav>
         <p v-if="data?.brand" class="detail__brandline">{{ data.brand }}</p>
-        <h1 class="detail__title">{{ data?.title }}</h1>
+        <h1 class="detail__title">{{ displayTitle }}</h1>
 
         <!-- 需求 22.1-5 / 23.1-2：商品名下方「评分 | 已售 x+ 件」。评价条数
              按 23.1-2 不展示；评分与已售之间的灰色竖线按用户口径保留。 -->
@@ -669,8 +821,8 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
                 :class="{ 'detail__thumb--active': currentMedia?.key === item.key }"
                 :aria-label="
                   item.type === 'video'
-                    ? `${data?.title} video ${index + 1}`
-                    : `${data?.title} thumbnail ${index + 1}`
+                    ? `${displayTitle} video ${index + 1}`
+                    : `${displayTitle} thumbnail ${index + 1}`
                 "
                 @click="selectMedia(item)"
               >
@@ -679,8 +831,8 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
                   :src="item.type === 'image' ? item.url : item.poster"
                   :alt="
                     item.type === 'video'
-                      ? `${data?.title} video preview`
-                      : `${data?.title} thumbnail ${index + 1}`
+                      ? `${displayTitle} video preview`
+                      : `${displayTitle} thumbnail ${index + 1}`
                   "
                 />
                 <span v-else class="detail__thumb-video" aria-hidden="true">▶</span>
@@ -725,7 +877,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             >
               Your browser does not support embedded video.
             </video>
-            <img v-else-if="currentImage" :src="currentImage" :alt="data?.title" />
+            <img v-else-if="currentImage" :src="currentImage" :alt="displayTitle" />
             <BaseSkeleton v-else variant="block" class="detail__image-placeholder" />
             <!-- Blue dotted selection mask over the hovered region (real site). -->
             <div
@@ -772,6 +924,26 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
               {{ stickySpecText }}
             </p>
 
+            <!-- 批次 DB（Q9）：族内兄弟商品 = 外层「型号/系列」选择；点击整页跳转
+                 到兄弟商品（真站做法），并尽量带上同一商家的 ?offer=。 -->
+            <div v-if="hasFamilyAxis" class="detail__axis detail__axis--family">
+              <h2 class="detail__axis-name">{{ familyAxisName }}</h2>
+              <div class="detail__axis-values">
+                <button
+                  v-for="(member, index) in familyMemberList"
+                  :key="member.spu_public_id"
+                  type="button"
+                  class="detail__variant detail__variant--link"
+                  :class="{ 'detail__variant--active': member.is_current }"
+                  :aria-current="member.is_current ? 'true' : undefined"
+                  :data-family-spu="member.spu_public_id"
+                  @click="goToFamilyMember(member)"
+                >
+                  <span>{{ memberLabel(member, index) }}</span>
+                </button>
+              </div>
+            </div>
+
             <div v-for="axis in variantAxes" :key="axis.name" class="detail__axis">
               <h2 class="detail__axis-name">{{ axis.name }}</h2>
               <div class="detail__axis-values">
@@ -794,6 +966,27 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
                     :alt="value.value"
                   />
                   <span>{{ value.value }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 批次 DB（Q9/Q10）：商家轴。同一规格可能多个商家在售，切换只改
+                 价格/库存/加购 offer 与 URL，不重新拉整页数据。 -->
+            <div v-if="hasMerchantAxis" class="detail__axis detail__axis--merchant">
+              <h2 class="detail__axis-name">{{ t('detail.sellerAxis') }}</h2>
+              <div class="detail__axis-values">
+                <button
+                  v-for="entry in skuMerchants"
+                  :key="entry.public_id"
+                  type="button"
+                  class="detail__variant detail__variant--merchant"
+                  :class="{ 'detail__variant--active': offer?.public_id === entry.public_id }"
+                  :data-offer-id="entry.public_id"
+                  :data-merchant-slug="entry.merchant?.slug || ''"
+                  @click="selectMerchant(entry)"
+                >
+                  <span class="detail__merchant-name">{{ merchantLabel(entry) }}</span>
+                  <span class="detail__merchant-price">{{ formatDisplayPrice(entry.price) }}</span>
                 </button>
               </div>
             </div>
@@ -952,7 +1145,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
               v-for="(image, imageIndex) in section.images"
               :key="image"
               :src="image"
-              :alt="`${section.title || data?.title} ${imageIndex + 1}`"
+              :alt="`${section.title || displayTitle} ${imageIndex + 1}`"
               loading="lazy"
               decoding="async"
             />
@@ -1017,7 +1210,7 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
         v-if="publicId && data"
         :product-id="publicId"
         :ai-summary="aiSummaryText"
-        :review-summary="data?.review_summary"
+        :review-summary="reviewSummary"
       />
 
       <!-- 我们支持已移到右栏购买区下方（需求 22.1-1），页面底部不再渲染。 -->
@@ -1029,10 +1222,10 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
             v-if="currentImage || gallery[0]?.url"
             class="buy-bar__thumb"
             :src="currentImage || gallery[0]?.url"
-            :alt="data.title"
+            :alt="displayTitle"
           />
           <div class="buy-bar__info">
-            <p class="buy-bar__title">{{ data.title }}</p>
+            <p class="buy-bar__title">{{ displayTitle }}</p>
             <p v-if="stickySpecText" class="buy-bar__spec">{{ stickySpecText }}</p>
           </div>
           <p v-if="price" class="buy-bar__price">{{ price }}</p>
@@ -1525,6 +1718,27 @@ useHead(() => ({ title: data.value?.title || 'Product' }))
   color: var(--colour-accent);
   background: var(--colour-accent-soft);
   font-weight: var(--font-weight-semibold);
+}
+
+/* 批次 DB（Q9）：族内兄弟商品（整页跳转）与商家轴按钮。 */
+.detail__variant--link {
+  text-decoration: none;
+}
+
+.detail__variant--merchant {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 6px var(--space-4);
+}
+
+.detail__merchant-name {
+  font-size: var(--font-size-sm);
+}
+
+.detail__merchant-price {
+  color: var(--colour-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* 真站 dpCounter_counterBoxWrapper 实测：padding 12px 0，label margin-bottom 12px

@@ -7,10 +7,9 @@
 两个接口都只读、无需登录；总关注/总曝光度为**总数**（不是今日）。
 """
 
+from catalog.models import Sku, Spu
 from django.db.models import Exists, OuterRef, Q
 from django.http import JsonResponse
-
-from catalog.models import Sku, Spu
 from offers.models import Offer
 
 # 商家页商品卡兜底图（本地资源，storefront/public/images/categories/）。
@@ -91,7 +90,7 @@ def _product_image(spu, gallery_paths: dict[int, str]) -> str:
     return gallery_paths.get(spu.pk) or PRODUCT_PLACEHOLDER_IMAGE
 
 
-def _product_payload(offer: Offer, *, image: str) -> dict:
+def _product_payload(offer: Offer, *, image: str, family=None) -> dict:
     spu = offer.sku.spu
     translation = (
         spu.translations.filter(locale__in=["zh-CN", "zh", "en-GB", "en"]).order_by("pk").first()
@@ -106,7 +105,74 @@ def _product_payload(offer: Offer, *, image: str) -> dict:
         "currency": offer.currency.code,
         "merchant_category": spu.merchant_category,
         "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
+        # 批次 DB（2026-11-27）：族信息只做增量字段，老前端忽略也不影响。
+        "family_key": family["family_key"] if family else "",
+        "family_representative_public_id": str(family["representative_public_id"]) if family else "",
     }
+
+
+def _family_map(spu_ids):
+    """SPU → {family_key, family_id, representative_spu_id/public_id}（一次查询）。"""
+
+    from catalog.models import VariantFamilyMember
+
+    rows = (
+        VariantFamilyMember.objects.filter(spu_id__in=set(spu_ids))
+        .values(
+            "spu_id",
+            "family_id",
+            "family__family_key",
+            "family__representative_spu_id",
+            "family__representative_spu__public_id",
+        )
+        .distinct()
+    )
+    result = {}
+    for row in rows:
+        result.setdefault(
+            row["spu_id"],
+            {
+                "family_id": row["family_id"],
+                "family_key": row["family__family_key"],
+                "representative_spu_id": row["family__representative_spu_id"],
+                "representative_public_id": row["family__representative_spu__public_id"],
+            },
+        )
+    return result
+
+
+def _dedupe_by_family(offers, family_by_spu, *, limit=50):
+    """同款族只留一张卡（Q7）：优先保留「代表 SPU 的 offer」，否则取最便宜的一张。
+
+    商家页是「这个商家卖什么」，所以卡片的 ``product_id``/``offer_id`` 指向真实
+    在售的那个 offer（可能落在族内非代表 SPU 上）；点击进 PDP 时带 ``?offer=``，
+    PDP 会默认选中该商家的 offer（Q10）。
+
+    单遍扫描全部 offer（按 ``-listed_at`` 顺序 = 最新上架在前），族首次出现即占位，
+    后续同族 offer 只做「代表优先 / 更便宜」的替换；攒够 ``limit`` 个族就提前结束。
+    """
+
+    picks = {}  # key -> (offer, family)
+    order = []
+    for offer in offers:
+        spu_id = offer.sku.spu_id
+        family = family_by_spu.get(spu_id)
+        key = ("family", family["family_id"]) if family else ("spu", spu_id)
+        current = picks.get(key)
+        if current is None:
+            picks[key] = (offer, family)
+            order.append(key)
+            if len(order) >= limit:
+                break
+            continue
+        existing_offer, _family = current
+        existing_rep = family is not None and existing_offer.sku.spu_id == family["representative_spu_id"]
+        candidate_rep = family is not None and spu_id == family["representative_spu_id"]
+        if candidate_rep and not existing_rep:
+            picks[key] = (offer, family)
+        elif candidate_rep == existing_rep and offer.current_price < existing_offer.current_price:
+            picks[key] = (offer, family)
+    return [picks[key] for key in order]
 
 
 def _listed_offers(merchant):
@@ -144,11 +210,26 @@ def merchant_detail(request, slug):
             {"error": {"code": "MERCHANT_NOT_FOUND", "message": "商家不存在。"}}, status=404
         )
     payload = _merchant_header(merchant)
-    offers = list(_listed_offers(merchant)[:50])
-    gallery_paths = _gallery_paths(offer.sku.spu_id for offer in offers)
+    # 批次 DB（Q7）：商家页商品按同款族去重——同一族的多个变体 SPU 只出一张卡。
+    # 单遍扫描（族内可能有大量变体挂在这个商家上），攒够 50 个族即停。
+    offers = _listed_offers(merchant).iterator(chunk_size=500)
+    family_by_spu = _family_map(
+        Offer.objects.filter(
+            merchant=merchant,
+            status=Offer.Status.ACTIVE,
+            sku__status=Sku.Status.ACTIVE,
+            sku__spu__status=Spu.Status.ACTIVE,
+        ).values_list("sku__spu_id", flat=True)
+    )
+    picks = _dedupe_by_family(offers, family_by_spu, limit=50)
+    gallery_paths = _gallery_paths(offer.sku.spu_id for offer, _family in picks)
     payload["products"] = [
-        _product_payload(offer, image=_product_image(offer.sku.spu, gallery_paths))
-        for offer in offers
+        _product_payload(
+            offer,
+            image=_product_image(offer.sku.spu, gallery_paths),
+            family=family,
+        )
+        for offer, family in picks
     ]
     return JsonResponse({"merchant": payload})
 

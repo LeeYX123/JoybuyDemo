@@ -61,6 +61,12 @@ urlpatterns = [
         name="merchant-public-detail",
     ),
     path(
+        # 批次 CB2 同款合并：旧商品 id 的别名查询（storefront 301 用）。
+        "api/v1/products/aliases/<uuid:old_public_id>",
+        detail_views.product_alias,
+        name="product-alias",
+    ),
+    path(
         "api/v1/products/<uuid:public_id>",
         detail_views.product_detail,
         name="product-detail",

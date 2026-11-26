@@ -53,7 +53,10 @@ const price = computed(() => {
       return formatDisplayPrice(raw) ?? String(raw).trim()
     }
   }
-  return formatDisplayPrice(props.product.price_min ?? props.product.price)
+  return formatDisplayPrice(
+    // 批次 DB（2026-11-27）：同款族卡片显示族内最高价；不在族里/缺价回退 price_min。
+    props.product.family_max_price ?? props.product.price_min ?? props.product.price,
+  )
 })
 
 // 划线原价：只在数据里真的带有更高的原价时渲染（真站折扣卡 14/500/20

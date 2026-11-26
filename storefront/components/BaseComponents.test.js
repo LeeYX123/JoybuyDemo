@@ -61,4 +61,12 @@ describe('BaseRatingStars', () => {
     const wrapper = mount(BaseRatingStars, { props: { rating: 9 } })
     expect(wrapper.findAll('.star--filled')).toHaveLength(5)
   })
+
+  // 2026-11-27：接口没有评价数时不显示「(0)」。
+  it('omits the count when it is zero or missing', () => {
+    const zero = mount(BaseRatingStars, { props: { rating: 4.5, count: 0, showCount: true } })
+    expect(zero.find('.rating-stars__count').exists()).toBe(false)
+    const missing = mount(BaseRatingStars, { props: { rating: 4.5, showCount: true } })
+    expect(missing.find('.rating-stars__count').exists()).toBe(false)
+  })
 })

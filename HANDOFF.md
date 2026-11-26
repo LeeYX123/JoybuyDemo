@@ -2,6 +2,113 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cy. 夜批协同：执行 31 个频道卡落地页采集（2026-11-27，✅ **本批已跑完** / 未 commit）
+
+### 我们在做什么
+用户要求读根目录 `CRAWL_COORDINATION.md` 并与另一个 agent（WorkBuddy/Moss）协同：**对方建任务（job#388~418 共 31 个 PAGE_SET 任务），我方是「执行方」**，只负责跑爬取队列、避免风控、自动切 VPN 节点，双方交流全部写进 `CRAWL_COORDINATION.md`（对方轮询 `var/home_modules_20261125/overnight/crawl_state.json`，建页状态在 `build_state.json`）。
+
+### 已完成（本批结果）
+- **31/31 到终态：24 SUCCEEDED / 7 FAILED_FINAL，入库 230 个商品**；31 个页面**全部生成 `CrawlPageManifest`**（28 个含商品，平均 24 件、最大 92 件；3 个为 0 件）。
+- **风控：全程 0 次** `RISK_CONTROL_FALLBACK`/`LOGIN_WALL_FALLBACK`/`ACCOUNT_POOL_EXHAUSTED`/`CONNECTIVITY_PREFLIGHT_FAILED`，仅 1 次账号池内部 `ACCOUNT_ROTATED`；所有 run 带 `PROXY_CONFIGURED`，无一条直连。
+- **自动切节点 6 次**（TW3→JP1→JP2→JP3→JP4→KR1→KR2），每次校验出口 IP + 详情页 `real_data`。
+- 7 个失败的归因（**都不是风控**，已写进协同文档第八节）：A 已全部入库（399/407）、B 归属冲突但库内有 ACTIVE SPU（388/403）、C 清单 0 件·纯客户端渲染 HTTP 拿不到（394/412/416）。
+- 我方产出脚本：`overnight/run_crawl_queue.py`（修 3 处 bug）、`overnight/detach_runner.py`、`overnight/risk_guard.py`；代理侧 `var/clash_crawler_proxy/{start_instance,switch_node,watch_rotate}.py`。
+- 批量跑完后**队列已自行退出**；保留 `risk_guard.py` 与 `watch_rotate.py` 两个守护常驻，可直接接下一批。
+
+### 当前卡在哪 / 遗留
+- 无阻塞。生产侧不受影响（只写 dev 库与 `var/`）。
+- **`run#443/444/445`（job#385/386/387「店铺资产下载 20261127」）17 分钟 0 事件 0 进度**，与 410~418 同型僵尸；已在协同文档请 Moss 确认（不是本批 31 个任务，我方未动）。
+- 协同方 24 个页面已建（`build_state.json` = built 24）。
+
+### 下一步
+1. 等 Moss 的「建页完成」回复与可能的**补爬请求**（格式：页面 external_id + 缺什么 + 是否要新商品）；有就按 `skip_imported` 重跑对应 job 一次。
+2. 若要继续采新页：`detach_runner.py --guard` 起守护（若没在跑）→ 建任务 → `detach_runner.py` 起队列。
+3. 本批未 commit（仓库惯例）。
+
+### 坑（勿重踩）
+- **`run_crawl_queue.py` 原来有 int/str key 混用 → `KeyError: '388'`，一启动就崩**；用任何第三方给的队列脚本先空跑一遍。
+- **Django `TIME_ZONE` 就是 UTC，`timezone.localtime()` 仍返回 UTC**；要写给人看的本地时间用 `datetime.now()`。
+- 用工具的后台 shell 跑队列 → shell 被回收会连带杀死队列和它 spawn 的 DETACHED 执行器，库里留 RUNNING 僵尸；必须用 `overnight/detach_runner.py`（`DETACHED_PROCESS`）拉起。
+- **`.venv/Scripts/python.exe` 是 shim**，会再起一个 `D:\Anaconda\python.exe` 子进程 → `wmic` 里每个任务看到两个同名进程是正常的。
+- 「没有发现任何商品：列表页可能被风控拦截…」这条文案**不等于风控**：它也在「商品全部已入库、待采 0」时触发；判断前先看 `PAGE_SKIP_IMPORTED` 与 `crawl_page_manifest.product_count`。
+- `crawl_run.started_at` 存 UTC（本地 = +8）；判断「有没有任务在跑」要加 `started_at > UTC_TIMESTAMP()-INTERVAL 48 HOUR`。
+
+## 0cx. 批次 DB：同款族去重（列表/搜索/商家页）+ 族内最高价 + PDP「规格 × 商家」（2026-11-27，✅ 已写库 / 未 commit）
+
+> 产物目录 `var/variant_family_db_20261127/`：`build_report.json`（写库台账：1,758 族全量清单 + Q8 排除清单）、`search_backfill_report.json`、`verify_apply.json`（只读复核，`failure_count=0`）、`rollback_report.json`（回滚演练）、`preview.csv` / `listed_only.csv` / `preview_summary.md`（写库后重新生成的族清单与 med/low 清单）。
+> 规则**只有一份**：`backend/catalog/variant_family_services.py`。`var/variant_family_db_20261127/build_preview.py` 已改成薄报告层（只调服务），不要再在 `var/` 里写第二份规则。
+
+### 我们在做什么（用户 2026-11-27 拍板 Q1–Q10）
+列表/搜索/商家页「同一件商品只出一张卡」、卡片显示**族内最高价**、PDP 用**规格 × 商家**两级选择；未合并族切规格=**整页跳转兄弟商品**（真站做法），合并族仍用批次 DA 的 `?sku=`。全站自营，商家只是同一商品的不同 Offer，所以**同 slug 跨商家也合并**（Q7）。
+
+### 已写库的内容（全部实跑）
+1. **模型**（迁移 `0020_variant_family`，**已 apply dev MySQL**）：
+   - `catalog.VariantFamily`：`family_key`(唯一，`slug:<slug>` / `title:<hash>` / `merged:<public_id>`)、`kind`(slug/title/merged)、`representative_spu`、`confidence`、`axis_hint`、`evidence`、`member_count`；
+   - `catalog.VariantFamilyMember`：一条 = (族, SPU, SKU, 商家 offer)，带 `axis_label`（规格展示串）、`merchant_label`、`is_representative`、`sort_order`；唯一键 `(family,spu,sku,offer)`；
+   - `ProductSearchDocument` 加 `family_key` / `is_family_representative`(默认 True) / `family_max_price` + `family_key` 索引。
+2. **建族命令** `build_variant_families`（默认 DRY_RUN，`--apply`）：全量重建（先删后建，幂等）。
+   - 结果：**1,758 族**（slug **816** / merged **432** / title **510**）、**6,275 成员行** / **3,468 个 SPU**。
+   - 486 个保留 SPU：**432 单独成族**（kind=merged）+ **54 并入同 slug 的 A 族并强制当代表**（保证 PDP `?sku=` 可用）。
+   - **Q8 排除 98 族**（84 slug + 14 title，族内价差 >3x，保持多卡）：见 `build_report.json.excluded_price_spread`。
+   - title **med/low 957 族只出清单**（`listed_only.csv`），不落库。
+3. **搜索文档回填** `backfill_family_search_fields`（DRY_RUN/`--apply`）：**3,163 条**族文档（1,634 代表 + 1,529 非代表）。
+   - 列表/搜索：可搜索文档 **17,913 → 16,384 张卡**（隐藏 **1,529**，−8.5%）；`search_documents` 过滤 `is_family_representative=True`，`total`/`total_pages` 自动是去重后的值；**价格排序改用 `Coalesce(family_max_price, min_price)`**。
+   - 卡片价：`serialize_search_row` 新增 `family_key` / `is_family_representative` / `family_max_price`；前端 `ProductCard`（含移动端 3 个卡片组件）优先取 `family_max_price`，缺失回退 `price_min`。
+   - **爬虫重导不会冲掉**：`rebuild_search_document` 里通过 `family_fields_for_spu()` 实时算三个族字段。
+4. **商家页去重**（`merchants/public_views.py::merchant_detail`）：按族只出一张卡；优先「代表 SPU 的 offer」，否则最便宜的一张；卡片的 `product_id`/`offer_id` 指向真实在售 offer，点击走 `/p/<spu>?offer=<offer>&from=merchant`（Q10）。样本：某商家 339 个 offer → 50 张卡、0 重复族键。
+5. **PDP 后端**（`detail_views.py`）：
+   - 每个 SKU 新增 `offers`（该规格**全部商家**的 offer，含价格/库存/可购性）；
+   - 新增 `variant_family`（**只对多 SPU 族**返回；合并族为 null）：`{family_key, kind, axis_hint, representative_spu_public_id, is_representative, members:[{spu_public_id,title,axis_label,is_current,price_min,price_max,skus:[{sku_public_id,axis_label,specification,offers}]}]}`；`axis_label` = 标题去掉族内公共词前缀后的残差（Hypershell → `Max S AI-Powered Exoskeleton` / `Ultra S …` / `Pro S …`）。
+6. **PDP 前端**（`pages/p/[id].vue` + `components/mobile/MobilePDP.vue` + `utils/variantFamily.js`）：
+   - 族轴（型号/系列）按钮 → `navigateTo(/p/<兄弟>?offer=<同商家>)` 整页跳转；商家轴按钮 → 只改本地 `activeOfferId` + URL `?offer=`（**不触发 re-fetch**，避免整页闪白），价格/库存/加购取所选 offer；
+   - 切规格尽量停在同商家（`preferredOfferId`），商户不存在则清掉 offer；
+   - `offerSelection.findSkuForOffer` 同时匹配 `sku.offers`，否则切商家会把所选规格弹回 SKU[0]；
+   - fetch key 里的 offer 用 `offerForRequest`（只在**商品变化**时更新），商家切换不进 key。
+7. **回滚** `var/variant_family_db_20261127/rollback_variant_families.py`（默认 DRY_RUN）：删全部族（成员 cascade）+ 把文档 3 个字段恢复默认；**不删列、不回滚迁移**。
+   - DRY_RUN 实测对账：`families 1,758 / members 6,275 / docs_in_family 3,163 / docs_non_representative 1,529 / docs_with_family_max_price 3,163`（文档总数已涨到 17,914，爬虫在跑）。
+
+### 验证（按验证纪律只做针对性验证）
+- 后端：`manage.py test catalog.tests.test_variant_family` = **9 OK**；回归 `test_product_detail_api` + `test_product_detail_extras` + `test_search` + `test_spu_alias` + `test_variant_archive` = **59 OK**；`merchants.tests` 33 个里只有 1 个 **既有**失败（`test_merchant_totp_policy_is_enforced_during_staff_login` 200≠403，与并行 Agent 的 accounts 改动有关，本批未碰这些文件）；`manage.py check` 0 issue、`makemigrations --check` 无变化；`ruff check` 本批文件全过。
+- 前端：`vitest run storefront/tests/variantFamily.test.js storefront/tests/offerSelection.test.js storefront/tests/variantArchive.test.js storefront/components/mobile/MobilePDP.test.js` = **24 passed**；eslint + prettier 改动文件全过。
+- 浏览器 `tests/e2e/variant-family.spec.js` = **5 passed / console error 0**：
+  1. `dog-toys` 类目页：卡片 href 无重复、卡片价 = 族内最高价；
+  2. Hypershell：搜索 total=1；PDP 型号轴 3 个按钮，点 `Ultra S` 整页跳到 `d88b76fd`、价格 $1,499→$1,999；
+  3. 同规格多商家（HOCO 充电宝）：商家轴 2 个按钮，切第二个后 `data-offer-id`/URL/价格全变；
+  4. 商家页：href 无重复 SPU，点第一张卡进 PDP 默认 `data-offer-id` = 链接里的 offer（`from=merchant`）；
+  5. 手机版（`m.localhost`）：型号轴 3 个按钮、点兄弟跳转、console 0 error。
+  另跑批次 DA 的 `tests/e2e/variant-switch.spec.js` = **2 passed**（合并族 `?sku=` 未被破坏）。
+- 只读复核 `var/variant_family_db_20261127/verify_apply.py` = **0 failure**：族数/成员行、代表行唯一、SPU 只在一族、每族恰好 1 条代表文档、`family_max_price` 抽 200 族全对、`search_documents` total = 代表文档数、末页 24 条、抽 5 个 merged 族各有 `SpuVariantArchive`、抽 2 个商家页无重复族键、Hypershell 1 张卡、`SpuAlias` 仍 710。
+- 手工数据核对：3 个类目全分页（dog-toys 185 / kitchen-toilet-roll 171 / school-office-accessories 108）卡片数 = `total`、无同款多卡、121 张代表卡价格 = 族内最高价；搜索 `dog` total 585、末页 9 条；`SpuAlias` 旧链接 301 仍正常（nuxt middleware，实测 `/p/<old>` → 301 `/p/<keep>`）。
+
+### 当前卡在哪里 / 遗留
+1. **族是快照**：`VariantFamilyMember` 只记录建族那一刻的 SPU。爬虫之后若又新建同 slug SPU，它会 `family_key=""` 单独出卡，直到重跑 `build_variant_families --apply` + `backfill_family_search_fields --apply`。建议每天跑一次（或爬虫批次后跑）。重跑幂等，跑完要重新核 `verify_apply.py`。
+2. **Q8 的可见后果**：`slug:interactive-dog-football-toy-with-nylon`（31 个成员、价差 4.39x）**没有建族**，所以它会出 31 张卡；`slug:sma-follow-on-milk-6-months`（47.5x）、`slug:fairy-washing-up-liquid-lemon-320ml`（17x）等同理。若想只对「包装数」类族放开，需改 Q8 口径后重跑。
+3. **频道楼层**（`content/channel_module_services.py`）与后台列表（`common/admin_views.py`）仍按显式 SPU 出卡，未接族过滤；运营若手动挑了非代表 SPU，楼层里可能出现同款两张卡。
+4. **商家页价格口径**：商家页卡片显示**该商家自己的 offer 价格**（不是族内最高价），因为该页语义是「这个商家卖什么」；搜索/类目列表才是族内最高价。若要求商家页也显示族内最高价，需要再改。
+5. **首页「为您推荐」也已过滤代表卡**（`recommendation_documents`），池子会略小于 240。
+6. 未做 AWS、未 commit；工作区还有并行 Agent 的改动（accounts/oauth、storefront auth 等）。
+
+### 踩坑（不要再踩）
+1. **`/dp/x/` 与 `/dp/-/` 是占位 slug**（源站没给 slug）：不排除会造出 1401 / 422 个成员的假族，隐藏卡片虚增到 2,718。
+2. **合并保留 SPU 必须当代表**：54 个保留 SPU 落在 A 族里，按「创建最早」会选到合并后新建的同 slug SPU，PDP 的 `?sku=` 档案就丢了；`representative_sort_key` 里 keep 优先级最高。
+3. **`VariantFamily` 族键要含代表 public_id**：只 hash（类目+品牌+标题）会撞键（实测 33 个重复）。
+4. **`brand` 大量为空**（12,204 / 17,876 在售 SPU）：B 族桶必须允许 `brand=None` 同桶，否则 Hypershell（无品牌）直接漏掉。
+5. **B 族相似度到不了 0.90**：Hypershell 实测 `SequenceMatcher` 0.8101、真实语料 IDF 余弦 0.8531；high 档实际是 `0.85 + 强身份（共享图/同非空品牌/词级公共前缀≥4）+ 价差≤3x`（Q6 已接受）。
+6. **Django `runserver --noreload`**：改了 models/detail_views/search_services/merchant views 后必须杀 :8000 让看护重启，否则新字段/新接口不生效（本批已重启一次）。
+7. **测试 DB 用 `--keepdb` 会复用缺种子数据的老库**（Market/Merchant 都没有，DA 的测试也会一起挂）：本批跑测试**不带 `--keepdb`**（重建测试库，data migration 会灌 Market/Merchant）。
+8. **测试里 `import_offer_from_source` 默认建 DRAFT offer**：必须 `Offer.objects.filter(pk=...).update(status=ACTIVE)`，否则族计算/搜索/商家页全拿不到价格（第一版 5 个测试因此失败）。
+9. **商家页 URL 名是 `merchant-public-detail`**（不是 `merchant-detail`）；`reverse()` 写错会 NoReverseMatch。
+10. **手机版是独立 host `m.localhost:3000`**（`useMobileView` 按 host 判断，Playwright 的 webdriver 会禁用自动跳转）：e2e 验手机控件要直接 `goto('http://m.localhost:3000/p/...')`，光改 viewport 没用。
+11. **切商家不要进 useFetch key**：key 带 offer 会在切商家时重新 fetch、`data` 清空整页闪白（与 DA 的 `?sku=` 同一类坑）；本批用 `offerForRequest` 冻结「商品变化时才更新」。
+12. **`router.replace` 是异步的**：e2e 断言 URL 要 `expect.poll(() => page.url())`，紧跟一条 `toHaveAttribute` 之后立刻读 `page.url()` 会偶发取到旧值。
+
+### 本次改动文件（提交时只挑这些）
+- 新增（后端）：`backend/catalog/migrations/0020_variant_family.py`、`backend/catalog/variant_family_services.py`、`backend/catalog/management/commands/build_variant_families.py`、`backend/catalog/management/commands/backfill_family_search_fields.py`、`backend/catalog/tests/test_variant_family.py`。
+- 修改（后端）：`backend/catalog/models.py`（两个新模型 + 搜索文档 3 字段）、`backend/catalog/search_services.py`（族字段写入/过滤/价格排序/序列化）、`backend/catalog/detail_views.py`（`offers` + `variant_family`）、`backend/merchants/public_views.py`（商家页族去重 + 族字段）。
+- 新增（前端）：`storefront/utils/variantFamily.js`、`storefront/tests/variantFamily.test.js`、`storefront/tests/offerSelection.test.js`、`tests/e2e/variant-family.spec.js`。
+- 修改（前端）：`storefront/pages/p/[id].vue`（族轴 + 商家轴 + offer 解析）、`storefront/components/mobile/MobilePDP.vue`（手机版两级轴）、`storefront/components/ProductCard.vue` + 3 个 `mobile/Mobile*.vue`（卡价用 `family_max_price`）、`storefront/utils/offerSelection.js`、`storefront/locales/messages.js`（`detail.sellerAxis` / `detail.modelAxis`，5 个语言）。
+- 新增（数据/脚本）：`var/variant_family_db_20261127/*`（`build_preview.py` 报告层、`verify_apply.py`（唯一复核脚本；旧的 `verify_preview.py`/`verify.json` 对应已废弃的预览规则，已删）、`rollback_variant_families.py`、`build_report.json`、`search_backfill_report.json`、`verify_apply.json`、`preview.csv`、`listed_only.csv`、`preview_summary.md`）。
+
 ## 0cw. 批次 DA：变体档案 + PDP 切规格切换数据（2026-11-27，✅ 已写库 / ⚠️ Hypershell 样例无法覆盖 / 未 commit）
 
 > 范围：**只做已合并的 486 组 / 1196 SKU**；未合并的 223 组只出候选 CSV（不建族、不改列表）。产物目录 `var/variant_archive_20261127/`：`backfill_report.json`（回填台账）、`verify.json`（校验）、`variant_family_candidates.csv`（223 组候选）、脚本 `verify.py` / `gen_family_candidates.py`。
@@ -62,7 +169,7 @@
 2. **keep 自己的 SKU 无法反拆原始画廊**：`backup_merge.json` 没记录 keep 自身的 `media_usages`（只记 merged 成员）→ 这类档案 `gallery_manifest=[]`，前端回退 keep 的**并集**画廊；从变体切回默认规格时主图仍是并集，不是 keep 原始图。要精确需另做一次抓取/备份。
 3. **变体视频未做快照**：整套切换时 `mediaItems` 不混入 base 视频（否则主图仍是旧视频）；变体自己的视频当前不展示。
 4. **`share_metadata=false` 含少量「其实只是规格不同」的族**（如 `Spray 100ml` vs `50 ml` 判为 axis_text）：按用户「名称像、规格不同必须整套切换」口径宁可多换、不少换；如需收紧可改 `classify_share_metadata` 后重跑回填（幂等）。
-5. **列表去重/223 组建族/兄弟跳转未做**（下一批）；本批未改 `search_services`/`ProductSearchDocument`。
+5. **列表去重/223 组建族/兄弟跳转未做**（下一批）；本批未改 `search_services`/`ProductSearchDocument`。→ 2026-11-27 批次 DB 已出「建族预览」（见上面 0cx，**预览已出、尚未写库、等用户确认**）；Hypershell 两个 SPU 在 0cx 里已用「标题相似族」覆盖。
 6. 未做 AWS、未 commit；工作区还有并行 Agent 的改动。
 
 ### 踩坑（不要再踩）

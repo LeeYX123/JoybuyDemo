@@ -11,6 +11,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from django.db.models import Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from catalog.models import ProductSearchDocument
@@ -73,8 +74,9 @@ def refresh_spu_search_documents(spu) -> int:
     返回删除的文档数（重建返回 0，方便调用方记日志）。
     """
 
-    from catalog.models import Spu
     from offers.models import Market, Offer
+
+    from catalog.models import Spu
 
     has_active_offer = Offer.objects.filter(
         sku__spu=spu, status=Offer.Status.ACTIVE
@@ -100,8 +102,9 @@ def rebuild_search_documents(*, market, locale_code: str | None = None, full: bo
     ``rebuild_search_document(spu, market)`` called by import flows.
     """
 
-    from catalog.models import Spu
     from offers.models import Offer
+
+    from catalog.models import Spu
 
     del full
     spu_ids = set(
@@ -123,11 +126,11 @@ def rebuild_search_document(
     """Refresh the search document of one SPU from its ACTIVE offers."""
 
     from django.db.models import Avg, Count
+    from offers.models import Locale, Offer
+    from reviews.models import Review
 
     from catalog.localization_services import resolve_product_content
     from catalog.models import Spu
-    from offers.models import Locale, Offer
-    from reviews.models import Review
 
     active_offers = list(
         Offer.objects.filter(
@@ -153,6 +156,10 @@ def rebuild_search_document(
             rating_count = detail.rating_count
     has_offer = bool(active_offers)
     prices = [offer.current_price for offer in active_offers] or [None]
+    # 批次 DB：族去重字段随文档一起刷新（否则爬虫重导会把代表标记/族键冲掉）。
+    from catalog.variant_family_services import family_fields_for_spu
+
+    family_fields = family_fields_for_spu(spu.pk, market)
     document, _ = ProductSearchDocument.objects.update_or_create(
         spu=spu,
         market=market,
@@ -167,6 +174,9 @@ def rebuild_search_document(
             "rating_average": rating_average,
             "rating_count": rating_count,
             "is_searchable": has_offer and spu.status == Spu.Status.ACTIVE,
+            "family_key": family_fields["family_key"],
+            "is_family_representative": family_fields["is_family_representative"],
+            "family_max_price": family_fields["family_max_price"],
             "published_at": timezone.now() if has_offer else None,
         },
     )
@@ -194,8 +204,13 @@ def search_documents(
     page = min(page, MAX_PAGE)
 
     locale_code = locale_code or market.default_locale
+    # 批次 DB：列表/搜索按同款族去重，只出代表卡（文档已过滤，total/分页自动是
+    # 去重后的真实值，不需要窗口函数）。
     queryset = ProductSearchDocument.objects.filter(
-        market=market, locale_code=locale_code, is_searchable=True
+        market=market,
+        locale_code=locale_code,
+        is_searchable=True,
+        is_family_representative=True,
     ).select_related("spu", "local_category")
     query = (query or "").strip()
     if query:
@@ -244,10 +259,12 @@ def search_documents(
     if parsed_max is not None:
         queryset = queryset.filter(min_price__lte=parsed_max)
 
+    # 价格排序口径与卡片价一致（Q4）：族内最高价优先，缺失回退 min_price。
+    price_order = Coalesce("family_max_price", "min_price")
     orderings = {
         "relevance": ("title", "pk"),
-        "price_asc": ("min_price", "pk"),
-        "price_desc": ("-min_price", "pk"),
+        "price_asc": (price_order, "pk"),
+        "price_desc": (price_order.desc(), "pk"),
         "rating_desc": ("-rating_average", "-rating_count", "pk"),
         "newest": ("-published_at", "-pk"),
     }
@@ -279,10 +296,10 @@ def _first_gallery_images(rows: list[ProductSearchDocument]) -> dict[int, str]:
     if not rows:
         return {}
     from django.contrib.contenttypes.models import ContentType
-
-    from catalog.models import Spu
     from media.models import MediaUsage
     from media.storage import media_url
+
+    from catalog.models import Spu
 
     spu_type = ContentType.objects.get_for_model(Spu)
     usages = (
@@ -325,6 +342,13 @@ def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") ->
         "rating_average": str(row.rating_average) if row.rating_average is not None else None,
         "rating_count": row.rating_count,
         "image_path": image_path,
+        # 批次 DB：族去重字段。卡片价格优先 ``family_max_price``（族内最高价），
+        # 缺失（不在族里/无价）时前端回退 ``price_min``。
+        "family_key": row.family_key,
+        "is_family_representative": row.is_family_representative,
+        "family_max_price": (
+            str(row.family_max_price) if row.family_max_price is not None else None
+        ),
     }
 
 
@@ -359,9 +383,9 @@ def recommendation_documents(
     # 快照会让「精选好物/为您推荐」混入 PDP 已 404 的商品（验收 FAIL-A）。
     # 池子构建时对 SPU ACTIVE + 该市场 ACTIVE Offer 做实时校验。
     from django.db.models import Exists, OuterRef
+    from offers.models import Offer
 
     from catalog.models import Spu
-    from offers.models import Offer
 
     active_offer = Offer.objects.filter(
         sku__spu=OuterRef("spu_id"),
@@ -372,6 +396,7 @@ def recommendation_documents(
         market=market,
         locale_code=locale_code,
         is_searchable=True,
+        is_family_representative=True,
         spu__status=Spu.Status.ACTIVE,
     ).annotate(has_active_offer=Exists(active_offer)).filter(has_active_offer=True)
     if category is not None:

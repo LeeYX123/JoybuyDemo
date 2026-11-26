@@ -2,12 +2,12 @@ import uuid
 
 from django.db import OperationalError, ProgrammingError
 from django.http import JsonResponse
-
-from catalog.localization_services import localized_specification, resolve_product_content
-from catalog.models import Sku, Spu, SpuDetailTranslation
 from offers.market_services import offer_market_chain, resolve_market_context
 from offers.models import Offer
 from reviews.models import Review
+
+from catalog.localization_services import localized_specification, resolve_product_content
+from catalog.models import Sku, Spu, SpuDetailTranslation
 
 
 def _offer_merchant_payload(offer: Offer) -> dict:
@@ -42,13 +42,19 @@ def _offer_payload(offer: Offer, *, requested_market, price_source_market) -> di
     }
 
 
-def _parse_offer_id(value: str):
-    """``?offer=`` 是外部 UUID；脏参数按未提供处理（不能 500）。"""
+def _parse_uuid(value):
+    """外部 UUID 参数；脏参数按未提供处理（不能 500）。"""
 
     try:
         return uuid.UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _parse_offer_id(value: str):
+    """``?offer=`` 是外部 UUID；脏参数按未提供处理（不能 500）。"""
+
+    return _parse_uuid(value)
 
 
 def _resolve_sku_offer(sku, market, preferred_offer_id):
@@ -77,6 +83,165 @@ def _resolve_sku_offer(sku, market, preferred_offer_id):
         if candidate_market.pk in by_market:
             return by_market[candidate_market.pk], candidate_market
     return None, market
+
+
+def _all_offers_by_sku(sku_ids, market) -> dict[int, list[Offer]]:
+    """一次取完这些 SKU 在 market 回退链上的全部 ACTIVE offer，按 sku_id 分组。"""
+
+    if not sku_ids:
+        return {}
+    markets = offer_market_chain(market)
+    result = {}
+    for offer in (
+        Offer.objects.filter(
+            sku_id__in=sku_ids,
+            market__in=markets,
+            status=Offer.Status.ACTIVE,
+        )
+        .select_related("currency", "merchant")
+        .order_by("sku_id", "current_price", "pk")
+    ):
+        result.setdefault(offer.sku_id, []).append(offer)
+    return result
+
+
+def _variant_family_payload(spu, market, locale) -> dict | None:
+    """批次 DB：族内成员（规格 × 商家），供 PDP 规格区跳兄弟商品 + 选商家。
+
+    只对**多 SPU 的族**返回（``kind != merged`` 且成员数 > 1）：合并族的单 SPU
+    多 SKU 由批次 DA 的 ``?sku=`` 处理，不需要跳转。返回结构：
+
+    ``{family_key, kind, axis_hint, representative_spu_public_id, is_representative,
+       members: [{spu_public_id, title, axis_label, is_current, price_min, price_max,
+                  skus: [{sku_public_id, axis_label, offers: [offer…]}]}]}``
+    """
+
+    from catalog.models import SpuTranslation, VariantFamilyMember
+
+    membership = (
+        VariantFamilyMember.objects.filter(spu_id=spu.pk)
+        .values(
+            "family_id",
+            "family__family_key",
+            "family__kind",
+            "family__axis_hint",
+            "family__representative_spu_id",
+            "family__representative_spu__public_id",
+        )
+        .first()
+    )
+    if membership is None:
+        return None
+    member_rows = list(
+        VariantFamilyMember.objects.filter(family_id=membership["family_id"])
+        .values("spu_id", "spu__public_id", "axis_label", "sort_order")
+        .order_by("sort_order", "spu_id")
+        .distinct()
+    )
+    # 去重到 SPU 级（成员行是按 SKU × offer 展开的）
+    member_spus = []
+    seen_spus = set()
+    for row in member_rows:
+        if row["spu_id"] in seen_spus:
+            continue
+        seen_spus.add(row["spu_id"])
+        member_spus.append(row)
+    if len(member_spus) < 2:
+        return None
+
+    from django.db.models import Max, Min
+
+    member_spu_ids = [row["spu_id"] for row in member_spus]
+    titles = {}
+    for spu_id, code, title in SpuTranslation.objects.filter(
+        spu_id__in=member_spu_ids, locale__in=[locale.code, "en-GB"]
+    ).values_list("spu_id", "locale", "title"):
+        if code == locale.code or spu_id not in titles:
+            titles[spu_id] = title
+    member_skus = list(
+        Sku.objects.filter(spu_id__in=member_spu_ids, status=Sku.Status.ACTIVE)
+        .only("pk", "spu_id", "public_id", "specification")
+        .order_by("spu_id", "pk")
+    )
+    display_specs = {}
+    for sku in member_skus:
+        display_specs[sku.pk], _translated = localized_specification(sku, locale)
+    offers_by_sku = _all_offers_by_sku([sku.pk for sku in member_skus], market)
+    price_stats = {}
+    markets = offer_market_chain(market)
+    for row in (
+        Offer.objects.filter(
+            sku__spu_id__in=member_spu_ids,
+            market__in=markets,
+            status=Offer.Status.ACTIVE,
+        )
+        .values("sku__spu_id")
+        .annotate(low=Min("current_price"), high=Max("current_price"))
+    ):
+        price_stats[row["sku__spu_id"]] = row
+
+    skus_by_spu = {}
+    for sku in member_skus:
+        skus_by_spu.setdefault(sku.spu_id, []).append(sku)
+
+    members = []
+    member_titles = [titles.get(row["spu_id"], "") for row in member_spus]
+    # 规格按钮标签：标题去掉族内公共词前缀后的残差（"X Max S AI-Powered Exoskeleton, …"
+    # → "X Max S AI-Powered Exoskeleton"）；没有可读残差时回退 SKU 规格/标题。
+    from catalog.management.commands.merge_variant_spus import common_word_prefix
+
+    prefix_len = len(common_word_prefix([title for title in member_titles if title] or [""]))
+    for row, title in zip(member_spus, member_titles):
+        spu_id = row["spu_id"]
+        stats = price_stats.get(spu_id) or {}
+        sku_entries = []
+        for sku in skus_by_spu.get(spu_id, []):
+            display_specification = display_specs.get(sku.pk) or {}
+            sku_entries.append(
+                {
+                    "sku_public_id": str(sku.public_id),
+                    "axis_label": " / ".join(str(value) for value in display_specification.values()),
+                    "specification": display_specification,
+                    "offers": [
+                        _offer_payload(
+                            offer,
+                            requested_market=market,
+                            price_source_market=offer.market,
+                        )
+                        for offer in offers_by_sku.get(sku.pk, [])
+                    ],
+                }
+            )
+        residual = " ".join(title.split()[prefix_len:]).strip() if title else ""
+        label = residual.split(",")[0].strip()[:60]
+        if not label:
+            label = (
+                sku_entries[0]["axis_label"]
+                if sku_entries and sku_entries[0]["axis_label"]
+                else (title[:60] or row["axis_label"])
+            )
+        members.append(
+            {
+                "spu_public_id": str(row["spu__public_id"]),
+                "title": title,
+                "axis_label": label,
+                "is_current": spu_id == spu.pk,
+                "price_min": str(stats["low"]) if stats.get("low") is not None else None,
+                "price_max": str(stats["high"]) if stats.get("high") is not None else None,
+                "skus": sku_entries,
+            }
+        )
+
+    return {
+        "family_key": membership["family__family_key"],
+        "kind": membership["family__kind"],
+        "axis_hint": membership["family__axis_hint"],
+        "representative_spu_public_id": str(
+            membership["family__representative_spu__public_id"]
+        ),
+        "is_representative": membership["family__representative_spu_id"] == spu.pk,
+        "members": members,
+    }
 
 
 def _video_payload(spu) -> list[dict]:
@@ -195,6 +360,82 @@ def _translated_detail_payload(detail, translation) -> dict:
     return payload
 
 
+def _variant_archive_payload(spu, sku_public_id, locale):
+    """``?sku=`` 命中的变体档案（批次 DA）；无档案返回 None。
+
+    既有顶层字段（gallery/title/review_summary/content_sections...）不在这里
+    覆盖——前端按 ``share_metadata`` 决定是否采用本块的覆盖值，未采用时页面
+    与旧行为逐字段一致。档案缺图（``gallery=[]``）或没有 ``detail`` 时前端
+    回退顶层数据，这里不做兜底，避免把「档案缺失」伪装成「切换成功」。
+    """
+
+    if sku_public_id is None:
+        return None
+
+    from media.models import MediaAsset
+    from media.views import asset_urls
+
+    from catalog.models import SpuVariantArchive
+    from catalog.variant_archive_services import (
+        pick_title,
+        rating_snapshot_payload,
+    )
+
+    archive = (
+        SpuVariantArchive.objects.filter(
+            spu=spu,
+            sku__public_id=sku_public_id,
+            sku__status=Sku.Status.ACTIVE,
+        )
+        .select_related("sku", "detail_spu", "detail_spu__detail")
+        .first()
+    )
+    if archive is None:
+        return None
+
+    gallery = []
+    manifest = archive.gallery_manifest if isinstance(archive.gallery_manifest, list) else []
+    if manifest:
+        assets = {
+            asset.relative_path: asset
+            for asset in MediaAsset.objects.filter(relative_path__in=manifest)
+        }
+        for path in manifest:
+            asset = assets.get(path)
+            if asset is not None:
+                gallery.append(asset_urls(asset))
+
+    detail_payload = None
+    if archive.detail_spu_id:
+        source_detail = getattr(archive.detail_spu, "detail", None)
+        translation = _detail_translation(archive.detail_spu, locale)
+        fields = _translated_detail_payload(source_detail, translation)
+        detail_payload = {
+            "content_sections": fields["content_sections"],
+            "specification_tables": fields["specification_tables"],
+            "specifications": fields["specifications"],
+            "ai_summary": fields["ai_summary"],
+            "ai_summary_title": fields["ai_summary_title"],
+            "ai_summary_tags": source_detail.ai_summary_tags if source_detail else [],
+            "detail_translated": translation is not None,
+            "detail_language": translation.language_code if translation else None,
+        }
+
+    sold_snapshot = archive.sold_snapshot if isinstance(archive.sold_snapshot, dict) else {}
+    return {
+        "sku": str(archive.sku.public_id),
+        "source_spu_public_id": str(archive.source_spu_public_id),
+        "axis_label": archive.axis_label,
+        "share_metadata": archive.share_metadata,
+        "share_metadata_reason": archive.share_metadata_reason,
+        "gallery": gallery,
+        "review_summary": rating_snapshot_payload(archive.rating_snapshot),
+        "sale_amount": sold_snapshot.get("sale_amount") or None,
+        "title": pick_title(archive.title_snapshots, locale.code) or None,
+        "detail": detail_payload,
+    }
+
+
 def _active_spu_detail_queryset(public_id):
     """PDP 用的单 SPU 读取集合（详情 + 译文 + 市场内容 + 视频）。"""
 
@@ -291,13 +532,20 @@ def product_detail(request, public_id):
         record_view(spu, buyer_account)
     content = resolve_product_content(spu, market, locale)
     preferred_offer_id = _parse_offer_id(request.GET.get("offer"))
+    # 批次 DA：``?sku=`` 选中的变体档案（合并后的商品切规格用）。无参数/无档案时
+    # 返回 null；顶层字段保持不变，兼容既有购物端与缓存。
+    requested_sku_id = _parse_uuid(request.GET.get("sku"))
     skus = []
     sku_queryset = (
         Sku.objects.filter(spu=spu, status=Sku.Status.ACTIVE)
         .prefetch_related("specification_translations__locale")
         .order_by("pk")
     )
-    for sku in sku_queryset:
+    sku_list = list(sku_queryset)
+    # 批次 DB（Q9）：每个 SKU 的**全部商家 offer**，供「规格 × 商家」两级选择。
+    # 一次性取完，避免逐 SKU 查询（N+1）。
+    offers_by_sku = _all_offers_by_sku([sku.pk for sku in sku_list], market)
+    for sku in sku_list:
         offer, price_source_market = _resolve_sku_offer(sku, market, preferred_offer_id)
         display_specification, specification_translated = localized_specification(sku, locale)
         sku_entry = {
@@ -315,6 +563,15 @@ def product_detail(request, public_id):
                 if offer
                 else None
             ),
+            # 该规格的全部商家（含价格/库存/可购性），前端渲染「商家」轴。
+            "offers": [
+                _offer_payload(
+                    candidate,
+                    requested_market=market,
+                    price_source_market=candidate.market,
+                )
+                for candidate in offers_by_sku.get(sku.pk, [])
+            ],
         }
         skus.append(sku_entry)
 
@@ -333,7 +590,6 @@ def product_detail(request, public_id):
 
     gallery = []
     from django.contrib.contenttypes.models import ContentType
-
     from media.models import MediaUsage
 
     spu_usages = MediaUsage.objects.filter(
@@ -422,6 +678,10 @@ def product_detail(request, public_id):
             "gallery": gallery,
             "videos": _video_payload(spu),
             "skus": skus,
+            "variant_archive": _variant_archive_payload(spu, requested_sku_id, locale),
+            # 批次 DB：族内兄弟商品（未合并族跳转 + 规格×商家两级选择）。
+            # 合并族（1 SPU 多 SKU）为 null，仍走上面的 ?sku= 档案。
+            "variant_family": _variant_family_payload(spu, market, locale),
             **detail_payload,
             "review_summary": review_summary,
             # 需求 22.1-5：PDP 商品名下方「已售 x 件」。源站销量展示值（如

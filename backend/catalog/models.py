@@ -1012,6 +1012,12 @@ class ProductSearchDocument(models.Model):
     rating_average = models.DecimalField(max_digits=3, decimal_places=2, null=True, blank=True)
     rating_count = models.PositiveIntegerField(default=0)
     is_searchable = models.BooleanField(default=False)
+    #: 批次 DB（2026-11-27）：同款族键。空串 = 该 SPU 不属于任何族（独立商品）。
+    family_key = models.CharField(max_length=160, blank=True, default="")
+    #: 是否族代表（列表/搜索只出代表卡）。回填前默认 True，保证行为与旧版一致。
+    is_family_representative = models.BooleanField(default=True)
+    #: 族内最高价（各成员当前价取最大），卡片价格显示用；空则回退 ``min_price``。
+    family_max_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1037,6 +1043,7 @@ class ProductSearchDocument(models.Model):
                 fields=["market", "locale_code", "is_searchable", "rating_average"],
                 name="psd_market_locale_rate_idx",
             ),
+            models.Index(fields=["family_key"], name="psd_family_key_idx"),
         ]
 
 
@@ -1059,3 +1066,169 @@ class SpuAlias(models.Model):
     class Meta:
         db_table = "spu_alias"
         indexes = [models.Index(fields=["spu"], name="spu_alias_spu_idx")]
+
+
+class SpuVariantArchive(models.Model):
+    """同款合并后的「变体档案」（2026-11-27 批次 DA）。
+
+    批次 CB2 把同款多规格合并成 1 个保留 SPU + 多 SKU，但成员 SPU 的画廊
+    ``MediaUsage`` 已改挂保留 SPU 并按 asset 去重、SKU/身份也改挂保留 SPU，
+    库里没有「SKU → 合并前来源 SPU」的持久映射。本表从
+    ``var/variant_merge_20261126/backup_merge.json`` 一次性回填：
+
+    - ``spu``/``sku``：合并后保留 SPU 与它名下的 SKU（唯一键）；
+    - ``source_spu_public_id``：该 SKU 合并前所属的 SPU（保留 SPU 自己的 SKU
+      等于 ``spu`` 本身）；归档 SPU 的 ``SpuDetail``/译文仍可读，供详情块切换；
+    - ``gallery_manifest``：来源 SPU 合并前的画廊 asset 相对路径（按原
+      ``sort_order``），因为归属只在备份里；缺图时前端回退保留 SPU 的画廊；
+    - ``rating_snapshot``/``sold_snapshot``：来源 SPU 的评分/已售快照，避免
+      依赖运行期 join；``detail_spu`` 指向归档 SPU，图文详情从它实时读；
+    - ``share_metadata``：是否「只共享元数据」（纯尺码/数量变体）。True =
+      切规格只换价格/库存/规格；False = 整套切换（画廊/评分/已售/详情/标题）。
+      判定不确定时一律 True（保守，不换数据），原因写在 ``share_metadata_reason``。
+
+    注意：``detail_spu`` 用 ``SET_NULL``，归档 SPU 若被物理清理，详情块回退
+    保留 SPU 的内容（快照仍在，不会 500）。
+    """
+
+    #: 合并后的保留 SPU。
+    spu = models.ForeignKey(Spu, on_delete=models.CASCADE, related_name="variant_archives")
+    #: 该档案对应的 SKU（必属于 ``spu``；DB 层由唯一键保证一对一）。
+    sku = models.ForeignKey(Sku, on_delete=models.CASCADE, related_name="variant_archives")
+    #: 合并前该 SKU 所属 SPU 的 public_id（保留 SPU 自己的 SKU 等于 ``spu``）。
+    source_spu_public_id = models.UUIDField()
+    #: 派生轴值，如 "300g"/"X Max S"；来自合并后的 ``sku.specification``。
+    axis_label = models.CharField(max_length=120, blank=True, default="")
+    #: 来源 SPU 合并前的画廊图片相对路径列表（按原 sort_order）。
+    gallery_manifest = models.JSONField(default=list, blank=True)
+    #: 归档 SPU（图文详情来源）；保留 SPU 自己的 SKU 为 NULL（回退保留 SPU 详情）。
+    detail_spu = models.ForeignKey(
+        Spu,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="variant_archive_sources",
+    )
+    #: {average, count, distribution, source}
+    rating_snapshot = models.JSONField(default=dict, blank=True)
+    #: {sale_amount, comment_count_display}
+    sold_snapshot = models.JSONField(default=dict, blank=True)
+    #: 来源 SPU 的标题快照 {locale: title}（切规格时用于替换标题）。
+    title_snapshots = models.JSONField(default=dict, blank=True)
+    #: True = 纯尺码/数量变体，仅价格/库存/规格切换；False = 整套数据切换。
+    share_metadata = models.BooleanField(default=True)
+    #: 判定依据（审计用）：size_like / colour_word / axis_text / uncertain_default。
+    share_metadata_reason = models.CharField(max_length=40, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "spu_variant_archive"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["spu", "sku"],
+                name="spu_variant_archive_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["spu", "share_metadata"], name="variant_archive_spu_share_idx"),
+            models.Index(fields=["detail_spu"], name="variant_archive_detail_idx"),
+        ]
+
+
+class VariantFamily(models.Model):
+    """同款族（批次 DB，2026-11-27）：列表/搜索/商家页「一个商品只出一张卡」。
+
+    全站商品都是自营，商家「上架」只是同一商品的不同 SKU Offer，所以同一件商品
+    可能既有「源站同 slug 的多个 SPU」（批次 CB2 没合并掉的），也有「源站不同
+    slug 但名称极像、只是型号不同」的多个 SPU（如 Hypershell X Max S / X Ultra S）。
+    本表把这类 SPU 归到一个族，族内只保留一个「代表 SPU」出卡。
+
+    ``family_key`` 形如 ``slug:<源站 slug>`` / ``title:<hash>`` /
+    ``merged:<保留 SPU public_id>``；族计算规则在
+    ``catalog/variant_family_services.py``（与 ``var/`` 下的预览脚本同源）。
+    """
+
+    class Kind(models.TextChoices):
+        SLUG = "slug", "同源站 slug"
+        TITLE = "title", "标题相似（型号差异）"
+        MERGED = "merged", "已合并（1 SPU 多 SKU）"
+
+    class Confidence(models.TextChoices):
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        LOW = "low", "Low"
+
+    family_key = models.CharField(max_length=160, unique=True)
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    #: 出卡的 SPU（列表/搜索只出这一张卡）。
+    representative_spu = models.ForeignKey(
+        Spu, on_delete=models.CASCADE, related_name="variant_families_represented"
+    )
+    confidence = models.CharField(
+        max_length=8, choices=Confidence.choices, default=Confidence.HIGH
+    )
+    #: 派生轴名提示（Size/Colour/Style/Model/Style…），只做运营提示，不参与判定。
+    axis_hint = models.CharField(max_length=64, blank=True, default="")
+    #: 建族依据（审计用，如 ``same_slug`` / ``sim>=0.85&(img|brand|head)&price``）。
+    evidence = models.CharField(max_length=240, blank=True, default="")
+    #: 族内 SPU 数（去重后，冗余存一份便于后台列族）。
+    member_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "variant_family"
+        indexes = [
+            models.Index(fields=["kind", "confidence"], name="variant_family_kind_conf_idx"),
+            models.Index(fields=["representative_spu"], name="variant_family_rep_idx"),
+        ]
+
+
+class VariantFamilyMember(models.Model):
+    """族成员：一条 = (族, SPU, SKU, 商家 offer)。
+
+    跨商家族按 offer 维度展开（同一 SKU 不同商家各一条），``merchant_label``
+    存商家展示名；``axis_label`` 是该 SKU 的规格展示串（如 ``Size: 140g``）。
+    PDP 的「规格 × 商家」两级选择读这里 + 实时 ``Offer`` 表（价格/库存必须实时）。
+    """
+
+    family = models.ForeignKey(VariantFamily, on_delete=models.CASCADE, related_name="members")
+    spu = models.ForeignKey(Spu, on_delete=models.CASCADE, related_name="variant_family_memberships")
+    #: 规格维度；SPU 级成员（没有 SKU，理论上不会出现）为 NULL。
+    sku = models.ForeignKey(
+        Sku,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="variant_family_memberships",
+    )
+    #: 商家维度；Offer 被删/下架后置 NULL（成员结构仍在，PDP 回退到 SKU 级）。
+    offer = models.ForeignKey(
+        "offers.Offer",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="variant_family_memberships",
+    )
+    axis_label = models.CharField(max_length=160, blank=True, default="")
+    merchant_label = models.CharField(max_length=160, blank=True, default="")
+    #: True = 该行属于代表 SPU（列表/搜索文档的 is_family_representative 与它一致）。
+    is_representative = models.BooleanField(default=False)
+    #: 展示顺序：代表 SPU 优先，其次按创建时间/pk。
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "variant_family_member"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["family", "spu", "sku", "offer"],
+                name="variant_family_member_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["spu"], name="variant_member_spu_idx"),
+            models.Index(fields=["family", "is_representative"], name="variant_member_family_rep_idx"),
+            models.Index(fields=["sku"], name="variant_member_sku_idx"),
+        ]
