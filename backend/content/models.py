@@ -206,6 +206,16 @@ class ChannelPageCard(models.Model):
     group_index = models.PositiveIntegerField(default=0)
     image_url = models.CharField(max_length=1000)
     link_url = models.CharField(max_length=1000, blank=True, default="")
+    # 2026-11-26（ADR-0002）：绑定的本地落地页。绑定时购物端跳转用
+    # ``/active/<external_id>`` 或 ``/store/<external_id>``，``link_url`` 保留
+    # 原值仅作溯源/兜底；未绑定时沿用 ``link_url``。页面删除（物理）时置空。
+    activity_page = models.ForeignKey(
+        "ActivityPage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="channel_cards",
+    )
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     layout = models.CharField(max_length=20, default="row3", choices=Layout.choices)
@@ -224,6 +234,24 @@ class ChannelPageCard(models.Model):
 
     def __str__(self):
         return f"{self.channel_code}#{self.group_index}.{self.sort_order}"
+
+
+class ChannelCardSetting(models.Model):
+    """频道级卡片展示配置（2026-11-26，ADR-0002）。
+
+    ``max_cards``：购物端该频道最多展示的卡片数（默认 3）；``null`` 表示
+    不截断（母婴童玩频道的豁免）。没有配置行的频道按默认 3 处理。
+    """
+
+    channel_code = models.CharField(max_length=64, unique=True)
+    max_cards = models.PositiveIntegerField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "channel_card_setting"
+
+    def __str__(self):
+        return f"{self.channel_code} max={self.max_cards if self.max_cards is not None else '∞'}"
 
 
 class ChannelModule(models.Model):

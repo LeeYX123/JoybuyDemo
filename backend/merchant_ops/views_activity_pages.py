@@ -118,6 +118,31 @@ class AdminActivityPagesView(OpsAPIView):
         return Response({"page": serialize_page(page)}, status=201)
 
 
+class AdminActivityPageOptionsView(OpsAPIView):
+    """活动页下拉选项（2026-11-26，ADR-0002）：给频道卡面板绑定落地页用。
+
+    轻量列表：只给 id/kind/external_id/title/enabled，不走整页序列化。
+    权限用卡片面板自己的码，避免运营为绑卡再申请活动页权限。
+    """
+
+    permission_classes = [StaffRbacPermission]
+    view_permissions = ["cms.channel_page_cards.view"]
+
+    def get(self, request):
+        rows = ActivityPage.objects.order_by("kind", "external_id")
+        items = [
+            {
+                "id": str(page.public_id),
+                "kind": page.kind,
+                "external_id": page.external_id,
+                "title": page.title,
+                "enabled": page.enabled,
+            }
+            for page in rows
+        ]
+        return Response({"items": items, "total": len(items)})
+
+
 class AdminActivityPageDetailView(OpsAPIView):
     permission_classes = [StaffRbacPermission]
     required_permissions = ["cms.campaign.manage"]

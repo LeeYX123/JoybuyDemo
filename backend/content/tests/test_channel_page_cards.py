@@ -527,7 +527,7 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
         )
 
     def test_public_groups_follow_multi_group_channels(self):
-        """宠物 2 组、母婴 2 组、游戏空组（用户圈定的最终形态）。"""
+        """宠物 2 组（截断后只保留第一组前 3 张）、母婴豁免不截断、游戏空组。"""
 
         setup = {
             "UK-Mini-HP-Pets": [(0, "row3_scroll", 4), (1, "row2", 2)],
@@ -547,19 +547,18 @@ class ChannelPageCardPublicTests(ChannelPageCardTestBase):
             self.make_card(channel_code="UK-Mini-HP-Gaming", sort_order=position, is_active=False)
 
         pets = self.client.get("/api/v1/cms/channel-page-cards?channel=UK-Mini-HP-Pets").json()
+        # ADR-0002：上限 3 → 组#0 只留前 3 张，组#1 整组不出现。
         self.assertEqual(
             pets["groups"],
-            [
-                {"group_index": 0, "layout": "row3_scroll", "count": 4},
-                {"group_index": 1, "layout": "row2", "count": 2},
-            ],
+            [{"group_index": 0, "layout": "row3_scroll", "count": 3}],
         )
-        self.assertEqual(pets["total"], 6)
+        self.assertEqual(pets["total"], 3)
         self.assertEqual(pets["layout"], "row3_scroll")
 
         baby = self.client.get(
             "/api/v1/cms/channel-page-cards?channel=UK-Mini-HP-Toys-Baby-and-Kids"
         ).json()
+        # 母婴童玩豁免（0027 种子行 max_cards=NULL）→ 4 张全保留。
         self.assertEqual(
             baby["groups"],
             [
@@ -668,3 +667,124 @@ class ChannelPageCardGroupMigrationTests(ChannelPageCardTestBase):
         self.assertEqual(self._layouts("UK-Mini-HP-Pets"), {"row3"})
         self.assertEqual(self._layouts("UK-Mini-HP-Gaming"), {"row3"})
         self.assertEqual(set(ChannelPageCard.objects.values_list("is_active", flat=True)), {True})
+
+
+class ChannelCardPageBindingTests(ChannelPageCardTestBase):
+    """ADR-0002（2026-11-26）：卡片绑定落地页 + 去重 + store 优先 + 频道级上限。"""
+
+    def _make_page(self, *, kind="ACTIVITY", external_id="41xQpuBGBQ37QRh44nrYLBbUh4cR", enabled=True):
+        from content.models import ActivityPage
+
+        return ActivityPage.objects.create(
+            kind=kind,
+            external_id=external_id,
+            title="Channel card page",
+            source_url="https://www.joybuy.co.uk/campaign/active/" + external_id,
+            enabled=enabled,
+        )
+
+    def test_bound_card_jumps_to_local_page_and_unbound_keeps_link_url(self):
+        page = self._make_page()
+        bound = self.make_card(sort_order=1)
+        bound.activity_page = page
+        bound.save()
+        unbound = self.make_card(sort_order=2, link_url="/c/kitchen")
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual([item["link_url"] for item in payload["items"]], ["/active/" + page.external_id, "/c/kitchen"])
+
+    def test_disabled_bound_page_falls_back_to_channel_page(self):
+        page = self._make_page(enabled=False)
+        card = self.make_card(sort_order=1)
+        card.activity_page = page
+        card.save()
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["items"][0]["link_url"], "/minihome/" + HOME_CODE)
+
+    def test_duplicate_page_rows_are_deduped(self):
+        page = self._make_page()
+        first = self.make_card(sort_order=1)
+        first.activity_page = page
+        first.save()
+        second = self.make_card(sort_order=2, link_url="https://m.joybuy.co.uk/campaign/active/" + page.external_id)
+        second.activity_page = page
+        second.save()
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["total"], 1)
+
+    def test_store_page_cards_win_the_cap_over_activity_cards(self):
+        store = self._make_page(kind="STORE", external_id="100004093")
+        store_card = self.make_card(sort_order=3, link_url="https://www.joybuy.co.uk/store/100004093/products")
+        store_card.activity_page = store
+        store_card.save()
+        # 两张活动卡：sort_order 更小的一张与 store 卡竞争 3 个名额之外的位置。
+        self.make_card(sort_order=1, link_url="/c/a")
+        self.make_card(sort_order=2, link_url="/c/b")
+        self.make_card(sort_order=4, link_url="/c/d")
+
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        # 上限 3：store 卡必须保留；其余按组序号 + sort_order 取前 2。
+        self.assertEqual(payload["total"], 3)
+        hrefs = [item["link_url"] for item in payload["items"]]
+        self.assertIn("/store/100004093", hrefs)
+        self.assertNotIn("/c/d", hrefs)
+        # 展示顺序仍按 sort_order，不因 store 优先而重排。
+        self.assertEqual(hrefs, ["/c/a", "/c/b", "/store/100004093"])
+
+    def test_channel_setting_overrides_default_limit(self):
+        from content.models import ChannelCardSetting
+
+        for position in range(1, 6):
+            self.make_card(sort_order=position, link_url=f"/c/{position}")
+        ChannelCardSetting.objects.update_or_create(
+            channel_code=HOME_CODE, defaults={"max_cards": 5}
+        )
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["total"], 5)
+        ChannelCardSetting.objects.update_or_create(
+            channel_code=HOME_CODE, defaults={"max_cards": None}
+        )
+        self.make_card(sort_order=6, link_url="/c/6")
+        payload = self.client.get(f"/api/v1/cms/channel-page-cards?channel={HOME_CODE}").json()
+        self.assertEqual(payload["total"], 6)
+
+    def test_admin_bind_and_unbind_activity_page(self):
+        page = self._make_page()
+        created = self.post(
+            "/api/v1/admin/channel-page-cards",
+            {
+                "channel_code": HOME_CODE,
+                "image_url": "/media/cms/bound.webp",
+                "link_url": "https://www.joybuy.co.uk/campaign/active/" + page.external_id,
+                "activity_page": str(page.public_id),
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        card = created.json()["card"]
+        self.assertEqual(card["activity_page"]["external_id"], page.external_id)
+        self.assertEqual(card["activity_page"]["local_path"], "/active/" + page.external_id)
+
+        unbound = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card['id']}", {"activity_page": ""}
+        )
+        self.assertEqual(unbound.status_code, 200, unbound.content)
+        self.assertIsNone(unbound.json()["card"]["activity_page"])
+
+        invalid = self.patch(
+            f"/api/v1/admin/channel-page-cards/{card['id']}",
+            {"activity_page": "00000000-0000-0000-0000-000000000000"},
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(invalid.json()["error"]["code"], "ACTIVITY_PAGE_INVALID")
+
+    def test_activity_page_options_endpoint(self):
+        page = self._make_page()
+        listing = self.client.get("/api/v1/admin/activity-pages/options")
+        self.assertEqual(listing.status_code, 200, listing.content)
+        items = listing.json()["items"]
+        match = next(item for item in items if item["id"] == str(page.public_id))
+        self.assertEqual(match["kind"], "ACTIVITY")
+        self.assertEqual(match["external_id"], page.external_id)
+        self.assertTrue(match["enabled"])

@@ -5960,3 +5960,29 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 单测 `storefront/tests/activity-page-skeleton.test.js` 2/2（activity 无店铺条、store 有黑条 + 10 卡占位 + aria-busy）；
 - Playwright 慢网实测（`var/home_modules_20261125/skeleton_check.mjs`，接口延迟 4s）：从首页点卡 → 客户端导航 → **26ms 内出现骨架**，全程无「This page is not available」，数据到达后正常切内容；截图 `skeleton_loading.png`。
 - eslint 通过；未跑全量测试与 e2e。
+
+## 品类页频道卡落地页首批上线（2026-11-27 00:50 本地，✅ 完成）
+
+**任务**：ADR-0002（grill 定稿）落地——UK-Mini-HP-Home-Living 三张频道卡的落地页建出来并绑定：4VQ7「Christmas for less」（三档价格带）、41xQ「Find your Christmas style」（圣诞礼物）、254vg「Make your tree magical」（圣诞树/挂饰/灯串/树顶装饰）。
+
+**已完成**：
+1. **采集**：3 个 PAGE_SET 任务（job#382~384，run#403~406）全 SUCCEEDED；清单 75 / 100 / 88 件，逐层点开 View more 生效（每层 25，254vg 的灯串层真站就 13 件）。run#403 首跑因 `CONNECTIVITY_PREFLIGHT_FAILED`（SSL EOF，瞬时网络抖动）失败，重跑即过。
+2. **模型/迁移**：`ChannelPageCard.activity_page` 外键（SET_NULL）+ `ChannelCardSetting`（channel_code 唯一，max_cards=NULL=不截断）；0026/0027 迁移，0027 播种 9 个频道上限（默认 3，母婴童玩豁免）。
+3. **服务端截断**（`channel_page_card_services.storefront_cards/storefront_groups`）：去重（同一落地页只留一张）→ 店铺页优先占用名额 → 按组序号+sort_order 取前 N；展示顺序不重排；空组不出现；`resolved_href`：绑定页 → `/active/<id>`、`/store/<id>`，页面停用 → `/minihome/<code>` 回退，未绑定 → 13.8 原值。公开接口 `link_url` 字段返回**解析后跳转**（字段名不变，前端零改动）。
+4. **后台**：卡片面板新增「落地页」列（页型/标题/ID/停用告警）与编辑器下拉（新端点 `GET /api/v1/admin/activity-pages/options`，权限 `cms.channel_page_cards.view`）；create/patch 支持 `activity_page`（空串=解绑，非法 id 400）。
+5. **建页选品**（`scripts/build_channel_card_pages.py --apply`，可重跑）：3 个 ActivityPage + 13 个商品楼层；选品=白名单（真站清单，含 SKU 级身份兜底）→ 价格带过滤（展示价=retail_price 优先否则最低 ACTIVE 报价）→ 关键词补位（圣诞树/bauble/light/topper 等，全库 ACTIVE+有报价）→ 每层 ≤25、页内去重。核对：4VQ7 25/25/25（补 3 件带内品）、41xQ 25×4（补 6 件）、254vg 25/25/13/25（补 8 件，真站灯串层只有 13）。
+6. **上架**：楼层引用的 83 个 DRAFT 全部上架（激活 Offer 72、重建搜索文档 83、失败 0），备份走 publish 语义。
+7. **绑定**：Home-Living 三张卡（bf204770/21439b11/4b4cb413）已绑落地页，接口 `link_url` 实测返回 `/active/<id>`。
+
+**验证**（按验证纪律针对性验证）：
+- 后端 `manage.py test content.tests.test_channel_page_cards --noinput`：**35/35 OK**（含新增 7 个绑定/去重/优先级/上限/回退用例）；
+- 接口核对：3 页逐楼层数量与上表一致；频道卡接口返回 3 条 `/active/<id>`；
+- Playwright 截图 3 页桌面版（楼层标题/商品卡/价格正常，圣诞树楼层全为圣诞树）；移动端截图正常；
+- eslint（admin panel + storefront 改动文件）通过；前端单测（骨架/minihome）36/36 通过。
+
+**注意/坑**：
+- 管理命令/脚本里 `Path.resolve()` 的 cwd 是 `backend/`，`--out/--bundle` 一律绝对路径；
+- `manage.py test` 孤儿测试库会触发交互式确认，后台跑必须加 `--noinput`（本次挂 30 分钟的教训）；
+- 4VQ7 白名单里有 3 件价格跑出带外（真站改价），已按「价格优先」剔除并用带内圣诞品补位——若运营想保真站原卡，需人工调整；
+- runserver 是 `--noreload`，改后端代码后要手动重启；
+- 下批（美妆/电子等 28 个 id）等用户发话再启动，同一套脚本换个 PAGES 表即可。

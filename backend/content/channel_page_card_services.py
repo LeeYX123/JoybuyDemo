@@ -18,12 +18,14 @@
 
 from django.db import transaction
 
-from content.models import ChannelPageCard
+from content.models import ActivityPage, ChannelCardSetting, ChannelPageCard
 
 MAX_SORT_ORDER = 9999
 MAX_GROUP_INDEX = 99
 
 DEFAULT_LAYOUT = ChannelPageCard.Layout.ROW3
+# 没有配置行的频道按这个默认值截断（母婴童玩用 max_cards=null 豁免）。
+DEFAULT_CARD_LIMIT = 3
 
 
 class ChannelPageCardError(Exception):
@@ -74,6 +76,31 @@ def validate_link_url(value) -> str:
     if len(link) > 1000:
         raise ChannelPageCardError("FIELD_TOO_LONG", "跳转链接不能超过 1000 个字符。")
     return link
+
+
+def validate_activity_page(value) -> ActivityPage | None:
+    """绑定本地落地页：传活动页 public_id；空串/None 表示解除绑定。
+
+    绑定后购物端跳转用 ``/active/<id>`` / ``/store/<id>``（页面 ID 与真站
+    一致）；``link_url`` 保留原值仅作溯源。
+    """
+
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    page = ActivityPage.objects.filter(public_id=raw).first()
+    if page is None:
+        raise ChannelPageCardError("ACTIVITY_PAGE_INVALID", "落地页不存在或已被删除。")
+    return page
+
+
+def channel_card_limit(channel_code: str) -> int | None:
+    """购物端该频道的卡片上限；``None`` 表示不截断（频道级可配，ADR-0002）。"""
+
+    setting = ChannelCardSetting.objects.filter(channel_code=channel_code).first()
+    if setting is None:
+        return DEFAULT_CARD_LIMIT
+    return setting.max_cards
 
 
 def validate_layout(value) -> str:
@@ -172,18 +199,110 @@ def _parse_sort(value) -> int:
 
 
 def serialize_card(card: ChannelPageCard) -> dict:
+    page = card.activity_page
     return {
         "id": str(card.public_id),
         "channel_code": card.channel_code,
         "group_index": card.group_index,
         "image_url": card.image_url,
         "link_url": card.link_url,
+        "activity_page": (
+            {
+                "id": str(page.public_id),
+                "kind": page.kind,
+                "external_id": page.external_id,
+                "title": page.title,
+                "enabled": page.enabled,
+                "local_path": _page_local_path(page),
+            }
+            if page
+            else None
+        ),
         "sort_order": card.sort_order,
         "is_active": card.is_active,
         "layout": card.layout,
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),
     }
+
+
+def _page_local_path(page: ActivityPage) -> str:
+    prefix = "store" if page.kind == ActivityPage.Kind.STORE else "active"
+    return f"/{prefix}/{page.external_id}"
+
+
+def resolved_href(card: ChannelPageCard, channel_code: str) -> str:
+    """购物端实际跳转：绑定落地页优先；页面停用（下架/失效）回退频道列表页。
+
+    未绑定时沿用 13.8 规则的 ``link_url`` 原值。
+    """
+
+    page = card.activity_page
+    if page is not None:
+        if not page.enabled:
+            return f"/minihome/{channel_code}"
+        return _page_local_path(page)
+    return card.link_url
+
+
+def storefront_cards(channel_code: str) -> list[ChannelPageCard]:
+    """购物端读：去重 → 店铺页优先 → 按频道上限截断（ADR-0002，2026-11-26）。
+
+    - 同一落地页只保留第一张（真站同一活动会同时挂 joyfumi/m. 两条卡）；
+    - 超出上限时优先保留店铺页卡，其余按组序号 + sort_order；
+    - 展示顺序保持原样（组序号 + sort_order），只在「保留谁」上做优先级；
+    - 上限来自 :func:`channel_card_limit`（默认 3，``None`` 不截断）。
+    """
+
+    code = str(channel_code or "").strip()
+    if not code:
+        raise ChannelPageCardError("CHANNEL_REQUIRED", "缺少 channel 参数。")
+    rows = list(
+        ChannelPageCard.objects.filter(channel_code=code, is_active=True)
+        .select_related("activity_page")
+        .order_by("group_index", "sort_order", "public_id")
+    )
+
+    unique: list[ChannelPageCard] = []
+    seen_pages: set[tuple] = set()
+    for row in rows:
+        page = row.activity_page
+        key = (page.kind, page.external_id) if page else ("card", row.pk)
+        if key in seen_pages:
+            continue
+        seen_pages.add(key)
+        unique.append(row)
+
+    limit = channel_card_limit(code)
+    if limit is not None and len(unique) > limit:
+        keep_order = sorted(
+            unique,
+            key=lambda row: (
+                0 if (row.activity_page and row.activity_page.kind == ActivityPage.Kind.STORE) else 1,
+                row.group_index,
+                row.sort_order,
+            ),
+        )
+        kept = {row.pk for row in keep_order[:limit]}
+        unique = [row for row in unique if row.pk in kept]
+    return unique
+
+
+def storefront_groups(rows: list[ChannelPageCard]) -> list[dict]:
+    """按截断后的生效卡片重算组概览（空组不再出现在 payload 里）。"""
+
+    groups: dict[int, dict] = {}
+    for row in rows:
+        group = groups.get(row.group_index)
+        if group is None:
+            groups[row.group_index] = {
+                "group_index": row.group_index,
+                "layout": row.layout,
+                "count": 1,
+            }
+        else:
+            group["count"] += 1
+    return [groups[key] for key in sorted(groups)]
 
 
 def channel_options() -> list[dict]:
@@ -207,6 +326,7 @@ def create_card(*, payload: dict) -> ChannelPageCard:
     group_index = validate_group_index(payload.get("group_index", 0))
     provided_layout = str(payload.get("layout") or "").strip()
     layout = validate_layout(provided_layout) if provided_layout else None
+    activity_page = validate_activity_page(payload.get("activity_page"))
     with transaction.atomic():
         if payload.get("sort_order") in (None, ""):
             # 未指定排序时追加到该**组**末尾，避免插队打乱现有顺序。
@@ -225,6 +345,7 @@ def create_card(*, payload: dict) -> ChannelPageCard:
             group_index=group_index,
             image_url=image_url,
             link_url=link_url,
+            activity_page=activity_page,
             sort_order=sort_order,
             is_active=is_active,
             layout=layout or group_layout(channel_code, group_index),
@@ -252,6 +373,9 @@ def update_card(card: ChannelPageCard, *, payload: dict) -> ChannelPageCard:
     if "link_url" in payload:
         card.link_url = validate_link_url(payload.get("link_url"))
         fields.append("link_url")
+    if "activity_page" in payload:
+        card.activity_page = validate_activity_page(payload.get("activity_page"))
+        fields.append("activity_page")
     if "sort_order" in payload:
         card.sort_order = _parse_sort(payload.get("sort_order"))
         fields.append("sort_order")

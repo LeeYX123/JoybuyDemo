@@ -39,6 +39,7 @@ const state = reactive({
   channels: [],
   channelCode: '',
   items: [],
+  pages: [],
   loading: true,
   error: '',
   notice: '',
@@ -51,6 +52,7 @@ const editorId = ref('')
 const editor = reactive({
   image: '',
   linkUrl: '',
+  activityPage: '',
   sortOrder: '',
   groupIndex: '0',
   isActive: true,
@@ -135,6 +137,16 @@ async function loadChannels() {
   }
 }
 
+// 落地页选项（ADR-0002）：绑定的活动页/店铺页，购物端跳转用站内路径。
+async function loadPages() {
+  try {
+    const payload = await apiRequest('/activity-pages/options')
+    state.pages = payload.items || []
+  } catch {
+    state.pages = []
+  }
+}
+
 async function load() {
   if (!state.channelCode) {
     state.items = []
@@ -164,6 +176,7 @@ function openCreate() {
   editorId.value = ''
   editor.image = ''
   editor.linkUrl = ''
+  editor.activityPage = ''
   editor.sortOrder = ''
   editor.isActive = true
   // 新增时默认落在最后一组，布局沿用该组（新组则由这里选定的布局决定）。
@@ -177,6 +190,7 @@ function openEdit(row) {
   editorId.value = row.id
   editor.image = row.image_url || ''
   editor.linkUrl = row.link_url || ''
+  editor.activityPage = row.activity_page?.id || ''
   editor.sortOrder = String(row.sort_order ?? '')
   editor.groupIndex = String(row.group_index ?? 0)
   editor.isActive = Boolean(row.is_active)
@@ -200,6 +214,9 @@ async function saveCard() {
     group_index: groupIndexText === '' ? 0 : groupIndexText,
     image_url: editor.image,
     link_url: editor.linkUrl,
+    // 绑定落地页（ADR-0002）：选了页就跳站内 /active/<id>、/store/<id>，
+    // link_url 保留作溯源；清空 = 解除绑定走 13.8 链接规则。
+    activity_page: editor.activityPage || '',
     is_active: editor.isActive,
     layout: editor.layout,
   }
@@ -278,6 +295,7 @@ async function toggle(row) {
 
 onMounted(async () => {
   await loadChannels()
+  await loadPages()
   await load()
 })
 </script>
@@ -338,7 +356,7 @@ onMounted(async () => {
               <thead>
                 <tr>
                   <th style="width: 200px">图片</th>
-                  <th>跳转链接</th>
+                  <th>落地页 / 跳转</th>
                   <th style="width: 90px">状态</th>
                   <th style="width: 90px">组内顺序</th>
                   <th class="actions-col">操作</th>
@@ -353,7 +371,24 @@ onMounted(async () => {
                   <td>
                     <img :src="row.image_url" alt="" class="card-thumb" />
                   </td>
-                  <td class="mono">{{ row.link_url || '—' }}</td>
+                  <td>
+                    <div v-if="row.activity_page" class="page-cell">
+                      <span
+                        class="tag"
+                        :class="row.activity_page.enabled ? 'tag--ok' : 'tag--warn'"
+                      >
+                        {{ row.activity_page.kind === 'STORE' ? '店铺页' : '活动页' }}
+                      </span>
+                      <span class="page-cell__title">
+                        {{ row.activity_page.title }}
+                        <span class="mono page-cell__id">{{ row.activity_page.external_id }}</span>
+                      </span>
+                      <span v-if="!row.activity_page.enabled" class="page-cell__warn">
+                        页面已停用：点击会回退到频道列表页
+                      </span>
+                    </div>
+                    <span v-else class="mono">{{ row.link_url || '—' }}</span>
+                  </td>
                   <td>
                     <button
                       type="button"
@@ -444,9 +479,24 @@ onMounted(async () => {
           </span>
         </label>
         <label class="field">
+          <span class="field__label">落地页（推荐）</span>
+          <select v-model="editor.activityPage">
+            <option value="">不绑定（走下方跳转链接）</option>
+            <option v-for="page in state.pages" :key="page.id" :value="page.id">
+              {{ page.kind === 'STORE' ? '店铺页' : '活动页' }} · {{ page.title }}（{{
+                page.external_id
+              }}）
+            </option>
+          </select>
+          <span class="field__hint">
+            绑定后跳转站内 /active/&lt;id&gt;、/store/&lt;id&gt;；同一页面的重复卡只展示一张；
+            页面停用时点击回退频道列表页。绑定后下方链接仅作留档。
+          </span>
+        </label>
+        <label class="field">
           <span class="field__label">跳转链接（选填）</span>
           <input v-model="editor.linkUrl" type="text" placeholder="/c/electronics 或 https://…" />
-          <span class="field__hint">{{ LINK_RULE_HINT }}留空则卡片不可点。</span>
+          <span class="field__hint">{{ LINK_RULE_HINT }}未绑定落地页时生效；留空则卡片不可点。</span>
         </label>
         <label class="field">
           <span class="field__label">排序（选填）</span>
@@ -550,6 +600,30 @@ onMounted(async () => {
   border-radius: 4px;
   border: 1px solid var(--border);
   background: #fff;
+}
+
+.page-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.page-cell__title {
+  display: block;
+  line-height: 1.3;
+}
+
+.page-cell__id {
+  display: block;
+  font-size: 11px;
+  color: #8493a9;
+  word-break: break-all;
+}
+
+.page-cell__warn {
+  font-size: 11px;
+  color: #b25e02;
 }
 
 .row--off {

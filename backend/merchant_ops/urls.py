@@ -658,6 +658,11 @@ urlpatterns = [
         name="admin-activity-pages",
     ),
     path(
+        "api/v1/admin/activity-pages/options",
+        views_activity_pages.AdminActivityPageOptionsView.as_view(),
+        name="admin-activity-page-options",
+    ),
+    path(
         "api/v1/admin/activity-pages/<uuid:public_id>",
         views_activity_pages.AdminActivityPageDetailView.as_view(),
         name="admin-activity-page-detail",

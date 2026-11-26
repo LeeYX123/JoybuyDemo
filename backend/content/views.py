@@ -73,23 +73,29 @@ def channel_page_cards(request):
         "groups":[{group_index,layout,count}],
         "items":[{id,group_index,image_url,link_url,sort_order,layout}]}``
     （items 按 ``group_index`` + ``sort_order`` 升序；空配置或未知频道返回
-    ``{"items": [], "groups": []}``；``link_url`` 按 13.8 存原值）。
-    ``layout`` 是**组级**展示布局：``groups`` 逐组给 layout + 张数（按组序号
-    升序），顶层 ``layout`` 保留旧语义（= 第一个组的 layout，空则 ``row3``），
-    每个 item 也带一份自己的组布局（购物端不依赖取哪一层）。
+    ``{"items": [], "groups": []}``）。
+
+    2026-11-26（ADR-0002）购物端口径升级：
+    - ``link_url`` 变为**解析后的实际跳转**：绑定了落地页的卡返回
+      ``/active/<id>`` / ``/store/<id>``（页面停用回退 ``/minihome/<code>``），
+      未绑定沿用 13.8 原值；
+    - 同一落地页只保留一张（去重）；超出频道上限时**店铺页卡优先保留**；
+    - 上限频道级可配（默认 3，``max_cards=null`` 不截断）；空组不出现。
+    ``layout`` 仍是组级展示布局：``groups`` 按截断后的生效卡重算。
     缺少 ``channel`` 参数才报 400（调用方 bug）。
     """
 
     from content.channel_page_card_services import (
         ChannelPageCardError,
-        channel_groups,
         channel_layout,
-        public_cards,
+        resolved_href,
+        storefront_cards,
+        storefront_groups,
     )
 
     channel_code = str(request.GET.get("channel") or "").strip()
     try:
-        rows = public_cards(channel_code)
+        rows = storefront_cards(channel_code)
     except ChannelPageCardError as exc:
         return JsonResponse(
             {
@@ -103,7 +109,7 @@ def channel_page_cards(request):
             "id": str(row.public_id),
             "group_index": row.group_index,
             "image_url": row.image_url,
-            "link_url": row.link_url,
+            "link_url": resolved_href(row, channel_code),
             "sort_order": row.sort_order,
             "layout": row.layout,
         }
@@ -113,7 +119,7 @@ def channel_page_cards(request):
         {
             "channel": channel_code,
             "layout": channel_layout(channel_code),
-            "groups": channel_groups(channel_code),
+            "groups": storefront_groups(rows),
             "items": items,
             "total": len(items),
         }
