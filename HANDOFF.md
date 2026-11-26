@@ -6246,3 +6246,16 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - **硬性约束**（写在协同文档第三节）：不改业务数据、不改任务配置、大量风控降级要停并在请求区留言。
 - **建任务方（本会话）接下来的动作**：轮询 `crawl_state.json`，≥25 个 SUCCEEDED 后统一建页选品 + 上架 + 绑卡 + 验收（复用 `scripts/build_channel_card_pages.py` 逻辑泛化版），并响应执行方在请求区提出的请求。
 - 首批 3 页已上线（见上节）；本次 31 页不包含它们。
+
+## 夜批完成：剩余 31 个频道卡落地页全部上线（2026-11-27 02:50 本地）
+
+**协作模式**：建任务方（本会话）建任务/建页/上架/绑卡/验收；爬取执行方（另一个 agent）跑队列。沟通板：根目录 `CRAWL_COORDINATION.md`（双向请求区 + 自动进度，含执行方的 3 处队列修复与守护三件套说明）。
+
+**结果**：31/31 页面建好（28 活动 + 3 店铺），全渠道卡片接口实测跳转均为站内 `/active/<id>`、`/store/<id>`；Gaming 频道卡片按 0018 口径仍隐藏（页面已就绪）；Sports 3 页真站被风控拦截未建（卡片保留外链）。37 个活动页逐层商品数见 `var/home_modules_20261125/overnight/final_api_check.md`。
+
+**过程要点**：
+- 队列脚本执行方修了 3 处（str key / 超时 45min / 本地时间戳）并加了代理保活+自动切节点+风控熔断；
+- 建页监听器 `build_watcher.py`：轮询 crawl_state，SUCCEEDED 一个建一个（商品库优先、价格带/关键词补位、≤25、页内去重、DRAFT 即时上架、自动绑卡）；
+- 修复 3 个坑：店铺清单 URL 带 slug 的 source_id 解析、清单楼层标题为空=真站无标题文案（忠实保留）、搜索文档构建器换现行 family_key 版本；
+- 28 页标题/配色用真站探测重写（Electronics/Clearance/Razer/Nintendo/Baby/Dyson/Toy…）；
+- 3 个 Sports 页真站被拦 → 卡片保留外链，未建页。
