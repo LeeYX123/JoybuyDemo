@@ -88,21 +88,76 @@ class PageRunSpider(JoybuyRunSpider):
                 self.logger.warning("会话读取失败（继续匿名渲染）：%s", exc)
         page.get(url)
         time.sleep(wait)
+        clicked = 0
         # 每一层的【View more】各点一次（用户口径：每层只点一次，不反复追加载）。
         # 之前只点页面上的第一个按钮，导致第 2 层之后仍停留在默认 5 个商品
         # （2026-11-26 jnSk 的 Flash sale / Coupon zone 就是这个问题）。
-        clicked = 0
-        for text in ("View more", "See more", "Visit more"):
-            elements = page.eles(f"text={text}") or []
-            for element in elements[:8]:
-                try:
-                    element.scroll.to_see()
-                    time.sleep(0.5)
-                    element.click()
-                    time.sleep(2.2)
-                    clicked += 1
-                except Exception:  # noqa: BLE001
-                    continue
+        #
+        # 2026-11-26（第二轮修正）：不能再按「全页按钮列表 + 索引」点。展开后
+        # 该层按钮会从 DOM 消失，列表整体前移，按索引遍历会跳层（89Hg 的
+        # Home & other appliances / 无标题层就是这样被跳过的）。改为按模块
+        # （.bab-opt-mod）定位：只点「卡片数 ≤ 5」的楼层自己的按钮，用 JS 点击
+        # 绕开浮层遮挡；已展开的楼层（>5 张）直接跳过，不会重复展开。
+        #
+        # 2026-11-26（第三轮修正）：楼层是滚动懒挂载的，进入页面 8 秒时后面
+        # 两三层还没进 DOM（89Hg 一直只展开前 3 层就是这个原因）。先滚到底把
+        # 全部楼层挂出来，再点。
+        for _ in range(8):
+            page.scroll.to_bottom()
+            time.sleep(0.6)
+        page.scroll.to_top()
+        time.sleep(1.5)
+        click_js = r"""
+        (() => {
+          let clicked = 0;
+          document.querySelectorAll('.bab-opt-mod').forEach((mod) => {
+            const cards = mod.querySelectorAll('a[href*="/dp/"]').length;
+            if (!cards || cards > 5) return;
+            const btn = [...mod.querySelectorAll('button')].find((b) =>
+              /^(view|visit|see)\s+more$/i.test((b.textContent || '').trim())
+              || /^查看更多$/.test((b.textContent || '').trim())
+            );
+            if (!btn) return;
+            btn.scrollIntoView({block: 'center'});
+            btn.click();
+            clicked += 1;
+          });
+          return clicked;
+        })()
+        """
+
+        def _click_floors() -> int:
+            try:
+                result = page.run_cdp(
+                    "Runtime.evaluate", expression=click_js, returnByValue=True
+                )
+                return int(((result or {}).get("result") or {}).get("value") or 0)
+            except Exception as exc:  # noqa: BLE001 - JS 失败时退回文本点击
+                self.logger.warning("楼层按钮 JS 点击失败（改用文本点击）：%s", exc)
+                return -1
+
+        for _pass in range(3):
+            count = _click_floors()
+            if count <= 0:
+                break
+            clicked += count
+            time.sleep(3.0)
+            page.scroll.to_bottom()
+            time.sleep(1.0)
+
+        if clicked == 0:
+            # 兜底：页面没有 .bab-opt-mod 结构（如店铺页）时，仍按文案点击。
+            labels = ("View more", "See more", "Visit more", "查看更多")
+            for text in labels:
+                for element in (page.eles(f"text={text}") or [])[:8]:
+                    try:
+                        element.scroll.to_see()
+                        time.sleep(0.5)
+                        element.click()
+                        time.sleep(2.2)
+                        clicked += 1
+                    except Exception:  # noqa: BLE001
+                        continue
         if clicked:
             self.logger.info("已点击 %d 个 View more：%s", clicked, url)
         for _ in range(8):

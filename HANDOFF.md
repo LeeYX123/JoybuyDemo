@@ -2,6 +2,399 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0d4f. 活动落地页内容数据 dev→DO 生产同步（2026-11-26 17:15~17:30，✅ 完成 / HANDOFF 未 commit）
+
+### 我们在做什么
+把本地 dev 库三张 content 表（`activity_page` / `activity_section` / `activity_section_product`）数据导入 DO 生产托管库，让生产落地页路由 `/active/[id]`、`/store/[id]` 从「降级态空页」变为真实渲染（0d4e 遗留项 2 的替代解法：不手工后台录入，直接同步 dev 已录数据）。
+
+### 模型依赖结论（backend/content/models.py）
+`activity_page`（根表，无 FK）← `activity_section`（FK `page` → activity_page，CASCADE）← `activity_section_product`（FK `section` → activity_section CASCADE + FK `spu` → catalog.spu **PROTECT** + FK `sku` → catalog.sku 可空 **PROTECT**）。导出/导入顺序即此；**section_product 引用商品表 → 孤儿引用风险**（见下）。
+
+### 已完成（全部实跑）
+1. **导出**：容器 `joybuy-dev-mysql-1` mysqldump `--no-create-info --complete-insert --single-transaction --skip-extended-insert`（顺序 page→section→section_product）；文件头尾手工包 `SET FOREIGN_KEY_CHECKS=0/1;`；另剔除 `LOCK TABLES/UNLOCK TABLES/DISABLE|ENABLE KEYS` 行（防托管库用户缺 LOCK/ALTER 权限导入中断）。产物 `var/activity_sync_20261126/activity_data.sql`：**117,749 B / md5 cb384a9ac2776e1e02540d8d82fab3d3 / 479 条 INSERT（10+48+421）**。
+2. **上传**：scp → 服务器 `/tmp/activity_data.sql`，md5 一致；**导入完成后已从 /tmp 删除**。
+3. **导入前核对**：托管库三表计数 **0/0/0**；`SHOW COLUMNS FROM activity_page` 15 列与导出列一致（含 logo_image，schema 为 0d4e 跑的 0020~0025）。
+4. **导入**：`mysql -h <MYSQL_HOST> -P 25060 -u joybuy --ssl-mode=REQUIRED joybuy < /tmp/activity_data.sql`（密码在服务器 shell 里从 `/srv/joybuy/.env` 的 MYSQL_PASSWORD 读取拼接，**未回显未落盘**）；导入后三表计数 **10 / 48 / 421**（与 dev 完全一致），页面清单（id/kind/external_id/title）逐行核对一致。
+5. 截图存 `var/activity_sync_20261126/`：`prod_active_7Uw83.png`、`prod_store_100000744.png`、`prod_product_fbdac658.png`。
+
+### 孤儿引用统计（如实口径）
+- prod spu/sku 总数 **18,835 / 28,116**（dev 22,927 / 35,914——差值即今日爬虫新商品，未同步）。
+- `activity_section_product` **421 行中 213 行（50.6%）引用 prod 不存在的商品**：spu 缺失 213 行；sku 缺失 17 行**全部与 spu 缺失重叠**（sku-only 孤儿 0）；可正常渲染 **208 行**（421-213）。
+- 分页影响（total/OK）：page1 6/4、store100000744 15/6、page3 28/22、page4 80/34、page5 35/26、page6 65/17、page7 45/14、page8 50/26、page9 50/28、page10 47/31。孤儿集中在 section 63(21)/80(18)/78(18)/73(16)/64(14) 等，均为今日爬虫新商品所在楼层。
+- **遗留（下一个任务）**：今日爬虫新商品（1,640 入库/1,633 上架）尚未 dev→prod 同步 → 上述 213 行孤儿卡片在 prod 上 404/空；**待商品数据增量同步后自愈，不需要也不得改这 3 张 content 表**（今天爬的商品同步是另一任务，用户未下指令）。
+
+### 验证矩阵（按验证纪律仅针对性验证；★=实测通过）
+- ★ `https://www.joyfumi.com/api/v1/activity-pages/active/7Uw83BgGwFGKHFJYkSfon4pzPsQ` 200 返回全量 JSON（hero_image/sections 完整）；`/api/v1/activity-pages/store/100000744` 200。
+- ★ `/active/7Uw83BgGwFGKHFJYkSfon4pzPsQ` 200：SSR HTML 含标题 3 处，浏览器渲染 hero「Less cleaning, more living」+ TOP DEAL 楼层 + 商品卡（截图为证，非空壳）。**注意路由参数是 `external_id`**（真站 ID），不是数据库自增 id；id=2 是 STORE 页 `100000744` → 正确 URL 是 `/store/100000744`（0d4e 曾把两 URL 写反）。
+- ★ `/store/100000744` 200：Purcotton 顶栏 logo + hero 轮播渲染（截图）。
+- ★ 商品卡详情 `/p/fbdac658-256d-4edd-a593-7e845e004591` 200：全量 PDP（ECOVACS DEEBOT X11，$1,100.99，图/视频/购买面板，截图）。API `/api/v1/products/<uuid>` 同样 200 全量。
+
+### 踩过的坑（不要再踩）
+- **spu.public_id 在 MySQL 存 32 位无横线 hex，但 `/p/` 路由是 `<uuid:...>` 转换器，URL 必须带横线**：不带横线打不进路由返回通用 `NOT_FOUND`，而页面壳仍 200 + 「This product has been delisted」文案——别误判成商品下架/数据没同步。
+- **ssh 单引号命令里 mysql -e 的 `\"` 转义不可靠**（远端 shell 吃掉反斜杠后被 sql_mode 干扰，报 Unknown column）；复杂 SQL 用 base64 或文件传，别硬拼引号。
+- **`mysql ... | grep -v insecure; echo $?` 的 `$?` 是 grep 的退出码**（mysql 无输出时 grep=1），不是 mysql 的；导入成败看行数复核，不看管道退出码。
+- 托管库 mysqldump 默认输出含 `LOCK TABLES`/`DISABLE KEYS`，权限不足会中断导入——导出后先剔除这几类行再上传。
+
+### 下一步（新会话接手）
+1. **dev→prod 商品数据增量同步**（另一任务，用户未下指令前不动）：同步后 213 行孤儿引用自愈；spu/sku/offer/搜索文档都不要用今天这套 content 表流程碰。
+2. 落地页后续运营维护走 admin-web ActivityPagesView / merchant_ops API（0d4e 遗留：ops-do 无 `cms.campaign` 权限的问题仍在）。
+3. m 站 DNS/certbot 前置（0d4e 下一步 1）仍未完成，与本任务无关。
+
+## 0d4e. DO 生产同步 6 提交 + m 站部署前置（2026-11-26 16:20~17:05，✅ 完成 / HANDOFF 未 commit）
+
+### 我们在做什么
+把本地 main `29990da`（6 个新提交）同步到 DigitalOcean 生产（/srv/joybuy，原 `8e5ad99`），并按 m 站提交改变部署需求做好 nginx / ALLOWED_HOSTS / 验证。**遗留一项用户侧待办：m.joyfumi.com DNS A 记录（见下）。**
+
+### 6 提交部署摘要（全部已上线）
+| 提交 | 内容 | 部署影响 |
+| --- | --- | --- |
+| `8dea6f5` / `298bc6c` | 首页心选品牌滚动 + 品类发现悬停（CmsLinkGrid） | storefront 重建 |
+| `8371eb0` | **m 站 host 双端渲染 + 账户中心**（mobile 布局族、/categories、余额/优惠券/积分/语言/设置页、买家钱包 API `/api/v1/buyer/wallet`） | storefront 重建 + nginx m 块 + ALLOWED_HOSTS |
+| `06914da` | 【为你推荐】落地页 `/active/[id]` `/store/[id]`（content_activitypage 等 5 张新表 + merchant_ops 管理 API + admin-web ActivityPagesView） | storefront + admin-web 重建 + migrate |
+| `d706314` | 爬虫 PAGE_SET 任务体系（crawler_control 0011/0012 迁移、pages_run spider、admin CrawlersView） | migrate（爬虫本体未跑，仅部署） |
+| `29990da` | 测试基线 + 文档（CONTEXT/CRAWLER_STATUS/HANDOFF、e2e 基线图） | 无运行时影响 |
+
+**requirements 无变化**（未跑 pip install）；admin-web 有改动已重建；merchant-web 未涉及未动。
+
+### m 站机制结论（8371eb0，ADR-0001）
+- **纯 host 判定，无 env 开关**：全局中间件 `storefront/middleware/mobile-host.global.js` 按 `useRequestURL().host` 是否以 `m.` 开头切 mobile 布局；同一 Nuxt 应用同一路由，`nuxt.config` 零改动。
+- 客户端自动切换（`plugins/mobile-auto-switch.client.js`）：≤768px 桌面 host → `m.`+当前 host（**协议保留**，www 用户会去 `https://m.www.joyfumi.com`）；>768 回跳；`?nomobile=1` / `navigator.webdriver` 旁路，`?mobile-auto=1` 强制；手动选择存 localStorage。**IP 直访无 m 形态（no-op）**。
+- Cookie 无 Domain 属性 → m 站会话天然独立（同一后端账号数据互通，重复登录），无需后端 cookie 改动。
+- 账户中心全是 buyer 侧页面 + wallet API，**无 accounts_buyers 迁移**。
+
+### 服务器动作（全部实跑）
+1. `rm -f storefront/composables/useMobileView.js`（未跟踪文件撞车）→ `git pull --ff-only` → HEAD `29990da`，status 干净。
+2. **migrate**（托管库 SSL）：content 0020~0025（activitypage/activitysection/activitysectionproduct 5 表族）+ crawler_control 0011/0012（CrawlJob target_imported_count、job_kind/page_urls 等）→ 全部 OK。cart/reviews 的 W036 MySQL 条件唯一约束警告是旧有现象。
+3. **nginx**（/etc/nginx/sites-enabled/joybuy 追加 m 块）：`server_name m.joyfumi.com m.www.joyfumi.com` 监听 80，location /media/（→Spaces 同款）、/api/（→:8000）、/（→:3000，Host 透传）。**仅 HTTP，无 443**：证书只含 joyfumi.com+www，且 HTTP-01 必须 DNS 先生效。块内注释写了后续命令：`certbot --nginx --expand -d m.joyfumi.com -d m.www.joyfumi.com` 后把块转 443。
+4. **.env** `DJANGO_ALLOWED_HOSTS` 追加 `m.joyfumi.com,m.www.joyfumi.com`（先漏了 → DisallowedHost 400，已修）。⚠️ 部署代码里没有这个文件，**服务器 .env 是手改的，别被 git 覆盖**。
+5. 重建：storefront `pnpm --filter @joybuy/storefront build` exit 0（.output 08:46 UTC）；admin-web **`npx vite build --base=/admin/`** exit 0。
+6. 重启 joybuy-api + joybuy-storefront → 双 active，journal 无新错误。
+
+### 踩过的坑（不要再踩）
+- **admin-web 必须 `--base=/admin/`**：`npm run build`（package.json 是裸 `vite build`，无 base 配置）会产出 `/assets/...` 路径毁掉线上 /admin/，本次已踩并用 `npx vite build --base=/admin/` 纠正。
+- **Node fetch/undici 不发自定义 Host 头**：验证 m 站 SSR 必须用 `node:http`（http.request 显式 host 头），fetch 会以 IP 为 Host 打到 default_server 拿到桌面端 HTML，得出错误结论。
+- **用户本机 VPN 是 fake-ip TUN**：域名解析返回 198.18.x.x 假 IP，任何走「域名→连接」的客户端（含 Chromium，无视 --no-proxy-server / host-resolver-rules）访问不存在的 m.* 都被代理注入 502；curl `--resolve`/直连 IP 可绕过。m 站浏览器验证用 Playwright route 拦截 + IP+Host 传输替身（`var/do_sync_20261126/verify_m_site.mjs`）。
+- **nginx media_cache 负缓存**：`proxy_cache_valid 404 1m` + `proxy_cache_key $uri`，m 块补上 /media/ 之前落进去的 404 会缓存 1 分钟，别误判成配置没生效。
+
+### 验证矩阵（按验证纪律仅针对性验证；★=实测通过）
+- ★ 服务器本机 + 外网（本地 curl/Playwright 走 VPN）：`https://www.joyfumi.com/` 200、`/api/v1/categories` 200、`/admin/` 200（资产 `/admin/assets/...` 正常）、`/api/v1/health` 200、`http://161.35.23.231/` 200。
+- ★ 新落地页 `/active/100000744`、`/store/7Uw83...` 均 200（**降级态**：`/api/v1/activity-pages/*` 404，因 content_activitypage 表新建无数据，需 admin「活动页/店铺页」后台录入后才有内容）。
+- ★ admin Playwright 冒烟（ops-do@joybuy.local）：登录成功落 /admin/merchants、console 0 error；⚠️ 新菜单 `activity-pages` 路由已部署但 **ops-do 无 `cms.campaign` 模块权限 → 跳 /admin/no-access**，视图本身要用有权限的账号才能验。
+- ★ www 首页 console 0 error、非 mobile-shell（桌面布局完好）。
+- ★ m 站（**经 IP+Host 传输替身的真实浏览器验证**，非公网直连）：`m.joyfumi.com/` 与 `/categories` 200 + `.mobile-shell` + console 0 error + `/media/` 图 200；375px 访问 www `?mobile-auto=1` → 正确跳 `https://m.www.joyfumi.com/` 且渲染 mobile 壳。**`/api/v1/buyer/wallet` 未登录 401（正常鉴权）**。
+- 截图：`var/do_sync_20261126/prod_home_desktop.png`、`prod_admin_logged_in.png`、`prod_admin_activity_pages.png`（no-access 页）、`prod_m_home.png`、`prod_m_categories.png`、`prod_m_autoswitch.png`；脚本 `verify_20261126.mjs`（www+admin）、`verify_m_site.mjs`（m 站）。
+
+### m.joyfumi.com DNS 实测结果（关键遗留）
+- **无公网记录**：服务器 `dig`（系统解析器 / 1.1.1.1 / 8.8.8.8 / 权威 NS a.share-dns.com+b.share-dns.net）查 `m.joyfumi.com` 全部空；www/apex 正常指 161.35.23.231。本机 nslookup 出的 198.18.0.37 是 VPN fake-ip 假象，不是真实记录。
+- **用户待办**：① DNS 加 A 记录 `m.joyfumi.com → 161.35.23.231`（建议同时加 `m.www.joyfumi.com`，因为 www 上的自动切换跳的是它）；② 生效后在服务器跑 `certbot --nginx --expand -d m.joyfumi.com -d m.www.joyfumi.com` 并按 nginx 注释把 m 块转 443。**在此之前 m 站对公网不可达，且 www 窄视口用户会被跳到无证书的 https://m.www...（TLS 报错页）**——这是上线 m 站的硬前置。
+
+### 下一步（新会话接手）
+1. 等 DNS 生效 → certbot expand → m 块转 443 → 公网复验 m 站（上节脚本可直接重跑）。
+2. admin 用有 `cms.campaign` 权限的账号录入活动页/店铺页数据（否则 /active /store 一直降级态）；录入后可给 ops-do 配权或换号复验 ActivityPagesView。
+3. PAGE_SET 爬虫体系只做了部署 + migrate，**爬虫任务未在服务器启动**（避免和本地爬虫撞车）；要跑时走 admin CrawlersView 或既有爬虫流程。
+
+## 0d4d. 50–99 类目补到 100：建 57 任务 + 全量跑完 + 上架 1633 + 媒体 7.74GB（2026-11-26 09:50~16:20 本地，✅ 完成 / 未 commit / **未关机**）
+
+### 我们在做什么
+用户任务（创建阶段先说「只建任务」，随后更新为**建完直接启动**）：把 `50 ≤ ACTIVE < 100` 的二级类目补到 100。
+口径：`Spu.status='ACTIVE'` 按 `local_category`（depth=1）计数，排除 World Foods（食品）；范围 **57 个类目 / need 合计 2,199**。
+约束：不改业务代码（脚本全在 `var/topup100_20261126/`）、不碰 9334/FB、不重启代理实例、**不关机**、不 commit、不打印 Cookie。
+
+### 结果总账（DB 实测）
+| 指标 | 值 |
+| --- | --- |
+| 建任务 | **57 个**（pk **314–370**），全部 `READY`；`target_imported_count` 合计 **2,199**；参数 200/True/True/INCREMENTAL/SOURCE_DEFAULT 全对 |
+| 账号组（建任务时） | 01=12、03=14、06=11、07=14、08=6（按 VALID 9/10/8/10/4 最大余数分配） |
+| 实际开跑 | 57 个 run（1 个单任务试跑 + 主队列 + 补跑 phase2–6）；**56 COMPLETED / 1 FAILED**（pk=370 上游无货） |
+| 实际入库 | **1,640 / 2,199（74.6%）**；达标任务 **15 / 57** |
+| 上架 | **1,633 SPU ACTIVE、激活 933 Offer、失败 0、重建 1,633 条文档**（排除 143 源站下架品、4 个无类目） |
+| SPU（上架验证时） | ACTIVE **16,586 → 18,219**；DRAFT 375 → 379（+4 无类目）；INACTIVE 4,217 |
+| Offer（终态） | ACTIVE **28,984** / DRAFT 171 / INACTIVE 5,181 |
+| 搜索文档 | **18,219**（searchable 18,218） |
+| 媒体增量 | **100,866 文件 / 7,741,017,164 B（7.74 GB）/ 失败 0 / 4507.6s**；抽查 5 个 `public-read=True` + 匿名 GET 200 |
+
+### 时间线与动作（全部实跑）
+1. **09:50~09:52 建计划/建任务**：`plan.py`（DRY_RUN 打印 57 / need 2,199 / 账号组分布 / 不可建清单=0，且 DB job 数 313→313 零写库）→ `plan.py --apply` 建 57 个 READY（`create_crawl_job` + `mark_job_ready`），0 失败；`plan.py --task-list` 生成 `task_list.json`。幂等：同名任务存在则跳过（本次 0 个）。
+2. **09:53~09:54 单任务试跑**：`queue100.py` + `trial_list.json` 跑 pk=357（手柄，target=1），run `a023ddd2` **SUCCEEDED 1/1**，`PROXY_CONFIGURED` 有，队列等到 run 终态才 END（wait 逻辑正确）。
+3. **09:55 主队列**：`wmic process call create "cmd.exe /c ...\run_queue100.bat"` 彻底脱离；5 并发（每账号组 1 线程）、组内串行、单 run 240 min、熔断=连续 3 个坏 run（超时不算坏）。前 1.5 小时顺利（5 组满并发）。
+4. **11:00 起账号池耗尽 → 借池**（见「坑 3」）：01/07 先 0 可用 → `phase2_borrow.py` 把 14 个 READY 借到 06/08；随后 06/08 也耗尽 → `borrow.py` phase3 把 8 个借到 **05/02**；03/02 将耗尽 → phase4 把 4 个借到 **05 + 数据抓取**（2 个 VALID 的备用池）。跑完已按备份 `--restore` 还原成计划原组（12/14/11/14/6）。
+5. **15:00 收尾补跑**：phase5 因 group 05 仍被 phase3 占用被旧代码 skip，已 kill；phase6 用修好的 `queue100.py` 跑 359/360（05 空闲后串行），359 入 17/50、360 入 24/25。
+6. **15:35 全终态**：56 COMPLETED + 1 FAILED（370）。随后 `publish_batch.py --apply`（复用 topup50 的 `publish_drafts.py` 语义）→ 1,633 上架；`verify_publish.py` → **ALL_OK=True**（1,633 全 ACTIVE、0 无 Offer、0 无类目上架；3 PDP 200+有价；3 类目搜索 95/93/85）。
+7. **15:45~17:00 媒体增量**：`upload_media_inc.bat` DRY_RUN 报 **100,866 文件 / 7.74GB**（窗口内本地 106,073 文件/7.90GB，其余已在旧桶索引）→ `--apply --threads 16 --verify 5` 上传完成，0 失败，抽查 5 个匿名可读。
+
+### 节点切换（授权自愈，共 4 次，均验证 200+real_data）
+HK丨香港4（起始）→ **HK5**（03:30Z，2 组被轮换）→ **TW1**（04:42Z，24 次/15min）→ **TW2**（05:22Z，20 次/15min）→ **TW3**（06:12Z，27 次/15min）。当前节点 **TW丨台湾3**。均未重启代理实例。
+
+### 缺口（559 件，43 个类目未达标；不是脚本错误）
+- 主要原因：**上游列表翻完仍无新商品**（每个 run 都以 `LISTING_SHORTFALL` 结束，如 pk=333 mailing-supplies 只发现 4 个新候选、342 kitchen-appliances 16、345 toothbrushes-flossers 16、332 laundry 9、337 female-hair-removal 7、317 period-products-intimate-care 6）+ **账号池风控**（20 个 run 带 `RISK_CONTROL_FALLBACK`、6 个带 `ACCOUNT_POOL_EXHAUSTED`）。
+- pk=370（打印机与扫描仪，target 26）**FAILED**：列表只有 5 个商品且全部已入库，discovered=0 → 合理失败，不是配置问题。
+- 这些任务已是终态（COMPLETED/FAILED），**不要再原地重跑**；要补只能新建任务/换源。
+
+### 本轮踩坑（务必不要再踩）
+1. **脚本不能叫 `queue.py`**：`var/topup100_20261126/queue.py` 会遮蔽标准库 `queue`，导致同目录任何脚本 `django.setup()` 报 `partially initialized module 'django.conf'`。已改名 **`queue100.py`**。同理别在该目录放 `json.py`/`types.py` 等。
+2. **队列 wait 逻辑必须「run 仍 RUNNING 就继续等」**：本版 `monitor()` 是 `while proc alive: if run.status != RUNNING -> 60s grace -> kill`，试跑已验证不会把 RUNNING 当 END；另在 `dispatch()` 加了**组级 RUNNING 守卫**（同组已有 run 就不派）。
+3. **账号池会集体进 6h 风控冷却**：`usable_accounts()==0` 时 worker 会每 300s 空转。不要干等 6h——用 `borrow.py` 把 READY 任务借到空闲池（本轮 01/07→06/08→05/02/数据抓取），**跑完用备份 restore**。注意 `default` 组有 2 个历史僵尸 RUNNING（job 2/3），别往 default 组借（组级守卫会永久 skip）。
+4. **多阶段队列同组会撞 check-then-act 竞态**：两个 queue 进程同时给同一组派活，都可能通过 `group_already_running` 检查。修法：`queue100.py` 遇到 `group_already_running`/`job_already_running` 改为**每 60s 重试**（不再 skip），且新阶段务必等前阶段该组空闲再起。
+5. **相对路径参数会落到仓库根**：`borrow.py --backup phase3_*.json` 曾写到仓库根（已移回 `var/`）；以后传绝对/`var/...` 路径。
+6. **publish `--since` 用批次起点 01:53:00Z**：包含试跑那 1 件；上架排除逻辑（143 下架 + 无类目）全部命中 0 误伤。
+7. **另有会话在跑 jobs 371–374「补采-…全楼层更多」**（run 9b19b19d/b8adbff6/8cf07103/f51f0699，本文写作时仍 RUNNING）：不是本批进程，**没碰**；它们会让 DRAFT/搜索数继续变化，看数时注意区分。
+8. **`upload_media.py` 的 DRY_RUN 也会覆盖 `upload_media_result.json`**：本次已先存 `upload_dryrun_topup100.json`。
+9. 媒体上传不用爬虫代理（boto3 直连 Spaces），0.1→1.6 MB/s 是文件小/建连开销，不是代理问题；16 线程约 75 分钟。
+
+### 交付物（全在 `var/topup100_20261126/`，不进 git）
+| 内容 | 路径 |
+| --- | --- |
+| 计划/建任务 | `plan.py` → `plan.json` / `plan.csv`（57 行）/ `apply_result.json` / `task_list.json` |
+| 建任务核验 | `verify_report.json`（57/57 READY、need 2,199、参数全对、0 run） |
+| 队列 | `queue100.py`、`run_trial.bat`、`run_queue100.bat`、`progress*.json`、`final_summary_phase*.json`、日志 `var/logs/topup100_*.log` |
+| 借池 | `phase2_borrow.py`、`borrow.py`、`phase2/3/4_borrow_backup.json`、`phase3/4_list.json`、`phase5_list.json`、`run_phase2/3/4/6.bat` |
+| 汇总 | `summary.py` → `final_summary_crawl.json`（57 行，含 target/imported/trip/shortfall） |
+| 上架 | `publish_batch.py` + `publish_drafts.py`（从 topup50 复制）、`publish_batch_backup.json`、`publish_batch_summary.json`、`verify_publish.py` → `verify_publish_report.json`（ALL_OK） |
+| 媒体 | `upload_media.py`（复制）、`upload_media_inc.bat`、`run_upload_apply.bat`、`upload_dryrun_topup100.json`、`upload_media_result.json` |
+| 批次窗口 | `batch_window.json`（`first_launch_utc=2026-11-26T01:53:00+00:00`） |
+
+### 验证记录（按验证纪律只做针对性验证，未跑全量测试/未跑 e2e）
+- `plan.py` DRY_RUN：57 / need 2,199 / blocked 0 / DB job 数零变化。
+- `plan.py --verify`：`ALL_OK=True`（57 READY、target 合计 2,199、参数逐项核对、0 run）。
+- 试跑：run `a023ddd2` SUCCEEDED 1/1；日志含 `PROXY_CONFIGURED`。
+- 全量：57 run 终态、0 RUNNING；`final_summary_crawl.json` 入库 1,640/2,199、达标 15、FAILED 1。
+- 上架：`verify_publish_report.json` `ALL_OK=True`（1,633 全 ACTIVE、0 无 Offer、0 无类目；3 PDP 200+有价；3 类目 total 95/93/85）。
+- 媒体：`upload_media_result.json` 100,866 文件 / 0 失败 / verify 5 全 `acl_public=True` + `public_get=200`。
+
+### 下一步
+1. **媒体/上架均已完成，本轮收尾**；用户明确**不要关机**，也**未 commit**。
+2. 要补剩余 559 件：这些类目已达终态，需**新建**任务（或换源/人工补录），不要重跑 314–370。
+3. 若之后要清理借池痕迹：03/02/05/06/08 的 job.account_group 已 restore 成计划值，无需再动。
+4. 注意另一会话的 371–374 仍在跑，别误杀/误判 DRAFT 增量。
+
+## 0d4c. 无类目 53 个归类 + 上架 52（2026-11-26 09:10~09:25 本地，✅ 完成 / 未 commit / **未关机**）
+
+### 我们在做什么
+用户任务（已确认）：把 53 个**无类目 DRAFT** 按来源类目自动归类，然后上架；之后做针对性验证并出报告。约束不变：**不 commit、不碰 9334/FB、不重启代理实例、不关机、不改业务代码（脚本全在 `var/`）**。
+
+### 结果总账（DB 实测）
+| 指标 | 之前 | 之后 |
+| --- | --- | --- |
+| 归类 | 53 无类目 | **52 已归类**（派对装饰品 33 / 家居装饰 12 / 礼物包装与贺卡 7），剩 1 个 Doc02 E2E |
+| 上架 | — | **52 SPU 全部 ACTIVE / 激活 41 Offer / 失败 0 / 重建 52 条文档** |
+| SPU | ACTIVE 16,534 / DRAFT 427 / INACTIVE 4,217 | **ACTIVE 16,586 / DRAFT 375 / INACTIVE 4,217** |
+| Offer | ACTIVE 25,780 / DRAFT 196 / INACTIVE 5,181 | **ACTIVE 25,821 / DRAFT 155** / INACTIVE 5,181 |
+| `party-decorations` ACTIVE | 16 | **49** |
+| `home-decor` ACTIVE | 36 | **48** |
+| `gift-wrap-cards` ACTIVE | 43 | **50** |
+| 搜索文档 | 16,534 | **16,586**（searchable 16,585） |
+
+**关键前提修正（协调者简报错了，必读）**：三个目标类目本批之前**不是 0**，而是 16 / 36 / 43 —— 正因它们 ACTIVE < 50 才在缺口清单里（缺口 34/14/7 = 50 − 现值）。上架后 49/48/50；`party-decorations` 仍差 1 件（本批只有 33 个该来源的无类目 SPU）。下次谁再说「这三个类目应为 0」，直接用本节数字纠正。
+
+### 时间线与动作（全部实跑）
+1. **归类 DRY_RUN**：`var/nocat_fix_20261126/classify.py`（新脚本，只读）→ 将归类 52（33/12/7），跳过 1（空来源 Doc02 E2E），人工确认 0。跑后确认目录只有脚本、DB 仍是 53 无类目 / ACTIVE 16,534 / DRAFT 427 → **DRY_RUN 零写库**。
+   - 映射规则：`source_category` 精确匹配 `LocalCategory.name_zh/name/name_en`；`source_job` 必须含同一类目名做二次校验（不一致 → 不自动归类、列人工确认）。53 行里 job 与类目**全部一致**，人工确认 0。
+2. **归类 apply**：`classify.py --apply` → 52/52 成功，失败 0；三个类目下 DRAFT 变成 33/12/7。备份 `classify.py` 同目录 `backup.json`。
+3. **上架 DRY_RUN**：`var/nocat_fix_20261126/publish.py`（新脚本，复用 `var/publish_furniture_20261125/publish.py` 口径）。归类前跑一次 → 52 全阻断「未归类」（证明护栏有效）；归类后再跑 → **52 可上架 / 0 阻断**、DRAFT Offer 41 + ACTIVE Offer 32、将激活 41。
+4. **上架 apply**：`publish.py --apply` → 52 上架 / 41 Offer 激活 / 0 失败 / 52 条文档（写库 1.0s、文档 1.3s）。排除口径全部命中 0：143 下架清单 0 命中（并已核对无交集）、Doc02 E2E 排除 1、平台下架留痕 0、无报价 0、缺零售价 0。
+5. **验证**：`var/nocat_fix_20261126/verify.py`（只读）→ `verify_report.json`，**`ALL_OK=True`**：
+   - 52/52 仍 ACTIVE、零 Offer 阻断、类目 52/52 正确；
+   - 3 个 PDP（每类目 1 个）全 200 + 有价（5.99 / 36.99 / 4.99）+ `is_purchasable` + gallery 5/10/6 张本地文件 0 缺失；
+   - 3 个类目页（`/api/v1/search?category=`）：**49 / 48 / 50**，第 1 页含本批 22/11/6 个；
+   - 2 个关键词：`Festive Hanging` 命中（total 9）、`5Ft/1.5m Green` 命中（total 3）；
+   - 遗留物未动：Doc02 E2E 仍 DRAFT / 无类目 / 无 Offer；143 源站下架品仍 143 全 DRAFT、0 激活。
+6. **回滚干跑**：`publish.py --rollback`（需还原 52 SPU / 41 Offer）、`classify.py --rollback`（需还原 52 个类目）——均不写库，确认备份可用。
+
+### 备份与回滚命令
+| 内容 | 路径 |
+| --- | --- |
+| 归类备份（52 条 `spu_pk + original_local_category_id(=None)` + 目标类目） | `var/nocat_fix_20261126/backup.json` |
+| 上架备份（52 条 Spu.status + local_category_id + Offer 状态/报价原值） | `var/nocat_fix_20261126/publish_backup.json` |
+| 归类结果 / 上架汇总 / 验证报告 | `classify_result.json` / `publish_summary.json` / `verify_report.json` |
+| 报告 | `var/topup50_20261125/BATCH_REPORT.md` 第 8 节 |
+
+```bash
+# 回滚上架（52 → DRAFT，还原 41 个 Offer，重建文档）
+.venv/Scripts/python.exe var/nocat_fix_20261126/publish.py --rollback --apply
+# 回滚归类（52 个 local_category 置回 NULL）
+.venv/Scripts/python.exe var/nocat_fix_20261126/classify.py --rollback --apply
+```
+
+### 本轮遗留 / 观察（不影响上架）
+1. **Doc02 E2E 商品**（pk=165，`bcdae5fc-98c0-45f6-8cb2-11173359f9d1`）仍是 `DRAFT`、无类目、无 SKU/Offer/零售价 —— **测试残留，故意不动**。未来若要清理，先确认没有 e2e 用例依赖它。
+2. **PDP 面包屑只渲染一级**：`category_slug` 已正确指向目标类目（`party-decorations`/`home-decor`/`gift-wrap-cards`），但 `category_breadcrumb` 两级（来源 `ProductCategory`：Seasonal & Party / Seasons & Events）的 `local_slug` 都映射成 `home-living`（归父级映射），`storefront/utils/pdpBreadcrumb.js` 去重后只剩「Home & Living」。**同类目原有商品（pk=21040）行为完全一致，非本批引入**；要修得改 `ProductCategory.local_category` 映射（会影响其他商品），本批明确没做。
+3. **`party-decorations` 49/50**：还差 1 件才到 50。要补只能再抓（上游是否还有货未验证）或人工补录入，别再重复归类/上架脚本。
+4. 两个新脚本的护栏（记住，改脚本时别拆）：`publish.py` 要求目标 SPU 的 `local_category` **已等于** CSV 推出的目标 slug，否则一律阻断 → 必须先归类后上架；`classify.py` 拒绝覆盖已有 `local_category`，且备份已存在且不覆盖本次目标时直接 ABORT。
+
+### 交付物
+| 内容 | 路径 |
+| --- | --- |
+| 归类脚本 / 上架脚本 / 验证脚本 | `var/nocat_fix_20261126/classify.py` / `publish.py` / `verify.py` |
+| 备份 | `var/nocat_fix_20261126/backup.json` / `publish_backup.json` |
+| 结果 | `classify_result.json` / `publish_summary.json` / `verify_report.json` / `verify_stdout.log` |
+| 批次报告 | `var/topup50_20261125/BATCH_REPORT.md` 第 8 节「无类目 53 个已归类上架」 |
+
+## 0d4b. 上架 83 + 缺口补跑 round 2（1 个 A 类）+ 媒体增量 408MB（2026-11-26 08:53~09:55 本地，✅ 完成 / 未 commit / **关机已取消**）
+
+### 我们在做什么
+用户任务（用户已确认，**明确不要关机**）：①上架本次新导入的 DRAFT ②补缺口 ③媒体增量上传 ④汇总。约束：不 commit、不碰 9334/FB、**不重启代理实例**、不关机、不打印 Cookie、不改业务代码（脚本全在 `var/`）。
+
+### 关键前提修正（必读，否则会重复上架错东西）
+协调者简报写的「DRAFT 502 = 143 下架品 + 357 近 36h 新导入 + 2 较老」中，**357 只是个算术结果**（502−143−2），把 11-24~11-25 的**批前遗留 DRAFT** 也算进了「本批」。DB 实查的真实构成：
+
+| DRAFT 分桶（互斥） | 数量 |
+| --- | --- |
+| 源站已下架（`var/gap_recrawl_20261121/delisted_source_removed.json`，143 个全部仍是 DRAFT） | 143 |
+| 本批补洞 round 1 新导入（有类目）→ 本次上架 | 75 |
+| 本批补洞 round 1 新导入（无类目） | 52 |
+| 11-24~11-25 批前遗留（142 猫粮 + 88 摄影摄像 + …） | 230 |
+| 36h 之外的极老 DRAFT（11-04、11-07） | 2 |
+
+**已问过用户并得到答复：只上架 75 个「本次新导入」**，230 个批前遗留与 2 个极老 DRAFT 只出清单不上架。其中 142 个猫粮是 0ct 明确记录过的「只有 SKU 身份」脏数据，上架会产生重复 listing。
+
+### 结果总账（全部 DB 实测）
+| 指标 | 值 |
+| --- | --- |
+| 上架合计 | **83 SPU**（75 + 8，两次 apply），失败 0，激活 Offer 41，重建文档 83 |
+| SPU | ACTIVE 16,451 → **16,534**；DRAFT 502 → **427**；INACTIVE 4,217 |
+| Offer | ACTIVE **25,780** / DRAFT 196 / INACTIVE 5,181 |
+| 搜索文档 | **16,534**（searchable 16,533，1 个历史遗留不可搜） |
+| 缺口补跑 | **1 个 A 类任务**（`补洞2-makeup-20261126b` pk=313）→ 8/8 达标，3.3 分钟 |
+| 最终缺口 | **22 个类目 / 409 件**（34 个类目已 ≥50） |
+| 媒体增量 | **5,632 文件 / 407,983,339 B（0.41GB）/ 失败 0**，抽查 5 个 public-read + 匿名 GET 200 |
+
+### 时间线与实际动作
+1. **08:53~09:05 上架 75**：`publish_batch.py --apply --backup publish_round2_backup.json --summary publish_round2_summary.json`。DRY_RUN 先报 75；`window_draft_spu_ids=75`、`staging_only=1753`（1753 是上批已上架的，全部 `not_draft` 阻断）。75 全成功、0 失败、35 Offer。
+2. **09:05 上架验证**：`verify_publish.py --n 4 --backup publish_round2_backup.json --summary publish_round2_summary.json --report verify_round2_report.json` → `ALL_OK=True`（`verify_round2_report.json`）。4 个 PDP 全 200 + 有价 + 可购 + gallery 本地文件 0 缺失；4 个标题关键词全部命中。
+3. **09:07~09:15 缺口分类**（新脚本 `classify_gap.py`，只读，出 `gap_class.json`）：按每个类目 last run 的 `crawl_run_event` 事件构成判 A/B/C。
+4. **09:15~09:20 建 1 个 A 类任务**：`gap_refill2.py --apply` → pk=313 `补洞2-makeup-20261126b`，parent 289，target 8，`skip_imported=True`，`allow_pagination=True`，账号组 **数据抓取07**（08 组当时只剩 3 个可用号）。
+5. **09:20 起跑**：`wmic process call create` 拉起 `run_gap_refill2.bat`（**彻底脱离**，见踩坑 1）→ 00:59:14Z 开始、01:02:34Z 结束，SUCCEEDED，discovered 8 / imported 8 / 0 风控 fallback / 未切节点。
+6. **09:35 二次上架 8**：`publish_batch.py --apply --backup publish_round3_backup.json`；验证 `ALL_OK=True`（`verify_round3_report.json`，3 PDP + 3 关键词）。
+7. **09:50~10:05 媒体增量**：`upload_media.py --use-cache --since 2026-11-25T22:55:27+00:00 --apply --threads 16 --verify 5` → 5,632 文件 / 408MB / 0 失败 / 294s / 抽查 5 个可公共读。
+8. **10:05 出清单**：`nocat_report.py` → `nocat_draft_list2.csv`（53 个无类目）+ `old_draft_list2.csv`（2 个极老）。
+
+### 缺口分类结论（A/B/C，全部有 DB 事件依据）
+- **判据关键**：`discovered_count` 只统计**扣掉「跳过已入库」之后的新候选**（`joybuy_run.py`: `update_run_progress(discovered=fresh)`）。所以 `discovered < need` 就等价「列表真没货」，重跑只能拿同一批 → 判 B。
+- **A 类（跑了，1 个）**：`makeup` pk=289 —— 上一轮 discovered=34、`RISK_CONTROL_FALLBACK` 31 次 / `RENDER_FAILED` 31 / `RECORD_REJECTED` 29，只入库 5，缺口 8。属**瞬时性失败**，值得重跑。**结果 8/8 全补上，ACTIVE 42→50**。
+- **B 类（不跑，22 个 / 409 件）**：
+  - **上游没货 19 个 / 354 件**：dishwashers 46、heating-cooling-purifier 42、stop-smoking 38、drones 37、desktop-pcs 30、sexual-wellbeing-family-planning 29、soundbars-home-cinema 28、cooker-hoods 25、steering-wheels 25、baby-milk 17、air-fryers 14、baby-clothing 8、nursery-bedding 4、sexual-wellness 4、tvs 3、sports-apparel-shoes 1、gaming-headsets 1、speakers 1、intimate-hygiene 1。
+  - **无类目阻塞 3 个 / 55 件**：party-decorations 34、home-decor 14、gift-wrap-cards 7 —— 只要把 52 个无类目 DRAFT 归类后上架就能补上，**不需要再爬**。
+- **C 类（已达标，34 个）**：不动。
+- **重要**：08:19~08:36 已有一轮 gap refill 跑过 16 个任务（target 102 / 入库 75 / 11 达标），本轮**没有重复跑那 16 个**——它们的 `succ + conflicts ≈ discovered`，候选已耗尽。`nursery-bedding`/`soundbars`/`speakers`/`sports-apparel-shoes` 虽仍有 conflict，但候选已用完，再跑只会撞同一批 `IMPORT_SOURCE_CONFLICT`（来源身份已绑定别的 SPU，重跑不可解）。
+
+### 媒体上传的关键细节（下次必须知道）
+- `remote_media_index.tsv` 是 **03:05 的快照**，不含上一轮（08:13 完成）上传的 118,979 个键。**直接 `--use-cache` 会把那 10.19GB 重新算进计划**。
+- 解决：给 `upload_media.py` 加了 `--since <ISO>`（`walk_local` 只收 mtime ≥ 该时刻的文件）。配合旧索引得到真实增量：5,866 候选 → 计划 5,632。
+- 下次仍有两个选择：**重建索引（约 40 分钟）** 或 **继续 `--use-cache --since <上次上传时刻>`**。索引文件里没有上传时间记录，上传时刻看 `upload_media_result.json.at`。
+
+### 本轮的坑（务必不要再踩）
+1. **`printf` 写 bat 会吃掉反斜杠**：`printf '...var\topup50...'` 把 `\t` 变成 TAB，生成的 bat 里路径变成 `var<TAB>opup50`，`cmd` 报「不是内部或外部命令」。写 bat 用 `Write` 工具，需要 CRLF 时再单独转。
+2. **`cmd //c` 传路径要用单反斜杠加引号**：`cmd //c "var\topup50_20261125\x.bat"` 可以；`cmd //c var\\topup50\\x.bat` 会被 MSYS 吃掉反斜杠变成 `vartopup50x.bat`。
+3. **`python -I` 会忽略 `PYTHONIOENCODING`**：`-I` 隐含 `-E`。要 UTF-8 输出必须脚本内 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`（`nocat_report.py` 已加）。
+4. **`Spu` 没有 `title` 字段**：标题在 `SpuMarketContent` 或 `SpuTranslation`；`values("title")` 会 `FieldError`。无 `local_category` 的商品往往还没有 `SpuMarketContent`，要 fallback 到 `SpuTranslation`。
+5. **`CrawlRun` 没有 `imported_count`**，是 `succeeded_count`；`discovered_count` 是增量累加（`update_run_progress` 传 delta）。
+6. **`publish_batch.py` 拒绝覆盖已存在的备份**（这是保护，不是 bug）：新一轮必须显式传 `--backup`/`--summary`，否则报 `Refusing to overwrite existing backup`。
+7. **`upload_media.py` 的 DRY_RUN 也会写 `upload_media_result.json`**，会覆盖上一轮的上传结果。要先 `cp` 一份再跑。
+8. **本会话没有重启代理实例**（用户铁律）。节点全程 HK丨香港4，本轮 0 次风控 fallback，所以风控自愈授权**一次都没用**（未调用 `switch_node.py --next`）。
+9. **MySQL 容器重建后数据完好**（`joybuy-dev-mysql-1` healthy，SPU 16,534/427/4,217 与 0d3 收尾数一致、无丢失）。会话开始时三个容器都是「Up 6 minutes」，说明刚重建过，`var/` 与 DB 数据均未受影响。
+10. **`git status` 里那 4 个 0 字节中文名垃圾文件仍在**（0d3 记录过，非本批产生），本轮没删。
+11. **`git status` 里 `M backend/config/settings.py` 和 `M infra/compose.dev.yml` 不是本轮改的**：内容是「runserver 0.0.0.0 时把局域网 IP 加进 ALLOWED_HOSTS」+「MySQL/Redis 端口 bind 地址改成 `${DEV_BIND_ADDRESS:-127.0.0.1}`」，是重建 MySQL/局域访问那次留下的未提交改动。本轮**一行业务代码都没动**（本轮新增/修改的文件全在 `var/`，加上 `HANDOFF.md` 与本报告）。
+
+### 交付物路径（新增/本轮用到）
+| 内容 | 路径 |
+| --- | --- |
+| 批次报告（新增第 7 节） | `var/topup50_20261125/BATCH_REPORT.md` |
+| 上架 75：备份/汇总/验证 | `publish_round2_backup.json` / `publish_round2_summary.json` / `verify_round2_report.json` |
+| 上架 8：备份/汇总/验证 | `publish_round3_backup.json` / `publish_round3_summary.json` / `verify_round3_report.json` |
+| 缺口分类 | `classify_gap.py` → `gap_class.json`；`survey2.py` → `survey2.json`；`gap_table_round2.py` |
+| A 类任务 | `gap_refill2.py`、`task_list_gap_refill2.json`、`gap_refill2_backup.json`、`run_gap_refill2.bat`、`progress_gap_refill2.json`、`final_summary_gap_refill2.json`、日志 `var/logs/topup50_gap_refill2_20261126.log`、run 日志 `var/logs/crawl_runs/34b46fc0-*.log` |
+| 媒体增量 | `upload_media_inc.bat`、`upload_media_result.json`（本轮结果）、`upload_dryrun_round23.json`（本轮 DRY_RUN）、日志 `var/logs/upload_apply_round23.log` |
+| 无类目清单 53 + 极老 2 | `nocat_draft_list2.csv` / `nocat_draft_list2.json` / `old_draft_list2.csv`（生成脚本 `nocat_report.py`） |
+
+### 下一步建议
+1. **要补满剩余 55 件**：先把 52 个无类目 DRAFT（`nocat_draft_list2.csv`：派对装饰品 33、家居装饰 12、礼物包装与贺卡 7）人工归类，归好后它们会自然进入对应类目，即可补 party-decorations / home-decor / gift-wrap-cards 共 55 件缺口。**（✅ 已在 0d4c 完成：自动归类 + 上架 52 个，勿重做；只剩 party-decorations 差 1 件 50）**
+2. **上游没货的 19 个类目（354 件）不要再爬**：多次跑已证明列表翻到底。要补只能换源站或换类目策略。
+3. **142 个猫粮遗留 DRAFT 不要上架**（0ct 已定性为脏数据）。
+4. **88 个摄影摄像遗留 DRAFT** 来自未跑完的 job 225/247（都还是 READY）；若以后要这个类目，先决定是「上架存量」还是「续跑采集」。
+
+## 0d3. 补货队列全量跑完 + 上架 1700 + 媒体上传 10.19GB（2026-11-26 02:14~08:14，✅ 全部完成 / 未 commit / 已下达关机）
+
+### 我们在做什么
+把 0ct 备好的「每个二级品类补到 50」队列**全量跑完**（用户 0d2 暂停换节点后恢复，用户拍板**全程走爬虫专用代理**不改回直连），然后**上架本批导入的 DRAFT**、**增量上传媒体到 DO Spaces**、出报告，最后关机。未 commit、未改业务代码（脚本全在 `var/`）、未碰 9334/FB、未动用户系统代理 7897。
+
+### 结果总账（数据来自 DB 实测）
+| 指标 | 值 |
+| --- | --- |
+| 任务清单 | 56 个（131 家具在本批前就 COMPLETED，队列自动跳过） |
+| 本批实际开跑 | 55 个：**55 COMPLETED / 1 FAILED**（pk=263 见下）|
+| 目标入库合计 | 2171 |
+| **实际入库合计** | **1762**（81%）|
+| 达标任务（入库 ≥ 该任务 target） | 22 个 |
+| 全库 Spu（本批开始 → 上架后） | ACTIVE 14,725 → **16,451**；DRAFT 378 → **427**（上架前峰值 2,127）|
+| 本批上架 | **1700 SPU**、激活 **981 Offer**、重建 **1700 条搜索文档**、失败 0 |
+| Offer 全库 | ACTIVE 25,599 / DRAFT 196 / INACTIVE 5,181 |
+| 媒体增量上传 | 见「媒体上传」小节（实时结果 `upload_media_result.json`）|
+
+### 时间线与关键动作（全部实跑）
+1. **02:14:46** 起全量队列（5 并发、同组串行、240 min 超时、熔断口径不变），`CRAWL_HTTP(S)_PROXY=http://127.0.0.1:7997` + `MEDIA_BACKEND=local` + `CRAWL_VARIANT_PRICES=true` + `CRAWL_VARIANT_PRICE_LIMIT=0`；5 个 run 均出现 `PROXY_CONFIGURED`。
+2. **02:59~03:03 节点切换**：15 分钟窗口 `RISK_CONTROL_FALLBACK` 25 次（≥12）触发，`switch_node.py --next` 把 HK丨香港1 → HK丨香港2（验证 200 + 真数据）。全部切换记录见 `node_switch_state.json` 与报告第 6 节，共 **3 次**（HK1→HK2 03:03、HK2→HK3 05:04、HK3→HK4 05:19），每次都是 R1 触发，切完全部可用。
+3. **03:17 事故：队列被外层进程树终止**（后台 shell 任务被 harness kill，62 分钟时）。后果：调度进程存活但新派发的 7 个 run 子进程**秒退、日志 0 字节**（DB 里留下 7 个 RUNNING 假 run）。处置：`taskkill //PID <queue> //T //F` → `var/topup50_20261125/fix_stuck.py --apply`（10 个 open run 全部 `complete_run_failed`，jobs 回 READY）→ 改用 **WMI 彻底脱离**重启（`wmic process call create "cmd.exe /c ...\run_full_queue.bat"`），之后未再被杀。
+4. **06:43 主体终态**：只剩 290（08 组账号池 0 可用）与 263（FAILED）→ 停主队列，跑 phase3（`phase3_prep.py`：263→READY，290 临时借 07 组）→ 290 入库 13/19（列表翻完），263 复跑仍 0（类目本身只有 4 个商品且已入库）→ `phase3_prep.py --restore` 把 290 组还原成 08。
+5. **06:53 上架**：`publish_batch.py --apply`（目标=本批 job 的 `StagingProduct.imported_refs.spu_public_id` ∪ 窗口内该类目 DRAFT；复用 `publish_drafts.py` 的 `_activate_offers_on_publish` + 文档重建）；1700 SPU 全部成功，无 one-category 阻断（52 个无类目 SPU 留在 DRAFT，见下）。
+6. **06:55 起媒体增量上传**：`upload_media.py --apply --use-cache`（boto3，16 线程，`ACL=public-read`，不删远端，可续跑）。
+
+### 验证（按验证纪律只做针对性验证，未跑全量测试、未跑 e2e）
+- `var/topup50_20261125/verify_publish.py`（只读）：**ALL_OK**，报告 `verify_publish_report.json`：
+  - 本批 1700 个 SPU **全部仍 ACTIVE**（1700/1700）、**零 Offer 阻断**（without_active_offer=0）；
+  - 抽查 6 个 PDP（Django test client `GET /api/v1/products/<uuid>`，Host=127.0.0.1）：全部 **200 + 有价 + is_purchasable + gallery 非空且本地文件 0 缺失**；
+  - 6 个标题关键词搜索：目标商品全部命中（total 1~13）；
+  - 计数：spu ACTIVE 16,451 / DRAFT 427；search_docs 16,451（searchable 16,450）。
+- 队列侧：`monitor.py` 每 ~15 分钟记录一次（`node_switch_monitor.log`），全程 `breaker=False`；每 run 的事件都留在 `crawl_run_event`。
+- 媒体上传：DRY_RUN 数字见下；上传完成后 `--verify 5` 会 HEAD + 匿名 GET 抽查 5 个对象。
+
+### 缺口与原因（下一轮补跑依据，明细见 BATCH_REPORT.md 第 4 节）
+- **总缺口 409 件**（2171-1762）。三大原因：① **变体页冲突**（同批次内父/变体同页仍撞 `IMPORT_SOURCE_CONFLICT`，如 101 奶粉×12、256 箱包×11、95 婴儿×10）；② **类目可选商品不足**（列表翻完/第 2 页就没结果：167 洗碗机只 4 件、281 风扇净化 5 件、265 Drones 11 件、166 油烟机 25 件）；③ **频道级/风控短时缺口**（风控 fallback 会让个别详情页失败，但 run 仍 SUCCEEDED）。
+- **pk=263 游戏方向盘 FAILED**：`Gaming Steering Wheels` 搜索页只有 4 个商品且全部已入库 → 0 入库、`RUN_FAILED 没有发现任何商品`。复跑一次结果相同，**不是风控、不是配置问题**，是类目上游没货。
+- **pk=131 家具**：本批前已 COMPLETED（0cu 上架 42 件），队列跳过，ACTIVE 42，距 50 差 8。
+- **52 个「无类目」DRAFT**：本批导入但 `local_category` 为空（如圣诞/万圣装饰），按 `publish_batch.py` 默认**不上架**（避免无类目商品出现在频道页），等人工归类。名单见 `staging_only` 差异与报告。
+- 下一轮建议：对缺口类目建 `target=缺口` 的新任务（`need` 已按当前 ACTIVE 重算，见报告第 3/4 节）；变体冲突类目建议把入队节流余量放大或接受 1 次补跑。
+
+### 媒体上传（Spaces）
+- 脚本 `var/topup50_20261125/upload_media.py`（boto3；DRY_RUN 打印 local/remote/to_upload 文件数与字节；`--apply` 才写；`--use-cache` 复用桶索引 `remote_media_index.tsv`；`--verify N` 抽查匿名可读）。旧 aws-cli 脚本 `var/do_migration_20261124/upload_media.sh` 保留作兜底（凭据已填）。
+- **DRY_RUN（06:54，全部终态后）**：本地 `1,190,800` 文件 / `102.06 GB`；桶内 `1,071,825` 文件 / `91.87 GB`；**待上传 118,979 文件 / 10.19 GB**。数值落盘 `upload_dryrun_final.json`。
+- 桶：`joybuy-media`（fra1），对象路径 `media/<relative_path>` 不变；桶保持 Private + 每对象 `public-read` ACL。
+- **实际执行（`--apply --use-cache`，06:55→08:13，75 分钟）**：上传 **118,979 个文件 / 10.19 GB，失败 0**；`--verify 5` 抽查 5 个对象：ACL `public-read` 全部为 True、匿名 GET 全部 **200**（内容长度 1.9KB~183KB）。结果落盘 `upload_media_result.json`（local 1,190,800 文件/102.06GB；桶 1,071,825 文件/91.87GB，上传后约 1,190,804）。
+- 桶索引构建耗时约 40 分钟（`s3 ls` 107 万 key）；下次要重算索引再跑一次 DRY_RUN 即可。
+- 上传带宽实测约 1~2 MB/s（直连 DO fra1），16 线程；总量 10GB 约 75 分钟。
+
+### 本轮踩坑（务必不要再踩）
+1. **后台 shell 任务会被 harness 在 ~1 小时处整树 kill**：长任务（队列/上传）必须用 `wmic process call create "cmd.exe /c <bat>"` 彻底脱离，bat 里写死 env；否则会出现「调度还活着、子进程秒退、日志 0 字节、DB 留 RUNNING 假 run」。
+2. **被 kill 后必须收尾**：`fix_stuck.py --apply` 把 open run 全部 `complete_run_failed`（会因 `failure_strategy=PAUSE` 让 job 变 FAILED），再把 job 改回 READY，否则队列只派 READY → 任务永久丢失。
+3. `batch_queue.py` 已加 `--task-list/--progress-file/--summary-file`；phase 专跑和复跑都靠这三个参数，别改回硬编码。
+4. **08 组账号池最脆**：4 个号在 05:30 前后全部被 risk-flag（6 小时窗口），`usable_accounts()=0` 会让该组 worker 每 300s 空转。处置是「临时借 07 组跑单个任务，跑完还原」，已用 `phase3_prep.py` 做备份/还原。
+5. `monitor.py` 打印 `switch_node.py` 的 emoji 时 GBK 会 `UnicodeEncodeError`（已加 `sys.stdout.reconfigure(utf-8)`）；`verify_publish.py` 同理。
+6. PDP 接口 `/api/v1/products/<uuid>` **没有顶层 price**，价格/SKU 在 `body["skus"][*]["offer"]`；`search_documents()` 必须传 `market=`，没有 `page_size` 参数。
+7. `ProductSearchDocument` 字段是 `is_searchable`（不是 `searchable`）。
+8. Django test client 要带 `HTTP_HOST="127.0.0.1"`，否则 `DisallowedHost: testserver`。
+9. 上架目标用「StagingProduct.imported_refs.spu_public_id ∪ 窗口内 DRAFT」最稳；`Spu.created_at` 窗口会漏掉「staging 有但类目为空」的，但那些本来也不上架。
+10. 另有一个会话在 02:35 把 26 个 SPU 批量改成 ACTIVE（无类目 13 个），**不是本批动作**，看 ACTIVE 增量时要注意区分。
+11. **仓库根出现 4 个 0 字节垃圾文件**（05:16 创建，文件名是中文句子片段：`15m=0，orphan_units=0。`、`最终`、`本报告只做如实记录；所有验证按纪律均为针对性验证（仅`、`状态：**已完成（2026-11-26`），`git status` 里是 untracked。**不是本批脚本产生的、本轮没删**，看起来是某个会话 heredoc/重定向写错留下的，确认后可 `rm` 掉。
+
+### 交付物路径（都在 `var/`，不进 git）
+| 内容 | 路径 |
+| --- | --- |
+| 批次报告 | `var/topup50_20261125/BATCH_REPORT.md` |
+| 每任务/每品类数据 | 报告第 2/3 节；原始 `final_summary.json`、`progress.json`、`progress_phase3.json` |
+| 上架备份 / 汇总 | `publish_batch_backup.json`（1700 SPU + Offer 原值）/ `publish_batch_summary.json` |
+| 上架验证 | `verify_publish_report.json` |
+| 节点切换 | `node_switch_state.json`、`node_switch_monitor.log`、`var/clash_crawler_proxy/switch_log.jsonl` |
+| 媒体上传 | `upload_dryrun_final.json`、`upload_media_result.json`、`remote_media_index.tsv`、日志 `var/logs/upload_apply_20261126.log` |
+| 队列日志 | `var/logs/topup50_queue_full2_20261126.log`、`var/logs/topup50_queue_phase3_20261126.log`、每 run `var/logs/crawl_runs/<run_id>.log` |
+| 运维脚本 | `batch_queue.py`、`run_full_queue.bat`、`run_phase3.bat`、`monitor.py`、`fix_stuck.py`、`resume_jobs.py`、`phase3_prep.py`、`publish_batch.py`、`upload_media.py`、`verify_publish.py`、`report.py`、`snapshot.py`、`status.py` |
+
+### 回滚方式
+- 上架：`.venv/Scripts/python.exe -I var/topup50_20261125/publish_batch.py --rollback --apply`（按 `publish_batch_backup.json` 还原 SPU 状态与 Offer 字段，并重建文档）。
+- 媒体：只增不删；要清理只能人工按 key 删除（脚本没有 delete 逻辑）。
+- job 状态：`phase3_backup.json`（263/290 的原组与原状态）、`resume_jobs_backup.json`（暂停时 5 个 job 的原状态）。
+
+### 关机
+用户要求「上架 + 上传都完成后」才关机。**三项前置条件在 08:15 全部满足**（55/56 任务终态、1700 SPU 上架且验证 ALL_OK、118,979 文件/10.19GB 上传且抽查可公共读），随后执行 `shutdown //s //t 120`（Git Bash 必须写双斜杠，否则 MSYS 会把 `/s` 改写成路径；下达时刻 2026-11-26 08:14:13 本地，08:16:13 关机）。开机后若要继续补缺口，见「缺口与原因」与 `BATCH_REPORT.md` 第 4 节。
+
 ## 0d2. ⏸ 补货队列已暂停（准备换 VPN 节点）（2026-11-26 01:52 本地，未 commit / 未关机）
 
 ### 我们在做什么
@@ -1901,6 +2294,7 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - **选型定稿：$48 FRA1 + Spaces $5 = 全套 $53/月**（实际机器 nproc=4 核）。**$24 = 最低可用**；$96 只为 200 并发能力（口径已放宽不必）。对比 AWS 时代 ≈$300+/月。
 - **迁移影响清单（已按此执行）**：① Spaces 兼容 S3 API——`MEDIA_S3_ENDPOINT` ✅；② 媒体本地重传 ✅ 进行中；③ DB 本地 dev dump ✅；④ 代码 git bundle ✅ 进行中；⑤ TLS：DO LB $12/月免费证书 或 certbot $0——上 TLS 回滚 cookie 降级；⑥ ssh 别名/.env 接线 ✅。
 - **Spaces 媒体腿已提前接通（2026-11-24 晚，上传进行中即切换）+ 媒体迁移 ✅ 收官（2026-11-25 晨对账完成）**：服务器 `.env` 切 `MEDIA_BACKEND=s3` + endpoint/bucket/prefix/region + Spaces AWS_* 凭据（chmod 600）；nginx `/media/` 从本地 alias 切 **Spaces 反代 + proxy_cache**（`/var/cache/nginx/media` 10G，conf.d/joybuy-media-cache.conf），resolver=127.0.0.53（systemd-resolved，以 /etc/resolv.conf 实际为准）。**两个 nginx 坑（403 现场证据）**：① `proxy_pass https://$spaces/joybuy-media/;` 带变量时 URI 部分被 as-is 传递、**不追加请求路径** → 匿名列目录 → AccessDenied；必须 `rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;` + proxy_pass 不带 URI；② rewrite 曾漏 `media/` 段（桶 key=media/<relative_path>）→ 403；正确终态=`rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;`。验证：cms 键经代理 MISS 3684B→HIT 200；三个 derived 样本服务器侧 200（17ms 缓存命中）+ 本机 200；API sanity 200。**媒体迁移终态对账（2026-11-25 晨）**：主同步 exit 0 → 增量补传 8,540 个尾巴文件（与今晚爬虫导入并行吸收）→ 终版双侧清点**完全一致：本地 1,064,175 文件 / 91,599,685,570 字节 == Spaces 1,064,175 对象 / 91,599,685,570 字节，字节级零差**（含爬虫通宵新增）。**剩余必要动作：桶 Visibility 改 Public**（用户控制台一键）——服务器 Django put_object **不带 ACL**，应用侧新上传对象是 Private → 403；桶 Public 才能让其可见（sync 批量对象有 per-object public-read ACL 不受影响）。**运维常态化：爬虫持续导入新图 → 媒体 sync 需定期跑（建议每日一次 `bash var/do_migration_20261124/upload_media.sh`，凭据已填、断点安全；可复制为正式运维脚本或挂计划任务）**。本地→服务器 VPN 此间多次瞬断（000/SSH 断连），判服务器侧正常与否用"服务器侧 curl 地面真值"法，勿被本地噪音带偏。
+- **媒体 sync 常态化首跑（2026-11-26，今日爬虫批次媒体已全部上 Spaces）**：`upload_media.sh` 两轮——主轮 55,776 文件（exit 0）+ 收敛轮 69,248 文件（exit 0，爬虫边导边传持续吸收）→ Spaces 终版 **1,187,663 对象 / 101,939,746,478 字节**（本地同刻快照 1,156,099 / 99,450,126,169，差值 = 爬虫在清点窗口内继续导入的新文件，属移动目标正常态；**sync exit 0 的语义 = "扫描时点本地全部文件已在 Spaces"，爬虫运行期对不平是必然，批次结束/每日例行再跑即收敛**）。注意：**Spaces 端点（fra1.digitaloceanspaces.com）国内直连可达，不开 TUN 也能传**（与 Droplet 161.35.x 段不同，实测 11-26 无 TUN 全程正常）——媒体上传与爬虫可共存。**待办不变**：爬虫批次结束后跑一轮收尾 sync；或挂每日计划任务（user 未拍板，勿自建）。
 - **档位确认（2026-11-24 用户问「$48 2核8G160G 够吗」→ 已定案；追加 Regular4C vs Premium2C 吞吐对比）**：官方默认区页 $48 是 Basic Regular 8G/**4C**/160G，但**用户实际选的是 FRA1 法兰克福 Premium Intel 线——该区该线最高档只放出 2C/8G/160G NVMe/5T @ $48**（DO 各区域可售档位不一致，之前"不存在 2核档"的说法只对默认区成立）。**定论：可买、当前够用**——内存需求 ~4.5G/8G、盘 160G NVMe、2 个 Premium 核单核性能比 Regular 高 20-30%（≈2.5-3 Regular 核），峰值 7-10 req/s 扛得住、余量薄于 4C；买前可再瞄一眼 FRA1 的 Basic→Regular 标签有无 4C/8G $48（有则优先），无则直接买 Premium Intel 2C。**DO CPU/内存可在线 resize（盘只增不减）→ 先买 2C 后升配不是陷阱**。别选 General Purpose $63（8G/2 专用核）：只有 25G 盘，硬伤。**4C-慢核 vs 2C-快核的吞吐对比（实测数据推演）**：聚合吞吐 4C Regular ≈ 4.0 标准核 vs Premium 2C ≈ 2.5（1.6× 差）；但 **Nuxt SSR 单线程只吃 1 核 → Premium 快核直接受益，4C 多核对 SSR 无用**；每页导航 CPU ≈ 0.33 核·秒（SSR 100ms + 4×API 45ms）→ 日常峰值 1.67 页/s ≈ 0.55 核（两档 ~15-25% 占用都稳）；突发 5× → Premium 接近满、4C ~65%；200 并发（12 页/s ≈ 4 核）→ Premium 顶不住、4C 边际（=容量报告原话）。批量任务（爬虫导入重建文档）4C 快 ~60%。
 - **本地侧准备完成（2026-11-24，弃 AWS→DO 的执行前置；本任务只做本地，未动任何远端/未动 dev 容器写路径）**：
   - **代码支持 S3 兼容端点（DO Spaces）**：`backend/config/settings.py` 新增 `MEDIA_S3_ENDPOINT`（空=AWS 虚拟主机式，行为不变；非空=S3 兼容端点）；`backend/media/storage.py::get_s3_client` 端点非空时 `boto3.client(endpoint_url=..., Config(s3={"addressing_style": "path"}))`（DO Spaces 用 path style 最稳），懒加载单例沿用 `reset_s3_client` 供测试重置；`s3_public_url` 端点非空拼 `{endpoint}/{bucket}/{prefix}{path}`（path-style），views 302 回退零改动。**commit `3332e26`（信息英文一行），已推送 origin main**。
@@ -5000,6 +5394,14 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
   - **坑（不得再踩）**：①`messages.js` 只能精确 Read→Edit 字符串替换，另一 Agent 同时在改，整文件 Write 会覆盖对方改动；②`request.newContext({ baseURL: '.../api/v1' })` 再用 `/auth/...` 前导斜杠会丢掉 `/api/v1` 前缀、请求落到 SPA 返回 HTML（本轮踩过，改为 baseURL 不带路径 + 全路径）；③临时买家的 `MerchantApplication` 由 `buyer` OneToOne CASCADE，删买家即删申请，无需单独清理；④状态请求必须 catch 降级，否则后端 403/网络失败会让整个下拉菜单渲染卡住。
   - **未做/下一步**：①APPROVED 态只在单测覆盖，浏览器未实测（需管理端审核通过，属另一 Agent 的端到端范围）；②中文买家账号名过长时仍按原 ellipsis 处理；③**git 未提交**。
 
+- **当前任务（2026-11-26，中文批量翻译第一轮 1033 商品，✅ 完成（数据留在库里），爬虫全程共存未受影响，未 commit）**：用户指令「爬虫优先，先把商品翻成中文，其他语言后续；商品放宽到早于 24h 前」。
+  - **zh 语言接线**：`agent/settings.py` 增 `TARGET_LOCALES["zh"]=("zh-CN",)` 与 `LANGUAGE_NAMES["zh"]="Chinese"`；`agent/prompts.py DEFAULT_GLOSSARY` 增 zh 种子（免费配送/保修/颜色/材质/容量）；其余管线（术语注入/specs/verify CJK 档）复用。
+  - **规模**：候选 14,501（24h 前 + ACTIVE + en 标题 + ACTIVE offer + 缺 zh-CN）；本轮完成 **1033 商品**（batch1 200 + batch1b 33 历史 SPU 补齐 + batch2–5 各 200），**2018 units 全 done、0 failed**；zh 术语 1598 done；写入 zh-CN 标题 1033 行、detail 985、SKU 规格 552； **11 项 PASS**。**剩余候选 13,478**（每 1000 约 100 分钟模型时间）。
+  - **verify.py 最小补丁（重要，勿回退）**：原 CJK 分档按**源**语言，en→zh 全量误报 2029 条 → 新增 **CJK-目标档 (0.1,2.5)**（源≥20 字符）+ 中文列名豁免；de/fr/nl 行为不变。
+  - **质量**：14 处真缺陷 SQL 精确修补留痕（GB 重复、4GB→4G、"5-Inch"含义反转、粤语"嘅"、"1roll英寸"幻觉、L升/ml升单位重复）；zh→zh 再翻 29 个中文源商品结果可用。报告与 30 条抽样：；回滚 id 集 （purge 命令在报告内，未执行）。
+  - **爬虫共存实测**：2h13m 未暂停一次；Threads_connected 36–64（阈值 120）； 41 条集中在爬虫自身换 run 时段（翻译窗口 0–8 条/30min）；同窗口爬虫导入 913 商品；Ollama 全程仅 hy-mt2。**tasklist //FI 在 Git Bash 会被 MSYS 改写参数 → 用 wmic 判进程**（batch1 的 run 其实没死，差点重复启动）。
+  - **待办**：①剩余 13,478 候选分批续翻（同口径 SQL ，每批 200 约 20 分钟）；②de/fr/nl 等用户发话；③全量完成后重建本地化搜索文档（此前 55 行实验已回退）；④ 只刷 en-GB 的限制仍在。
+
 - **当前任务（2026-11-17，AI 术语表全链路（零人工）+ 三轮重翻对照 + 搜索文档实验，✅ 术语表可用、55 商品重翻 PASS，⚠️ 搜索文档实验已回退，未 commit）**：用户指令「术语表要我们自己建立，全程都要 AI 来，不需要人工干预，参照电商平台规则」。
   - **术语表（AI 生成→AI 审查→自投票，无人工）**：规则落地 `translation_agent/glossary/rules.md`（颜色/材质/尺码/容量/质保/合规/品类/功能形容词/永不收录 10 类）；工具 `translation_agent/tools/build_glossary.py`（子命令 `scan/gen/review/vote/apply`，curator=`qwen3.8:27b`，`think:False` 防思考吃掉 num_predict，24–36 词/批、`format=json`）。**覆盖 7488/10090 条可译词（74%）**；审查统计 `ok 5704 / fix 1783 / unchanged 1819 / suspicious 270 / 低置信度 1 / 德语名词大写自动修正 37`；写回 `translation_term` **7536 行/语言**，全表备份 `translation_agent/glossary/backup_20261117.json`，产出 `glossary/glossary_v1.json`，余 **2602 条 pending**。
   - **管线接线**：正文/图文 prompt 早已注入 `db.glossary_hits()`（命中的 done 词按官方 `Reference the following translations:` 段，上限 20 条）+ `DEFAULT_GLOSSARY` 种子；本轮补的是**品类策略**——`GLOSSARY_NON_INJECTABLE`（prompt 注入）= **空**（形容词必须注入，否则 `Sparkling Sour` 会错），`GLOSSARY_NON_INJECTABLE_SPEC`（规格单元格取值）= `{adjective_selling}`（避免 `Ambidextr` 这类非词，宁可保留源文）；术语 `category` 由 `var/glossary_apply_20261117/backfill_categories.py` 回填进 `quality_flags`（apply 原本没写，导致过滤失效——已修）。
@@ -6257,6 +6659,40 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
   - **未完成/需用户操作**：**Windows 防火墙**三个 profile 全开且**没有 Node 的入站放行规则**，`netsh advfirewall firewall add rule name="Joybuy storefront 3000" dir=in action=allow protocol=TCP localport=3000` 因非管理员被拒 → **需以管理员身份执行该命令**（或首次连接时在弹窗点"允许访问"），否则手机仍然连不上。当前主机 IP：**192.168.1.165**（以太网），另有 WSL 172.27.160.1（不用）。
   - 备注：管理端 5173 / 商家端 5174 仍是只绑 127.0.0.1；若要局域网访问，同样加 `--host 0.0.0.0` 即可（CSRF 白名单已覆盖它们的端口）。
 - **2026-11-24 20:55 手动重启后端（用户要求，无代码改动）**：杀掉 8000 上的 runserver（PID 37436），**脱管看护循环 6 秒内自动拉起**新实例（PID 44428，父 35640），无需手动敲命令。验证：8000 单行 LISTENING、health ok、经 3000 代理 `api/v1/cart` 200/0.27s、`localhost:3000` / `192.168.1.165:3000` / 5173 / 5174 全部 200。
+- **2026-11-26 03:35 「有些服务挂了」排查（结论：服务没挂，是爬虫批量导入持锁拖慢加购，无代码改动）**：用户报服务挂了。实测四端口全部 LISTENING、health ok、三端首页 200、关键接口全 200 → **无服务down**。真正问题是**加购慢/偶发 500**：
+  - 后端日志 11-25 18:57–18:58（UTC）连续 3 次 `POST /api/v1/cart/items` **500**，异常是 `django.db.utils.OperationalError: (1205, 'Lock wait timeout exceeded')`；同一窗口还有 20 个 `cart/items` 请求耗时 **28–70 秒**（都 201 成功）。
+  - 实测复现：连续加购 3 次耗时 **18.9s / 7.25s / 0.04s**；采样 `INNODB_TRX` 抓到单个事务 `trx_rows_locked` 从 16 涨到 94、持续 10s+。
+  - **根因**：`cart/services.py` 的 `add_item` 用 `Offer.objects.select_for_update()` 锁商品行，而当前**有一个爬虫批量导入任务在跑**（`var/topup50_20261125/batch_queue.py`，开启于 03:19，56 个任务/已完成 16，**8 个 `run_crawl_*` worker**）——导入事务长时间持 `offer` 行锁，加购只能排队，超过 MySQL `innodb_lock_wait_timeout=50s` 就 1205。
+  - **现状**：`SELECT ... FOR UPDATE NOWAIT` 可立即拿到 Offer 行（无残留锁）；端到端实测登录+加购 **201**、购物车能读到商品；探针账号已删除（`probe-cart-20261126*@joybuy.test`，remaining 0）。
+  - **结论/建议**：①不要杀那个爬虫批（属另一会话任务），等它跑完加购自然恢复；②若要根治体验，可把加购的锁改成「短锁等待（如 3s）+ 有限重试」或 `nowait` 快速失败提示"稍后再试"，避免用户等 50 秒——**未实施，待用户拍板**。
+  - 备注：11-22 15:23 那次 `merchant/overview` 1205 也是同类并发锁冲突（非新问题）。
+- **2026-11-26 03:50 全部前端 + API 开放局域网访问（2 处改动；MySQL/Redis/Mailpit 按用户要求保持仅本机）**：
+  - **改动**：①`backend/config/settings.py` 在既有 DEBUG 分支里追加代码，把本机所有非 127.* IPv4 加进 **ALLOWED_HOSTS**（runserver 绑 0.0.0.0 后，其他设备直连 :8000 的 Host 头是本机 IP，不在白名单会 400 DisallowedHost）；②`var/run_backend_keepalive.sh` 启动参数 `127.0.0.1:8000` → **`0.0.0.0:8000`**；③admin/merchant 的 vite 改用 `--host 0.0.0.0` 重启（这两端没有看护脚本，是普通后台任务）。
+  - **验证（针对性）**：四端口全部 `0.0.0.0:PORT LISTENING`；**经局域网 IP 全部 200**——`192.168.1.165:3000`（购物端）、`:5173`（管理端）、`:5174`（商家端）、`:8000/api/v1/health`（API，证明 ALLOWED_HOSTS 生效）；同时 `localhost`/`127.0.0.1` 原有访问方式仍 200；`ruff check backend/config/settings.py` 通过。
+  - **注意**：改 keepalive 脚本后必须**重启看护循环本身**（bash 会把 while 循环体整块缓存，只重启 runserver 仍用旧参数）——正确顺序是杀看护 bash → 杀 runserver → `bash var/start_keepalives_detached.sh`。
+  - **仍未完成（需用户操作）**：**Windows 防火墙没有任何 Node/Python 入站放行规则**，跨设备访问依旧会被拦。管理员 PowerShell 执行一条即可覆盖全部端口：
+    `netsh advfirewall firewall add rule name="Joybuy dev LAN" dir=in action=allow protocol=TCP localport=3000,5173,5174,8000,8025,33060,63790`
+  - **明确不做的**：MySQL 33060 / Redis 63790 / Mailpit 1025+8025 仍是 `127.0.0.1` 映射（`infra/compose.dev.yml` 未改）。用户回复「那先不用动了」——改绑定要重建容器，会打断正在运行的爬虫批量导入。将来要开：把 compose 里的 `127.0.0.1:` 前缀换成 `${DEV_BIND_ADDRESS:-127.0.0.1}:` 并在 `infra/.env` 设成本机 IP，再 `docker compose -f infra/compose.dev.yml up -d`。
+  - 参考：`infra/compose.dev.yml` 三个服务当前均为 `127.0.0.1:PORT` 绑定；MySQL 账号 `joybuy@%` 已允许任意主机登录，所以只差端口映射 + 防火墙。
+  - **补充（2026-11-26 03:55，回答用户「重建容器会不会丢数据」）**：不会。三个服务的数据都在**命名卷**里（`docker inspect` 实测 `joybuy_dev_mysql_data → /var/lib/mysql`，另有 `joybuy_dev_redis_data`、`joybuy_dev_mailpit_data` 挂 `/data`），`docker-compose up -d` 重建容器只是「删容器→建新容器→**复用同名卷**」，数据不动；MySQL 镜像固定 `mysql:8.4.7` 无跨版本 datadir 风险。会丢数据的只有 `docker-compose down -v`、`docker volume rm`、改卷名或改成 bind mount。**重建的代价是 5–10 秒停机**：in-flight 请求可能 500、爬虫导入事务会失败（可重跑）。参考行数（重建后应一致）：`spu=21169 offer=31148 sku=32538 buyer=180 orders=57`。compose 工具：本机 `docker compose` 子命令不可用，用 **`docker-compose`（v2.39.1）**。尚未执行，等用户通知。
+- **2026-11-26 08:47 容器重建完成：MySQL/Redis/Mailpit 开放局域网（数据零丢失）**：用户先把网卡改成**静态 IP 192.168.1.165/24，网关 192.168.1.1，DNS 192.168.1.1**（`PrefixOrigin=Manual`、Dhcp=Disabled 已核实），并暂停了爬虫/翻译任务，授权按安全流程执行。
+  - **备份（先做）**：`var/backups/joybuy_20261126_pre_lan.sql`，1.2 GB / 27 秒 / `mysqldump --single-transaction --quick --routines --triggers --events --databases joybuy`；校验：`-- Dump completed`、**建表 131 = 库内 131 张表**、1280 条 INSERT、关键表与已知商品 ID 均在。
+  - **改动**：`infra/compose.dev.yml` 四个端口由硬编码 `127.0.0.1:` 改为 **`${DEV_BIND_ADDRESS:-127.0.0.1}:`**（mysql 33060 / redis 63790 / mailpit 1025+8025）；新建 **`infra/.env`**（被 `.gitignore` 覆盖）设 `DEV_BIND_ADDRESS=0.0.0.0`；`docker-compose --env-file .env -f compose.dev.yml up -d mysql redis mailpit` 重建三容器（~6s）。
+  - **踩坑（关键，勿再踩）**：第一次把 `DEV_BIND_ADDRESS` 设成 **192.168.1.165** 时，容器只绑该 IP、**回环 127.0.0.1 不再监听**，而后端连的是 `127.0.0.1:33060`（MySQL）+ `127.0.0.1:63790`（Redis）→ `/api/v1/health` 立刻 `database:error / cache:error`、购物端 500/000。改成 **`0.0.0.0`**（同时覆盖回环与局域网）后恢复。**结论：本机还要用服务时不能只绑单一 LAN IP，必须 `0.0.0.0` 或双端口映射。**
+  - **验证**：容器全部 healthy；`docker port` 显示 `0.0.0.0:33060/63790/1025/8025`；loopback 与 LAN 双向可用（`mysql -h127.0.0.1` 与 `-h192.168.1.165` 均 `connected, spu=21170`；Redis LAN `PING → +PONG`；Mailpit LAN 200；API LAN 200；storefront LAN 200）；health 回到 ok。**数据**：重建后 `spu=21170 offer=31149 sku=32539 buyer=180 orders=57`，与重建前一致（03:55 记录的 21169 是更早快照，08:36 又导入 1 个商品，故 +1 属正常增长，非丢失）。
+  - **安全提醒**：**Redis 没有密码**（`requirepass` 为空），现在同网段任何设备都能读写；MySQL 业务账号 `joybuy/joybuy_dev_only` 弱口令且 `@'%'`。仅限内网开发机使用，切勿把该网段接入公共网络。
+  - **防火墙已开放（2026-11-26 08:53，已完成）**：当前 shell 非管理员（`IsInRole(Administrator)=False`），直接用 `netsh` 被拒；改用 **UAC 提权**完成——写一个临时 ps1 到 `var/`，再 `powershell -Command "Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','<ps1>' -Verb RunAs"`，用户点【是】后脚本执行。**验证**（`netsh advfirewall firewall show rule name="Joybuy dev LAN"`）：已启用=是、方向=入、配置文件=域/专用/公用、协议=TCP、本地端口=`3000,5173,5174,8000,8025,33060,63790`、操作=允许。临时 ps1 与日志已删除。
+    - **坑**：非管理员读不了规则——`Get-NetFirewallRule` 报「拒绝访问」，要改用 `netsh advfirewall firewall show rule name=...` 查看；`Start-Process -Verb RunAs` 本身不报错，是否真的提权成功要靠脚本内写日志文件判断（第一次无日志无法确认，第二次加日志才看到 `result: rules=1`）。
+  - **2026-11-26 09:42 真正的根因与修复（Mac 只能访问 3000/5173/5174）**：现象=Mac 能开三个网页端口、**8000/8025/33060/63790 全不通**。提权脚本读出的规则表给出答案：
+    - **`Docker Desktop Backend` 在 Public 档有显式 `Block` 规则**（2 条）→ 容器端口全被拦；
+    - `node.exe` 有 **Public Allow** → 所以 3000/5173/5174 通（这三个恰好是 node 起的）；
+    - `python.exe` 的 Allow 只覆盖部分档位/部分安装路径 → 8000 被拦；
+    - **以太网被 Windows 判为「公用网络」（Public）**（WLAN 才是 Private），这是总开关。
+    - **修复**：①`Set-NetConnectionProfile -InterfaceIndex <以太网> -NetworkCategory Private`（以太网 → 专用）；②补 3 条**程序级 Profile=Any** 放行规则（`.venv\Scripts\python.exe`、`D:\Anaconda\python.exe`、`D:\com.docker\resources\com.docker.backend.exe`）；③端口规则 `Joybuy dev LAN` 重建为 `Profile=Any`、端口 `3000,5173,5174,8000,8025,1025,33060,63790`。
+    - **验证**：`Get-NetConnectionProfile` → 以太网 **Private**；4 条 Joybuy 规则全部 `Enabled=True / Allow / Profile=Any`；本机侧 `192.168.1.165:8000` 200、`:8025` 200、`:3000` 200、5173/5174 200、health ok。**待用户在 Mac 上复测**。
+    - **坑（重要）**：PS1 里**不要写中文**（如 `-InterfaceAlias "以太网"`）——PowerShell 5.1 按 ANSI 解析无 BOM 的 UTF-8 文件，中文变乱码会导致脚本静默失败（第一次改网络类别的脚本就是这么废掉的，日志都没生成）。改成 ASCII + 用 IP 反查 `InterfaceIndex`，并且在**第一行就写日志**，才能确认提权脚本真的执行了。
+  - 回滚：`git checkout infra/compose.dev.yml` + 删 `infra/.env` 的 `DEV_BIND_ADDRESS`（或改 `127.0.0.1`）后 `docker-compose -f compose.dev.yml up -d`；数据异常再 `docker exec -i joybuy-dev-mysql-1 mysql -uroot -pjoybuy_root_dev_only < var/backups/joybuy_20261126_pre_lan.sql`。
+  - 回滚：`git checkout infra/compose.dev.yml` + 删 `infra/.env` 的 `DEV_BIND_ADDRESS`（或改 `127.0.0.1`）后 `docker-compose -f compose.dev.yml up -d`；数据异常再 `docker exec -i joybuy-dev-mysql-1 mysql -uroot -pjoybuy_root_dev_only < var/backups/joybuy_20261126_pre_lan.sql`。
 
 ### 2026-11-09（正式详情存储 + 购物端渲染：视频 / 图文区块 / 规格表格 / spec_options / AI）
 
@@ -8049,3 +8485,42 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 2. **Crisp 后台 Website 设置**：把 joyfumi.com / www.joyfumi.com 加进域名列表，否则挂件在正式域名不弹出。
 
 **后续注意**：nginx 已 3 块结构，再跑 certbot 类工具改配置后 diff 检查 default_server 归属；.env 回滚备份在服务器 `.env.bak.tls20261125`（勿删，回滚锚点）。本节按纪律未 commit git、未跑全量验证。
+
+## 【查看更多】楼层全量补采完成（2026-11-26 17:00 本地，✅ 完成）
+
+**任务**：用户指出 `/active/` 各楼层的【查看更多】展开数据只采了首层——首采十页每页只点了一次按钮，只有第一层从 5 件展开到 25 件，其余楼层停在 5 件。要求 5 个页面全部建单重采，并把 jnSk Coupon zone 差的 1 件补上。
+
+**已完成**：
+
+1. **jnSk 补 1 件**：Coupon zone 缺 `10299353`（Kasj Z201 电动足浴盆，SPU 22725，此前已 ACTIVE），按清单原位置插回，现 25/25。
+2. **5 页各建 PAGE_SET 任务并跑完**（原目标账号组 01/03/06/08 全部处于 6 小时风控冷却，改派 数据抓取05 / 数据抓取）：
+   - 24EG、4ZXg、TLgE、89Hg、295t 全部完成，新增清单 117~150 件/页。
+   - 执行器必须用 `run_in_background` 起 `manage.py run_crawl_run --run <uuid>`；`_spawn_run_executor` 在工具会话里起的子进程会随父进程退出（本次踩到两次，run 卡在 RUNNING 无事件）。
+3. **爬虫修了 3 个点击缺陷**（`crawler/joybuy_crawler/spiders/pages_run.py::_render_page`）：
+   - 按钮文案补中文「查看更多」：295t 首轮整页被渲染成中文，英文文案匹配不到 → 0 次点击、每层 5 件。
+   - 改为**按模块点**（`.bab-opt-mod` + 卡片数 ≤ 5 才点），不再按全页按钮列表索引：展开后按钮从 DOM 消失导致列表前移，按索引会跳层（89Hg 末两层就是被跳过的）。已展开楼层（>5 张）跳过，避免重复展开（295t 曾出现一层 40 件）。
+   - **点之前先滚到底**：楼层是滚动懒挂载，进页 8 秒时后两三层还没进 DOM，89Hg 连续三轮只展开前 3 层。滚到底 → 回顶 → 再点，run#402 才把 5 层全部展开到 21/25/25/25/25。
+4. **回填 + 上架**：
+   - `var/home_modules_20261125/fill_products.py` 重跑，全部页面 `missing=0`，楼层商品 420 → 856 件。
+   - 新导入商品是 DRAFT → 活动页序列化只输出 ACTIVE（`content/activity_services.py:164`），楼层会少卡。`publish_activity_drafts.py --apply` 上架 151 个（激活 Offer 87、重建文档 151、失败 0，备份 `publish_activity_drafts_backup.json`）。
+   - 41 个食品/冷冻品 INACTIVE（此前「食品整体下架」批处理所致）用 `exempt_activity_food.py` 重跑恢复：SPU/SKU/Offer 置 ACTIVE 但**不重建搜索文档**，仅活动页可见。
+
+**最终接口实测（/api/v1/activity-pages/active/<id>，各楼层 products 数）**：
+
+| 页面 | 楼层商品数 |
+| --- | --- |
+| TLgE | 25 / 25 / 17 / 25 / 25 |
+| 24EG | 25 × 6 |
+| 4ZXg | 25 × 6 |
+| 89Hg | 21 / 25 / 25 / 25 / 25 |
+| 295t | 25 / 22 / 25 / 25 / 25 / 20 |
+| jnSk | 5 / 25 / 25 / 25（Top deals 真站本就 5 件且无按钮） |
+
+3GBT(5/23)、3Yu5(25/2/20)、7Uw(6)、店铺页(15) 无待展开楼层，未改动。
+
+**注意**：
+- 楼层「17 件」「21 件」「22 件」「20 件」都是真站该层实际数量（按钮已消失 `more=false` 或清单就这么多），不是漏采。
+- 89Hg 的详情页导入有大量 `IMPORT_SOURCE_CONFLICT`（源 SKU 已绑到别的 SPU 的多规格兄弟），`fill_products.py` 有 SKU 级兜底，已全部落位，不算丢数据。
+- 本轮创建的任务：job#371~381、run#392~402。可按名字 `补采*-* 全楼层更多 20261126` 追溯。
+
+**验证**：按验证纪律只做针对性验证——逐页调接口核对楼层商品数（上表）、`fill_products.py` 输出 `missing=0`、上架脚本 `failures=0`。未跑全量测试与 e2e。
