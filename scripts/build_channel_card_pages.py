@@ -44,7 +44,9 @@ from merchant_ops.views_catalog import StaffApiError, _activate_offers_on_publis
 HERE = ROOT / "var" / "home_modules_20261125"
 SOURCE_SYSTEM = "joybuy_uk"
 FLOOR_CAP = 25
-BRICK = "#a33838"  # 真站楼层标题深红（measure 系列实测）
+# 真站 4VQ7 实测（probe_4vq7_style.json）：楼层标题 28/700、**黑色**、行高 35，
+# 标题模块高 72（上内边距 16、下 21），楼层模块之间 0 间距，tab 底到首个模块 9px。
+MOD_TITLE_COLOR = "#000000"
 
 PAGES = [
     {
@@ -272,9 +274,12 @@ def main() -> None:
                     page=page,
                     kind=ActivitySection.Kind.PRODUCTS,
                     title=floor["title"],
-                    title_color=BRICK,
+                    title_color=MOD_TITLE_COLOR,
                     columns=5,
                     show_more=floor["show_more"],
+                    # babel 楼层模块口径（真站 4VQ7 实测）：模块间 0 间距，
+                    # 标题模块自带 16/21 内边距，购物端据此渲染（extra.mod）。
+                    extra={"mod": True},
                     sort_order=floor["sort_order"],
                 )
                 ActivitySectionProduct.objects.bulk_create(

@@ -79,8 +79,12 @@ function reveal(section) {
 
 // .app-main > * 默认给上下 24px 外边距；活动页/店铺页要求 header 与 banner 无缝，
 // 用行内样式压掉上边距（scoped CSS 与全局规则特异性相同，不可靠）。
+// babel 楼层模块页（extra.mod，2026-11-26 真站 4VQ7 实测）：tab 底到首个模块 9px，
+// 且首层标题模块的上内边距不能被 margin 折叠顶穿——用 padding 兜住，否则
+// 画布底色 #F6F7F9 会从 header 与标题之间漏出来。
 const pageStyle = computed(() => ({
   marginBlockStart: '0px',
+  ...(sections.value[0]?.extra?.mod ? { paddingBlockStart: '9px' } : {}),
   ...(props.page?.background_color ? { background: props.page.background_color } : {}),
 }))
 
@@ -116,6 +120,7 @@ const pageTitle = computed(() =>
         :class="[
           `activity-section--${section.kind.toLowerCase()}`,
           { 'activity-section--flush': isFlush(section, index) },
+          { 'activity-section--mod': !!section.extra?.mod },
           { 'activity-section--store-banner': props.kind === 'store' && section.kind === 'BANNER' },
         ]"
       >
@@ -291,6 +296,29 @@ const pageTitle = computed(() =>
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* babel 楼层模块口径（2026-11-26 真站 4VQ7 实测，extra.mod 标记）：
+   楼层模块之间 0 间距；标题模块高 72（上内边距 16、下 21）；
+   标题文字底到卡片顶 45 = 标题下内边距 21 + 网格上外边距 24。 */
+.activity-section--products.activity-section--mod,
+.activity-section--banner.activity-section--mod,
+.activity-section--carousel.activity-section--mod,
+.activity-section--video.activity-section--mod {
+  margin-top: 0;
+}
+
+.activity-section--mod .activity-floor-title {
+  padding: 16px 0 21px;
+  margin-bottom: 0;
+}
+
+.activity-section--mod .activity-grid {
+  margin-top: 24px;
+}
+
+.activity-section--mod .activity-more {
+  margin-bottom: 16px;
 }
 
 .activity-more {

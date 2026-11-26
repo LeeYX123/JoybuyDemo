@@ -2,7 +2,34 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cuc. 调研：列表同款只出一卡 + PDP 切规格换整套数据（2026-11-27，✅ 只读调研完成 / 未写库、未改业务代码、未 commit）
+
+> 用户需求（新）：「同款多规格在列表页只展示一个商品；进 PDP 后展示规格选择，切规格时画廊/主图/评分/已售/详情/价格都换成所选规格的数据（用户说 Joybuy 就是这样）」。涉及两类：已合并的 486 组 + `skip_underivable.csv` 的 223 组（483 SPU，未合并）。
+> **完整调研报告：`var/variant_family_20261127/findings.md`**；抽样表 `merged_variant_map_sample.csv` / `unmerged_family_sample.csv`；原始数据 `measure.json` / `stats.json`；真站实测 `real_*.json|png`（脚本 `measure.py`/`stats.py`/`probe_switch.cjs`/`export_cookies.py`）。
+
+### 事实要点（可复核，全部写进 findings.md）
+- **现状（代码）**：PDP 切 SKU 只变「价格/库存可购性/加购 offer/规格文本」；`gallery`（`MediaUsage→Spu`）、`review_summary`、`sale_amount`、`content_sections`、`title` 全是 SPU 级，切规格不重新取（`catalog/detail_views.py:294-345,368-430`；`storefront/pages/p/[id].vue:108-122,260,463-465`）。`Sku` 没有图片字段，导入器画廊永远挂 Spu（`crawler_control/import_services.py:909-952`）。
+- **合并是否保住「变体→归档 SPU」映射**：`backup_merge.json` 完整（1196/1196 SKU 带 `spu_public_id`；486/486 组有 `media_usages` 归属、`identities`）→ **能支撑**。但库里**没有**这张映射：成员画廊 `MediaUsage` 已改挂 keep 并按 asset 去重（归档 SPU 0 行），SKU/身份/视频也改挂 keep，归档 SPU 0 SKU 0 Offer 0 文档。评分/已售/详情可原地读（710/710 归档 `SpuDetail` 在、683 行译文在），**画廊归属只有备份有**。要做「切规格换数据」必须先把映射落表（一次性回填）。
+- **数据差异（实测 486 组）**：评分均值不同 427 组、评价数 478、已售 474、详情字数 297、有族内独有画廊图 479。keep 画廊是并集（p50=14/p90=22/max=71）；480/486 组 SKU 全可购。
+- **223 组未合并族（实测）**：483 SPU、408 个仍 ACTIVE 在售、179 组仍多卡；slug 100% 同族（族键可派生），但标签不可派生（`empty_label` 191 / `prefix_too_short` 15 / `duplicate_label` 9 …）→ 能去重、**不能自动给轴值**。抽样 5 组见 CSV（A-0018 五个 SPU 标题逐字相同、画廊全共享；A-0016/A-0058 画廊与详情差异大）。
+- **真站（实测，登录态 + color-api 打桩）**：规格选项是 `<a href="/dp/<slug>/<别的skuId>?ref_sku=…&dimExpandType…">`，**点击=整页导航到另一个 skuId 的商品页**（不是局部换图）。实测 4 个商品：URL/标题后缀/价格必变；主图+画廊 3/4 全换（交集 0/10）；图文详情 1/4 变、3/4 同文；**HUAWEI 两个颜色评分 4.7(10+)、已售 300+ 完全相同 → 真站评分/已售是族级**。注意与库内矛盾（库内该族评分变体级 4.32·516/4.41·249…），需产品拍板以哪边为准。无规格选择器的源页（胶原蛋白粉/眼罩/PS5/Addis 等）实测确实没有互链，与库内 `variants=[]` 一致。
+- **列表去重（实测）**：`ProductSearchDocument` 每 SPU 一条、无族字段；按 slug 族可派生。`is_searchable=1` 的 17,754 条里 1,866 条落在 781 个多成员 slug 族 → 去重少 1,085 卡（其中 223 组贡献 408 条→少 185 卡；余 558 族/1,458 条→少 900 卡）。列表页不显示总数但分页用 `total_pages`（`ProductListing.vue:86-87`）→ 数据层「代表卡」做法下 `total/total_pages` 自动变真实值，不存在「显示 170 分页按 200」。
+
+### 下一步 / 待用户拍板（**未定，不得自行决定**）
+1. 评分/已售切规格时跟不跟着变（真站现状=不变，库内数据=变）；2. 走 P1 就地换整套数据 / P2 族内跳转（最像真站）/ P3 回滚合并后统一走 P2；3. 去重范围只 223 组还是全 slug 族（905 族/2,180 SPU）；4. 卡片价格与 `price_asc/desc` 按代表价还是族价区间；5. 223 组轴值来源（人工命名 / `Style 1..N` / 只去重不给选择器）；6. A-0041 这类「成员本身多 SKU」的族是否纳入；7. 486 组是否允许再加变体档案表或回滚。
+
+### 本次验证（按验证纪律仅做针对性验证）
+- 只读 Django ORM 查询 dev MySQL 8.4.7（无 save/update/delete）；真站 Playwright chromium 1440×1200 + 爬虫账号登录态只读解密（临时 cookie 文件用完即删）；8 个真站页面、4 次成功规格切换。
+- 未跑任何测试套件（本次未改代码）；未 commit。
+
+### 踩坑（下次不要重踩）
+- 老 cookie（2026-11-19）打真站会 307 到 `/login?redirectReason=risk605_login`；要么用爬虫账号只读解密（`export_cookies.py`），要么直接标注「风控挡住=推定」。cookie 导出必须只保留 `domain` 以 `joybuy.co.uk` 结尾的项，否则 `.joybuy.com/.nl/...` 的同名 `mfs_session/pin` 会覆盖英国站会话。
+- 真站规格选项**不是** `background-image` 色块，是 `<a href*="dimExpandType">` 链接；用坐标找色块会 0 命中。
+- `backup_merge.json` 里 `media_usages.object_id` 是**成员 SPU 的 pk**（不是 public_id）；`skus[].spu_public_id` 才是合并前归属。归档 SPU 现在读不到画廊，别误判「没有变体图」。
+
 ## 0cub. 批次 CB2：同款多规格 SPU 合并（2026-11-27 01:45，✅ 已完成并写库 / ⚠️ 有残留风险 / 未 commit）
+
+> 后续批次：**标题固化已完成**（2026-11-27 00:45，见下方「标题固化」小节），0cub 原先「爬虫重导入可能改回变体名」的风险已用 `local_field_override` 处理。
 
 > 任务书写的编号 `0ct` 已被「详情/评分缺失清单」与「爬虫出站代理」两个批次占用，本批顺延为 `0cub`。
 > 完整报告：`var/variant_merge_20261126/report.md`；台账：`backup_merge.json` / `result.csv` / `apply_plan_A.csv` / `apply_plan_B2.csv` / `skip_underivable.csv`。
@@ -31,12 +58,31 @@
   - 库内全量复核（486 组）：keep 全 ACTIVE、SKU 数 = 成员数、规格无重复、成员全 INACTIVE 且 0 SKU/0 文档/0 身份、别名齐全 → **0 问题**。
   - 回滚已在真库验证两次：单组 trial（apply→rollback，3 个 SPU 全恢复）与 A-0318/A-0320 返工。
 
+### 标题固化（2026-11-27 00:45，✅ 已写库 / 未 commit）
+
+> 完整报告：`var/merge_title_override_20261127/report.md`；产物：`scope.csv`（810 行）、`backup_titles.json`（before 快照）、`verify.json`、`verify_reimport.json`、`scope_audit.csv`、`plan.json`；脚本：`audit_scope.py` / `freeze_titles.py` / `verify_reimport.py` / `rollback_overrides.py`。
+
+- **机制**（读代码后的准确口径）：爬虫只写 `SourceFieldValue`（`apply_source_field_values`）；人工覆盖在 `LocalFieldOverride`，唯一键 `(content_type, object_id, field_code)`，走 `propose_local_override` → `review_local_override(APPROVED)`；`resolve_effective_value` 口径 = `approved_override ?? source`。导入侧标题路径是 `get_or_create_spu_from_source`（已有 SPU 不动标题）→ `SpuTranslation.objects.get_or_create(..., defaults={"title": ...})` → `apply_source_field_values`，**已存在的 `SpuTranslation.title` 列重导入时根本不会被写**。展示链路 `resolve_product_content` 先 `SpuMarketContent`（keep 全 0 行）再 legacy `SpuTranslation`，不读覆盖层 → 固化不改当前展示，作用是钉住「有效值」、挡住未来「源层回写模型」的对账作业。
+- **写库**：486 个 keep（`backup_merge.json` 与 `SpuAlias.spu_id` 去重集合完全一致）：en-GB 486 + zh-CN 324 = **810 条 `title` 覆盖（全 APPROVED / version 2 / 审计 1620 条）**；`local_field_override` 表里**只有 title**，价格/库存/类目/描述无覆盖。其他语言（de/fr/nl，115/6 条）未固化。
+- **固化值**：取合并后库内标题。审计 486/486 en-GB 标题 == `base_title`（无被覆盖），**`--fix-titles` 修复 0 条**。抽查 10 个（A-0003/A-0005/A-0007/A-0014/A-0029/B2-0107/A-0415/B2-0387/A-0513/B2-0414）全为家族标题、无规格尾缀；3 组结尾命中颜色短语（A-0167/A-0216/B2-0063）属标题本身措辞，不是覆盖。
+- **验证**（针对性）：
+  - 5 个固化 keep 用真实 staging payload 重导入（标题故意改成「家族标题 | 变体标签」，价格 +1；`transaction.atomic()` 内执行并**强制回滚**、剥掉媒体 URL 不下载）→ 模型标题不变 / 有效值仍固化 / `origin=local_override` / 源层 `source`=变体标题 / **价格照常 +1 跟随源层**，5/5 通过。
+  - 2 个未固化在售 SPU 同样重导入改标题 → 有效值 = 新标题、`origin=source`、无覆盖行（没放开全局覆盖）。
+  - 6 组别名真实 HTTP：`/api/v1/products/aliases/<old>` 200 且 canonical = keep、与 `SpuAlias` 一致；keep PDP 200 且标题 = 固化标题。
+  - 幂等：`freeze_titles.py --apply` 重跑 → 810 行全 skip、覆盖数仍 810、版本不涨、审计不增。
+  - 机制回归：`catalog.tests.test_field_override` **10 tests OK**、`test_crawler_import...test_source_updates_never_shadow_approved_local_overrides` **1 OK**；`ruff check/format`（`--config backend/pyproject.toml var/merge_title_override_20261127/`）全过。**未改任何后端/前端业务代码。**
+  - 回滚演练：`rollback_overrides.py` DRY_RUN → 待清理 810 条。
+- **残留（留给后续批次）**：
+  1. zh-CN 标题（324 条，99 条带尺寸/颜色/容量字样）仍是「被保留那个变体」的中译名；组内中文标题句式各异、**无公共前缀可派生**，本批只固化现状。后续人工/翻译写好家族中文标题后重跑 `freeze_titles.py --apply` 即可 `update` 到新值（幂等）。
+  2. **23 个 `base_title` 结尾悬空**（合并剥公共尾部的产物，如 `… Hiking and Skiing, Size`、`… Water Bottle, for`、`… Pack of`），非爬虫覆盖、非本批引入；修标题后同样重跑脚本同步覆盖值。
+  3. 覆盖层目前**没有「源层 → 模型」的应用步骤**；若将来加对账/回写作业，必须先读覆盖层。
+
 ### 当前卡在哪里
-没有阻塞项，本批已收尾。**未 commit**（工作区还有并行 Agent 的改动）。
+没有阻塞项，合并批次已收尾；标题固化也已写库（见上）。**未 commit**（工作区还有并行 Agent 的改动）。
 
 ### 下一步计划（若要继续）
 1. 想扩大覆盖：重跑 `collect.py`/`classify.py` 后看 B2 剩余 328 组与 A 类 258 个非 auto 组（混合商家已定不合并；`skip_underivable.csv` 223 组需人工派生标签）。
-2. 建议单独批次做**标题固化**：对合并后的 keep 用 `propose_local_override(translation,"title",base)` + APPROVE，避免爬虫重导把标题改回某个变体名（本批未做，见「坑」）。
+2. ~~建议单独批次做**标题固化**~~ → **已于 2026-11-27 00:45 完成**（810 条 title 覆盖，见上面「标题固化」小节；zh-CN 家族标题与 23 个悬空标题仍是后续手工活）。
 3. 观察一个爬虫周期（24h+）确认重导不再产生同款新 SPU；无异常后再考虑是否清理归档 SPU（本批未物理删除）。
 
 ### 坑（绝对不要再踩）
@@ -48,9 +94,12 @@
 6. `export_skip.py`/`metrics.py`/`b2_sample_check.py` 是 `var/` 下的裸脚本（`django.setup()` + `sys.path` 插入），和 `collect.py` 同款；直接 `python var/.../x.py`，不要 `cd backend`。
 7. 爬虫 run 405 在合并窗口内一直在导入（20 分钟新建 39 个 SPU）：前后总数含爬虫新增，**「可归因变化」只能看 `backup_merge.json` 的归档数（710）**，别用两次 `count()` 相减。
 8. 回滚脚本 `rollback_merge.py` 默认读 `backup_merge.json` 全量逆序；`--group-id` 只回滚指定组；回滚会重建搜索文档并刷新，跑完要重新确认 `product_search_document` 数与价格区间。
+9. **标题固化脚本不要重复写备份**：`freeze_titles.py` 首次 `--apply` 写 `backup_titles.json`，之后重跑（幂等 skip）若再写会把 before 快照冲成「已固化」状态（本次已踩，现已改成「文件存在就写 `backup_titles_<UTC>.json`」）。`backup_titles.json` 是回滚依据，丢了就没有「固化前标题」。
+10. **`local_field_override` 目前没有「源层 → 模型列」的应用步骤**：`resolve_effective_value` 只被管理端 diff/测试调用，展示读的是 `SpuTranslation.title`/`SpuMarketContent`。所以「固化标题」= 钉住有效值 + 防未来对账回写，**不是**「改了覆盖就能改展示」；要改展示得直接改 `SpuTranslation.title`（改完记得重跑 `freeze_titles.py --apply` 同步覆盖值）。
+11. 重导入**不会更新已存在的 `SpuTranslation` 行**（只有 `get_or_create(defaults=...)`），爬虫标题只进 `source_field_value`；所以「爬虫把标题改回变体名」当前代码下不会发生，别据此判断标题新鲜度——标题列只能靠人工/其它流程更新。
 
 ### 本次改动的文件（提交时只挑这些）
-- 新增：`backend/catalog/migrations/0018_spu_alias_sku_merge_managed.py`、`backend/catalog/management/commands/merge_variant_spus.py`、`backend/catalog/tests/test_spu_alias.py`、`backend/crawler_control/tests/test_merge_managed_spec.py`、`storefront/utils/pdpAlias.js`、`storefront/server/middleware/pdp-alias.js`、`storefront/tests/pdp-alias.test.js`、`var/variant_merge_20261126/*`（本次产出）。
+- 新增：`backend/catalog/migrations/0018_spu_alias_sku_merge_managed.py`、`backend/catalog/management/commands/merge_variant_spus.py`、`backend/catalog/tests/test_spu_alias.py`、`backend/crawler_control/tests/test_merge_managed_spec.py`、`storefront/utils/pdpAlias.js`、`storefront/server/middleware/pdp-alias.js`、`storefront/tests/pdp-alias.test.js`、`var/variant_merge_20261126/*`、`var/merge_title_override_20261127/*`（标题固化批次产出：4 个脚本 + `scope.csv` / `backup_titles.json` / `plan.json` / `verify.json` / `verify_reimport.json` / `scope_audit.csv` / `report.md`）。
 - 修改：`backend/catalog/models.py`、`backend/catalog/detail_views.py`、`backend/config/urls.py`、`backend/crawler_control/import_services.py`、`storefront/pages/p/[id].vue`、`eslint.config.js`。
 - **不要提交**：`var/variant_merge_20261126/spu_dump.jsonl`（23k 行快照，体积大）如需入库请先问用户。
 
@@ -5986,3 +6035,22 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 4VQ7 白名单里有 3 件价格跑出带外（真站改价），已按「价格优先」剔除并用带内圣诞品补位——若运营想保真站原卡，需人工调整；
 - runserver 是 `--noreload`，改后端代码后要手动重启；
 - 下批（美妆/电子等 28 个 id）等用户发话再启动，同一套脚本换个 PAGES 表即可。
+
+## 频道卡落地页楼层标题样式对齐真站（2026-11-27 01:30 本地，✅ 完成）
+
+**问题（用户反馈）**：4VQ7 页楼层标题字体/颜色/大小与真站不一致；顶部 tab 与标题之间间隙过大，且标题上方无 padding/margin，画布底色 #F6F7F9（`--colour-canvas`）从 header 与标题之间漏出。
+
+**真站实测**（`var/home_modules_20261125/probe_4vq7_style.json`，babel 楼层模板）：
+- 标题 28px/700、**黑色 rgb(0,0,0)**、行高 35、居中、margin 0；
+- 标题模块高 72（上内边距 16、下 21），模块之间 **0 间距**（标题模块底=商品模块顶）；
+- tab 底到首个模块顶 **9px**（白底）；标题文字底到卡片顶 45 = 21 + 商品模块上 24；
+- 41xQ/254vg 模块结构与 4VQ7 完全一致（babMods 同构）。
+
+**修复**：
+- 选品脚本：三页楼层 `title_color=#000000`、`extra={"mod": True}`（`scripts/build_channel_card_pages.py`，重跑已写库）；
+- `ActivityPageView.vue`：新增 `activity-section--mod` 变体——模块间 0 间距、标题模块 16/21 内边距（替代 45px 下边距模型：45 = 21 + 网格上 24）、页面 `padding-top: 9px`（inline，仅 mod 页，堵住 margin 折叠导致的画布漏色）；
+- 移动端标题色随 `title_color` 自动变黑，间距未动（无 m 站实测数据）。
+
+**验证**：Playwright 实测渲染值 = 真站模型（28/700/黑/lh35/元素高 72/pad 16+21/margin 0；header 底→标题文字顶 25px = 真站 25px）；页面 padding-top 9px 白底；截图 `cc_4VQ7_desktop_v2.png`；eslint 通过；骨架单测 2/2。按验证纪律未跑全量。
+
+**注意**：`--mod` 变体由 `extra.mod` 驱动，只影响新管线建的三页；10 个老页面走旧间距模型不受影响。后续批次建页统一带 `extra.mod`。
