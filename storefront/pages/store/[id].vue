@@ -2,24 +2,32 @@
 // 店铺页 /store/<真站店铺 id>（2026-11-25，一次性快照复刻）。
 // 与活动页共用配置模型（kind=store）：店铺头 + 商品网格，不含真站的
 // 【店铺】【商品】tab（用户 2026-11-25 拍板）。
+// 2026-11-26：慢网络下客户端导航会先进入 pending，此时渲染骨架而不是降级态。
 import { useHead } from '#imports'
 
 import { useActivityPage } from '../../composables/useActivityPage'
 import { useLocale } from '../../composables/useLocale'
 import { useMobileView } from '../../composables/useMobileView'
 
+import ActivityPageSkeleton from '../../components/activity/ActivityPageSkeleton.vue'
 import ActivityPageView from '../../components/activity/ActivityPageView.vue'
 import MobileActivityPage from '../../components/mobile/MobileActivityPage.vue'
 
 const { t } = useLocale()
 const { isMobileHost } = useMobileView()
-const { page } = useActivityPage('store')
+const { page, loading } = useActivityPage('store')
 
-useHead(() => ({ title: page.value?.store_name || page.value?.title || t('activity.notFound') }))
+useHead(() => ({
+  title:
+    page.value?.store_name ||
+    page.value?.title ||
+    (loading.value ? t('activity.loading') : t('activity.notFound')),
+}))
 </script>
 
 <template>
-  <MobileActivityPage v-if="isMobileHost && page" :page="page" kind="store" />
+  <ActivityPageSkeleton v-if="loading" kind="store" />
+  <MobileActivityPage v-else-if="isMobileHost && page" :page="page" kind="store" />
   <ActivityPageView v-else-if="page" :page="page" kind="store" />
   <section v-else class="activity-missing" role="status">
     <p>{{ t('activity.notFound') }}</p>

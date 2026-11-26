@@ -5575,3 +5575,28 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - `.gitignore`：忽略 `backend/var/deploy/`（数据包按环境现导现用）。
 
 **注意**：管理命令的相对路径以 `backend/` 为 cwd 解析，`--out/--bundle` 必须用绝对路径。导入对页面是「整页替换」，会重置 section/item 的 public_id（前端不依赖，可接受）。
+
+- **当前任务（2026-11-26，生产首页 10 卡片链接修复 → /active|/store 落地页，✅ 完成并已线上验证，未 commit）**：按上一节 `docs/21-activity-pages-deploy.md` 官方流程执行（协调者中途纠偏指定）。生产 `www.joyfumi.com` + `m.joyfumi.com` 首页「Offers for you」10 张卡已从 `/search`/`/s?category=` 全部改指 `/active/<external_id>`（9 张）+ `/store/100000744`（1 张），桌面 1440 与移动 375 双视口逐卡点击全过、console 0 error。
+  - **根因（实测修正上一节假设）**：首页 10 卡渲染组件是 `storefront/components/cms/CmsCampaignGrid.vue`（桌面）与 `MobileHome.vue` 的 `.m-offers` 区（m 站），数据全部来自 **`home_campaign_card` 表 section='campaign' 的 10 行**（`backend/content/campaign_services.py` 经 `/api/v1/storefront/home` 注入覆盖快照；0 行/全 disabled 才回退 CMS 快照 `/search` 层）。生产实查：这 10 行**存在且 enabled**，但 href 停在旧值（第 1 行 `/s?category=electronics`，第 2–10 行 `/search`，title 还是 Welcome Offers/XGIMI 等旧活动）——不是「0 行回退快照」，是「表行本身旧」。前端代码零改动（29990da 已含 /active 路由、卡片静态图与 `tile.href` 渲染）。
+  - **修复方式（两步，均在数据侧）**：①dev 库 campaign 区 10 行本就是正确配置（标题与 activity_page.title 一一对应、编号卡图 `/images/activity/cards/01~10-*.webp`、href 全 /active|/store），`mysqldump --no-create-info --complete-insert --replace --where="section='campaign'"` 导出后经 SSL 导入生产（10 个 public_id 两库完全一致，REPLACE 按 PK 原位覆盖；discovery/weekly 区未动）——等效 docs/21 §2.2 注明的「只修跳转」10 行改法并顺带对齐卡片文案；②官方工具链重建活动页位次：`export_activity_pages`（本地实跑 pages=10 sections=48 **items=856** cards=10 static=34 unresolved=0，与文档期望一致）→ scp `/srv/joybuy/var/deploy/activity_pages.json` → 服务器干跑 `resolved spu=735/735 sku=70/70 missing_spu=0` → `--apply` 输出 **`IMPORTED items=856 skipped=0` + `home cards updated: 10, created: 0`**——把此前裸 SQL 同步的 421 items 干净重建为 856（sections 48 不变），商品按 `joybuy_uk:<source_id>` 来源身份解析、未按主键对齐。
+  - **服务器代码状态（重要）**：`export/import_activity_pages` 属提交 `8894062`（29990da 之后），生产没有。为避免 `git pull` 带上 fbc7889（改 `crawler/joybuy_crawler/spiders/pages_run.py`，用户爬虫在跑）与 6bf9d24（纯文档），**只 scp 两个命令文件为服务器 untracked 文件**（`/srv/joybuy/backend/content/management/commands/*.py`，git status 显示 ??；未来 pull 到含 8894062 的提交时内容一致无冲突）。backend/content 模型在 29990da 与本地 main 间零差异，命令兼容。
+  - **验收清单实测（docs/21 §3）**：cards 10 行全 /active|/store 且 enabled=True ✓；ActivityPage 10（9 ACTIVITY+1 STORE）✓；sections/items 48/**856** ✓（修前 421）；`/api/v1/activity-pages/active/7Uw83…` 200 且 sections 含 products ✓；静态 hero.webp / store 视频 video-1.mp4 / 卡图全 200（随 29990da 产物已就位，**storefront 无需重建**）✓。
+  - **验证（Playwright headless，`var/home_cards_fix_20261126/verify_home_cards.mjs`，原始结果 `verify_results.json`；按验证纪律仅针对性验证）**：www 1440×900 与 m 375×812 双场景，各做「首页 10 卡 href 断言 + 逐卡真实点击 → 落地页断言（URL 非 /s|/search、`.activity-page`/`.m-activity` 渲染、活动标题匹配、分区/商品卡计数>0）」：**desktop hrefs 10/10 landings 10/10 consoleErrors=0；mobile hrefs 10/10 landings 10/10 consoleErrors=0**；抽第 1 卡分区商品卡点击 → `/p/fbdac658-256d-4edd-a593-7e845e004591`（curl 复核 200、h1 渲染；该卡分区商品图 /media/ 抽查 200）。截图 26 张存 `var/home_cards_fix_20261126/`（双视口首页十卡 + campaign 楼层 + 各 10 张落地页 + PDP）。
+  - **坑（不得再踩）**：①m 站落地页组件是 `MobileActivityPage`（根类 `.m-activity`、商品卡 `.m-activity__card`、店铺名 h1 `.m-activity__store`），断言不能照抄桌面 `.activity-page`/`a.activity-card`/`.activity-store-bar__name`，否则页面渲染正常却判 FAIL（本次踩过一轮）；②部署工具链前先查目标提交是否在服务器 HEAD 祖先（`git merge-base --is-ancestor`），缺命令优先 scp 单文件而非 pull（防止带上爬虫改动）；③ssh 单引号里嵌 SQL 转义不可靠（复踩已知坑），一律 scp 文件 + `mysql < file` / `shell -c "exec(open(...).read())"`；④`useMobileView` 纯 host 判定（m. 前缀），视口宽度只影响 www↔m 自动跳转，不改变渲染分支；⑤campaign 区只要有 enabled 行就整组生效，快照 `/search` 层只是兜底——修复只动表行，别改组件；⑥Windows 下 `new URL(import.meta.url).pathname` 生成 `/E:/...` 坏路径，Playwright 脚本 OUT 目录用字面量。
+  - **改前留档（生产 campaign 区 10 行旧值）**：sort1 "Welcome Offers"→`/s?category=electronics`；sort2 "New arrivals from XGIMI"、sort3 "Refresh Your Kitchen with MAXCOOK"、sort4 "Bonfire night favourites"、sort5 "Be ready"、sort6 "Cosy up this winter"、sort7 "Hosting at yours?"、sort8 "Upgrade to Oral-B iO"、sort9 "Bring home the fun"、sort10 "Happy Diwali" 全部→`/search`；图均 `/media/cms/original/...webp`；public_id 两库一致（da320d87…/d7f12f59…/041241bd…/b5724342…/54496e84…/61852a7b…/b492aa52…/5ee02deb…/0e92c6b8…/81a04f78…）。discovery 10 行（`/s?category=`，过滤后生产可见 7 个）与 weekly 6 行（`/marketing?activityId=`）不在本次范围、未动。
+  - **未做/交接**：①本地 main 领先生产 3 提交（fbc7889 爬虫修复、8894062 文档+工具链、6bf9d24 ADR），生产 `git pull` 时机由用户拍板；②后续换活动页时记得同步改 `home_campaign_card` 卡片文案（后台 CRUD 可管）；③未 commit 任何 git（含 HANDOFF）；④服务器 `/tmp` 临时 SQL/py 已清，`/srv/joybuy/var/deploy/activity_pages.json` 保留供幂等重跑。
+
+## 活动页/店铺页加载骨架（2026-11-26 21:25 本地，✅ 完成）
+
+**问题**：慢网络下从首页点卡片进 /active、/store，客户端导航 pending 阶段会先渲染一帧「This page is not available. Back to home」（用户截图为证）。根因：`useActivityPage` 只返回 `page`，`useFetch` pending 时 page 为空，页面把「加载中」当成「页面不存在」。
+
+**修复**：
+- `composables/useActivityPage.js` 额外返回 `pending`/`loading`（`pending && !page`）；
+- 新组件 `storefront/components/activity/ActivityPageSkeleton.vue`：与真实布局同尺寸的占位（店铺页黑条 + hero + 2 层 5 列商品卡），shimmer 高光扫过，`prefers-reduced-motion` 时静止，含 `role=status`/`aria-busy`/sr 文案；
+- `/active/[id].vue`、`/store/[id].vue`：pending 阶段渲染骨架，pending 结束且无数据才渲染降级态；文档标题加载中不再提前显示 notFound；
+- i18n 新增 `activity.loading`（en/zh/de/fr/nl 五语言）。
+
+**验证**（按验证纪律针对性验证）：
+- 单测 `storefront/tests/activity-page-skeleton.test.js` 2/2（activity 无店铺条、store 有黑条 + 10 卡占位 + aria-busy）；
+- Playwright 慢网实测（`var/home_modules_20261125/skeleton_check.mjs`，接口延迟 4s）：从首页点卡 → 客户端导航 → **26ms 内出现骨架**，全程无「This page is not available」，数据到达后正常切内容；截图 `skeleton_loading.png`。
+- eslint 通过；未跑全量测试与 e2e。

@@ -1,24 +1,29 @@
 <script setup>
 // 活动页 /active/<真站 id>（2026-11-25，首页「为你推荐」落地页）。
 // 数据来自 /api/v1/activity-pages/active/<id>；停用或不存在时渲染降级态。
+// 2026-11-26：慢网络下客户端导航会先进入 pending，此时渲染骨架而不是降级态。
 import { useHead } from '#imports'
 
 import { useActivityPage } from '../../composables/useActivityPage'
 import { useLocale } from '../../composables/useLocale'
 import { useMobileView } from '../../composables/useMobileView'
 
+import ActivityPageSkeleton from '../../components/activity/ActivityPageSkeleton.vue'
 import ActivityPageView from '../../components/activity/ActivityPageView.vue'
 import MobileActivityPage from '../../components/mobile/MobileActivityPage.vue'
 
 const { t } = useLocale()
 const { isMobileHost } = useMobileView()
-const { page } = useActivityPage('active')
+const { page, loading } = useActivityPage('active')
 
-useHead(() => ({ title: page.value?.title || t('activity.notFound') }))
+useHead(() => ({
+  title: page.value?.title || (loading.value ? t('activity.loading') : t('activity.notFound')),
+}))
 </script>
 
 <template>
-  <MobileActivityPage v-if="isMobileHost && page" :page="page" kind="activity" />
+  <ActivityPageSkeleton v-if="loading" kind="activity" />
+  <MobileActivityPage v-else-if="isMobileHost && page" :page="page" kind="activity" />
   <ActivityPageView v-else-if="page" :page="page" kind="activity" />
   <section v-else class="activity-missing" role="status">
     <p>{{ t('activity.notFound') }}</p>

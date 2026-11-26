@@ -18,11 +18,14 @@ export function useActivityPage(kind) {
       ? `${config.apiBaseInternal}/activity-pages/${kind}/${externalId.value}`
       : `/api/v1/activity-pages/${kind}/${externalId.value}`,
   )
-  const { data } = useFetch(url, {
+  const { data, pending } = useFetch(url, {
     key: `activity-page-${kind}-${externalId.value}`,
     ignoreResponseError: true,
   })
 
   const page = computed(() => (data.value && !data.value.error ? data.value : null))
-  return { page }
+  // 慢网络/客户端导航时 data 还没到，pending 为真——页面必须先渲染骨架，
+  // 不能把「还在加载」当成「页面不存在」（2026-11-26 用户反馈）。
+  const loading = computed(() => pending.value && !page.value)
+  return { page, pending, loading }
 }
