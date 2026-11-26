@@ -2,12 +2,12 @@ import uuid
 
 from django.db import OperationalError, ProgrammingError
 from django.http import JsonResponse
-from offers.market_services import offer_market_chain, resolve_market_context
-from offers.models import Offer
-from reviews.models import Review
 
 from catalog.localization_services import localized_specification, resolve_product_content
 from catalog.models import Sku, Spu, SpuDetailTranslation
+from offers.market_services import offer_market_chain, resolve_market_context
+from offers.models import Offer
+from reviews.models import Review
 
 
 def _offer_merchant_payload(offer: Offer) -> dict:
@@ -195,20 +195,10 @@ def _translated_detail_payload(detail, translation) -> dict:
     return payload
 
 
-def product_detail(request, public_id):
-    """Localized storefront product detail for the requested market and locale."""
+def _active_spu_detail_queryset(public_id):
+    """PDP 用的单 SPU 读取集合（详情 + 译文 + 市场内容 + 视频）。"""
 
-    context = resolve_market_context(request)
-    if context is None:
-        return JsonResponse(
-            {
-                "error": {"code": "MARKET_UNAVAILABLE", "message": "Market not configured."},
-                "request_id": getattr(request, "request_id", None),
-            },
-            status=503,
-        )
-
-    spu = (
+    return (
         Spu.objects.filter(public_id=public_id, status=Spu.Status.ACTIVE)
         .select_related(
             "brand",
@@ -226,8 +216,63 @@ def product_detail(request, public_id):
             "videos__video",
             "videos__poster",
         )
-        .first()
     )
+
+
+def product_alias(request, old_public_id):
+    """旧商品 id → 保留商品 id 的别名查询（批次 CB2 同款合并）。
+
+    购物端 server middleware 在渲染 ``/p/<old>`` 之前查一次并 301 到保留
+    商品；404 表示该 id 不是被合并商品（按普通 PDP 流程继续）。
+    """
+
+    from catalog.models import SpuAlias
+
+    alias = SpuAlias.objects.select_related("spu").filter(old_public_id=old_public_id).first()
+    if alias is None or alias.spu.status != Spu.Status.ACTIVE:
+        return JsonResponse(
+            {
+                "error": {"code": "ALIAS_NOT_FOUND", "message": "No alias for this product id."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=404,
+        )
+    response = JsonResponse(
+        {
+            "old_public_id": str(old_public_id),
+            "canonical_public_id": str(alias.spu.public_id),
+        }
+    )
+    # 别名在合并且回滚前都不变；短缓存足够挡住热门旧链接的重复查询。
+    response["Cache-Control"] = "public, max-age=60"
+    return response
+
+
+def product_detail(request, public_id):
+    """Localized storefront product detail for the requested market and locale."""
+
+    context = resolve_market_context(request)
+    if context is None:
+        return JsonResponse(
+            {
+                "error": {"code": "MARKET_UNAVAILABLE", "message": "Market not configured."},
+                "request_id": getattr(request, "request_id", None),
+            },
+            status=503,
+        )
+
+    from catalog.models import SpuAlias
+
+    spu = _active_spu_detail_queryset(public_id).first()
+    canonical_public_id = None
+    if spu is None:
+        # 别名回退（批次 CB2）：被合并 SPU 的 public_id 归档后仍可读取，返回
+        # 保留商品的完整 payload，并带 canonical_public_id 供前端换成新 URL。
+        alias = SpuAlias.objects.filter(old_public_id=public_id).first()
+        if alias is not None:
+            spu = _active_spu_detail_queryset(alias.spu.public_id).first()
+            if spu is not None:
+                canonical_public_id = str(spu.public_id)
     if spu is None:
         return JsonResponse(
             {
@@ -288,6 +333,7 @@ def product_detail(request, public_id):
 
     gallery = []
     from django.contrib.contenttypes.models import ContentType
+
     from media.models import MediaUsage
 
     spu_usages = MediaUsage.objects.filter(
@@ -359,6 +405,8 @@ def product_detail(request, public_id):
     return JsonResponse(
         {
             "public_id": str(spu.public_id),
+            # 命中旧 id 别名时返回保留商品 id（批次 CB2）；正常访问为 None。
+            "canonical_public_id": canonical_public_id,
             "market": market.code,
             "requested_locale": locale.code,
             "content_locale": content.content_locale,

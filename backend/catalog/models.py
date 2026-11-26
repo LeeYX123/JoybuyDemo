@@ -788,6 +788,13 @@ class Sku(models.Model):
     width_mm = models.PositiveIntegerField(null=True, blank=True)
     height_mm = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    #: 同款多规格合并标记（2026-11-27 批次 CB2）。
+    #: True 表示该 SKU 的 ``specification`` 是「同款合并」工具按标题差异派生
+    #: 写入的（Size/Colour/Pack/Style），源站页面本身没有规格解析结果。
+    #: 爬虫重导该变体页时会保留本地规格，而不是按「旧非空 → 新空」判为身份
+    #: 冲突（见 ``crawler_control.import_services._adopt_enriched_specification``）。
+    #: 只有合并工具会置位，普通导入/人工编辑保持 False。
+    specification_merge_managed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1031,3 +1038,24 @@ class ProductSearchDocument(models.Model):
                 name="psd_market_locale_rate_idx",
             ),
         ]
+
+
+class SpuAlias(models.Model):
+    """旧商品 URL 别名（2026-11-27 批次 CB2 同款多规格合并）。
+
+    合并不物理删除 SPU：被合并的 SPU 归档（``status=INACTIVE``）并把它的
+    ``public_id`` 写进本表，指向保留 SPU。购物端 ``/p/<old_public_id>`` 命中
+    别名时 301 到 ``/p/<keep_public_id>``，后端详情接口也回退到保留 SPU，
+    保证历史订单「查看商品」、外部分享链接、搜索引擎收录都不 404。
+    """
+
+    #: 被合并（归档）SPU 的 public_id；全局唯一 —— 一个旧链接只能指向一个保留商品。
+    old_public_id = models.UUIDField(unique=True)
+    spu = models.ForeignKey(Spu, on_delete=models.CASCADE, related_name="aliases")
+    #: 审计用：哪个批次/组产生了这条别名（如 ``CB2/A/A-0002``）。
+    reason = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "spu_alias"
+        indexes = [models.Index(fields=["spu"], name="spu_alias_spu_idx")]

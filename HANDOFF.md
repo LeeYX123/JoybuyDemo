@@ -2,6 +2,58 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cub. 批次 CB2：同款多规格 SPU 合并（2026-11-27 01:45，✅ 已完成并写库 / ⚠️ 有残留风险 / 未 commit）
+
+> 任务书写的编号 `0ct` 已被「详情/评分缺失清单」与「爬虫出站代理」两个批次占用，本批顺延为 `0cub`。
+> 完整报告：`var/variant_merge_20261126/report.md`；台账：`backup_merge.json` / `result.csv` / `apply_plan_A.csv` / `apply_plan_B2.csv` / `skip_underivable.csv`。
+
+### 我们在做什么
+把「同一源站 slug 家族、第二个及以后规格各自建了 SPU」的重复商品合并成一个 SPU + 多规格 SKU（用户 2026-11-27 拍板：A 类自动合并、跨商家不合并、B2 抽样通过后合并、标题不可派生者只出清单）。**数据已实际写库**（不可撤销的改动都已备份，可回滚）。
+
+### 已完成（全部实跑，数字见 `report.md`）
+- **前置代码**
+  1. `catalog.SpuAlias`（`old_public_id` 唯一 / `spu` FK / `reason` / `created_at`）+ 迁移 `0018_spu_alias_sku_merge_managed`；`Sku.specification_merge_managed` 标记「规格由合并工具派生」。迁移**已 apply 到 dev MySQL**。
+  2. `catalog/detail_views.py`：新增 `GET /api/v1/products/aliases/<old>`（200 → `canonical_public_id`；404 未知）；`product_detail` 命中别名时返回保留商品 payload 并带 `canonical_public_id`（订单页旧链接不 404）。
+  3. `storefront/server/middleware/pdp-alias.js` + `storefront/utils/pdpAlias.js`：`/p/<old>` 在 SSR 前 **301** 到 `/p/<keep>`，带 60s TTL 缓存、后端异常不挡 PDP。**server 侧必须用 `~~/utils/...` 别名，相对路径在 Nitro 打包后会解析到 `E:\storefront\...`（已踩）。**
+  4. `crawler_control/import_services.py::_adopt_enriched_specification`：对 `specification_merge_managed=True` 的 SKU 保留本地派生规格（否则每合并一组就制造 N 条 `ImportSourceConflict`）；未打标记的 SKU 口径不变。
+  5. `storefront/pages/p/[id].vue`：`spec_options` 过滤后为空时回退到 SKU 规格反推（合并后保留 SPU 的源站 spec_options 可能是单规格残留，否则规格区空白）。`eslint.config.js` 给 `storefront/server/**` 补 Nitro 全局声明。
+  6. `catalog/management/commands/merge_variant_spus.py`（默认 DRY_RUN；`--apply`；`--offset/--limit/--group-id/--force-group-id/--batch-size`）；`var/variant_merge_20261126/rollback_merge.py`。
+- **执行**
+  - A 类：**258 组 / 657 SPU**（257 个 `auto_merge_ok=yes` + 用户样例 `A-0103` 用 `--force-group-id` 豁免价差 3.07x），归档 **399**，failed=0。
+  - B2：抽样 20 组（`b2_sample_check.py` 20/20 通过）→ 批量 208 组；合计 **228 组 / 539 SPU**，归档 **311**，failed=0。
+  - 合计 **486 组、710 个 SPU 归档、710 条 `SpuAlias`、1196 个 SKU 打合并标记**。
+  - 前后：SPU 总数 23,058→23,058（归档 710 + 爬虫同期新增）；ACTIVE/在售 18,411→17,794（可归因 −700）；搜索文档 18,370→17,755（可归因 −710）；dog-toys 310→226、consoles 199→141、school-office-accessories 200→135、sports-nutrition-performance 94→91。
+  - 用户样例：`07aff65c` 现在 Size=140g/300g/600g，`12f82874`/`381eb9bd` 均 301 到它。
+- **验证**（按验证纪律只做针对性验证）
+  - 后端 `catalog.tests.test_spu_alias`(7) + `crawler_control.tests.test_merge_managed_spec`(5) + 回归 `test_product_detail_api` / `test_crawler_import_variants` = **34 tests OK**；`ruff check` 改动文件全过、`ruff format` 只动本批新增段。
+  - 前端 `vitest run storefront/tests/pdp-alias.test.js` = **10 passed**；eslint/prettier 改动文件全过。
+  - 浏览器（`verify_browser.cjs`，白名单买家真实登录）：10 组 × (旧链接 301 / PDP 规格齐 / 切换生效 / 价格随规格变化 / 加购行 offer 正确) + 5 个类目页全分页无同款多卡 = **57/57 PASS**，console error 0。
+  - 库内全量复核（486 组）：keep 全 ACTIVE、SKU 数 = 成员数、规格无重复、成员全 INACTIVE 且 0 SKU/0 文档/0 身份、别名齐全 → **0 问题**。
+  - 回滚已在真库验证两次：单组 trial（apply→rollback，3 个 SPU 全恢复）与 A-0318/A-0320 返工。
+
+### 当前卡在哪里
+没有阻塞项，本批已收尾。**未 commit**（工作区还有并行 Agent 的改动）。
+
+### 下一步计划（若要继续）
+1. 想扩大覆盖：重跑 `collect.py`/`classify.py` 后看 B2 剩余 328 组与 A 类 258 个非 auto 组（混合商家已定不合并；`skip_underivable.csv` 223 组需人工派生标签）。
+2. 建议单独批次做**标题固化**：对合并后的 keep 用 `propose_local_override(translation,"title",base)` + APPROVE，避免爬虫重导把标题改回某个变体名（本批未做，见「坑」）。
+3. 观察一个爬虫周期（24h+）确认重导不再产生同款新 SPU；无异常后再考虑是否清理归档 SPU（本批未物理删除）。
+
+### 坑（绝对不要再踩）
+1. **Nitro server middleware 里不能用相对路径 import**（会解析到 `E:\storefront\utils\...` 导致全站 500）；用 `~~/utils/...`。新增 `storefront/server/` 目录后**必须重启 nuxt dev**才生效。
+2. 后端 `runserver --noreload`：改了 `config/urls.py`/视图必须杀 :8000 让看护重启，否则别名接口 404（本次已踩一次）。
+3. 合并命令的 `--offset` 是相对**当次重算后的 ok 列表**：跑完一批后 `already_merged` 组会消失，offset 语义漂移（本次因此少跑一批，改用「不带 offset 重跑」补齐）。分批请用 `--limit` 或按 group-id。
+4. `strip_common_tail` 会把 `4 x 2.5kg Bags` 裁成 `4`（公共尾部是单位）；现在只有「剥完仍含字母」才采用剥离结果——改动标签算法后要重看 `apply_plan_*.csv`。
+5. `derive_labels` 不能拿**合并后**的库内标题重算：保留 SPU 标题已被改写成公共前缀，会误判成 `empty_label`（`export_skip.py` 因此改用 CSV 的 `variants_derivable` 列）。
+6. `export_skip.py`/`metrics.py`/`b2_sample_check.py` 是 `var/` 下的裸脚本（`django.setup()` + `sys.path` 插入），和 `collect.py` 同款；直接 `python var/.../x.py`，不要 `cd backend`。
+7. 爬虫 run 405 在合并窗口内一直在导入（20 分钟新建 39 个 SPU）：前后总数含爬虫新增，**「可归因变化」只能看 `backup_merge.json` 的归档数（710）**，别用两次 `count()` 相减。
+8. 回滚脚本 `rollback_merge.py` 默认读 `backup_merge.json` 全量逆序；`--group-id` 只回滚指定组；回滚会重建搜索文档并刷新，跑完要重新确认 `product_search_document` 数与价格区间。
+
+### 本次改动的文件（提交时只挑这些）
+- 新增：`backend/catalog/migrations/0018_spu_alias_sku_merge_managed.py`、`backend/catalog/management/commands/merge_variant_spus.py`、`backend/catalog/tests/test_spu_alias.py`、`backend/crawler_control/tests/test_merge_managed_spec.py`、`storefront/utils/pdpAlias.js`、`storefront/server/middleware/pdp-alias.js`、`storefront/tests/pdp-alias.test.js`、`var/variant_merge_20261126/*`（本次产出）。
+- 修改：`backend/catalog/models.py`、`backend/catalog/detail_views.py`、`backend/config/urls.py`、`backend/crawler_control/import_services.py`、`storefront/pages/p/[id].vue`、`eslint.config.js`。
+- **不要提交**：`var/variant_merge_20261126/spu_dump.jsonl`（23k 行快照，体积大）如需入库请先问用户。
+
 ## 0cua. 缺评分在售商品随机生成评分（2026-11-27，✅ 完成 / 未 commit）
 
 > 任务书写的编号 `0cu` 已被 2026-11-25「furniture 42 个 DRAFT SPU 上架」占用（0ca~0cz 全部已用），本批顺延为 `0cua`。

@@ -352,6 +352,13 @@ def _adopt_enriched_specification(
     身份键是 ``source_id``，规格只是观测值，所以这里只允许「旧规格为空 →
     新规格非空」的补全；旧规格非空且不一致、身份属于别的 SPU、或新签名已被
     同 SPU 其它 SKU 占用时返回 ``None``，调用方仍然抛原错误。
+
+    例外（2026-11-27 批次 CB2 同款多规格合并）：``Sku.specification_merge_managed``
+    为 True 的 SKU，其规格是合并工具按标题差异派生的（源站该变体页本身没有
+    规格解析结果，重导时 ``specification`` 为空，签名会和本地不一致）。这类
+    SKU 一律保留本地派生规格并返回 ``sku``，否则每合并一组就制造 N 条
+    ``ImportSourceConflict``。普通导入/人工编辑的 SKU 标记为 False，仍按原
+    口径判冲突，不放开任意外覆盖。
     """
 
     from catalog.models import Sku, SkuSourceIdentity
@@ -368,6 +375,19 @@ def _adopt_enriched_specification(
     if identity is None or identity.sku.spu_id != spu.pk:
         return None
     sku = identity.sku
+    if sku.specification_merge_managed:
+        # 合并派生规格：保留本地值（不写回源侧观测），只刷新身份观测时间。
+        logger.debug(
+            "keep merge-managed specification for %s#%s (source spec=%r)",
+            source_system,
+            source_id,
+            specification,
+        )
+        if source_url:
+            identity.source_url = source_url.strip()
+        identity.last_seen_at = timezone.now()
+        identity.save(update_fields=["source_url", "last_seen_at", "updated_at"])
+        return sku
     if sku.specification:
         return None
     try:
