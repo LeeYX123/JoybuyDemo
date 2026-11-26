@@ -2,6 +2,68 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cv. 在售无详情补抓（2026-11-27，⚠️ 完成主线 / 90% 目标按口径部分未达 / 未 commit）
+
+> 完整报告：`var/backfill_nodeail_20261127/report.md`；产物 `targets.csv` / `result.csv`（含 `account`）/ `remaining.csv` / `verify.json` / `run.log` / `html/` / `pdp_pages/`。
+> **只改了 `var/` 下的脚本与产物 + 本段 HANDOFF；后端/前端/爬虫代码零改动；不 commit。**
+
+### 我们在做什么
+把「在售但无有效详情」的商品补上详情（`/dp/`+`/dg/` 双请求 → 既有导入链路 → 重建搜索文档），全程**价格冻结、不动上下架**。
+
+### 目标（查库实时口径，未用 CSV 快照）
+- 在售 SPU **17,794**（`Spu.status=ACTIVE` + ≥1 条 ACTIVE Offer）；无有效详情 **197**（**126 无 `SpuDetail` 行** + **69 `content_sections` 为空** + **2 只有标题**）。
+- 源系统：`joybuy_uk` 132 / `joybuy` 52 / `joybuy_nl` 13（`joybuy` 与 `joybuy_uk` 都用 `.co.uk` 域名，`joybuy_nl` 用 `.nl`；**同一个 UK 解析器 `parse_uk_product_detail` + `merge_mobile_detail` 对三家都可用**）。
+
+### 已完成（全部实跑）
+- 预检：账号池 76 未软删 / **57 个含 `pin` 可用**（≥3 PASS）；`数据抓取04` 整组仍 0 可用；域名 robots 200；3 账号各 1 次真实 `/dp/` 探测 2/3 `200`（账号 3 遇 1 次 DNS 抖动，非风控）。
+- 抓取（账号池轮换）：单条 **15s**、每账号 **≤8 条**、每批 **≤20 条**、批间停 **3 分钟**；逐条尝试 **205** 次、成功解析页对 **188**、**请求约 400 次**、墙钟 **00:49–03:22（约 2h33m）**。
+- 结果：**导入成功 189/197**（`refreshed` 152 + `imported_no_detail` 37）；**remaining 8**（6 `failed_empty_parse` + 2 `skipped_no_bindable_sku_offer`）。
+  - 只跑 45 个账号的轮换池；**风控事件 3 次，全部是账号 77 的 307**（每次都在第 3 条内触发），其余账号 0 标记、0 个 403/429/HTTP200 壳页/维护页/登录墙。
+- 入库：全部走既有 `ingest_product_payload` → `import_staging_product`（逐条 `CrawlRun`，job 385/386/387），随后 `rebuild_search_document`。
+
+### 核对（`verify.py` 只读复核，数字为库内实况）
+- **有有效详情 152/197 = 77.16%**（目标 ≥90% 未达）。口径拆分：
+  - **任务书点名的 126 条「无 `SpuDetail` 行」子集 = 116/126 = 92.1%（达标）**；另有 3 条导入成功但来源无正文、7 条失败。
+  - 额外并入的 69 条「`content_sections` 原本为空」只有 **34 条拿到正文（49.3%）**，其余 34 条来源页本身只有规格表；2 条「只有标题」100%。
+  - **「图文 或 规格表」合计 184/197 = 93.4%**。
+  - 全库在售残余（含爬虫同期新增 218 个 SPU）：在售 **18,012**、无 `SpuDetail` 行 **9（0.05%）**、无有效正文 **45（0.25%）** —— 抓取前是 197 = 1.08%。
+- **规格表 150/197 = 76.1%**（导入成功的 189 条中 149 = 78.8%）；`/dg/` 合并成功 **189/189**（失败 8 条没走到 `/dg/`）。
+- **价格 0 变价**：对 197 SPU / **220 条 Offer 逐 `pk` 比对** `offers_before.json` → `current_price`/`list_price`/`promotion_label`/`status`/`merchant` 差异 **0**、新建 Offer **0**、`Spu.retail_price`/`Spu.status` 差异 **0**。
+- **搜索文档 189/189 重建成功**，`min_price` 与最低 ACTIVE Offer 不一致 **0**。
+- **PDP 抽 5 个：5/5 PASS**（HTTP 200 + `detail__content-paragraph` + `Product Description` + 在售）。其中 `59b6378c` 不在搜索列表里是 **0cub 同款族去重**（`is_family_representative=false`，按设计只出族代表卡），PDP 直达可买，不是下架。
+
+### 剩余 8 条（`remaining.csv`，根因已核）
+1. **6 条 `failed_empty_parse`**：源 `SpuSourceIdentity.source_id` 是 UK 榜单导入时生成的**合成 id（`uk-best-<hash>`）**；`GET /dp/uk-best-…` 返回 HTTP 200 的 SPA「Page Not Found / no longer available」壳页（约 544KB，无 `productId`）→ 空解析。**不是风控**；要补齐必须先把源 id 反查成真实 `/dp/<数字 id>`。
+2. **2 条 `skipped_no_bindable_sku_offer`**：`seed-watch` / `seed-cable` 种子测试商品，`OfferSourceIdentity` 是 `seed-watch-offer` 这类非 `<spu>#<sku>` 结构 → 导入会新建 Offer（变相加价），按纪律跳过。
+
+### 下一步计划
+1. 若要把 77% 拉到 90%：只能处理「来源无图文」的 34 条，属于**源头内容缺失**（页面 SSR 里无 description/无 structuredFloors，i18n 里的 `descriptionText` 只是文案键），需要产品/运营决定是否允许生成文案，技术侧无解。
+2. 6 条 `uk-best-*` 建议单独批次做「合成源 id → 真实 `/dp/<id>` 反查」（按标题搜索 `.co.uk` 列表页即可）。
+3. 2 条种子商品建议直接从在售池剔除，或补真实源身份。
+
+### 坑（绝对不要再踩）
+1. **payload 必须显式清空 seller**：`product.to_payload()` 自带页面卖家；「有映射才写」会漏清空 → 既有商家是「Joybuy 自营导入」(pk=1) 的商品被解析成页面卖家，撞 `ImportSourceConflict`（本次 `04d8f09a` 撞 IAGREEA/1028）。无映射时要写**空串**，`resolve_import_merchant` 才会回落 pk=1。
+2. **身份校验别用标题相似度做主判据**：本批 **28 个目标库内标题是中文**（EN 站页面是英文标题），相似度只有 0.42 会误判 `identity_mismatch`。改用「**页面 `productId` == 请求的 skuId / SPU 源 id**」，标题相似度只作页面 id 对不上时的兜底。
+3. **后台长任务会被系统 kill（exit137）**：本次两次（均在 40–50 分钟后），不是风控；靠逐条落 `progress.json` + `--resume` 续跑（第 3 次进入时 `previous=… done_ok=…`）。
+4. **`imported_no_detail` 不等于失败**：来源页只有规格表时导入器不写 `content_sections`，个别连 `SpuDetail` 行都不建。统计「有有效详情」必须把这类单列。
+5. **账号 77 已不稳定**：本批 3 次 307 全部来自它（第 3 条内必触发），下次轮换先排除。
+6. **`SpuDetail` 存在≠有正文**：`{"title":"Specifications","blocks":[],"text":"","images":[]}` 这种「只有标题」的区块要用「有正文/有图」判定，不能只看 `JSON_LENGTH(content_sections)`。
+7. 价格冻结口径照旧：`payload.current_price` = `Spu.retail_price`（空则取首个 Offer 价）、`skus[].price` = 既有 Offer `current_price`、`variants=[]`；只提交「`OfferSourceIdentity` 已存在（`<spu_source_id>#<sku_source_id>`）」的 SKU，否则会新建 Offer。
+8. 脚本是 `var/` 下裸脚本（`django.setup()` + `sys.path`），直接 `.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/xxx.py`，不要 `cd backend`；跑脚本前先确认没有别的 Agent 在同时写库。
+
+### 复跑 / 验证命令（按验证纪律只做针对性验证：本批零业务代码改动，未跑任何单测/lint）
+```bash
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/collect_targets.py     # 目标清单（只读）
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/preflight_db.py        # 账号池（只读）
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/probe.py               # 网络+账号探测（3 次请求）
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/snapshot_prices.py offers_before.json
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/backfill_nodeail.py --apply --resume \
+    --account-limit 45 --per-account 8 --min-interval 15 --batch-size 20 --batch-pause 180
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/build_result.py        # result.csv / remaining.csv
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/verify.py              # 覆盖率+0变价+PDP
+.venv/Scripts/python.exe -I var/backfill_nodeail_20261127/report.py              # report.md
+```
+
 ## 0cy. 夜批协同：执行 31 个频道卡落地页采集（2026-11-27，✅ **本批已跑完** / 未 commit）
 
 ### 我们在做什么
