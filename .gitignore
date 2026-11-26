@@ -52,6 +52,9 @@ var/*
 !var/README.md
 # 前端本地截图/对比产物（调试用，不入库）
 storefront/var/
+
+# 活动页部署数据包（由 export_activity_pages 生成，按环境现导现用）
+backend/var/deploy/
 backend/raw/
 /media/
 /raw/
