@@ -508,3 +508,43 @@ class AuditLogApiTests(Round2Base):
     def test_unknown_module_returns_404(self):
         response = self.client.get(f"/api/v1/admin/banners/{uuid.uuid4()}")
         self.assertEqual(response.status_code, 404)
+
+
+class BuyerSearchTests(Round2Base):
+    """批次 CA：用户端管理搜索支持用户名（display_name）模糊匹配。"""
+
+    def setUp(self):
+        super().setUp()
+        self.buyer_a = BuyerAccount.objects.create(
+            email="alice-a@joybuy.test", password="x", display_name="summer-alice"
+        )
+        self.buyer_b = BuyerAccount.objects.create(
+            email="bob-b@joybuy.test", password="x", display_name="Summer-Bob"
+        )
+        self.buyer_c = BuyerAccount.objects.create(
+            email="summer-c@joybuy.test", password="x", display_name="unrelated-name"
+        )
+
+    def search(self, query):
+        response = self.client.get("/api/v1/admin/buyers/accounts", {"q": query})
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["items"]
+
+    def test_username_fragment_matches_multiple_rows(self):
+        items = self.search("summer")
+        emails = {row["account"] for row in items}
+        # 两个 display_name 同前缀（大小写不同、允许重复）+ 一个邮箱命中
+        self.assertEqual(
+            emails, {"alice-a@joybuy.test", "bob-b@joybuy.test", "summer-c@joybuy.test"}
+        )
+        self.assertIn("display_name", items[0])
+
+    def test_username_search_is_case_insensitive(self):
+        lower = {row["account"] for row in self.search("summer-alice")}
+        upper = {row["account"] for row in self.search("SUMMER-ALICE")}
+        self.assertEqual(lower, {"alice-a@joybuy.test"})
+        self.assertEqual(upper, {"alice-a@joybuy.test"})
+
+    def test_blank_query_returns_all(self):
+        items = self.client.get("/api/v1/admin/buyers/accounts", {"q": "  "}).json()["items"]
+        self.assertEqual(len(items), 3)

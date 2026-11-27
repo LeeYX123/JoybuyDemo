@@ -286,3 +286,13 @@
 [data-concept="folio"] .order-filters input:first-child { grid-column: 1 / -1; }
 [data-concept="folio"] .order-filters > span { display: none; }
 [data-concept="folio"] .order-filters button { width: 100%; margin: 0; }
+
+/* JOYBUY-DEV OVERRIDE: 去截断（2026-11-27 阶段 3 追加要求）。
+   店铺切换器原来 max-width:76px + ellipsis，长店铺名被「…」吃掉；窄屏允许
+   头部换行来完整展示店铺名，绝不再用省略号。 */
+@media (max-width: 480px) {
+  [data-concept="folio"] body > header { flex-wrap: wrap; height: auto; min-height: 68px; row-gap: 4px; }
+  [data-concept="folio"] .merchant-storefront-tools select.shop-switch {
+    max-width: none; flex: 1 1 auto; padding: 0 6px; font-size: 12px; text-overflow: clip;
+  }
+}

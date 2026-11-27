@@ -121,6 +121,14 @@ class AutoOrderCreateTests(AutoOrderBase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "ACCOUNT_NOT_WHITELISTED")
 
+    def test_create_rejects_payment_disabled(self):
+        # 2026-11-27 管理端编辑关闭支付权限：不能创建自动下单任务。
+        BuyerAccount.objects.filter(pk=self.buyer.pk).update(payment_enabled=False)
+        response = self._create()
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"]["code"], "PAYMENT_DISABLED")
+        self.assertFalse(AutoOrderTask.objects.exists())
+
     def test_create_rejects_invalid_offer(self):
         Offer.objects.filter(pk=self.offer.pk).update(status=Offer.Status.INACTIVE)
         response = self._create()
@@ -206,6 +214,24 @@ class AutoOrderExecuteTests(AutoOrderBase):
         self.assertEqual(task.status, AutoOrderTask.Status.FAILED)
         self.assertIn("余额不足", task.failure_reason)
         # 没有生成订单
+        self.assertFalse(Order.objects.filter(auto_order_tasks=task).exists())
+
+    def test_task_fails_when_payment_disabled_at_trigger(self):
+        trigger = timezone.now() - timedelta(minutes=1)
+        task = AutoOrderTask.objects.create(
+            account=self.buyer,
+            merchant=self.shop,
+            offer=self.offer,
+            quantity=1,
+            trigger_at=trigger,
+        )
+        BuyerAccount.objects.filter(pk=self.buyer.pk).update(payment_enabled=False)
+        from orders.auto_order_services import execute_due_auto_orders
+
+        execute_due_auto_orders()
+        task.refresh_from_db()
+        self.assertEqual(task.status, AutoOrderTask.Status.FAILED)
+        self.assertIn("支付权限", task.failure_reason)
         self.assertFalse(Order.objects.filter(auto_order_tasks=task).exists())
 
     def test_task_fails_without_address(self):

@@ -312,10 +312,7 @@ const aboutBullets = computed(() => [
               <span class="m-reco__name">{{
                 locale === 'zh' && item.title_zh ? item.title_zh : item.title
               }}</span>
-              <span
-                v-if="Number(item.rating_average) > 0 || item.sold_amount"
-                class="m-reco__meta"
-              >
+              <span v-if="Number(item.rating_average) > 0 || item.sold_amount" class="m-reco__meta">
                 <span v-if="Number(item.rating_average) > 0" class="m-reco__rating">
                   ★ {{ Number(item.rating_average).toFixed(1) }}
                 </span>
@@ -599,12 +596,12 @@ const aboutBullets = computed(() => [
 .m-discovery__label {
   margin-top: 8px;
   max-width: 95px;
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 14px;
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* JoyPlus: pale gradient band */
@@ -707,12 +704,12 @@ const aboutBullets = computed(() => [
 .m-brands__name {
   margin-top: 8px;
   max-width: 96px;
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 13px;
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* rich text tail note */
@@ -755,15 +752,17 @@ const aboutBullets = computed(() => [
 }
 
 .m-reco__name {
+  /* 标题最多 2 行，超出省略号（min-height 48 含 8 上内边距 = 2×20 行高）。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   padding: 8px 10px 0;
   color: #1a1a1a;
   font-size: 14px;
   line-height: 20px;
   min-height: 48px;
+  word-break: break-word;
 }
 
 /* 评分 | 已售 + 自营徽标（ADR-0003，真站 m 站卡片同款行）。 */

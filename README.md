@@ -31,6 +31,50 @@ Joybuy 是一个按固定公开页面基线实施的研究与演示项目。首�
 
 商家端首期不实现页面或业务，待用户提供参考网页后另行评审；不要把平台端复制为商家端。
 
+## 环境地址
+
+> 本节只列地址与端口；凭据、密钥一律从 `.env` / 服务器 `.env` 读取，不写入本文档。
+
+### 本地开发环境（本机，2026-11-27 实测）
+
+| 服务 | 地址 | 说明 |
+| --- | --- | --- |
+| 购物端 storefront（Nuxt dev） | http://127.0.0.1:3000 | 亦可 `http://localhost:3000`；手机版为响应式，窄视口（<768px）或 `?mobile-auto=1` 触发移动布局 |
+| 后端 API（Django） | http://127.0.0.1:8000 | 健康检查 `GET /api/v1/health`；根路径返回 404 属正常 |
+| 平台管理端 admin-web（Vite） | http://127.0.0.1:5173 | 标题「Joybuy 管理平台」 |
+| 商家中心 merchant-web（Vite） | http://127.0.0.1:5174 | 标题「商家中心 · Joybuy」；手机版 `/mobile.html` |
+| 邮件预览 Mailpit | http://127.0.0.1:8025 | SMTP 端口 `127.0.0.1:1025` |
+| MySQL | 127.0.0.1:33060 | 库 `joybuy`；账号密码见 `.env` |
+| Redis | 127.0.0.1:63790 | 缓存与限流 |
+| 爬虫出站代理（可选） | 代理 `127.0.0.1:7997` / 控制 API `127.0.0.1:9098` | 本地独立 mihomo 实例，脚本见 `var/clash_crawler_proxy/`；非爬虫任务无需启动 |
+
+开发态数据流：`5173/5174 → vite 代理 → 8000`；`3000（Nuxt SSR）→ 8000`；媒体文件走本地 `var/media/`（`MEDIA_BACKEND=local`）或对象存储（`MEDIA_BACKEND=s3`）。
+
+### 生产环境（DigitalOcean，2026-11-27 实测）
+
+| 入口 | 地址 | 说明 |
+| --- | --- | --- |
+| 购物端主站（规范域） | **https://www.joyfumi.com** | 桌面与响应式购物端 |
+| 裸域 | https://joyfumi.com | 301 → `https://www.joyfumi.com` |
+| 购物端手机站 | **https://m.joyfumi.com** | 按 host 判定渲染移动布局（不看窗口宽度） |
+| 手机站备用域 | https://m.www.joyfumi.com | www 窄视口自动跳转到此域 |
+| 商家中心 | **https://merchant.joyfumi.com** | 桌面 + 手机版（`/mobile.html`） |
+| 平台管理端 | **https://www.joyfumi.com/admin18vm6u4b83sf/** | 邮箱 + 密码登录（无 TOTP）；入口路径为混淆串，`/admin/` 不再提供服务 |
+| 后端 API | https://www.joyfumi.com/api/v1/ | 健康检查 `/api/v1/health` |
+| 媒体（图片/视频） | https://www.joyfumi.com/media/&lt;relative_path&gt; | Nginx 反代 DO Spaces 桶 `joybuy-media`（fra1），带 7 天缓存 |
+| 服务器直连（应急/调试） | http://161.35.23.231 | SSH 别名 `joybuy-do`（密钥认证） |
+
+生产基础设施：
+
+| 组件 | 配置 |
+| --- | --- |
+| 应用服务器 | DigitalOcean Droplet，区域 FRA1（法兰克福），4 vCPU / 7.8 GB / 154 GB SSD |
+| 数据库 | DigitalOcean Managed MySQL 集群（VPC 内网端点，强制 TLS，自动备份） |
+| 对象存储 | DigitalOcean Spaces `joybuy-media` @ FRA1（`fra1.digitaloceanspaces.com`） |
+| TLS | Let's Encrypt，覆盖 joyfumi.com / www / m / m.www / merchant 共 5 个域名，certbot 自动续期 |
+| 对外端口 | 仅 Nginx 80/443；应用端口（Nuxt 3000、gunicorn 8000、Redis、Mailpit）均只绑 `127.0.0.1` |
+| 第三方服务 | Google OAuth（买家登录，回调 `https://www.joyfumi.com/api/v1/auth/buyer/oauth/google/callback`）；Crisp 客服（Website ID 见 `.env`） |
+
 ## 命令约定
 
 - 所有命令默认从仓库根目录执行；模块专用命令须明确写出工作目录。

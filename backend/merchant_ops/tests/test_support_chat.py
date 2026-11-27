@@ -340,8 +340,8 @@ class SupportChatCrispMirrorTests(SupportChatTestBase):
         self.assertEqual(kwargs["sender_kind"], "user")
         self.assertEqual(kwargs["sender_name"], "小明")
         self.assertEqual(kwargs["body"], "镜像这条买家消息")
-        # 会话 meta 标题 = 买家昵称（客服端 Inbox 只认这个），带邮箱。
-        self.assertEqual(kwargs["session_nickname"], "小明")
+        # 会话 meta 标题 = 买家昵称-->JoyBuy客服（客服端 Inbox 只认这个），带邮箱。
+        self.assertEqual(kwargs["session_nickname"], "小明-->JoyBuy客服")
         self.assertEqual(kwargs["session_email"], "bp-buyer@joybuy.test")
         message = SupportChatMessage.objects.get()
         self.assertEqual(kwargs["message_id"], str(message.pk))
@@ -363,8 +363,8 @@ class SupportChatCrispMirrorTests(SupportChatTestBase):
         self.assertEqual(kwargs["sender_name"], crisp_mirror.platform_nickname())
         # 正文保持干净：不带 [商家]/[平台] 等前缀。
         self.assertEqual(kwargs["body"], "客服回复一句")
-        # 客服回复时会话标题仍是买家昵称，不会被「系统客服」覆盖。
-        self.assertEqual(kwargs["session_nickname"], "小明")
+        # 客服回复时会话标题仍是「买家昵称-->JoyBuy客服」，不会被「系统客服」覆盖。
+        self.assertEqual(kwargs["session_nickname"], "小明-->JoyBuy客服")
         reply = SupportChatMessage.objects.get(sender_kind="support")
         reply.refresh_from_db()
         self.assertEqual(reply.crisp_status, SupportChatMessage.CrispStatus.SENT)

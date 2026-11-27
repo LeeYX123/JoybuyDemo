@@ -1,7 +1,8 @@
 <script setup>
 import { computed } from 'vue'
-import { navigateTo, useHead, useRuntimeConfig } from '#imports'
+import { navigateTo, useHead } from '#imports'
 
+import { useSearch } from '../../composables/useSearchApi'
 import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useLocale } from '../../composables/useLocale'
 
@@ -13,7 +14,6 @@ import { useLocale } from '../../composables/useLocale'
 const route = useRoute()
 const { categories } = useCategoryTree()
 const { categoryName, t } = useLocale()
-const config = useRuntimeConfig()
 
 const activeSlug = computed(() => String(route.query.category || 'home-living'))
 const minPrice = computed(() => String(route.query.min_price || ''))
@@ -26,14 +26,10 @@ const params = computed(() => {
   return base
 })
 
-const url = computed(() => {
-  const query = new URLSearchParams(params.value).toString()
-  return import.meta.server
-    ? `${config.apiBaseInternal}/search?${query}`
-    : `/api/v1/search?${query}`
-})
-
-const { data } = await useFetch(url, { key: `bestseller-${activeSlug.value}` })
+// Shared search composable: it always sends `market` + `locale` (卡片标题按
+// 请求语言本地化), server-side uses the internal API base, and its cache key
+// includes the query so switching language refetches instead of serving English.
+const { data } = await useSearch(params)
 
 const segments = computed(() => {
   const items = (Array.isArray(data.value?.items) ? data.value.items : []).slice(0, 10)

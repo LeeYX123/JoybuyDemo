@@ -59,7 +59,15 @@ vi.mock('../composables/useMarketLocale', () => ({
 const AuthForm = (await import('../components/AuthForm.vue')).default
 
 function mountForm(mode = 'login', providers = []) {
-  return mount(AuthForm, { props: { mode, providers } })
+  return mount(AuthForm, {
+    props: { mode, providers },
+    // 批次 CA：登录页新增 <NuxtLink> 注册入口；测试里用轻量 stub 保持输出干净。
+    global: {
+      stubs: {
+        NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
+      },
+    },
+  })
 }
 
 async function submitIdentifier(wrapper, value = 'buyer@example.test') {
@@ -78,11 +86,12 @@ describe('AuthForm email-first', () => {
     route.query = {}
   })
 
-  it('opens on the identifier step with the real-site promo and no social block when no provider is configured', () => {
+  it('opens on the identifier step without promo banner and with a register entry', () => {
     const wrapper = mountForm()
 
     expect(wrapper.find('#auth-identifier').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Welcome Offers')
+    expect(wrapper.text()).not.toContain('Welcome Offers')
+    expect(wrapper.text()).toContain('Create an account')
     expect(wrapper.text()).toContain('Continue')
     expect(wrapper.findAll('[data-testid="oauth-button"]')).toHaveLength(0)
     // 真站没有忘记密码入口

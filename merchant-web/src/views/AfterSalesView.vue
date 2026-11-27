@@ -198,8 +198,9 @@ onMounted(load)
             </thead>
             <tbody>
               <tr v-for="row in state.items" :key="row.id">
-                <td class="mono">{{ row.id.slice(0, 8) }}</td>
-                <td class="mono">{{ row.order_id.slice(0, 8) }}</td>
+                <!-- 2026-11-27 全站编号改造：售后号 JYA / 订单号 JYO 均整号展示。 -->
+                <td class="mono">{{ row.id }}</td>
+                <td class="mono">{{ row.order_id }}</td>
                 <td>{{ row.kind === 'RETURN' ? '退货订单' : '用户投诉' }}</td>
                 <td class="cell-sub">{{ row.issue }}</td>
                 <td>

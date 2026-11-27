@@ -293,10 +293,12 @@ function goToPage(next) {
   margin-top: 0;
 }
 
-/* 分布行：高 22、18/1fr/24 三列、列间距 16，无多余内边距。 */
+/* 分布行：高 22、18/1fr/auto 三列、列间距 16，无多余内边距。
+   2026-11-27 去截断：末列由固定 24px 改为 auto，三位数评价数（如 402）
+   不再溢出或被挤压，完整展示。 */
 .reviews__dist-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   height: 22px;
@@ -341,6 +343,7 @@ function goToPage(next) {
 .reviews__dist-count {
   color: #6e7078;
   text-align: right;
+  white-space: nowrap;
 }
 
 /* AI 总结：真站无卡片（无背景/边框/圆角/内边距），正文 16px/500 lh22，

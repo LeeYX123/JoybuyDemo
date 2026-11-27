@@ -233,14 +233,14 @@ const tileStyle = computed(() => {
 }
 
 .category-tile__name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
   max-width: 100%;
   font-size: 0.875rem; /* 14px — the source site's tile label size */
   font-weight: 500;
   line-height: 1.25rem; /* 20px, same as the source tiles */
+  word-break: break-word;
 }
 
 /* Hover: white card, black label, underline under the label only. */

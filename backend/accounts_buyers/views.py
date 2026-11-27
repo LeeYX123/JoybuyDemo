@@ -346,13 +346,18 @@ class BuyerLogoutView(BuyerCsrfAPIView):
 class BuyerSessionView(BuyerCsrfAPIView):
     def get(self, request):
         account = getattr(request, "buyer_account", None)
-        return Response(
+        response = Response(
             {
                 "authenticated": account is not None,
                 "account": _account_payload(account) if account else None,
                 "csrf_token": get_token(request),
             }
         )
+        # 2026-11-27：会话是逐请求的私人数据（管理端审核通过后必须立即可见）。
+        # 没有显式缓存头时浏览器/代理可对 GET 做启发式缓存，前端后台再校验会
+        # 拿到旧状态；显式 no-store 让每次请求都打到后端。
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class BuyerMerchantHandoffView(BuyerCsrfAPIView):

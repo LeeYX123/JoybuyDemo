@@ -143,7 +143,8 @@ onMounted(load)
             <tr v-for="row in state.items" :key="row.id">
               <td>
                 <span class="cell-strong">{{ row.name }}</span>
-                <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
+                <!-- 2026-11-27 全站编号改造：商家编号 JYM+10 位整号展示。 -->
+                <span class="cell-sub">{{ row.id }}</span>
               </td>
               <td class="num">¥ {{ row.required_amount ?? '—' }}</td>
               <td class="num">¥ {{ row.balance }}</td>

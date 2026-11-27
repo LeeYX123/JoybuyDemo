@@ -693,3 +693,154 @@ class RecommendationTests(SearchFixtureBase):
         Offer.objects.filter(sku__spu=no_offer).update(status=Offer.Status.ACTIVE)
         result = recommendation_documents(market=self.market, page=1)
         self.assertEqual(result["total"], 3)
+
+
+class LocalizedListingTitleTests(SearchFixtureBase):
+    """列表卡片标题「读取时本地化」（2026-11-27）。
+
+    搜索索引（``ProductSearchDocument.title``）保持 en-GB 快照不变；接口按
+    请求 locale 批量替换本页 ``title``：``SpuMarketContent``(CURRENT) 优先，
+    其次 ``SpuTranslation``，没有译文就保留英文，绝不回退 de/fr 等其它语言。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.zh = Locale.objects.get(code="zh-CN")
+        self.en = Locale.objects.get(code="en-GB")
+
+    def add_translation(self, spu, *, locale, title):
+        from catalog.models import SpuTranslation
+
+        return SpuTranslation.objects.create(
+            spu=spu, locale=locale, title=title, subtitle="", description=""
+        )
+
+    def test_zh_locale_title_comes_from_translation(self):
+        document = self.seed_product(
+            source_id="zh-translated",
+            title="Wireless Earbuds Pro",
+            price="19.99",
+            category=self.phones,
+        )
+        self.add_translation(document.spu, locale="zh-CN", title="无线耳机 Pro")
+
+        localized = search_documents(
+            market=self.market, category=self.phones, localize_locale=self.zh
+        )
+        self.assertEqual([item["title"] for item in localized["items"]], ["无线耳机 Pro"])
+        # 索引本身不动：文档标题仍是英文快照。
+        document.refresh_from_db()
+        self.assertEqual(document.title, "Wireless Earbuds Pro")
+        # 不传 localize_locale 的调用方（内部/后台）行为不变。
+        plain = search_documents(market=self.market, category=self.phones)
+        self.assertEqual([item["title"] for item in plain["items"]], ["Wireless Earbuds Pro"])
+
+    def test_market_content_current_beats_legacy_translation(self):
+        from catalog.models import SpuMarketContent
+
+        current_spu = self.seed_product(
+            source_id="market-content",
+            title="Smart Watch S2",
+            price="39.50",
+            category=self.electronics,
+        )
+        self.add_translation(current_spu.spu, locale="zh-CN", title="旧版译文")
+        SpuMarketContent.objects.create(
+            spu=current_spu.spu,
+            market=self.market,
+            locale=self.zh,
+            title="智能手表 S2",
+            status=SpuMarketContent.Status.CURRENT,
+        )
+        # STALE 行不参与本地化：该商品回落到 legacy 译文。
+        stale_spu = self.seed_product(
+            source_id="stale-market-content",
+            title="Smart Watch S3",
+            price="49.50",
+            category=self.electronics,
+        )
+        self.add_translation(stale_spu.spu, locale="zh-CN", title="旧版译文 S3")
+        SpuMarketContent.objects.create(
+            spu=stale_spu.spu,
+            market=self.market,
+            locale=self.zh,
+            title="过期市场内容",
+            status=SpuMarketContent.Status.STALE,
+        )
+
+        localized = search_documents(
+            market=self.market, category=self.electronics, localize_locale=self.zh
+        )
+        titles = {item["spu_public_id"]: item["title"] for item in localized["items"]}
+        self.assertEqual(titles[str(current_spu.spu.public_id)], "智能手表 S2")
+        self.assertEqual(titles[str(stale_spu.spu.public_id)], "旧版译文 S3")
+
+    def test_missing_zh_translation_keeps_english_and_never_uses_other_languages(self):
+        document = self.seed_product(
+            source_id="only-german",
+            title="USB-C Charging Cable",
+            price="4.99",
+            category=self.electronics,
+        )
+        # 只有 de-DE 译文，没有 zh-CN / zh：中文列表必须回退英文原值。
+        self.add_translation(document.spu, locale="de-DE", title="USB-C Ladekabel")
+
+        localized = search_documents(
+            market=self.market, category=self.electronics, localize_locale=self.zh
+        )
+        self.assertEqual([item["title"] for item in localized["items"]], ["USB-C Charging Cable"])
+        # 请求 de-DE 时才用德语（读取时本地化对其它语言同样生效）。
+        german = search_documents(
+            market=self.market,
+            category=self.electronics,
+            localize_locale=Locale.objects.get(code="de-DE"),
+        )
+        self.assertEqual([item["title"] for item in german["items"]], ["USB-C Ladekabel"])
+
+    def test_en_gb_response_is_unchanged(self):
+        document = self.seed_product(
+            source_id="en-unchanged",
+            title="Retail Priced Product",
+            price="10.00",
+            category=self.electronics,
+        )
+        self.add_translation(document.spu, locale="zh-CN", title="中文标题")
+
+        en_items = search_documents(
+            market=self.market, category=self.electronics, localize_locale=self.en
+        )["items"]
+        plain_items = search_documents(market=self.market, category=self.electronics)["items"]
+        self.assertEqual([item["title"] for item in en_items], ["Retail Priced Product"])
+        self.assertEqual(en_items, plain_items)
+
+        # 请求 locale == 文档 locale 时不做本地化查询（响应逐字节不变）。
+        with CaptureQueriesContext(connection) as queries:
+            search_documents(market=self.market, category=self.electronics, localize_locale=self.en)
+        self.assertLessEqual(len(queries), 5)
+
+    def test_api_localization_adds_at_most_three_queries_per_page(self):
+        for index in range(5):
+            self.seed_product(
+                source_id=f"budget-{index}",
+                title=f"Budget Product {index}",
+                price=f"{10 + index}.00",
+                category=self.electronics,
+            )
+        # 预热 ContentType/连接等一次性查询，再对比 zh 与 en 的每页查询数。
+        self.client.get("/api/v1/search", {"category": "electronics", "locale": "en-GB"})
+        self.client.get("/api/v1/search", {"category": "electronics", "locale": "zh-CN"})
+
+        with CaptureQueriesContext(connection) as en_queries:
+            response = self.client.get(
+                "/api/v1/search", {"category": "electronics", "locale": "en-GB"}
+            )
+        with CaptureQueriesContext(connection) as zh_queries:
+            zh_response = self.client.get(
+                "/api/v1/search", {"category": "electronics", "locale": "zh-CN"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(zh_response.status_code, 200)
+        self.assertEqual(zh_response.json()["requested_locale"], "zh-CN")
+        # zh 路径比 en 多：market 链探测 1 条（既有逻辑）+ 批量本地化 2 条。
+        self.assertLessEqual(len(zh_queries) - len(en_queries), 3)

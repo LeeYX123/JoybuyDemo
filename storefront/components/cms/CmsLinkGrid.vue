@@ -338,15 +338,14 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
   top: 28px;
   left: 28px;
   max-width: calc(100% - 28px - 125px);
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 18px;
   font-weight: 600;
   line-height: 24px;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+
+  display: block;
+
   word-break: break-word;
 }
 
@@ -509,16 +508,15 @@ const variantClass = computed(() => VARIANT_CLASSES[props.payload.variant] || ''
 
 .brand-card__name {
   padding: 6px;
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 16px;
   font-weight: 600;
   line-height: 20px;
   text-align: center;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+
+  display: block;
+  word-break: break-word;
 }
 
 @media (max-width: 1199px) {

@@ -19,6 +19,7 @@ from merchant_ops.models import (
 )
 from merchant_ops.services import append_after_sale_event
 from merchants.services import ensure_referral_code
+from orders.commerce_payloads import refund_payloads
 
 AFTER_SALE_KINDS = (AfterSale.Kind.COMPLAINT, AfterSale.Kind.RETURN)
 
@@ -66,6 +67,11 @@ def _after_sale_payload(record: AfterSale, *, detail: bool = False) -> dict:
             if item
             else None
         )
+        # 阶段 2：售后详情内嵌退款编号（目前只有管理端手动补录的数据）。
+        payload["refunds"] = refund_payloads(
+            record.refunds.select_related("payment", "after_sale").order_by("created_at", "pk"),
+            iso_fn=iso,
+        )
     return payload
 
 
@@ -85,13 +91,9 @@ class MerchantAfterSalesView(MerchantAPIView):
         query = (request.query_params.get("q") or "").strip()
         if query:
             condition = Q(issue__icontains=query) | Q(progress__icontains=query)
-            try:
-                import uuid as uuid_module
-
-                condition |= Q(public_id=uuid_module.UUID(query))
-                condition |= Q(order__public_id=uuid_module.UUID(query))
-            except ValueError:
-                pass
+            # 2026-11-27 全站编号改造：售后号 JYA / 订单号 JYO 都是字符串。
+            condition |= Q(public_id__iexact=query)
+            condition |= Q(order__public_id__iexact=query)
             queryset = queryset.filter(condition).distinct()
         rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request)
         counts = {

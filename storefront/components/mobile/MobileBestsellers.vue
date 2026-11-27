@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { useFetch, useRuntimeConfig } from '#imports'
+import { computed, ref, watch } from 'vue'
+import { useAsyncData } from '#imports'
 
+import { useBestsellerFeed } from '../../composables/useBestsellerFeed'
 import { useWishlist } from '../../composables/useWishlist'
 import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useLocale } from '../../composables/useLocale'
@@ -12,10 +13,15 @@ import { formatDisplayPrice } from '../../utils/display'
 // (16px, active = 700 + black underline), horizontally scrolling ranked
 // cards 146×250 with a grey rank badge top-left and a wishlist heart
 // top-right. Data: same storefront search API as the desktop floor.
+//
+// 2026-11-27: the curated tabs (家居生活 3:2, 健康保健 3:2) share the desktop
+// rules and loader (`utils/bestsellerCurations.js` +
+// `composables/useBestsellerFeed.js`), so both floors show the same products
+// in the same order; other tabs keep the original single request.
 const { categories } = useCategoryTree()
 const { t, categoryName, locale } = useLocale()
 const { isFavourite, toggle } = useWishlist()
-const config = useRuntimeConfig()
+const { loadTabItems, localeKey } = useBestsellerFeed()
 
 const navCategories = computed(() =>
   (categories.value || []).filter((category) => category.visible_in_nav !== false),
@@ -23,26 +29,31 @@ const navCategories = computed(() =>
 
 const activeSlug = ref(navCategories.value[0]?.slug || 'home-living')
 
-function searchUrl(slug) {
-  const query = `category=${encodeURIComponent(slug)}&sort=newest&page=1`
-  return import.meta.server
-    ? `${config.apiBaseInternal}/search?${query}`
-    : `/api/v1/search?${query}`
-}
+// Reactive key carrying the locale, so a language switch refetches the row
+// instead of reusing the cached English payload (same fix as the desktop floor
+// and `useSearchApi`).
+const feedKey = computed(() => `mobile-bestsellers-${localeKey.value}`)
+const { data: feed } = useAsyncData(feedKey, () => loadTabItems(activeSlug.value))
 
-const { data } = useFetch(() => searchUrl(activeSlug.value), {
-  key: 'mobile-bestsellers',
+// Curated tabs return their configured row (5 cards today); other tabs return
+// the plain search page and keep showing up to 10 cards.
+const switchedItems = ref(null)
+
+// A row fetched before the switch is in the old language; drop it so the
+// refetched (localised) feed row wins.
+watch(localeKey, () => {
+  switchedItems.value = null
 })
 
-const items = computed(() =>
-  (Array.isArray(data.value?.items) ? data.value.items : []).slice(0, 10),
-)
+const items = computed(() => {
+  const source = switchedItems.value ?? feed.value
+  return (Array.isArray(source) ? source : []).slice(0, 10)
+})
 
 async function selectTab(slug) {
   activeSlug.value = slug
   try {
-    const response = await $fetch(searchUrl(slug))
-    data.value = response
+    switchedItems.value = await loadTabItems(slug)
   } catch {
     // keep the previous list on a transient failure
   }
@@ -57,7 +68,7 @@ function priceOf(item) {
   // Same price contract as ProductCard: retail_price string, fallback price_min.
   const raw = item?.retail_price
   if (typeof raw === 'string' && raw.trim()) return raw.trim()
-  const price = item?.price_min ?? item?.price
+  const price = item?.family_max_price ?? item?.price_min ?? item?.price
   return price == null ? '' : formatDisplayPrice(price)
 }
 
@@ -281,15 +292,17 @@ function imgOf(item) {
 }
 
 .m-best__name {
+  /* 标题最多 2 行，超出省略号（min-height 42 = 2×18 保持卡片等高）。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   padding: 6px 8px 0;
   color: #1a1a1a;
   font-size: 13px;
   line-height: 18px;
   min-height: 42px;
+  word-break: break-word;
 }
 
 .m-best__price {

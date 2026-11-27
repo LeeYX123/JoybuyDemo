@@ -203,12 +203,13 @@ class OAuthApiTests(TestCase):
             identities__provider=BuyerIdentity.Provider.FACEBOOK,
             identities__subject="fb-app-scoped-1",
         )
-        # 核心需求：没有邮箱也要能建号、能登录、能下单（白名单默认开启）
+        # 核心需求：没有邮箱也要能建号、能登录；批次 CA 起新号默认不进购买白名单
+        # （后台「用户管理」可手动加入；历史账号不受影响）。
         self.assertIsNone(account.email)
         self.assertIsNone(account.phone_e164)
         self.assertTrue(account.identity_bound)
         self.assertEqual(account.auth_provider, BuyerAccount.AuthProvider.FACEBOOK)
-        self.assertTrue(account.purchase_whitelisted)
+        self.assertFalse(account.purchase_whitelisted)
         self.assertRegex(account.display_name, r"^user\d{4}[a-z]{4}$")
 
         session = self.session_payload()

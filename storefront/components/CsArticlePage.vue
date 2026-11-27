@@ -171,24 +171,25 @@ const breadcrumbPath = computed(() => (article.value ? `/help/${article.value.ca
 }
 
 .cs-article__breadcrumb-root {
-  overflow: hidden;
+  overflow: visible;
   color: #888b94;
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .cs-article__breadcrumb-link {
-  overflow: hidden;
+  overflow: visible;
   color: #888b94;
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+
   text-decoration: none;
+  word-break: break-word;
 }
 
 .cs-article__breadcrumb-link:hover {
@@ -202,13 +203,13 @@ const breadcrumbPath = computed(() => (article.value ? `/help/${article.value.ca
 }
 
 .cs-article__breadcrumb-current {
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 14px;
   font-weight: 700;
   line-height: 20px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 真站 detail_mainWrapper：1264px、min-height 200px、flex。

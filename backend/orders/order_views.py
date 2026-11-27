@@ -42,15 +42,33 @@ def _error(request, exc_or_code, message=None, status=400):
     )
 
 
-def _order_gallery_images(spu_public_ids):
-    """First local gallery image per SPU, one query for a whole order page."""
+def _normalized_public_id(value) -> str | None:
+    """商品 public_id 归一化成 32 位小写十六进制（脏值返回 None）。
 
-    valid_ids = set()
-    for value in spu_public_ids:
-        try:
-            valid_ids.add(UUID(str(value)))
-        except (TypeError, ValueError, AttributeError):
-            continue
+    ``Spu.public_id`` 是 ``UUIDField``：库里存 32 位无连字符，Python 里
+    ``str()`` 是 36 位带连字符。``OrderItem.spu_public_id`` 是字符串快照，
+    历史数据写的是 ``str(spu.public_id)``（36 位带连字符）。两边必须归一化后
+    再比对，否则订单商品图会丢（2026-11-27 编号改造期间踩过）。
+    """
+
+    try:
+        return UUID(str(value).strip()).hex
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _order_gallery_images(spu_public_ids):
+    """First local gallery image per SPU, one query for a whole order page.
+
+    键统一用归一化后的 32 位十六进制；调用方查表也走
+    :func:`_normalized_public_id`，与数据库列形态无关。
+    """
+
+    valid_ids = {
+        normalized
+        for value in spu_public_ids
+        if (normalized := _normalized_public_id(value)) is not None
+    }
     if not valid_ids:
         return {}
 
@@ -60,7 +78,7 @@ def _order_gallery_images(spu_public_ids):
     from media.models import MediaUsage
     from media.storage import media_url
 
-    spus = {str(spu.public_id): spu.pk for spu in Spu.objects.filter(public_id__in=valid_ids)}
+    spus = {spu.public_id.hex: spu.pk for spu in Spu.objects.filter(public_id__in=valid_ids)}
     if not spus:
         return {}
     spu_type = ContentType.objects.get_for_model(Spu)
@@ -110,7 +128,7 @@ def _order_items_payload(order, images):
             "unit_price": str(item.unit_price),
             "currency": item.currency,
             "spu_public_id": item.spu_public_id,
-            "image_path": images.get(str(item.spu_public_id), ""),
+            "image_path": images.get(_normalized_public_id(item.spu_public_id) or "", ""),
         }
         for item in order.items.all()
     ]
@@ -194,6 +212,12 @@ def order_detail(request, public_id):
     )
     if order is None:
         return _error(request, "ORDER_NOT_FOUND", "Order not found.", 404)
+    from orders.commerce_payloads import (
+        payment_payloads,
+        refund_payloads,
+        shipment_payloads,
+    )
+
     return JsonResponse(
         {
             "public_id": str(order.public_id),
@@ -216,6 +240,18 @@ def order_detail(request, public_id):
             "payment_expires_at": _local_iso(order.payment_expires_at),
             "canceled_at": _local_iso(order.canceled_at),
             "cancel_reason": order.cancel_reason,
+            # 阶段 2：支付 / 退款 / 物流编号直出（不截断）。
+            "payments": payment_payloads(
+                order.payments.all().order_by("created_at", "pk"), iso_fn=_local_iso
+            ),
+            "refunds": refund_payloads(
+                order.refunds.select_related("payment", "after_sale").order_by("created_at", "pk"),
+                iso_fn=_local_iso,
+            ),
+            "shipments": shipment_payloads(
+                order.shipments.select_related("merchant_order").order_by("created_at", "pk"),
+                iso_fn=_local_iso,
+            ),
             # 商家子单进度（确认收货按钮据此判断是否还有未完成的子单）。
             "merchant_orders": [
                 {

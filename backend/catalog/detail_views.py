@@ -111,12 +111,17 @@ def _variant_family_payload(spu, market, locale) -> dict | None:
     只对**多 SPU 的族**返回（``kind != merged`` 且成员数 > 1）：合并族的单 SPU
     多 SKU 由批次 DA 的 ``?sku=`` 处理，不需要跳转。返回结构：
 
-    ``{family_key, kind, axis_hint, representative_spu_public_id, is_representative,
-       members: [{spu_public_id, title, axis_label, is_current, price_min, price_max,
-                  skus: [{sku_public_id, axis_label, offers: [offer…]}]}]}``
+    ``{family_key, kind, axis_name, axis_hint, representative_spu_public_id,
+       is_representative, members: [{spu_public_id, title, axis_label, is_current,
+                  price_min, price_max, skus: [{sku_public_id, axis_label,
+                  offers: [offer…]}]}]}``
+
+    ``axis_name`` 优先取族代表 ``SpuDetail.spec_options[0].name``（源站真实规格名，
+    如 ``Colour``）；没有 spec_options 时为空串，前端回退 ``axis_hint``。
+    ``axis_hint`` 保留兼容（``Model/Style`` 这类系统推断的通用提示）。
     """
 
-    from catalog.models import SpuTranslation, VariantFamilyMember
+    from catalog.models import SpuDetail, SpuTranslation, VariantFamilyMember
 
     membership = (
         VariantFamilyMember.objects.filter(spu_id=spu.pk)
@@ -132,6 +137,22 @@ def _variant_family_payload(spu, market, locale) -> dict | None:
     )
     if membership is None:
         return None
+    # 轴名：优先用族代表的真实规格名（源站 spec_options 第一个分组），
+    # 没有时留空让前端回退 axis_hint（系统推断的通用提示）。
+    axis_name = ""
+    representative_options = (
+        SpuDetail.objects.filter(spu_id=membership["family__representative_spu_id"])
+        .values_list("spec_options", flat=True)
+        .first()
+    )
+    if isinstance(representative_options, list):
+        for option in representative_options:
+            if not isinstance(option, dict):
+                continue
+            name = str(option.get("name") or "").strip()
+            if name:
+                axis_name = name
+                break
     member_rows = list(
         VariantFamilyMember.objects.filter(family_id=membership["family_id"])
         .values("spu_id", "spu__public_id", "axis_label", "sort_order")
@@ -235,6 +256,7 @@ def _variant_family_payload(spu, market, locale) -> dict | None:
     return {
         "family_key": membership["family__family_key"],
         "kind": membership["family__kind"],
+        "axis_name": axis_name,
         "axis_hint": membership["family__axis_hint"],
         "representative_spu_public_id": str(
             membership["family__representative_spu__public_id"]

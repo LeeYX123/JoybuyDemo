@@ -678,13 +678,14 @@ onBeforeUnmount(() => {
 
 .merchant-chat__head-text h2 {
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
   color: var(--colour-text);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .merchant-chat__head-text p {

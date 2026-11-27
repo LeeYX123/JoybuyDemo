@@ -86,6 +86,7 @@ class Command(BaseCommand):
                 for key in (
                     "title",
                     "title_zh",
+                    "subtitle",
                     "store_name",
                     "logo_image",
                     "source_url",

@@ -51,7 +51,8 @@ const notifications = computed(() =>
   orders.value.slice(0, 10).map((order) => ({
     key: order.public_id,
     publicId: order.public_id,
-    number: order.public_id.slice(0, 8).toUpperCase(),
+    // 2026-11-27 全站编号改造：显示完整订单号（JYO+YYYYMMDD+6 位），不截断。
+    number: String(order.public_id || '').toUpperCase(),
     statusLabel: t(STATUS_KEYS[order.state] || 'orders.statusProcessing'),
     statusClass: STATUS_CLASSES[order.state] || 'pending',
     date: String(order.created_at || '')

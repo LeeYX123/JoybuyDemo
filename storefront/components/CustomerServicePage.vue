@@ -171,13 +171,13 @@ const CONTACT_EMAIL = 'Joybuyfumi@gmail.com'
 }
 
 .cs-page__breadcrumb-root {
-  overflow: hidden;
+  overflow: visible;
   color: #888b94;
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .cs-page__breadcrumb-sep {
@@ -186,13 +186,13 @@ const CONTACT_EMAIL = 'Joybuyfumi@gmail.com'
 }
 
 .cs-page__breadcrumb-current {
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 14px;
   font-weight: 700;
   line-height: 20px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 主区：宽 min(1264px,92vw)、flex space-between、gap 16、margin-top 32。 */

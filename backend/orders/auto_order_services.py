@@ -67,6 +67,9 @@ def create_auto_order_task(
 
     if account is None or not account.purchase_whitelisted:
         raise AutoOrderError("ACCOUNT_NOT_WHITELISTED", "只能选择白名单用户的账号。")
+    # 管理端编辑的支付权限关闭后不能建自动下单任务（与 place_order 同一条闸门）。
+    if not account.payment_enabled:
+        raise AutoOrderError("PAYMENT_DISABLED", "该买家已关闭支付权限，不能创建自动下单任务。")
     if quantity < 1:
         raise AutoOrderError("QUANTITY_INVALID", "数量至少为 1。")
     invalid_reason = validate_task_offer(offer)
@@ -148,6 +151,8 @@ def _execute_one(task: AutoOrderTask) -> str:
     account = task.account
     if not account.purchase_whitelisted:
         return "买家已不在购买白名单内，已停止下单。"
+    if not account.payment_enabled:
+        return "买家已关闭支付权限，已停止下单。"
     offer = task.offer
     invalid_reason = validate_task_offer(offer)
     if invalid_reason:

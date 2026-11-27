@@ -148,7 +148,8 @@ onMounted(() => load())
             <tr v-for="row in state.items" :key="row.id">
               <td>
                 <b>{{ row.name }}</b>
-                <span class="cell-sub mono">{{ row.id.slice(0, 8) }}</span>
+                <!-- 2026-11-27 全站编号改造：商品编号（UUID，商品回退 UUID 后）整号展示。 -->
+                <span class="cell-sub mono">{{ row.id }}</span>
               </td>
               <td>{{ row.merchant_category_label || '未分类' }}</td>
               <td class="num">¥ {{ row.price || '—' }}</td>

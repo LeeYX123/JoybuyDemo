@@ -182,15 +182,17 @@ useHead(() => ({ title: t('accountMenu.favourites') }))
 }
 
 .fav-card__title {
+  /* 标题最多 2 行，超出省略号（min-height 2.6em = 2×1.3 行高）。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   min-height: 2.6em;
   color: var(--colour-text);
   font-size: var(--font-size-md);
   line-height: 1.3;
   text-decoration: none;
+  word-break: break-word;
 }
 
 .fav-card__title:hover {

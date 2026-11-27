@@ -546,13 +546,16 @@ useHead({ title: () => 'Joybuy Plus' })
 }
 
 .plus-card__title {
+  /* 商品名最多 2 行，超出省略号。 */
   display: -webkit-box;
-  overflow: hidden;
-  margin: var(--space-2) 0 0;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: var(--space-2) 0 0;
+
   font-size: var(--font-size-sm);
   line-height: 1.4;
+  word-break: break-word;
 }
 
 .plus-card__price {

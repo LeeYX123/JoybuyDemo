@@ -145,14 +145,15 @@ urlpatterns = [
     path("api/v1/admin/buyers", admin_views.AdminBuyersView.as_view(), name="admin-buyers"),
     path("api/v1/admin/orders", admin_views.AdminOrdersView.as_view(), name="admin-orders"),
     path("api/v1/orders", order_views.order_list_create, name="orders"),
-    path("api/v1/orders/<uuid:public_id>", order_views.order_detail, name="order-detail"),
+    # 2026-11-27 全站编号改造：订单号 JYO+YYYYMMDD+6 位随机，用 str 转换器。
+    path("api/v1/orders/<str:public_id>", order_views.order_detail, name="order-detail"),
     path(
-        "api/v1/orders/<uuid:public_id>/confirm-receipt",
+        "api/v1/orders/<str:public_id>/confirm-receipt",
         order_views.order_confirm_receipt,
         name="order-confirm-receipt",
     ),
     path(
-        "api/v1/orders/<uuid:public_id>/payment-attempt",
+        "api/v1/orders/<str:public_id>/payment-attempt",
         order_views.payment_attempt,
         name="payment-attempt",
     ),

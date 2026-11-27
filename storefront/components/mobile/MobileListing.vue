@@ -101,7 +101,7 @@ function goToPage(page) {
 function priceOf(item) {
   const raw = item?.retail_price
   if (typeof raw === 'string' && raw.trim()) return raw.trim()
-  const price = item?.price_min ?? item?.price
+  const price = item?.family_max_price ?? item?.price_min ?? item?.price
   return price == null ? '' : formatDisplayPrice(price)
 }
 
@@ -263,15 +263,17 @@ function productHref(item) {
 }
 
 .m-list__name {
+  /* 标题最多 2 行，超出省略号（min-height 50 = 2×20 保持卡片等高）。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   padding: 10px 12px 0;
   color: #1a1a1a;
   font-size: 14px;
   line-height: 20px;
   min-height: 50px;
+  word-break: break-word;
 }
 
 .m-list__price {

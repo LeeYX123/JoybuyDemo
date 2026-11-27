@@ -201,27 +201,27 @@ onBeforeUnmount(() => {
 
       <div class="dashboard-grid">
         <div class="card">
-            <div class="card__head">
-              <h2>订单数量</h2>
-              <div class="card__actions">
-                <div class="range-switch range-switch--orders">
-                  <button
-                    v-for="range in RANGES"
-                    :key="range.key"
-                    type="button"
-                    class="range-switch__btn"
-                    :class="[
-                      { 'range-switch__btn--active': orderRange === range.key },
-                      { 'range-switch__btn--month': range.key === 'month' },
-                    ]"
-                    @click="switchRange('orders', range.key)"
-                  >
-                    {{ range.label }}
-                  </button>
-                </div>
-                <span class="tag">今日新增收益 ¥ {{ state.data.stats.shipping_profit_today }}</span>
+          <div class="card__head">
+            <h2>订单数量</h2>
+            <div class="card__actions">
+              <div class="range-switch range-switch--orders">
+                <button
+                  v-for="range in RANGES"
+                  :key="range.key"
+                  type="button"
+                  class="range-switch__btn"
+                  :class="[
+                    { 'range-switch__btn--active': orderRange === range.key },
+                    { 'range-switch__btn--month': range.key === 'month' },
+                  ]"
+                  @click="switchRange('orders', range.key)"
+                >
+                  {{ range.label }}
+                </button>
               </div>
+              <span class="tag">今日新增收益 ¥ {{ state.data.stats.shipping_profit_today }}</span>
             </div>
+          </div>
           <div class="card__body">
             <div class="bar-chart">
               <div v-for="item in bars" :key="item.date" class="bar-chart__item">
@@ -494,11 +494,10 @@ onBeforeUnmount(() => {
 .notice-list__content {
   font-size: 12px;
   color: var(--muted, #78869a);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow: visible;
+
+  display: block;
+  word-break: break-word;
 }
 
 .notice-list__time {

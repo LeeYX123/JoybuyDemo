@@ -10,6 +10,7 @@ from accounts_staff.permissions import StaffRbacPermission
 from audit.services import record_audit
 from merchant_ops.api_utils import OpsAPIView, csv_response, iso, money_str, paginate
 from merchant_ops.services import advance_progress, complete_all_nodes
+from orders.commerce_payloads import payment_payloads, refund_payloads, shipment_payloads
 from orders.models import MerchantOrder
 
 STATUS_TABS = {"PENDING", "SHIPPED", "COMPLETED"}
@@ -71,6 +72,19 @@ def _payload(order: MerchantOrder, *, detail=False) -> dict:
             "id": str(order.order.account.public_id),
             "name": order.order.account.email or order.order.account.phone_e164 or "买家",
         }
+        # 阶段 2：支付/退款挂在父订单，物流挂当前商家子单。
+        payload["payments"] = payment_payloads(
+            order.order.payments.all().order_by("created_at", "pk"), iso_fn=iso
+        )
+        payload["refunds"] = refund_payloads(
+            order.order.refunds.select_related("payment", "after_sale").order_by(
+                "created_at", "pk"
+            ),
+            iso_fn=iso,
+        )
+        payload["shipments"] = shipment_payloads(
+            order.shipments.all().order_by("created_at", "pk"), iso_fn=iso
+        )
     return payload
 
 
@@ -86,13 +100,10 @@ def _filtered_orders(request):
             | Q(items__title__icontains=query)
             | Q(tracking_reference__icontains=query)
         )
-        try:
-            import uuid as uuid_module
-
-            condition |= Q(public_id=uuid_module.UUID(query))
-            condition |= Q(order__public_id=uuid_module.UUID(query))
-        except ValueError:
-            pass
+        # 2026-11-27 全站编号改造：订单号是 JYO+YYYYMMDD+6 位随机字符串，
+        # 直接按字符串（大小写不敏感）精确匹配，不再 uuid.UUID() 解析。
+        condition |= Q(public_id__iexact=query)
+        condition |= Q(order__public_id__iexact=query)
         queryset = queryset.filter(condition).distinct()
     start = (request.query_params.get("start") or "").strip()
     end = (request.query_params.get("end") or "").strip()

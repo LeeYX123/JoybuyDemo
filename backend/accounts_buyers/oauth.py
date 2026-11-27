@@ -389,6 +389,8 @@ def _create_account(config: ProviderConfig, profile: Profile) -> BuyerAccount:
                 auth_provider=config.auth_provider,
                 last_login_at=now,
                 email_verified_at=(now if profile.email and profile.email_verified else None),
+                # 批次 CA：三方登录首次建号同样默认不进购买白名单。
+                purchase_whitelisted=False,
             )
             account.password = make_password(None)  # unusable：OAuth 账号不能走密码登录
             account.save()

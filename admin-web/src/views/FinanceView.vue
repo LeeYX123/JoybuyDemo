@@ -302,7 +302,7 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="row in state.items" :key="row.id">
-              <td>{{ row.id.slice(0, 8) }}</td>
+              <td>{{ row.id }}</td>
               <td>{{ row.merchant.name }}</td>
               <td>
                 <span v-if="row.method === 'BANK'">
@@ -395,7 +395,7 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="row in state.items" :key="row.id">
-              <td>{{ row.id.slice(0, 8) }}</td>
+              <td>{{ row.id }}</td>
               <td>{{ row.merchant.name }}</td>
               <td><StatusTag :value="row.kind" /></td>
               <td

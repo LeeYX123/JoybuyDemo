@@ -285,7 +285,8 @@ onMounted(load)
               </td>
               <td>
                 <b>{{ row.title }}</b>
-                <span class="cell-sub">{{ row.content.slice(0, 40) }}</span>
+                <!-- 2026-11-27 去截断：通知正文完整展示（不再只取前 40 字）。 -->
+                <span class="cell-sub">{{ row.content }}</span>
               </td>
               <td>{{ row.merchant.name }}</td>
               <td>

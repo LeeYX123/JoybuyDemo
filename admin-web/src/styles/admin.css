@@ -648,6 +648,16 @@
   color: #8493a9;
 }
 
+/* 层级标签（如「父单」）：区分同一单元格里的多个编号，不是截断。 */
+.cell-prefix {
+  font-style: normal;
+  margin-right: 4px;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: #eef2f7;
+  color: #6f8098;
+}
+
 .mono {
   font-size: 11px;
   color: #537198;

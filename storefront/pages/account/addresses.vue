@@ -611,13 +611,14 @@ useHead(() => ({ title: t('addresses.title') }))
 .address-card__name {
   max-width: 150px;
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
   color: #000;
   font-size: 16px;
   font-weight: var(--font-weight-bold);
   line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .address-card__phone {
@@ -636,17 +637,15 @@ useHead(() => ({ title: t('addresses.title') }))
 }
 
 .address-card__lines {
-  display: -webkit-box;
+  display: block;
   flex: 1;
   margin: 8px 0 0;
-  overflow: hidden;
+  overflow: visible;
   color: #505259;
   font-size: 14px;
   font-weight: var(--font-weight-regular);
   line-height: 18px;
   word-break: break-all;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .address-card__copy {

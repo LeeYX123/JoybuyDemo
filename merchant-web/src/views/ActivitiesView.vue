@@ -213,7 +213,8 @@ onMounted(async () => {
             <tbody>
               <tr v-for="row in state.referral.referrals" :key="row.merchant_id">
                 <td>{{ row.name }}</td>
-                <td class="mono">{{ row.merchant_id.slice(0, 8) }}</td>
+                <!-- 2026-11-27 全站编号改造：被推荐商家编号 JYM+10 位整号展示。 -->
+                <td class="mono">{{ row.merchant_id }}</td>
                 <td class="mono">{{ row.code_used || '—' }}</td>
                 <td>{{ fmtDate(row.joined_at) }}</td>
               </tr>
@@ -466,10 +467,10 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--muted);
   line-height: 1.6;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
+  word-break: break-word;
 }
 
 .activity-card__actions {

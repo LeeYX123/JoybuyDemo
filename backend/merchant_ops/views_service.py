@@ -34,6 +34,7 @@ from merchant_ops.services import (
     pay_commission,
     previous_period,
 )
+from orders.commerce_payloads import refund_payloads
 
 DECISION_STATE = {
     AfterSale.Decision.INVESTIGATE: AfterSale.State.PLATFORM,
@@ -78,6 +79,11 @@ def _after_sale_payload(record: AfterSale, *, detail=False) -> dict:
             for event in record.events.all()
         ]
         payload["order_status"] = record.order.status
+        # 阶段 2：售后详情内嵌退款编号（目前只有管理端手动补录的数据）。
+        payload["refunds"] = refund_payloads(
+            record.refunds.select_related("payment", "after_sale").order_by("created_at", "pk"),
+            iso_fn=iso,
+        )
     return payload
 
 

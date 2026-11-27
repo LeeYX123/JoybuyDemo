@@ -335,7 +335,8 @@ onMounted(async () => {
                     {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
                   </td>
                   <td class="num">¥ {{ row.balance_after }}</td>
-                  <td class="mono">{{ row.order_id ? row.order_id.slice(0, 8) : '—' }}</td>
+                  <!-- 2026-11-27 全站编号改造：钱包流水里的订单号 JYO 整号展示。 -->
+                  <td class="mono">{{ row.order_id || '—' }}</td>
                   <td class="cell-sub">{{ row.note || '—' }}</td>
                   <td class="actions-col">
                     <button type="button" class="btn btn--sm" @click="openEntry(row)">查看</button>

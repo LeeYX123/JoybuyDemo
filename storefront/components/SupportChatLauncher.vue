@@ -502,10 +502,9 @@ function clearConversation() {
 
 // ---------------------------- 发送订单 ----------------------------
 
-function shortOrderId(value) {
-  return String(value || '')
-    .slice(0, 8)
-    .toUpperCase()
+// 2026-11-27 全站编号改造：订单号 JYO+YYYYMMDD+6 位，整号展示（截前 8 位会撞车）。
+function orderNumberLabel(value) {
+  return String(value || '').toUpperCase()
 }
 
 function orderAmount(order) {
@@ -1001,7 +1000,9 @@ onBeforeUnmount(() => {
                     @change="toggleOrder(order.public_id)"
                   />
                   <span class="support-chat__order-main">
-                    <span class="support-chat__order-id">#{{ shortOrderId(order.public_id) }}</span>
+                    <span class="support-chat__order-id"
+                      >#{{ orderNumberLabel(order.public_id) }}</span
+                    >
                     <span class="support-chat__order-meta">
                       {{ orderAmount(order) }} · {{ orderStateLabel(order) }}
                     </span>
@@ -1248,9 +1249,10 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 600;
   line-height: 22px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .support-chat__item-time {
@@ -1276,16 +1278,15 @@ onBeforeUnmount(() => {
 }
 
 .support-chat__item-summary {
-  display: -webkit-box;
+  display: block;
   min-height: 40px;
   margin: 4px 0;
   color: #505259;
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow: visible;
+  word-break: break-word;
 }
 
 .support-chat__status {
@@ -1704,6 +1705,8 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .support-chat__order-meta {

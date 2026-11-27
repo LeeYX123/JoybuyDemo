@@ -76,6 +76,9 @@ async function payNow() {
     const code = response.error?.code || ''
     if (code === 'NOT_WHITELISTED') {
       error.value = t('gate.messageWhitelist')
+    } else if (code === 'PAYMENT_DISABLED') {
+      // 管理端编辑关闭支付权限（2026-11-27）：与白名单拦截同样走本地化文案。
+      error.value = t('gate.messagePaymentDisabled')
     } else {
       error.value = response.error.message || 'Could not place the order.'
     }

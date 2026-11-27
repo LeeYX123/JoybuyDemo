@@ -387,7 +387,7 @@ def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference:
                 merchant_id=locked.merchant_id,
                 kind=MerchantWalletEntry.Kind.ORDER_SHIPPING,
                 amount=-money(locked.cost_total),
-                note=f"订单发货扣成本 {locked.public_id.hex[:8].upper()}",
+                note=f"订单发货扣成本 {locked.public_id}",
                 order=locked,
                 idempotency_key=f"ship:{locked.public_id}",
                 actor=actor,
@@ -401,7 +401,7 @@ def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference:
                 balance_before=locked.merchant.wallet_balance,
                 balance_after=locked.merchant.wallet_balance,
                 order=locked,
-                note=f"订单发货（成本为 0）{locked.public_id.hex[:8].upper()}",
+                note=f"订单发货（成本为 0）{locked.public_id}",
                 idempotency_key=f"ship:{locked.public_id}",
                 occurred_at=timezone.now(),
                 created_by=actor,
@@ -429,6 +429,10 @@ def ship_merchant_order(merchant_order: MerchantOrder, *, actor=None, reference:
                 "updated_at",
             ]
         )
+        # 阶段 2：发货动作顺手记一条物流记录（tracking_no 取商家填的运单号）。
+        from orders.payment_services import record_shipment_for_merchant_order
+
+        record_shipment_for_merchant_order(locked, reference=reference, at=now)
         return locked
 
 
@@ -468,6 +472,11 @@ def advance_progress(
                 "updated_at",
             ]
         )
+        # 阶段 2：到「已签收」(node 6) 后物流记录转为已送达（消息只增不改业务）。
+        if node_index >= 6:
+            from orders.payment_services import sync_shipments_delivered
+
+            sync_shipments_delivered(locked, at=now)
         return locked
 
 
@@ -500,6 +509,10 @@ def complete_all_nodes(merchant_order: MerchantOrder, *, actor=None):
                 "updated_at",
             ]
         )
+        # 阶段 2：一键完成也把已存在的物流记录标记为已送达。
+        from orders.payment_services import sync_shipments_delivered
+
+        sync_shipments_delivered(locked, at=now)
         return locked
 
 
@@ -511,7 +524,6 @@ def auto_advance_progress(*, now=None) -> dict:
     - 已签收后最长 14 天自动确认收货（走 node 7，触发一次回款）；
     - 没有计划时刻表的历史子单（功能上线前发货）跳过，仍走人工推进。
     """
-
 
     from django.utils.dateparse import parse_datetime
 
@@ -550,6 +562,9 @@ def auto_advance_progress(*, now=None) -> dict:
                                 "updated_at",
                             ]
                         )
+                        from orders.payment_services import sync_shipments_delivered
+
+                        sync_shipments_delivered(locked, at=now)
                         confirmed += 1
             continue
         # 计算当前应达的最新节点：最大的 i（1..6）使 planned[i-1] <= now。
@@ -570,6 +585,10 @@ def auto_advance_progress(*, now=None) -> dict:
             locked.node_times = times
             locked.progress = target
             locked.save(update_fields=["node_times", "progress", "updated_at"])
+            if target >= 6:
+                from orders.payment_services import sync_shipments_delivered
+
+                sync_shipments_delivered(locked, at=now)
             advanced += 1
     return {"advanced": advanced, "confirmed": confirmed}
 
@@ -584,7 +603,7 @@ def _settle_locked(merchant_order: MerchantOrder, *, actor=None) -> MerchantOrde
             merchant_id=merchant_order.merchant_id,
             kind=MerchantWalletEntry.Kind.ORDER_SETTLEMENT,
             amount=money(merchant_order.items_total),
-            note=f"订单回款 {merchant_order.public_id.hex[:8].upper()}",
+            note=f"订单回款 {merchant_order.public_id}",
             order=merchant_order,
             idempotency_key=f"settle:{merchant_order.public_id}",
             actor=actor,

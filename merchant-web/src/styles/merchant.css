@@ -1031,9 +1031,10 @@
 
   .merchant-topbar__staff {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+
+    white-space: normal;
+    word-break: break-word;
   }
 
   .merchant-topbar__right .btn--sm {

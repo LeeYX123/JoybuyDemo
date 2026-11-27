@@ -42,7 +42,8 @@ def place_order(
     （成本快照取 offer.cost_price）。
 
     Raises OrderError (CART_INVALID / INSUFFICIENT_STOCK / NOT_WHITELISTED /
-    PAYMENT_METHOD_INVALID) without touching any state when validation fails.
+    PAYMENT_DISABLED / PAYMENT_METHOD_INVALID) without touching any state when
+    validation fails.
     """
 
     from cart.models import Cart
@@ -51,6 +52,11 @@ def place_order(
     # 白名单后端打通（文档拍板 7）：后端标识驱动，未拿到标识按不可购买处理。
     if account is None or not account.purchase_whitelisted:
         raise OrderError("NOT_WHITELISTED", "当前账号不在购买白名单内，无法下单。")
+
+    # 管理端【编辑】的支付权限（2026-11-27）：关闭后只拦下单/付款，
+    # 不动登录态、购物车与历史订单；与白名单是两条独立闸门。
+    if not account.payment_enabled:
+        raise OrderError("PAYMENT_DISABLED", "该账号已关闭支付权限，请联系平台客服。")
 
     if payment_method:
         from orders.models import Order as OrderModel
@@ -120,6 +126,12 @@ def place_order(
             payment_method=payment_method,
             paid_at=timezone.now() if paid_now else None,
         )
+        # 阶段 2：支付成功的订单顺手记一条 Payment（幂等；不改变任何支付判定）。
+        if paid_now:
+            from orders.payment_services import record_payment_for_order
+
+            record_payment_for_order(order)
+
         # 迭代02：余额支付真扣买家余额（与下单同事务，失败即整体回滚）。
         if balance_payment:
             from accounts_buyers.models import BuyerAccount

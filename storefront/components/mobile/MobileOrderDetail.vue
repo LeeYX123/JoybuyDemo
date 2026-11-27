@@ -42,6 +42,23 @@ const { t } = useLocale()
             <dt>{{ t('orders.payment') }}</dt>
             <dd>{{ order.paymentMethod }}</dd>
           </div>
+          <!-- 阶段 3：支付单号 / 物流单号整号展示，不截断。 -->
+          <div
+            v-for="number in order.paymentNumbers || []"
+            :key="`pay-${number}`"
+            class="m-odetail__meta-row"
+          >
+            <dt>{{ t('orders.paymentNumber') }}</dt>
+            <dd class="m-odetail__id">{{ number }}</dd>
+          </div>
+          <div
+            v-for="number in order.shipmentNumbers || []"
+            :key="`ship-${number}`"
+            class="m-odetail__meta-row"
+          >
+            <dt>{{ t('orders.shipmentNumber') }}</dt>
+            <dd class="m-odetail__id">{{ number }}</dd>
+          </div>
           <div class="m-odetail__meta-row">
             <dt>{{ t('orders.total') }}</dt>
             <dd class="m-odetail__total">{{ order.total }}</dd>
@@ -132,6 +149,8 @@ const { t } = useLocale()
   color: #1a1a1a;
   font-size: 16px;
   font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .m-odetail__badge {
@@ -162,6 +181,17 @@ const { t } = useLocale()
 .m-odetail__meta-row dt {
   color: #7a7d85;
   font-size: 14px;
+}
+
+.m-odetail__id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  /* 去截断：编号整号展示，窄屏允许折行，不用省略号也不裁切。 */
+  white-space: normal;
+  word-break: break-all;
+  overflow: visible;
+  max-width: none;
 }
 
 .m-odetail__meta-row dd {
@@ -228,13 +258,13 @@ const { t } = useLocale()
 .m-odetail__item-name {
   flex: 1;
   min-width: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
   color: #1a1a1a;
   font-size: 14px;
   line-height: 20px;
+  word-break: break-word;
 }
 
 .m-odetail__item-qty {

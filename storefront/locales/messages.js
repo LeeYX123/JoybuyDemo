@@ -268,6 +268,8 @@ export const messages = {
     'orders.status': 'Status',
     'orders.placedAt': 'Placed at',
     'orders.payment': 'Payment',
+    'orders.paymentNumber': 'Payment no.',
+    'orders.shipmentNumber': 'Shipment no.',
     'orders.total': 'Total',
     'orders.empty': 'You have no orders yet.',
     'orders.orderNumber': 'Order',
@@ -535,6 +537,8 @@ export const messages = {
     'gate.confirm': 'OK',
     'gate.messageWhitelist':
       'Your account is not on the purchase whitelist yet. Please contact customer service.',
+    'gate.messagePaymentDisabled':
+      'Payment is disabled for your account. Please contact customer service.',
     'checkout.balancePay': 'Balance payment',
     'checkout.wechatPay': 'WeChat Pay',
     'common.loading': 'Loading…',
@@ -957,6 +961,8 @@ export const messages = {
     'orders.status': '状态',
     'orders.placedAt': '下单时间',
     'orders.payment': '支付方式',
+    'orders.paymentNumber': '支付单号',
+    'orders.shipmentNumber': '物流单号',
     'orders.total': '合计',
     'orders.empty': '还没有订单。',
     'orders.orderNumber': '订单',
@@ -1216,6 +1222,7 @@ export const messages = {
     'gate.message': '您当前的国家业务尚未开放，暂不支持购买',
     'gate.confirm': '确定',
     'gate.messageWhitelist': '您的账号还未加入购买白名单，暂不能购买，请联系客服。',
+    'gate.messagePaymentDisabled': '该账号已关闭支付权限，请联系平台客服。',
     'checkout.balancePay': '余额支付',
     'checkout.wechatPay': '微信支付',
     'common.loading': '加载中…',
@@ -1925,6 +1932,8 @@ export const messages = {
     'gate.confirm': 'OK',
     'gate.messageWhitelist':
       'Ihr Konto befindet sich noch nicht auf der Kauf-Whitelist. Bitte kontaktieren Sie den Kundenservice.',
+    'gate.messagePaymentDisabled':
+      'Die Zahlung ist für Ihr Konto deaktiviert. Bitte kontaktieren Sie den Kundenservice.',
     'checkout.balancePay': 'Guthaben-Zahlung',
     'checkout.wechatPay': 'WeChat Pay',
     'common.loading': 'Wird geladen…',
@@ -2555,6 +2564,8 @@ export const messages = {
     'gate.confirm': 'OK',
     'gate.messageWhitelist':
       "Votre compte n'est pas encore sur la liste blanche d'achat. Veuillez contacter le service client.",
+    'gate.messagePaymentDisabled':
+      'Le paiement est désactivé pour votre compte. Veuillez contacter le service client.',
     'checkout.balancePay': 'Paiement par solde',
     'checkout.wechatPay': 'WeChat Pay',
     'common.loading': 'Chargement…',
@@ -3177,6 +3188,8 @@ export const messages = {
     'gate.confirm': 'OK',
     'gate.messageWhitelist':
       'Je account staat nog niet op de aankoop-witte lijst. Neem contact op met de klantenservice.',
+    'gate.messagePaymentDisabled':
+      'Betalen is uitgeschakeld voor je account. Neem contact op met de klantenservice.',
     'checkout.balancePay': 'Betaling met tegoed',
     'checkout.wechatPay': 'WeChat Pay',
     'common.loading': 'Bezig met laden…',

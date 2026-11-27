@@ -23,6 +23,7 @@ import {
 import { resolveProductCategoryCrumbs } from '../../utils/pdpBreadcrumb'
 import { ratingAverageLabel, soldCountLabel } from '../../utils/pdpDisplay'
 import {
+  resolveGalleryArchive,
   resolveVariantArchive,
   variantDetailField,
   variantGallery,
@@ -187,7 +188,10 @@ const hasMerchantAxis = computed(() => skuMerchants.value.length > 1)
 const familyMemberList = computed(() => familyMembers(data.value))
 const hasFamilyAxis = computed(() => familyMemberList.value.length > 1)
 const familyAxisName = computed(
-  () => String(data.value?.variant_family?.axis_hint || '').trim() || t('detail.modelAxis'),
+  () =>
+    String(data.value?.variant_family?.axis_name || '').trim() ||
+    String(data.value?.variant_family?.axis_hint || '').trim() ||
+    t('detail.modelAxis'),
 )
 
 function selectMerchant(offerEntry) {
@@ -208,8 +212,9 @@ const price = computed(() => (offer.value ? formatDisplayPrice(offer.value.price
 const router = useRouter()
 
 // 批次 DA：当前所选规格的「整档切换」档案。只有 share_metadata=false 且
-// 档案 sku 与当前选中 SKU 一致时才生效；其余情况返回 null，页面保持旧行为
-// （只切价格/库存/规格，不换画廊/评分/详情/标题）。
+// 档案 sku 与当前选中 SKU 一致时才生效；其余情况返回 null，标题/评分/已售/
+// 详情保持 SPU 级。注意**画廊不在这里**：画廊按 SKU 是否有自己的图单独判定
+// （见下方 galleryArchive），纯尺码规格也可能换图。
 const variantArchive = computed(() =>
   resolveVariantArchive(data.value, selectedSku.value?.public_id),
 )
@@ -281,7 +286,6 @@ function resolvesToPurchasableSku(axisName, value) {
 }
 
 const variantAxes = computed(() => {
-  if (isSingleSku.value) return []
   // 爬虫给出 spec_options 时优先用它：保留源站维度顺序、系列在前，
   // 并带上 s96 规格图与 SKU 映射；历史商品回退到 SKU 规格推导。
   if (specOptions.value.length) {
@@ -298,11 +302,21 @@ const variantAxes = computed(() => {
           .filter((value) => resolvesToPurchasableSku(option.name, value)),
       }))
       .filter((axis) => axis.values.length)
+      .map((axis) => ({
+        ...axis,
+        // 真站按「该维度有没有规格图」决定渲染图片卡还是文字胶囊
+        // （var/pdp_spec_ui_20261127/measurements.md §3/§4）。
+        has_image: axis.values.some((value) => Boolean(value.image_url)),
+      }))
     // 同款多规格合并（批次 CB2）后，保留 SPU 的 spec_options 可能仍是源站
     // 单规格残留（或详情译文行残留），过滤后一个可购规格值都不剩。此时必须
     // 回退到 SKU 规格反推，否则多 SKU 商品规格区一片空白、无法切换。
     if (fromSpecOptions.length) return fromSpecOptions
   }
+  // 单 SKU：反推轴只会造出点了没反应的单值按钮，保持只读展示。但上面
+  // spec_options 能解析到唯一可购 SKU 的轴（如单个 Capacity: 5000mAh 的
+  // 真实规格）要照真站渲染成卡片，所以这个短路必须排在 spec_options 之后。
+  if (isSingleSku.value) return []
   const axes = new Map()
   for (const sku of purchasableSkus.value) {
     // 反推轴：轴名与轴值都来自 sku.specification，匹配必须同样用译文。
@@ -316,6 +330,14 @@ const variantAxes = computed(() => {
     values: [...values].map((value) => ({ value, image_url: '', sku_ids: [] })),
   }))
 })
+
+// 真站轴标题是「轴名: 当前值」，值加粗 600
+// （var/pdp_spec_ui_20261127/measurements.md §1）。
+function axisSelectedValue(axis) {
+  const spec = matchSpec(selectedSku.value) || {}
+  const value = spec[axis.name]
+  return value === undefined || value === null ? '' : String(value)
+}
 
 function selectVariant(axisName, optionValue) {
   const value = typeof optionValue === 'string' ? optionValue : optionValue.value
@@ -361,24 +383,29 @@ function selectVariant(axisName, optionValue) {
 }
 
 const baseGallery = computed(() => (Array.isArray(data.value?.gallery) ? data.value.gallery : []))
-// 档案有图用档案图；档案缺图（如合并时全部去重）回退保留 SPU 的图。
-const gallery = computed(() => variantGallery(variantArchive.value, baseGallery.value))
+// 批次 DA（用户 2026-11-27 口径「有该规格自己的画廊数据就换，没有就不换」）：
+// 画廊按 SKU 自己的档案图判定，与 share_metadata 无关。档案缺失/sku 未对上/
+// 档案 gallery 为空 → galleryArchive 为 null → 保持 SPU 基础画廊（不出现空白）。
+const galleryArchive = computed(() =>
+  resolveGalleryArchive(data.value, selectedSku.value?.public_id),
+)
+// 档案有图用档案图；档案缺图回退保留 SPU 的图。
+const gallery = computed(() => variantGallery(galleryArchive.value, baseGallery.value))
 const videos = computed(() => (Array.isArray(data.value?.videos) ? data.value.videos : []))
 
 // 画廊媒体：视频排在图片前面（Joybuy 详情页顺序），图片保持原顺序。
-// 变体档案没有视频快照，整套切换时不混入保留 SPU 的视频（否则主图仍是旧视频）。
+// 视频是 SPU 级数据（档案没有视频快照），切规格时不跟着换，但也**不能把视频
+// 挤掉**：切完规格后视频仍排第一，用户点缩略图即可看新规格的图。
 const mediaItems = computed(() => {
   const items = []
-  if (!variantArchive.value) {
-    videos.value.forEach((video, index) => {
-      items.push({
-        key: `video-${index}`,
-        type: 'video',
-        url: video.url,
-        poster: video.poster || '',
-      })
+  videos.value.forEach((video, index) => {
+    items.push({
+      key: `video-${index}`,
+      type: 'video',
+      url: video.url,
+      poster: video.poster || '',
     })
-  }
+  })
   gallery.value.forEach((asset, index) => {
     items.push({ key: `image-${index}-${asset.url}`, type: 'image', url: asset.url })
   })
@@ -386,9 +413,10 @@ const mediaItems = computed(() => {
 })
 
 const activeMediaKey = ref('')
-// 切规格换画廊后回到第一张（旧 key 可能在新画廊里不存在）。
+// 画廊随规格变化后回到第一项（旧 key 可能在新画廊里不存在）：媒体列表
+// （含视频/图片）任一 key 变化即重置。
 watch(
-  () => variantArchive.value?.sku,
+  () => mediaItems.value.map((item) => item.key).join('|'),
   () => {
     activeMediaKey.value = ''
   },
@@ -919,8 +947,12 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
               {{ t('product.unavailableShort') }}
             </p>
 
-            <!-- 单 SKU/空规格：不做规格交互，只读展示唯一 SKU 的规格值。 -->
-            <p v-if="isSingleSku && stickySpecText" class="detail__spec-readonly">
+            <!-- 单 SKU/空规格：不做规格交互，只读展示唯一 SKU 的规格值。
+                 spec_options 能解析成规格卡时（如只一个 Capacity 值）改走卡片，不重复出文本。 -->
+            <p
+              v-if="isSingleSku && stickySpecText && !variantAxes.length"
+              class="detail__spec-readonly"
+            >
               {{ stickySpecText }}
             </p>
 
@@ -939,33 +971,43 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
                   :data-family-spu="member.spu_public_id"
                   @click="goToFamilyMember(member)"
                 >
-                  <span>{{ memberLabel(member, index) }}</span>
+                  <span>{{ memberLabel(member, index, familyAxisName) }}</span>
                 </button>
               </div>
             </div>
 
-            <div v-for="axis in variantAxes" :key="axis.name" class="detail__axis">
-              <h2 class="detail__axis-name">{{ axis.name }}</h2>
+            <div
+              v-for="axis in variantAxes"
+              :key="axis.name"
+              class="detail__axis detail__axis--spec"
+            >
+              <h2 class="detail__axis-name">
+                <span class="detail__axis-label">{{ axis.name }}:</span>
+                <span class="detail__axis-selected">{{ axisSelectedValue(axis) }}</span>
+              </h2>
               <div class="detail__axis-values">
                 <button
                   v-for="value in axis.values"
                   :key="value.value"
                   type="button"
                   class="detail__variant"
-                  :class="{
-                    'detail__variant--active':
-                      String(matchSpec(selectedSku)?.[axis.name]) === value.value ||
-                      value.sku_ids.includes(selectedSku?.public_id),
-                  }"
+                  :class="[
+                    axis.has_image ? 'detail__variant--spec-image' : 'detail__variant--spec',
+                    {
+                      'detail__variant--active':
+                        String(matchSpec(selectedSku)?.[axis.name]) === value.value ||
+                        value.sku_ids.includes(selectedSku?.public_id),
+                    },
+                  ]"
                   @click="selectVariant(axis.name, value)"
                 >
                   <img
                     v-if="value.image_url"
                     class="detail__variant-image"
                     :src="value.image_url"
-                    :alt="value.value"
+                    alt=""
                   />
-                  <span>{{ value.value }}</span>
+                  <span class="detail__variant-label">{{ value.value }}</span>
                 </button>
               </div>
             </div>
@@ -1720,6 +1762,107 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
   font-weight: var(--font-weight-semibold);
 }
 
+/* --- 规格轴（真站 imageDimensionItem / seriesDimension 实测复刻）---------
+   数值来源：var/pdp_spec_ui_20261127/measurements.md（1440 宽 getComputedStyle）。
+   真站按「该维度有没有规格图」二选一渲染：图片卡 80×103（图 72×72 在上、名在下）
+   或文字胶囊（padding 8px 12px）。选中态只换边框色 + 字重 600，底色/文字色不变。
+   作用域限定 --spec，避免影响族轴（--family）与商家轴（--merchant）。 */
+.detail__axis--spec {
+  padding: 12px 0;
+}
+
+.detail__axis--spec .detail__axis-name {
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
+  text-transform: none;
+  margin-bottom: 12px;
+}
+
+.detail__axis--spec .detail__axis-label {
+  margin-right: 4px;
+}
+
+.detail__axis--spec .detail__axis-selected {
+  font-weight: 600;
+}
+
+.detail__axis--spec .detail__axis-values {
+  gap: 8px;
+  margin-top: 0;
+}
+
+/* 图片型：竖向卡片，图在上、名在下。 */
+.detail__variant--spec-image {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  width: 80px;
+  min-height: 36px;
+  padding: 3px;
+  border-color: transparent;
+  border-radius: 4px;
+  background: #f5f6fa;
+  color: #1a1a1a;
+}
+
+.detail__variant--spec-image .detail__variant-image {
+  width: 72px;
+  height: 72px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.detail__variant--spec-image .detail__variant-label {
+  width: 100%;
+  margin-top: 3px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  overflow: visible;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 文字型：只有名称的胶囊。 */
+.detail__variant--spec {
+  gap: 0;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-color: transparent;
+  border-radius: 4px;
+  background: #f5f6fa;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.detail__variant--spec-image:hover,
+.detail__variant--spec:hover {
+  background: rgba(0, 16, 71, 0.06);
+}
+
+/* 选中态：边框 #1a1a1a、字重 600；底色与文字色保持未选中值。 */
+.detail__variant--spec-image.detail__variant--active,
+.detail__variant--spec.detail__variant--active {
+  border-color: #1a1a1a;
+  background: #f5f6fa;
+  color: #1a1a1a;
+}
+
+.detail__variant--spec.detail__variant--active {
+  font-weight: 600;
+}
+
+.detail__variant--spec-image.detail__variant--active .detail__variant-label {
+  font-weight: 600;
+}
+
 /* 批次 DB（Q9）：族内兄弟商品（整页跳转）与商家轴按钮。 */
 .detail__variant--link {
   text-decoration: none;
@@ -2095,21 +2238,23 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
 }
 
 .buy-bar__title {
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .buy-bar__spec {
   margin-top: 2px;
-  overflow: hidden;
+  overflow: visible;
   color: var(--colour-text-secondary);
   font-size: var(--font-size-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .buy-bar__price {

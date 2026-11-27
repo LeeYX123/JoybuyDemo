@@ -3,6 +3,14 @@ import uuid
 from django.db import models
 from django.db.models import Q
 
+from common.ids import (
+    new_order_public_id,
+    new_payment_public_id,
+    new_refund_public_id,
+    new_shipment_public_id,
+    save_with_public_id_retry,
+)
+
 
 class Order(models.Model):
     class Status(models.TextChoices):
@@ -15,7 +23,10 @@ class Order(models.Model):
     # 商家端订单管理可见"这笔是什么支付的"。
     PAYMENT_METHODS = ("BALANCE", "CARD", "GOOGLE_PAY", "APPLE_PAY", "WECHAT_PAY", "KLARNA")
 
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # 对外订单号：JYO + YYYYMMDD + 6 位随机（见 common.ids）；主键仍是 bigint。
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_order_public_id
+    )
     account = models.ForeignKey(
         "accounts_buyers.BuyerAccount", on_delete=models.PROTECT, related_name="orders"
     )
@@ -39,6 +50,19 @@ class Order(models.Model):
             models.Index(fields=["account", "status", "created_at"], name="order_account_idx"),
             models.Index(fields=["status", "payment_expires_at"], name="order_expiry_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        """新建时 public_id 撞唯一约束会换号重试（其它唯一键冲突原样抛出）。"""
+
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="order",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
 
 
 class OrderItem(models.Model):
@@ -86,7 +110,10 @@ class MerchantOrder(models.Model):
         "用户确认收货",
     )
 
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # 商家子单号同属订单体系：JYO 前缀 + 与 Order 一致的格式。
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_order_public_id
+    )
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="merchant_orders")
     merchant = models.ForeignKey(
         "merchants.Merchant",
@@ -133,6 +160,17 @@ class MerchantOrder(models.Model):
             ),
             models.Index(fields=["order", "merchant"], name="merchant_order_parent_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="order",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
 
     @property
     def profit(self):
@@ -208,3 +246,153 @@ class AutoOrderTask(models.Model):
             models.Index(fields=["status", "trigger_at"], name="auto_order_due_idx"),
             models.Index(fields=["merchant", "status"], name="auto_order_merchant_idx"),
         ]
+
+
+# --------------------------------------------------------------------------
+# 全站编号改造阶段 2：支付 / 退款 / 物流
+#
+# 三张表都只做「记录」：支付与物流分别在既有落点（下单即付、商家发货）
+# 顺手写入一条，退款目前没有真实打款动作，只留管理端手动创建。
+# 对外编号 public_id 是 JYPAY / JYR / JYLOG + YYYYMMDD + 6 位随机，主键仍是 bigint。
+# --------------------------------------------------------------------------
+
+
+class Payment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "待支付"
+        SUCCEEDED = "SUCCEEDED", "支付成功"
+        FAILED = "FAILED", "支付失败"
+        REFUNDED = "REFUNDED", "已退款"
+
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_payment_public_id
+    )
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payments")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    # 取值沿用 Order.PAYMENT_METHODS（BALANCE / CARD / GOOGLE_PAY ...）。
+    method = models.CharField(max_length=32, blank=True, default="")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    # 外部支付网关流水号；当前没有真实网关，留空。
+    provider_reference = models.CharField(max_length=120, blank=True, default="")
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payment"
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["order", "created_at"], name="payment_order_idx"),
+            models.Index(fields=["status", "created_at"], name="payment_status_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="payment",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
+
+
+class Refund(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "待处理"
+        APPROVED = "APPROVED", "已批准"
+        PROCESSING = "PROCESSING", "退款中"
+        SUCCEEDED = "SUCCEEDED", "退款成功"
+        FAILED = "FAILED", "退款失败"
+        REJECTED = "REJECTED", "已驳回"
+
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_refund_public_id
+    )
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="refunds")
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refunds",
+    )
+    after_sale = models.ForeignKey(
+        "merchant_ops.AfterSale",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refunds",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    reason = models.TextField(blank=True, default="")
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "refund"
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["order", "created_at"], name="refund_order_idx"),
+            models.Index(fields=["status", "created_at"], name="refund_status_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="refund",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
+
+
+class Shipment(models.Model):
+    class Status(models.TextChoices):
+        CREATED = "CREATED", "已创建"
+        IN_TRANSIT = "IN_TRANSIT", "运输中"
+        DELIVERED = "DELIVERED", "已送达"
+
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_shipment_public_id
+    )
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="shipments")
+    merchant_order = models.ForeignKey(
+        MerchantOrder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shipments",
+    )
+    carrier = models.CharField(max_length=120, blank=True, default="")
+    # 语义承接 MerchantOrder.tracking_reference（商家发货时填的运单号）。
+    tracking_no = models.CharField(max_length=120, blank=True, default="")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.CREATED)
+    shipped_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "shipment"
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["order", "created_at"], name="shipment_order_idx"),
+            models.Index(fields=["merchant_order"], name="shipment_suborder_idx"),
+            models.Index(fields=["status", "created_at"], name="shipment_status_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="shipment",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )

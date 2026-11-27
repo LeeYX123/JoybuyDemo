@@ -220,6 +220,64 @@ def _pick_legacy(legacy, codes) -> SpuTranslation | None:
     return None
 
 
+def localized_titles_for_spus(spu_ids, market: Market, locale: Locale) -> dict[int, str]:
+    """批量取多个 SPU 在 ``locale`` 下的标题（列表卡片用，读取时本地化）。
+
+    与 :func:`resolve_product_content` 同优先级：``SpuMarketContent``
+    (市场链 + ``locale`` + ``status=CURRENT``) 优先，其次 ``SpuTranslation``
+    （精确 locale 码 → 语言码）。都没有译文就不返回该 SPU —— 调用方保留英文
+    原值，**不回退其它语言**（避免 zh-CN 列表出现德语标题）。
+
+    固定 2 条查询（页大小无关），供搜索/推荐接口序列化时一次性本地化，
+    搜索索引本身（``ProductSearchDocument.title``）保持英文快照不变。
+    """
+
+    ids = {int(pk) for pk in spu_ids}
+    if not ids or locale is None:
+        return {}
+    titles: dict[int, str] = {}
+    market_ids = [item.pk for item in offer_market_chain(market)]
+    if market_ids:
+        rank = {market_id: index for index, market_id in enumerate(market_ids)}
+        best: dict[int, tuple[int, str]] = {}
+        rows = SpuMarketContent.objects.filter(
+            spu_id__in=ids,
+            market_id__in=market_ids,
+            locale_id=locale.pk,
+            status=SpuMarketContent.Status.CURRENT,
+        ).values_list("spu_id", "market_id", "title")
+        for spu_id, market_id, title in rows:
+            if not title:
+                continue
+            precedence = rank[market_id]
+            current = best.get(spu_id)
+            if current is None or precedence < current[0]:
+                best[spu_id] = (precedence, title)
+        titles = {spu_id: title for spu_id, (_, title) in best.items()}
+
+    missing = ids - set(titles)
+    if missing:
+        # 精确码（zh-CN）优先于语言码（zh）；同码多行按 pk 取第一条保证确定性。
+        priority = {locale.code: 0}
+        if locale.language_code != locale.code:
+            priority[locale.language_code] = 1
+        legacy: dict[int, tuple[int, str]] = {}
+        rows = (
+            SpuTranslation.objects.filter(spu_id__in=missing, locale__in=list(priority))
+            .order_by("spu_id", "pk")
+            .values_list("spu_id", "locale", "title")
+        )
+        for spu_id, code, title in rows:
+            if not title:
+                continue
+            precedence = priority[code]
+            current = legacy.get(spu_id)
+            if current is None or precedence < current[0]:
+                legacy[spu_id] = (precedence, title)
+        titles.update({spu_id: title for spu_id, (_, title) in legacy.items()})
+    return titles
+
+
 def resolve_product_content(spu, market: Market, locale: Locale) -> ResolvedProductContent:
     market_contents = list(spu.market_contents.all())
     for candidate_market in offer_market_chain(market):

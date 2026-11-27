@@ -42,6 +42,19 @@ const allCompleted = computed(
   () => merchantOrders.value.length > 0 && merchantOrders.value.every((m) => m.progress >= 7),
 )
 
+// 2026-11-27 全站编号改造：订单详情内嵌 payments / shipments（后端阶段 2 已直出
+// public_id），这里只做展示，不截断——JYPAY/JYLOG + 日期 + 6 位必须整号可见。
+const paymentNumbers = computed(() =>
+  (Array.isArray(order.value?.payments) ? order.value.payments : [])
+    .map((payment) => String(payment.public_id || ''))
+    .filter(Boolean),
+)
+const shipmentNumbers = computed(() =>
+  (Array.isArray(order.value?.shipments) ? order.value.shipments : [])
+    .map((shipment) => String(shipment.public_id || ''))
+    .filter(Boolean),
+)
+
 const confirming = ref(false)
 const confirmError = ref('')
 
@@ -89,7 +102,7 @@ const mobileOrder = computed(() => {
   if (!order.value) return null
   const shipping = order.value.shipping_address
   return {
-    number: order.value.public_id.slice(0, 8).toUpperCase(),
+    number: String(order.value.public_id || '').toUpperCase(),
     statusLabel: statusLabel(order.value.status),
     placedAt: order.value.created_at?.slice(0, 16).replace('T', ' ') || '',
     paymentMethod: order.value.payment_method || '',
@@ -105,12 +118,14 @@ const mobileOrder = computed(() => {
     })),
     showConfirm: !allCompleted.value && order.value.status === 'PAID',
     completed: allCompleted.value,
+    paymentNumbers: paymentNumbers.value,
+    shipmentNumbers: shipmentNumbers.value,
   }
 })
 
 useHead(() => ({
   title: order.value
-    ? `${t('orders.orderNumber')} #${order.value.public_id.slice(0, 8)}`
+    ? `${t('orders.orderNumber')} #${String(order.value.public_id || '').toUpperCase()}`
     : t('orders.orderNumber'),
 }))
 </script>
@@ -136,7 +151,7 @@ useHead(() => ({
       <p v-if="status === 'pending'" class="order-detail__hint">{{ t('common.loading') }}</p>
       <template v-else-if="order">
         <h1 id="order-title">
-          {{ t('orders.orderNumber') }} #{{ order.public_id.slice(0, 8).toUpperCase() }}
+          {{ t('orders.orderNumber') }} #{{ String(order.public_id).toUpperCase() }}
         </h1>
 
         <dl class="order-detail__meta">
@@ -151,6 +166,19 @@ useHead(() => ({
           <div v-if="order.payment_method">
             <dt>{{ t('orders.payment') }}</dt>
             <dd>{{ order.payment_method }}</dd>
+          </div>
+          <!-- 阶段 3：支付单号 / 物流单号整号展示（不截断）。 -->
+          <div v-if="paymentNumbers.length">
+            <dt>{{ t('orders.paymentNumber') }}</dt>
+            <dd class="order-detail__ids">
+              <span v-for="number in paymentNumbers" :key="number">{{ number }}</span>
+            </dd>
+          </div>
+          <div v-if="shipmentNumbers.length">
+            <dt>{{ t('orders.shipmentNumber') }}</dt>
+            <dd class="order-detail__ids">
+              <span v-for="number in shipmentNumbers" :key="number">{{ number }}</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t('orders.total') }}</dt>
@@ -218,6 +246,17 @@ useHead(() => ({
 .order-detail__meta dd {
   margin: 2px 0 0;
   font-weight: var(--font-weight-semibold);
+}
+
+/* 完整编号：等宽 + 不换行（JYPAY/JYLOG 17 位） */
+.order-detail__ids {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .order-detail__items {

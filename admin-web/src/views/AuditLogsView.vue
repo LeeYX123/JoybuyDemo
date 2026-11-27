@@ -165,7 +165,8 @@ onMounted(() => {
               <td>
                 <div class="stacked-cell">
                   <b>{{ row.target_name || '—' }}</b>
-                  <span class="mono">{{ row.target.slice(0, 8) }}</span>
+                  <!-- 2026-11-27 去截断：审计对象 ID 完整展示。 -->
+                  <span class="mono">{{ row.target }}</span>
                 </div>
               </td>
               <td class="mono">{{ summarize(row.after) }}</td>

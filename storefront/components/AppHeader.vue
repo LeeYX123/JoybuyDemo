@@ -61,10 +61,7 @@ function onWindowScroll() {
 
 const showCategoriesButton = computed(() => !route.path.startsWith('/p/'))
 const showCategoryNav = computed(
-  () =>
-    !props.hideCategoryNav &&
-    !route.path.startsWith('/p/') &&
-    !isImmersiveRoute.value,
+  () => !props.hideCategoryNav && !route.path.startsWith('/p/') && !isImmersiveRoute.value,
 )
 
 // Notice strip (docs/12 global): the "Same-day & Next-day Delivery" and
@@ -425,11 +422,7 @@ const brandLogoUrl = '/images/logo.png'
           </NuxtLink>
 
           <!-- 沉浸式（活动页/店铺页）：语言切换从黑条移到这里，位于【申请店铺】右侧。 -->
-          <label
-            v-if="isActivityRoute"
-            class="header-locale"
-            :aria-label="t('header.language')"
-          >
+          <label v-if="isActivityRoute" class="header-locale" :aria-label="t('header.language')">
             <span class="visually-hidden">{{ t('header.language') }}</span>
             <select :value="localeCode" @change="setMarketLocale($event.target.value)">
               <option v-for="option in availableLocales" :key="option.code" :value="option.code">
@@ -452,7 +445,14 @@ const brandLogoUrl = '/images/logo.png'
             <!-- 角标要贴在**图标**右上角（活动页图标 + 文字并排时不能跑到文字上），
                  所以图标与角标包在同一个相对定位容器里。 -->
             <span class="cart-icon">
-              <svg v-if="isActivityRoute" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+              <svg
+                v-if="isActivityRoute"
+                viewBox="0 0 24 24"
+                width="24"
+                height="24"
+                fill="none"
+                aria-hidden="true"
+              >
                 <path
                   d="M2.6 3.6h2.2l2.1 11.1h10.8l2.1-8H6.2"
                   stroke="currentColor"
@@ -722,12 +722,13 @@ const brandLogoUrl = '/images/logo.png'
 }
 
 .top-strip__text {
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
   margin: 0;
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .top-strip__arrow {
@@ -802,12 +803,17 @@ const brandLogoUrl = '/images/logo.png'
 .site-header--store {
   position: sticky;
   top: 0;
-  transition: background 220ms ease, box-shadow 220ms ease;
+  transition:
+    background 220ms ease,
+    box-shadow 220ms ease;
 }
 
 .site-header--store .top-strip {
   overflow: hidden;
-  transition: height 220ms ease, min-height 220ms ease, opacity 180ms ease;
+  transition:
+    height 220ms ease,
+    min-height 220ms ease,
+    opacity 180ms ease;
 }
 
 .site-header--store.site-header--scrolled .top-strip,
@@ -1107,13 +1113,14 @@ const brandLogoUrl = '/images/logo.png'
 }
 
 .account-menu__name {
-  overflow: hidden;
+  overflow: visible;
   max-width: 188px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
   font-size: 16px;
   font-weight: var(--font-weight-bold);
   line-height: 22px;
+  word-break: break-word;
 }
 
 .account-menu__item {

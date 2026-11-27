@@ -16,6 +16,7 @@ import base64
 import json
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
+from types import SimpleNamespace
 from unittest import mock
 
 from django.core.management import call_command
@@ -626,6 +627,77 @@ class CrispMirrorServiceTests(TestCase):
         )
 
 
+class CrispMetaTitleTests(TestCase):
+    """Inbox 会话标题口径（2026-11-27）：三个场景都保留双方身份，分隔符是字面 ``-->``。"""
+
+    def setUp(self):
+        crisp_mirror._META_READY.clear()
+        self.addCleanup(crisp_mirror._META_READY.clear)
+
+    def test_build_title_uses_literal_arrow_without_spaces(self):
+        title = crisp_mirror.build_session_title("小明", "会话测试店")
+
+        self.assertEqual(title, "小明-->会话测试店")
+        self.assertNotIn(" · ", title)
+        self.assertNotIn(" ", title)
+
+    def test_merchant_chat_title_keeps_both_sides(self):
+        thread = SimpleNamespace(
+            buyer=SimpleNamespace(display_name="小明", email=""),
+            merchant=SimpleNamespace(display_name="会话测试店"),
+        )
+
+        self.assertEqual(
+            crisp_mirror.merchant_chat_meta_nickname(thread), "小明-->会话测试店"
+        )
+
+    def test_merchant_chat_title_falls_back_to_generic_merchant_name(self):
+        thread = SimpleNamespace(
+            buyer=SimpleNamespace(display_name="小明", email=""),
+            merchant=SimpleNamespace(display_name="  "),
+        )
+
+        self.assertEqual(crisp_mirror.merchant_chat_meta_nickname(thread), "小明-->商家")
+
+    def test_support_chat_title_appends_platform_name(self):
+        thread = SimpleNamespace(buyer=SimpleNamespace(display_name="小明", email=""))
+
+        title = crisp_mirror.support_chat_meta_nickname(thread)
+
+        self.assertEqual(title, "小明-->JoyBuy客服")
+        # 标题里的平台名是独立口径：与消息气泡的 CRISP_PLATFORM_NICKNAME 不同。
+        self.assertNotEqual(title.split("-->")[1], crisp_mirror.platform_nickname())
+
+    def test_long_store_name_truncates_store_not_platform_suffix(self):
+        title = crisp_mirror.build_session_title("店" * 60, "JoyBuy客服")
+
+        self.assertEqual(len(title), crisp_mirror.META_NICKNAME_MAX_LENGTH)
+        self.assertTrue(title.endswith("-->JoyBuy客服"))
+
+    @override_settings(**CONFIGURED)
+    def test_meta_patch_keeps_platform_suffix_for_long_store_name(self):
+        long_store = "店" * 60
+        nickname = crisp_mirror.build_session_title(long_store, "JoyBuy客服")
+        responses = [{"data": {"session_id": "session-long"}}, {}, {}]
+        with (
+            mock.patch.object(crisp_mirror, "_http_post", side_effect=responses),
+            mock.patch.object(crisp_mirror, "_http_patch", return_value={}) as patch_http,
+        ):
+            mirror_message(
+                "merchant:JYLONGTITLE",
+                "merchant_visitor",
+                long_store,
+                "长店名",
+                None,
+                "601",
+                session_nickname=nickname,
+            )
+
+        _path, meta_body = patch_http.call_args.args
+        self.assertEqual(len(meta_body["nickname"]), crisp_mirror.META_NICKNAME_MAX_LENGTH)
+        self.assertTrue(meta_body["nickname"].endswith("-->JoyBuy客服"))
+
+
 class CrispMirrorEndpointTests(TestCase):
     """真实接口接线：商家端 / 管理端发消息 → on_commit 后镜像。"""
 
@@ -728,10 +800,10 @@ class CrispMirrorEndpointTests(TestCase):
         # 批次 AA（Q8）：merchant: 线程里商家是访客身份（from=user），不再是 operator。
         self.assertEqual(final_body["from"], "user")
         self.assertEqual(final_body["user"], {"type": "website", "nickname": "接口镜像店"})
-        # 线程的访客是商家 → 会话 meta 昵称用店名。
+        # 线程的访客是商家 → 会话 meta 标题 = 「店名-->JoyBuy客服」（2026-11-27 口径）。
         self.patch_http.assert_called_once()
         _meta_path, meta_body = self.patch_http.call_args.args
-        self.assertEqual(meta_body, {"nickname": "接口镜像店"})
+        self.assertEqual(meta_body, {"nickname": "接口镜像店-->JoyBuy客服"})
         self.assertEqual(CrispMirrorLog.objects.get().status, CrispMirrorLog.Status.SENT)
 
     @override_settings(**CONFIGURED)

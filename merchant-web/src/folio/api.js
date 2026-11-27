@@ -868,6 +868,9 @@ function populateGlobals() {
   sealed = !(merchant.can_operate ?? true) // eslint-disable-line no-undef
   enabled = Boolean(deposit.enabled) // eslint-disable-line no-undef
   immutableShopId = merchant.id || '' // eslint-disable-line no-undef
+  // 2026-11-27 全站编号改造：静态稿里不属于本模块作用域的编号展示（base-1 店铺状态
+  // 页、base-2 账号弹窗）从 dataset 读数据槽，避免再写死演示用 MER 号。
+  document.documentElement.dataset.merchantId = merchant.id || ''
   shopProfile = { name: merchant.name || '商家店铺', avatar: merchant.avatar || '' } // eslint-disable-line no-undef
   walletSecurity = wallet.wallet_password_configured ? { remote: true } : null // eslint-disable-line no-undef
   passwordGuard = { // eslint-disable-line no-undef

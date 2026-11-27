@@ -227,6 +227,7 @@ useHead(() => ({ title: heading.value }))
               :items="currentRoot.children"
               :active-slug="props.slug"
               :all-card="categoryAllCard"
+              :scroll-key="currentRoot.slug"
             />
           </template>
           <header class="listing-head">

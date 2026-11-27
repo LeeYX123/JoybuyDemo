@@ -159,7 +159,8 @@ onMounted(() => {
             <tr v-for="row in state.items" :key="row.id">
               <td>
                 <b>{{ row.name }}</b>
-                <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
+                <!-- 2026-11-27 全站编号改造：商家编号 JYM+10 位整号展示。 -->
+                <span class="cell-sub">{{ row.id }}</span>
               </td>
               <td class="num">{{ row.followers }}</td>
               <td class="num">

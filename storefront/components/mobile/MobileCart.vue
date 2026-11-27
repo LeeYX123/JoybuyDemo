@@ -200,11 +200,9 @@ const { t } = useLocale()
 }
 
 .m-cart__name {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
+  overflow: visible;
+
   color: #1a1a1a;
   font-size: 14px;
   font-weight: 500;

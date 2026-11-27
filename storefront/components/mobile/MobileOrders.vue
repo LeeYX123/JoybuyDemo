@@ -230,6 +230,9 @@ const { t } = useLocale()
 .m-orders__number {
   color: #55565b;
   font-size: 13px;
+  /* 完整订单号（JYO+YYYYMMDD+6 位）不换行 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .m-orders__card-body {

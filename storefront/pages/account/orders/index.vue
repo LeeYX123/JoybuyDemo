@@ -130,7 +130,9 @@ const mobileOrders = computed(() =>
     const first = Array.isArray(order.items) ? order.items[0] : null
     return {
       publicId: order.public_id,
-      number: order.public_id.slice(0, 8).toUpperCase(),
+      // 2026-11-27 全站编号改造：订单号是 JYO+YYYYMMDD+6 位，截前 8 位会撞车，
+      // 一律显示完整编号（CSS 用等宽字体 + nowrap 防换行）。
+      number: String(order.public_id || '').toUpperCase(),
       date: formatDate(order.created_at),
       statusLabel: stateLabel(order),
       statusClass: stateClass(order),
@@ -192,9 +194,7 @@ useHead(() => ({ title: t('accountMenu.orders') }))
           <article class="order-card">
             <header class="order-card__head">
               <div class="order-card__meta">
-                <span class="order-card__number"
-                  >#{{ order.public_id.slice(0, 8).toUpperCase() }}</span
-                >
+                <span class="order-card__number">#{{ String(order.public_id).toUpperCase() }}</span>
                 <span class="order-card__date">{{ formatDate(order.created_at) }}</span>
               </div>
               <span class="order-card__state" :class="`order-card__state--${stateClass(order)}`">
@@ -298,6 +298,10 @@ useHead(() => ({ title: t('accountMenu.orders') }))
 
 .order-card__number {
   font-weight: var(--font-weight-semibold);
+  /* 新编号（JYO+YYYYMMDD+6 位）必须整号可见：等宽 + 不换行，父容器可横向滚动。 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .order-card__date {
@@ -376,13 +380,13 @@ useHead(() => ({ title: t('accountMenu.orders') }))
 }
 
 .order-item__title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
   color: var(--colour-text);
   font-size: var(--font-size-md);
   text-decoration: none;
+  word-break: break-word;
 }
 
 .order-item__title:hover {

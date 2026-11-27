@@ -266,17 +266,6 @@ useHead({ title: () => title.value })
         <span>{{ subtitle }}</span>
       </p>
 
-      <p v-if="step === 'identifier'" class="auth-promo">
-        {{ t('auth.promoPrefix') }}
-        <span class="auth-promo__amount">{{ t('auth.promoDiscount') }}</span>
-        {{ t('auth.promoSuffix') }}
-        <svg class="auth-promo__info" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" />
-          <circle cx="8" cy="4.6" r="0.9" fill="currentColor" />
-          <path d="M8 7v4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-        </svg>
-      </p>
-
       <!-- 第一屏：只收邮箱/手机号 -->
       <form
         v-if="step === 'identifier'"
@@ -309,6 +298,11 @@ useHead({ title: () => title.value })
           {{ submitting ? t('auth.submitting') : t('auth.continue') }}
         </button>
       </form>
+
+      <!-- 批次 CA：删除迎新横幅后保留注册入口（需求：注册路径不能丢） -->
+      <p v-if="step === 'identifier'" class="auth-switch">
+        <NuxtLink to="/auth/register">{{ t('auth.createAccount') }}</NuxtLink>
+      </p>
 
       <!-- 分隔 + 三方登录（仅第一屏；无可用渠道时整块不渲染） -->
       <template v-if="showSocial">
@@ -353,8 +347,6 @@ useHead({ title: () => title.value })
             <span class="auth-social__label">{{ providerLabel(provider) }}</span>
           </a>
         </div>
-
-        <button class="auth-more" type="button">{{ t('auth.viewMoreOptions') }}</button>
 
         <div class="auth-region">
           <span class="auth-region__label">{{ localeName }}</span>
@@ -583,37 +575,6 @@ useHead({ title: () => title.value })
   flex: none;
 }
 
-.auth-promo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  /* 真站这行比表单列宽（约 640px）且单行显示；两侧用负边距越出 380 列。 */
-  margin: 18px -130px 0;
-  color: #1a1a1a;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-  text-align: center;
-}
-
-@media (max-width: 720px) {
-  .auth-promo {
-    margin-inline: 0;
-    flex-wrap: wrap;
-    font-size: 15px;
-  }
-}
-
-.auth-promo__amount {
-  color: #e1251b;
-}
-
-.auth-promo__info {
-  flex: none;
-  color: #6e7078;
-}
-
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -771,18 +732,18 @@ useHead({ title: () => title.value })
   text-align: center;
 }
 
-.auth-more {
-  display: block;
-  margin: 16px auto 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.auth-switch {
+  margin: 16px 0 0;
   color: #6e7078;
-  font: inherit;
   font-size: 14px;
-  font-weight: 500;
-  line-height: 32px;
-  cursor: pointer;
+  line-height: 20px;
+  text-align: center;
+}
+
+.auth-switch a {
+  color: #1a1a1a;
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .auth-region {

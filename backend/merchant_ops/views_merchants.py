@@ -165,12 +165,8 @@ def _filtered_queryset(request):
     query = (request.query_params.get("q") or "").strip()
     if query:
         condition = Q(display_name__icontains=query) | Q(slug__icontains=query)
-        try:
-            import uuid as uuid_module
-
-            condition |= Q(public_id=uuid_module.UUID(query))
-        except ValueError:
-            pass
+        # 2026-11-27 全站编号改造：商家编号 JYM+10 位字符串。
+        condition |= Q(public_id__iexact=query)
         queryset = queryset.filter(condition)
     return queryset.order_by("-created_at", "-pk")
 

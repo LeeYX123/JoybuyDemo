@@ -110,3 +110,6 @@ translation_agent/
 # 本地临时预览页与需求文档备份副本
 _preview.html
 *.bak-*
+
+# 本地问题清单工具（个人工具 + 本地 JSON 数据，整个目录不入库）
+issue-board/

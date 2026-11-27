@@ -19,6 +19,19 @@ import {
 const SESSION_KEY = 'buyer-session'
 const SESSION_DATA_KEY = 'buyer-session-data'
 const SESSION_STARTED_KEY = 'buyer-session-started'
+// 2026-11-27 缺陷修复（审核通过后入口仍是【申请店铺】）：会话是 SSR 首帧快照，
+// 客户端水合后 `started` 已为 true、不会再请求，因此同一个 SPA 生命周期里一直
+// 用首帧数据。管理端在另一个标签页把申请改成 APPROVED 后，买家回到商城点来点去
+// 看到的仍是旧状态，必须先点进 /account/apply-shop（该页 mount 时强制刷新）才好。
+// 现在在「客户端路由完成 / 标签页重新可见 / bfcache 恢复」时做一次**节流**再校验：
+// TTL 内的多次导航合并为一次请求，正常浏览几乎不增加开销。
+const REVALIDATE_NAV_TTL_MS = 20_000
+const REVALIDATE_FOCUS_TTL_MS = 5_000
+// 模块加载（≈ 客户端水合）时间即视为「刚同步过」：硬刷新时 SSR 刚取完会话，
+// 不需要紧接着再打一次请求。
+let lastSessionSyncAt = import.meta.client ? Date.now() : 0
+let sessionSyncPromise = null
+let sessionSyncHooksInstalled = false
 // 三方登录渠道（docs/16）：只返回后端凭据已配置的渠道，登录页据此渲染按钮。
 const OAUTH_DATA_KEY = 'buyer-oauth-providers-data'
 
@@ -98,7 +111,54 @@ export function useBuyerAuth() {
       ignoreResponseError: true,
     })
     session.value = response ?? null
+    lastSessionSyncAt = Date.now()
     return response
+  }
+
+  // 节流的后台再校验：同一时刻只发一条请求（in-flight 复用），TTL 内直接返回
+  // 当前共享状态。force 用于「明确的时机」（如从 bfcache 恢复）绕过 TTL。
+  // 后端写入（管理端审核）发生在别的标签页/设备，这里不会轮询，只在用户
+  // 重新看到商城（页面切换 / 切回标签页）时校准一次。
+  async function revalidate({ force = false, minInterval = REVALIDATE_NAV_TTL_MS } = {}) {
+    if (import.meta.server) return session.value
+    if (sessionSyncPromise) return sessionSyncPromise
+    if (!force && Date.now() - lastSessionSyncAt < minInterval) return session.value
+    sessionSyncPromise = (async () => {
+      try {
+        await refresh()
+      } catch {
+        // 后台再校验失败时保留当前派生状态，绝不把已登录用户刷成未登录。
+      } finally {
+        sessionSyncPromise = null
+        lastSessionSyncAt = Date.now()
+      }
+      return session.value
+    })()
+    return sessionSyncPromise
+  }
+
+  // 监听器只装一次（useBuyerAuth 被全站组件反复调用）。SSR 不装。
+  if (import.meta.client && !sessionSyncHooksInstalled) {
+    sessionSyncHooksInstalled = true
+    try {
+      // SPA 内导航完成（首帧水合时 TTL 刚重置，会被跳过，不额外发请求）。
+      nuxtApp.hook?.('page:finish', () => {
+        revalidate()
+      })
+    } catch {
+      // 极简运行时（单测/嵌入场景）没有 hook 系统：忽略，revalidate 仍可手动调用。
+    }
+    if (typeof window !== 'undefined') {
+      const onFocus = () => revalidate({ minInterval: REVALIDATE_FOCUS_TTL_MS })
+      window.addEventListener('focus', onFocus)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') onFocus()
+      })
+      // bfcache 恢复的页面不会重新执行 SSR，必须强制校准。
+      window.addEventListener('pageshow', (event) => {
+        if (event.persisted) revalidate({ force: true })
+      })
+    }
   }
 
   const data = computed(() => session.value)
@@ -188,6 +248,7 @@ export function useBuyerAuth() {
     loadOAuthProviders,
     ensureSession,
     refresh,
+    revalidate,
     sendVerificationCode,
     register,
     registerEmail,

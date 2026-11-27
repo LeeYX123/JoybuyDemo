@@ -415,9 +415,9 @@ onMounted(() => {
                   <img v-if="row.images?.length" :src="row.images[0]" alt="" class="thumb" />
                   <div class="pool-product__text">
                     <span class="cell-strong" :title="row.name">{{ row.name }}</span>
+                    <!-- 2026-11-27 全站编号改造：商品编号（UUID，商品回退 UUID 后）整号展示。 -->
                     <span class="cell-sub"
-                      >{{ row.id.slice(0, 8)
-                      }}<template v-if="row.activity"> · 活动商品</template></span
+                      >{{ row.id }}<template v-if="row.activity"> · 活动商品</template></span
                     >
                     <span v-if="row.has_detail" class="pool-badges">
                       <span class="badge-mini">图文 {{ row.section_count }}</span>
@@ -736,14 +736,14 @@ onMounted(() => {
               v-if="block.type === 'heading'"
               v-model="block.text"
               type="text"
-              maxlength="200"
+              maxlength="1000"
               placeholder="子标题内容（加粗展示）"
             />
             <textarea
               v-else
               v-model="block.text"
               rows="3"
-              maxlength="5000"
+              maxlength="50000"
               placeholder="段落内容"
             ></textarea>
             <div class="pool-editor-block__tools">
@@ -843,8 +843,8 @@ onMounted(() => {
 .pool-table th:nth-child(2),
 .pool-table td:nth-child(2) {
   width: 15%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  word-break: break-word;
 }
 
 .pool-table th:nth-child(3),
@@ -884,9 +884,10 @@ onMounted(() => {
 }
 
 .pool-product__text .cell-strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 操作列的按钮不换行、不撑宽。 */

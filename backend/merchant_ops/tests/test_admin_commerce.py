@@ -901,7 +901,7 @@ class ProductPoolDetailContentTests(CommerceTestBase):
                 "content_sections": [
                     {
                         "title": "区块",
-                        "blocks": [{"type": "paragraph", "text": "长" * 5001}],
+                        "blocks": [{"type": "paragraph", "text": "长" * 50001}],
                         "images": [],
                     }
                 ]

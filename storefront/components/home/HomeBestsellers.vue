@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { useFetch, useRuntimeConfig } from '#imports'
+import { computed, ref, watch } from 'vue'
+import { useAsyncData } from '#imports'
 
+import { useBestsellerFeed } from '../../composables/useBestsellerFeed'
 import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useLocale } from '../../composables/useLocale'
 
@@ -11,9 +12,14 @@ import { useLocale } from '../../composables/useLocale'
 // black underline), and one row of ranked product cards for the active tab.
 // Ranking data comes from the storefront search API (admin ranking config is
 // the phase-2 backend work).
+//
+// 2026-11-27: two tabs are curated instead of "newest 5 of the whole subtree"
+// (家居生活 = 家具 3 + 床上用品 2, 健康保健 = 维生素&补充剂 3 + 运动&体能 2).
+// Rules live in `utils/bestsellerCurations.js`, the loader is shared with the
+// mobile floor; every other tab keeps the original single request.
 const { categories } = useCategoryTree()
 const { t, categoryName, locale } = useLocale()
-const config = useRuntimeConfig()
+const { loadTabItems, localeKey } = useBestsellerFeed()
 
 // Same nav scope as the header: categories hidden from the top nav must not
 // reappear as bestseller tabs (需求文档03 12.4).
@@ -23,24 +29,31 @@ const navCategories = computed(() =>
 
 const activeSlug = ref(navCategories.value[0]?.slug || 'home-living')
 
-function searchUrl(slug) {
-  const query = `category=${encodeURIComponent(slug)}&sort=newest&page=1`
-  return import.meta.server
-    ? `${config.apiBaseInternal}/search?${query}`
-    : `/api/v1/search?${query}`
-}
+// Initial tab, server-rendered. The key is reactive and carries the locale:
+// a key frozen at setup keeps serving the cached English payload after the
+// header switcher changes the locale (same bug class as `useSearchApi`).
+const feedKey = computed(() => `home-bestsellers-${localeKey.value}`)
+const { data: feed } = useAsyncData(feedKey, () => loadTabItems(activeSlug.value))
 
-const { data } = useFetch(() => searchUrl(activeSlug.value), {
-  key: 'home-bestsellers',
+// Tab switches fetch on demand; the SSR row stays visible on a transient
+// failure, matching the previous behaviour.
+const switchedItems = ref(null)
+
+// A tab row fetched before the switch is in the old language; drop it so the
+// refetched (localised) feed row wins.
+watch(localeKey, () => {
+  switchedItems.value = null
 })
 
-const items = computed(() => (Array.isArray(data.value?.items) ? data.value.items : []).slice(0, 5))
+const items = computed(() => {
+  const source = switchedItems.value ?? feed.value
+  return (Array.isArray(source) ? source : []).slice(0, 5)
+})
 
 async function selectTab(slug) {
   activeSlug.value = slug
   try {
-    const response = await $fetch(searchUrl(slug))
-    data.value = response
+    switchedItems.value = await loadTabItems(slug)
   } catch {
     // keep the previous list on a transient failure
   }

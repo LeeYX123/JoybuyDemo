@@ -819,12 +819,13 @@ def _refresh_search_documents(spu) -> None:
 
 
 # --- 图文详情（content_sections）人工编辑的校验上限（2026-11-10）---
+# 2026-11-27 上限放宽：子标题 200→1000，段落 5000→50000（管理端编辑商品实测反馈原上限太紧）。
 MAX_CONTENT_SECTIONS = 50
 MAX_CONTENT_BLOCKS = 100
 MAX_SECTION_IMAGES = 20
 MAX_SECTION_TITLE_LEN = 120
-MAX_HEADING_LEN = 200
-MAX_PARAGRAPH_LEN = 5000
+MAX_HEADING_LEN = 1000
+MAX_PARAGRAPH_LEN = 50000
 CONTENT_BLOCK_TYPES = ("heading", "paragraph")
 
 

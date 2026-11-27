@@ -497,12 +497,13 @@ function closeOnEscape(event) {
 
 .m-drawer__username {
   flex: 1;
-  overflow: hidden;
+  overflow: visible;
   color: #1a1a1a;
   font-size: 16px;
   font-weight: var(--font-weight-bold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .m-drawer__signout,

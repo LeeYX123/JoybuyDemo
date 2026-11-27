@@ -14,8 +14,15 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
       - --default-time-zone=+00:00
+      # 2026-11-26：连接与内存调优（翻译 + 爬虫 + 前端三端并存）。
+      # 连接上限 151→500；buffer pool 128M→2G（本机 64GB 内存空闲充足）；
+      # 闲置连接 8h→4h 自动断开，避免 Sleep 连接堆积挤占上限。
+      - --max-connections=500
+      - --innodb-buffer-pool-size=2G
+      - --wait-timeout=14400
+      - --interactive-timeout=14400
     ports:
-      - "127.0.0.1:${MYSQL_PORT:-33060}:3306"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-33060}:3306"
     volumes:
       - joybuy_mysql_data:/var/lib/mysql
     healthcheck:
@@ -38,7 +45,7 @@ services:
       - "60"
       - "1"
     ports:
-      - "127.0.0.1:${REDIS_PORT:-63790}:6379"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-63790}:6379"
     volumes:
       - joybuy_redis_data:/data
     healthcheck:
@@ -54,8 +61,8 @@ services:
       MP_DATABASE: /data/mailpit.db
       MP_MAX_MESSAGES: "5000"
     ports:
-      - "127.0.0.1:${MAIL_PORT:-1025}:1025"
-      - "127.0.0.1:${MAIL_UI_PORT:-8025}:8025"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${MAIL_PORT:-1025}:1025"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${MAIL_UI_PORT:-8025}:8025"
     volumes:
       - joybuy_mailpit_data:/data
     healthcheck:

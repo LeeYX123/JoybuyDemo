@@ -313,10 +313,12 @@ useHead(() => ({
 .shop-product-card__name {
   font-size: 13px;
   line-height: 1.4;
+  /* 标题最多 2 行，超出省略号。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
+  word-break: break-word;
 }
 
 /* 评分 | 已售行（ADR-0003）：商家页只显示此行，不显示自营徽标。 */

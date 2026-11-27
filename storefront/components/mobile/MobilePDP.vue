@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useLocale } from '../../composables/useLocale'
+import { formatDisplayPrice } from '../../utils/display'
 
 // Mobile product detail (docs/20 §2): full-width square gallery with dot
 // indicators (static display, no swipe gestures), a 16px/700 two-line title
@@ -29,6 +30,10 @@ const props = defineProps({
   wishPending: { type: Boolean, default: false },
   contentSections: { type: Array, default: () => [] },
   specificationTables: { type: Array, default: () => [] },
+  // 批次 DB（Q9/Q10）：族内兄弟商品（型号轴）与当前规格的商家 list。
+  familyMembers: { type: Array, default: () => [] },
+  familyAxisName: { type: String, default: '' },
+  merchants: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -37,6 +42,8 @@ const emit = defineEmits([
   'add-to-cart',
   'buy-now',
   'toggle-wishlist',
+  'select-merchant',
+  'go-family-member',
 ])
 
 const { t } = useLocale()
@@ -49,7 +56,18 @@ const mediaImages = computed(() =>
     url: item.type === 'image' ? item.url : item.poster || '',
   })),
 )
-const currentImage = computed(() => mediaImages.value[activeMediaIndex.value]?.url || '')
+// 切规格换画廊（批次 DA）后回到第一张：旧下标可能超出新画廊长度，否则主图
+// 会变成空白占位。
+watch(
+  () => mediaImages.value.map((item) => item.key).join('|'),
+  () => {
+    activeMediaIndex.value = 0
+  },
+)
+const currentImage = computed(() => {
+  const active = mediaImages.value[activeMediaIndex.value] || mediaImages.value[0]
+  return active?.url || ''
+})
 
 function selectMedia(index) {
   activeMediaIndex.value = index
@@ -68,6 +86,13 @@ function isValueActive(axis, value) {
     String(props.selectedSkuSpec?.[axis.name]) === String(value.value) ||
     (Array.isArray(value.sku_ids) && value.sku_ids.includes(props.selectedSku?.public_id))
   )
+}
+
+// 真站轴标题是「轴名: 当前值」，值加粗 600
+// （var/pdp_spec_ui_20261127/measurements.md §1）。
+function axisSelectedValue(axis) {
+  const value = props.selectedSkuSpec?.[axis.name]
+  return value === undefined || value === null ? '' : String(value)
 }
 
 const guaranteeItems = computed(() => [
@@ -139,27 +164,70 @@ const addLabel = computed(() =>
 
       <!-- Variant axes + quantity stepper (docs/20 §2). -->
       <div class="m-pdp__variants">
-        <p v-if="isSingleSku && readonlySpec" class="m-pdp__spec-readonly">
+        <p v-if="isSingleSku && readonlySpec && !variantAxes.length" class="m-pdp__spec-readonly">
           {{ readonlySpec }}
         </p>
-        <div v-for="axis in variantAxes" :key="axis.name" class="m-pdp__axis">
-          <span class="m-pdp__axis-name">{{ axis.name }}</span>
+        <!-- 批次 DB：族内兄弟商品（型号/系列）整页跳转。 -->
+        <div v-if="familyMembers.length > 1" class="m-pdp__axis m-pdp__axis--family">
+          <span class="m-pdp__axis-name">{{ familyAxisName }}</span>
+          <div class="m-pdp__axis-values">
+            <button
+              v-for="(member, index) in familyMembers"
+              :key="member.spu_public_id"
+              type="button"
+              class="m-pdp__variant"
+              :class="{ 'm-pdp__variant--active': member.is_current }"
+              @click="emit('go-family-member', member)"
+            >
+              <span>{{ member.axis_label || member.title || 'Option ' + (index + 1) }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-for="axis in variantAxes" :key="axis.name" class="m-pdp__axis m-pdp__axis--spec">
+          <span class="m-pdp__axis-name">
+            <span class="m-pdp__axis-label">{{ axis.name }}:</span>
+            <span class="m-pdp__axis-selected">{{ axisSelectedValue(axis) }}</span>
+          </span>
           <div class="m-pdp__axis-values">
             <button
               v-for="value in axis.values"
               :key="value.value"
               type="button"
               class="m-pdp__variant"
-              :class="{ 'm-pdp__variant--active': isValueActive(axis, value) }"
+              :class="[
+                axis.has_image ? 'm-pdp__variant--spec-image' : 'm-pdp__variant--spec',
+                { 'm-pdp__variant--active': isValueActive(axis, value) },
+              ]"
               @click="emit('select-variant', axis.name, value)"
             >
               <img
                 v-if="value.image_url"
                 class="m-pdp__variant-image"
                 :src="value.image_url"
-                :alt="value.value"
+                alt=""
               />
-              <span>{{ value.value }}</span>
+              <span class="m-pdp__variant-label">{{ value.value }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 批次 DB：同一规格的多商家（切商家只改价格/库存/加购 offer）。 -->
+        <div v-if="merchants.length > 1" class="m-pdp__axis m-pdp__axis--merchant">
+          <span class="m-pdp__axis-name">{{ t('detail.sellerAxis') }}</span>
+          <div class="m-pdp__axis-values">
+            <button
+              v-for="entry in merchants"
+              :key="entry.public_id"
+              type="button"
+              class="m-pdp__variant"
+              :class="{ 'm-pdp__variant--active': offer?.public_id === entry.public_id }"
+              @click="emit('select-merchant', entry)"
+            >
+              <span
+                >{{ entry.merchant?.display_name || '' }} ·
+                {{ formatDisplayPrice(entry.price) }}</span
+              >
             </button>
           </div>
         </div>
@@ -380,7 +448,12 @@ const addLabel = computed(() =>
   bottom: 12px;
   left: 50%;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
+  /* 合并族画廊可能几十张图：旧版 29 个圆点在 375 宽下横向溢出 13px。
+     这里允许换行并限制在画廊宽度内，避免移动端横向滚动。 */
+  max-width: calc(100% - 24px);
   transform: translateX(-50%);
 }
 
@@ -405,15 +478,15 @@ const addLabel = computed(() =>
 }
 
 .m-pdp__title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
   margin: 0;
   color: #1a1a1a;
   font-size: 16px;
   font-weight: var(--font-weight-bold);
   line-height: 22px;
+  word-break: break-word;
 }
 
 .m-pdp__promo {
@@ -517,6 +590,109 @@ const addLabel = computed(() =>
   height: 24px;
   border-radius: 4px;
   object-fit: cover;
+}
+
+/* --- 规格轴：与桌面同一份真站实测（var/pdp_spec_ui_20261127/measurements.md）。
+   标题 16px/500/#1a1a1a（当前值 600）、标题下间距 12、选项 gap 8；
+   有图 = 80 宽卡片（图 72×72 在上、名 14px/500 在下）；
+   无图 = 文字胶囊 8px 12px、圆角 4、底色 #f5f6fa；
+   选中只换边框 #1a1a1a + 字重 600，底色与文字色不变。 */
+.m-pdp__axis--spec {
+  padding: 12px 0;
+}
+
+.m-pdp__axis--spec + .m-pdp__axis--spec {
+  margin-top: 0;
+}
+
+.m-pdp__axis--spec .m-pdp__axis-name {
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.m-pdp__axis--spec .m-pdp__axis-label {
+  margin-right: 4px;
+}
+
+.m-pdp__axis--spec .m-pdp__axis-selected {
+  font-weight: 600;
+}
+
+.m-pdp__axis--spec .m-pdp__axis-values {
+  margin-top: 12px;
+}
+
+.m-pdp__variant--spec-image {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  width: 80px;
+  height: auto;
+  min-height: 36px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #f5f6fa;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.m-pdp__variant--spec-image .m-pdp__variant-image {
+  width: 72px;
+  height: 72px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.m-pdp__variant--spec-image .m-pdp__variant-label {
+  width: 100%;
+  margin-top: 3px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  overflow: visible;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.m-pdp__variant--spec {
+  gap: 0;
+  height: auto;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #f5f6fa;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.m-pdp__variant--spec-image:hover,
+.m-pdp__variant--spec:hover {
+  background: rgba(0, 16, 71, 0.06);
+}
+
+.m-pdp__variant--spec-image.m-pdp__variant--active,
+.m-pdp__variant--spec.m-pdp__variant--active {
+  border: 1px solid #1a1a1a;
+  background: #f5f6fa;
+  color: #1a1a1a;
+}
+
+.m-pdp__variant--spec.m-pdp__variant--active {
+  font-weight: 600;
+}
+
+.m-pdp__variant--spec-image.m-pdp__variant--active .m-pdp__variant-label {
+  font-weight: 600;
 }
 
 .m-pdp__quantity {

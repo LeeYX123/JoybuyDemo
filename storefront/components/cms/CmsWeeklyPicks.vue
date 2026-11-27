@@ -133,26 +133,26 @@ function itemSubtitle(item) {
 }
 
 .weekly-picks__card-title {
-  overflow: hidden;
+  overflow: visible;
   color: #fff;
   font-size: 20px;
   font-weight: 700;
   line-height: 36px;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+
+  display: block;
+
   word-break: break-word;
 }
 
 .weekly-picks__card-subtitle {
-  overflow: hidden;
+  overflow: visible;
   color: rgb(255 255 255 / 88%);
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 @media (max-width: 64rem) {

@@ -63,4 +63,17 @@ export default [
       },
     },
   },
+  {
+    // Nitro server 目录（storefront/server/**）：事件处理器与跳转是 Nitro 自动
+    // 注入的全局函数，不在浏览器 globals 里，单独声明。
+    files: ['storefront/server/**/*.js'],
+    languageOptions: {
+      globals: {
+        defineEventHandler: 'readonly',
+        sendRedirect: 'readonly',
+        useRuntimeConfig: 'readonly',
+        $fetch: 'readonly',
+      },
+    },
+  },
 ]

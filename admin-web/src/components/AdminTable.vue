@@ -74,10 +74,10 @@ const props = defineProps({
   text-align: left;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--colour-border);
-  white-space: nowrap;
+  white-space: normal;
   max-width: 24rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  word-break: break-word;
 }
 
 .admin-table th {

@@ -70,6 +70,14 @@ SESSION_OPENING_MESSAGE = "Conversation started"
 DEFAULT_PLATFORM_NICKNAME = "Joybuy 客服"
 # Crisp meta nickname 长度未实测，按调研建议本地截断，避免超长被拒。
 META_NICKNAME_MAX_LENGTH = 40
+# 2026-11-27：Inbox 会话标题统一「左-->右」（字面分隔符，前后无空格），三个场景都
+# 保留双方身份。平台侧在**标题**里固定写「JoyBuy客服」（注意大小写）——它与消息气泡上
+# 的 ``CRISP_PLATFORM_NICKNAME``（默认「Joybuy 客服」）是两个口径，不要合并/复用。
+META_TITLE_SEPARATOR = "-->"
+META_TITLE_PLATFORM_NAME = "JoyBuy客服"
+# 名牌缺失时的退化名：避免出现「-->JoyBuy客服」这种空头标题。
+META_TITLE_BUYER_FALLBACK = "买家"
+META_TITLE_MERCHANT_FALLBACK = "商家"
 
 
 class CrispRequestError(RuntimeError):
@@ -541,8 +549,12 @@ def queue_support_message_mirror(message: SupportMessage) -> None:
         "body": message.text,
         "occurred_at": message.created_at,
         "message_id": str(message.pk),
-        # 这条线程的「访客」是商家：会话 meta 用店名，Inbox 列表不再 anonymous。
-        "session_nickname": conversation.merchant.display_name,
+        # 这条线程的「访客」是商家：会话 meta 标题 = 「店名-->JoyBuy客服」（2026-11-27
+        # 口径），Inbox 列表不再 anonymous，也一眼能看出是「商家 ↔ 平台客服」。
+        "session_nickname": build_session_title(
+            conversation.merchant.display_name or META_TITLE_MERCHANT_FALLBACK,
+            META_TITLE_PLATFORM_NAME,
+        ),
     }
 
     def _run() -> None:
@@ -577,18 +589,39 @@ def merchant_chat_buyer_name(buyer) -> str:
     return "买家"
 
 
+def build_session_title(left_name: str, right_name: str) -> str:
+    """拼 Crisp Inbox 会话标题：``左名-->右名``（字面分隔符，前后无空格）。
+
+    超长（``META_NICKNAME_MAX_LENGTH`` = 40）时**优先截左侧名牌**，让右侧角色名
+    （``JoyBuy客服`` / 店名）完整保留——否则会出现「慕思旗舰店-->JoyBuy客」这种
+    半截后缀。只有右侧自身就超过 40 字（店名极长）时才截右侧，此时左侧保留 1 字。
+    """
+
+    left = (left_name or "").strip()
+    right = (right_name or "").strip()
+    if not right:
+        return left[:META_NICKNAME_MAX_LENGTH]
+    separator = META_TITLE_SEPARATOR
+    room = META_NICKNAME_MAX_LENGTH - len(separator) - len(right)
+    if room >= 1:
+        head = left[:room] if left else META_TITLE_BUYER_FALLBACK
+        return f"{head}{separator}{right}"
+    head = (left or META_TITLE_BUYER_FALLBACK)[:1]
+    tail_room = max(META_NICKNAME_MAX_LENGTH - len(head) - len(separator), 0)
+    return f"{head}{separator}{right[:tail_room]}"
+
+
 def merchant_chat_meta_nickname(thread) -> str:
-    """Inbox 会话标题：``{买家昵称} · {商家店名}``。
+    """Inbox 会话标题：``{买家昵称}-->{商家店名}``。
 
     客服端 Inbox 的 operator 气泡只显示席位账号（不认 ``user.nickname``），所以把
-    「哪位买家 + 哪家店」放进会话 meta nickname，客服靠列表标题区分。
+    「哪位买家 + 哪家店」放进会话 meta nickname，客服靠列表标题区分。店名为空时
+    退化为「商家」，不会出现空头标题。
     """
 
     buyer_name = merchant_chat_buyer_name(thread.buyer)
-    merchant_name = (thread.merchant.display_name or "").strip()
-    if merchant_name:
-        return f"{buyer_name} · {merchant_name}"
-    return buyer_name
+    merchant_name = (thread.merchant.display_name or "").strip() or META_TITLE_MERCHANT_FALLBACK
+    return build_session_title(buyer_name, merchant_name)
 
 
 def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
@@ -622,7 +655,7 @@ def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
         "body": message.body,
         "occurred_at": message.created_at,
         "message_id": str(message.pk),
-        # Inbox 会话标题：买家昵称 · 店名（客服端只认这个，不认消息 user.nickname）；
+        # Inbox 会话标题：买家昵称-->店名（客服端只认这个，不认消息 user.nickname）；
         # 有邮箱一并带上（Crisp 可能不保存，失败不影响消息）。
         "session_nickname": merchant_chat_meta_nickname(thread),
         "session_email": (thread.buyer.email or "").strip(),
@@ -657,12 +690,13 @@ def thread_key_for_support_chat(thread) -> str:
 
 
 def support_chat_meta_nickname(thread) -> str:
-    """Inbox 会话标题 = 买家昵称（客服端只认 meta nickname，不认消息 user.nickname）。
+    """Inbox 会话标题 = ``{买家昵称}-->JoyBuy客服``（客服端只认 meta nickname）。
 
-    买家 ↔ 平台没有「店名」维度，标题只放买家名；客服回复时也保持不变。
+    买家 ↔ 平台没有「店名」维度，右侧固定写平台客服名「JoyBuy客服」；客服回复时
+    标题也不变（仍以买家名开头）。
     """
 
-    return merchant_chat_buyer_name(thread.buyer)
+    return build_session_title(merchant_chat_buyer_name(thread.buyer), META_TITLE_PLATFORM_NAME)
 
 
 def queue_support_chat_mirror(message: SupportChatMessage) -> None:
@@ -670,7 +704,8 @@ def queue_support_chat_mirror(message: SupportChatMessage) -> None:
 
     口径与批次 V/W 一致：买家 → ``from=user`` + 买家昵称；客服 → ``from=operator``
     （``user.nickname`` = ``CRISP_PLATFORM_NICKNAME``）；正文无前缀；会话 meta 标题
-    始终是买家昵称（即使客服先回复也不改）。失败/未配置都不影响已落库消息。
+    始终是 ``{买家昵称}-->JoyBuy客服``（即使客服先回复也不改）。失败/未配置都不影响
+    已落库消息。
     """
 
     thread = SupportChatThread.objects.select_related("buyer").filter(pk=message.thread_id).first()

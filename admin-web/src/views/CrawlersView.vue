@@ -227,7 +227,7 @@ async function submitCreate() {
         account_group: createForm.account_group || 'default',
         reason: '从管理页面创建（页面采集）',
       })
-      message.value = `页面采集任务「${data.public_id.slice(0, 8)}…」已创建，当前状态：${valueLabel(data.status)}。`
+      message.value = `页面采集任务「${data.public_id}」已创建，当前状态：${valueLabel(data.status)}。`
       showCreate.value = false
       createForm.name = ''
       createForm.page_urls = ''
@@ -262,7 +262,7 @@ async function submitCreate() {
   }
   try {
     const data = await adminWrite('/crawlers/jobs', body)
-    message.value = `任务「${data.public_id.slice(0, 8)}…」已创建，当前状态：${valueLabel(data.status)}。`
+    message.value = `任务「${data.public_id}」已创建，当前状态：${valueLabel(data.status)}。`
     showCreate.value = false
     selectedCategories.value = []
     createForm.name = ''

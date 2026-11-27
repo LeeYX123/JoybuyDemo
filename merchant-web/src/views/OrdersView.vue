@@ -222,7 +222,8 @@ onMounted(load)
             </thead>
             <tbody>
               <tr v-for="row in state.items" :key="row.id">
-                <td class="mono">{{ row.id.slice(0, 8) }}</td>
+                <!-- 2026-11-27 全站编号改造：子单号 JYO+YYYYMMDD+6 位整号展示。 -->
+                <td class="mono">{{ row.id }}</td>
                 <td>
                   <div class="cell-strong">{{ row.title || '—' }}</div>
                   <div class="cell-sub">× {{ row.quantity }}</div>

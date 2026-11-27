@@ -11,6 +11,7 @@ import { useLocale } from '../../composables/useLocale'
 import { useMobileView } from '../../composables/useMobileView'
 
 import ActivityPageSkeleton from '../../components/activity/ActivityPageSkeleton.vue'
+import AppMoreButton from '../../components/AppMoreButton.vue'
 import ProductCard from '../../components/ProductCard.vue'
 
 const { t, locale } = useLocale()
@@ -36,6 +37,10 @@ const bannerStyle = computed(() => ({
 
 useHead(() => ({
   title: page.value?.title || (loading.value ? t('activity.loading') : t('activity.notFound')),
+  // 真站营销页没有 body 背景规则（浏览器默认纯白）；我们全局主题给 body 上了
+  // --colour-canvas(#F6F7F9)，用户报「背景不是纯白」。只在本页把 body 底色改成
+  // 白色（unhead 随组件卸载回收，不动全局 token）。
+  bodyAttrs: { style: 'background-color: #ffffff' },
 }))
 
 function onReveal() {
@@ -64,9 +69,9 @@ function onReveal() {
         </li>
       </ul>
       <div v-if="hasMore && !revealed" class="marketing-more">
-        <button class="marketing-more__btn" type="button" @click="onReveal">
-          {{ t('channel.more') }}
-        </button>
+        <AppMoreButton @click="onReveal">
+          {{ t('activity.viewMore') }}
+        </AppMoreButton>
       </div>
     </div>
   </section>
@@ -79,39 +84,58 @@ function onReveal() {
 <style scoped>
 .marketing-page {
   margin-block-start: 0;
-  background: var(--colour-canvas, #f6f7f9);
+  /* 真站营销页无 body 背景规则（默认纯白）；用户报「背景不是纯白」，本页作用域内改白，
+     不动全局 --colour-canvas。 */
+  background: #ffffff;
 }
 
-/* banner：真站深蓝装饰底图，标题白字左对齐（约 384/1865 比例高度）。 */
+/* banner：真站 .BackGroundImage_backgroundImage 实测——高 384、图按高度铺满
+   （background-size: auto 100%，1440 宽下 1865×384 原图左右裁切）、容器 1264、
+   标题 44/700/44 + 下边距 12、副标题 18/500/24。真站无窄屏高度断点，390 宽同为 384。 */
 .marketing-banner {
   display: flex;
   align-items: center;
-  min-height: 220px;
+  height: 384px;
   background-color: #2e3577;
-  background-size: cover;
+  background-repeat: no-repeat;
+  background-size: auto 100%;
   background-position: center;
 }
 
 .marketing-banner__inner {
-  width: min(1296px, 92%);
+  width: min(1264px, calc(100% - 48px));
   margin: 0 auto;
 }
 
 .marketing-banner__title {
-  margin: 0;
+  display: block;
+  width: 632px;
+  max-width: 100%;
+  margin: 0 0 12px;
+  overflow: visible;
   color: #fff;
-  font-size: 32px;
-  font-weight: var(--font-weight-bold, 700);
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 44px;
+  word-break: break-word;
 }
 
 .marketing-banner__subtitle {
-  margin: 8px 0 0;
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 14px;
+  display: block;
+  width: 632px;
+  max-width: 100%;
+  margin: 0;
+  overflow: visible;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 24px;
+  word-break: break-word;
 }
 
 .marketing-body {
-  width: min(1296px, 92%);
+  /* 与真站容器一致（1264），让 banner 标题与网格左缘对齐。 */
+  width: min(1264px, calc(100% - 48px));
   margin: 0 auto;
   padding: 16px 0 40px;
 }
@@ -130,26 +154,13 @@ function onReveal() {
   gap: 12px 10px;
 }
 
+/* 真站 .style_footer__2m0ZT：宽 100%、上下 24、居中；按钮样式由共用
+   AppMoreButton 提供（131×48 / #1A1A1A / 白字 / radius 4 / 16px 500），
+   与真站 .style_btn__T8rQQ 实测值一致。文案用 activity.viewMore（查看更多）。 */
 .marketing-more {
   display: flex;
   justify-content: center;
-  padding: 24px 0 8px;
-}
-
-.marketing-more__btn {
-  min-height: 44px;
-  padding: 0 48px;
-  border: 1px solid var(--colour-border, #e0e0e0);
-  border-radius: 22px;
-  background: #fff;
-  color: var(--colour-text, #1a1a1a);
-  font-size: 15px;
-  font-weight: var(--font-weight-medium, 500);
-  cursor: pointer;
-}
-
-.marketing-more__btn:hover {
-  border-color: var(--colour-text, #1a1a1a);
+  margin: 24px 0;
 }
 
 .activity-missing {

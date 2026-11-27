@@ -203,7 +203,7 @@ onMounted(async () => {
             <tr v-for="row in state.items" :key="row.id">
               <td>
                 <b>{{ row.account }}</b>
-                <span class="cell-sub">{{ row.id.slice(0, 8) }}</span>
+                <span class="cell-sub">{{ row.id }}</span>
               </td>
               <td>{{ row.name }}</td>
               <td class="mono">{{ row.roles.join(', ') || '—' }}</td>

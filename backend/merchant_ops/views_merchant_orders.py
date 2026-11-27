@@ -14,6 +14,7 @@ from audit.services import record_audit
 from merchant_ops.api_utils import csv_response, iso, money_str, paginate
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import MerchantOpsError, ship_merchant_order
+from orders.commerce_payloads import payment_payloads, refund_payloads, shipment_payloads
 from orders.models import MerchantOrder
 
 STATUS_TABS = (
@@ -58,6 +59,19 @@ def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
             for item in items
         ]
         payload["title"] = items[0].title if items else ""
+        # 阶段 2：支付/退款挂在父订单，物流挂当前商家子单。
+        payload["payments"] = payment_payloads(
+            order.order.payments.all().order_by("created_at", "pk"), iso_fn=iso
+        )
+        payload["refunds"] = refund_payloads(
+            order.order.refunds.select_related("payment", "after_sale").order_by(
+                "created_at", "pk"
+            ),
+            iso_fn=iso,
+        )
+        payload["shipments"] = shipment_payloads(
+            order.shipments.all().order_by("created_at", "pk"), iso_fn=iso
+        )
     else:
         first = order.items.first()
         payload["title"] = first.title if first else ""
@@ -75,13 +89,10 @@ def _filtered_queryset(request):
     query = (request.query_params.get("q") or "").strip()
     if query:
         condition = Q(items__title__icontains=query) | Q(tracking_reference__icontains=query)
-        try:
-            import uuid as uuid_module
-
-            condition |= Q(public_id=uuid_module.UUID(query))
-            condition |= Q(order__public_id=uuid_module.UUID(query))
-        except ValueError:
-            pass
+        # 2026-11-27 全站编号改造：订单号是 JYO+YYYYMMDD+6 位随机字符串，
+        # 直接按字符串（大小写不敏感）精确匹配，不再 uuid.UUID() 解析。
+        condition |= Q(public_id__iexact=query)
+        condition |= Q(order__public_id__iexact=query)
         queryset = queryset.filter(condition).distinct()
     start = (request.query_params.get("start") or "").strip()
     end = (request.query_params.get("end") or "").strip()

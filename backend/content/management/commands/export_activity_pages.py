@@ -90,6 +90,7 @@ class Command(BaseCommand):
                     "external_id": page.external_id,
                     "title": page.title,
                     "title_zh": page.title_zh,
+                    "subtitle": page.subtitle,
                     "store_name": page.store_name,
                     "logo_image": page.logo_image,
                     "source_url": page.source_url,
@@ -131,6 +132,8 @@ class Command(BaseCommand):
                     )
                 section["items"] = converted
 
+        # campaign + weekly（每周甄选 4 张营销页卡，2026-11-27）：import 按
+        # (section, sort_order) 定位行，两个区都整包携带，两端字段一致。
         cards = [
             {
                 "section": card.section,
@@ -143,7 +146,9 @@ class Command(BaseCommand):
                 "href": card.href,
                 "enabled": card.enabled,
             }
-            for card in HomeCampaignCard.objects.filter(section="campaign").order_by("sort_order")
+            for card in HomeCampaignCard.objects.filter(
+                section__in=[HomeCampaignCard.Section.CAMPAIGN, HomeCampaignCard.Section.WEEKLY]
+            ).order_by("section", "sort_order")
         ]
         for card in cards:
             if card["image_url"].startswith("/"):

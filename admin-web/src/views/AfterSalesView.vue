@@ -190,7 +190,8 @@ onMounted(load)
           </thead>
           <tbody>
             <tr v-for="row in state.items" :key="row.id">
-              <td>{{ row.id.slice(0, 8) }}</td>
+              <!-- 2026-11-27 全站编号改造：JYA+YYYYMMDD+6 位整号展示，不截断。 -->
+              <td class="mono">{{ row.id }}</td>
               <td>{{ row.merchant.name }}</td>
               <td>{{ row.kind === 'RETURN' ? '退货订单' : '用户投诉' }}</td>
               <td style="max-width: 320px">{{ row.issue || '—' }}</td>
@@ -224,7 +225,7 @@ onMounted(load)
 
     <AppDrawer
       v-if="detail || detailLoading"
-      :title="detail ? `售后 ${detail.id.slice(0, 8)}` : '售后详情'"
+      :title="detail ? `售后 ${detail.id}` : '售后详情'"
       wide
       @close="closeDetail"
     >
@@ -267,6 +268,21 @@ onMounted(load)
 
         <h3 class="section-title">问题描述</h3>
         <p style="white-space: pre-wrap">{{ detail.issue || '暂无描述。' }}</p>
+
+        <!-- 阶段 2/3：退款单号（JYR+YYYYMMDD+6 位）内嵌在售后详情里，整号展示。 -->
+        <h3 class="section-title">退款单号</h3>
+        <dl v-if="detail.refunds?.length" class="detail-grid">
+          <div v-for="refund in detail.refunds" :key="refund.public_id">
+            <dt class="mono">{{ refund.public_id }}</dt>
+            <dd>
+              {{ refund.status }} · ¥ {{ refund.amount }}
+              <span v-if="refund.payment_public_id" class="cell-sub">
+                支付单号 {{ refund.payment_public_id }}
+              </span>
+            </dd>
+          </div>
+        </dl>
+        <p v-else class="empty-state">暂无退款记录。</p>
 
         <h3 v-if="detail.proof?.length" class="section-title">凭证</h3>
         <div v-if="detail.proof?.length" class="thumb-row">

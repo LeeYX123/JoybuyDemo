@@ -132,9 +132,9 @@ function fmtDate(value) {
   return value.slice(0, 16).replace('T', ' ')
 }
 
+// 2026-11-27 去截断：通知摘要完整展示（不再取前 46 字加省略号）。
 function summarize(text) {
-  if (!text) return ''
-  return text.length > 46 ? `${text.slice(0, 46)}…` : text
+  return text || ''
 }
 
 onMounted(load)

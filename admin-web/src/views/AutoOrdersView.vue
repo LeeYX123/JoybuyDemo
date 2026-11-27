@@ -373,8 +373,9 @@ onMounted(load)
                 <span v-if="row.status === 'FAILED'" class="cell-sub" style="color: var(--red)">
                   {{ row.failure_reason }}
                 </span>
+                <!-- 2026-11-27 全站编号改造：执行后的平台订单号 JYO 整号展示。 -->
                 <span v-else-if="row.executed_order_id" class="cell-sub mono">
-                  订单 {{ row.executed_order_id.slice(0, 8) }}
+                  订单 {{ row.executed_order_id }}
                 </span>
               </td>
               <td>
@@ -506,7 +507,7 @@ onMounted(load)
                 <span class="meta">
                   <b>{{ row.name }}</b>
                   <span class="sub">
-                    <span class="mono">ID {{ row.id.slice(0, 8) }}</span>
+                    <span class="mono">ID {{ row.id }}</span>
                     <span>{{ row.status === 'ACTIVE' ? '接单中' : row.status }}</span>
                     <span>信誉分 {{ row.credit_score ?? '—' }}</span>
                   </span>
@@ -1023,9 +1024,10 @@ onMounted(load)
 
 .product-card .cardbody b {
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 右侧规格标签 */
@@ -1043,9 +1045,10 @@ onMounted(load)
   background: #f0f4f9;
   color: var(--muted, #78869a);
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .product-card .card-foot {
@@ -1151,9 +1154,10 @@ onMounted(load)
   min-width: 0;
   color: var(--muted, #78869a);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .foot-actions {

@@ -439,7 +439,8 @@ onBeforeUnmount(() => {
               <strong>{{ state.active.product.name }}</strong>
               <span class="cell-sub">
                 {{ state.active.product.category }} ｜ ¥ {{ state.active.product.price }} ｜
-                <span class="mono">{{ state.active.product.id.slice(0, 8) }}…</span>
+                <!-- 2026-11-27 全站编号改造：商品编号（UUID，商品回退 UUID 后）整号展示。 -->
+                <span class="mono">{{ state.active.product.id }}</span>
               </span>
             </div>
           </div>
@@ -620,9 +621,10 @@ onBeforeUnmount(() => {
   display: block;
   font-size: 12px;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .chat-list__badge {
@@ -659,9 +661,10 @@ onBeforeUnmount(() => {
 }
 
 .chat-panel__head-left strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 移动端返回按钮：桌面（>768px）恒隐藏，桌面行为不变。 */

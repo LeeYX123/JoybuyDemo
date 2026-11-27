@@ -179,6 +179,9 @@ def storefront_search(request):
             max_price=request.GET.get("max_price"),
             sort=request.GET.get("sort", "relevance"),
             page=page,
+            # 读取时本地化：文档是 en-GB 快照，卡片标题按请求 locale 批量替换。
+            localize_locale=context.locale,
+            localize_market=market,
         )
     except SearchParamsInvalid as exc:
         return JsonResponse(
@@ -241,6 +244,8 @@ def recommendations(request):
             page=page,
             category=category,
             cycle=cycle,
+            localize_locale=context.locale,
+            localize_market=context.market,
         )
     except SearchParamsInvalid as exc:
         return JsonResponse(

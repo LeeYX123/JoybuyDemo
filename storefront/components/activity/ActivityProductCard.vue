@@ -38,7 +38,12 @@ const showSold = computed(() => Boolean(soldAmount.value))
 <template>
   <NuxtLink class="activity-card" :to="product.href">
     <span class="activity-card__media">
-      <img v-if="product.image_path" :src="product.image_path" :alt="product.title" loading="lazy" />
+      <img
+        v-if="product.image_path"
+        :src="product.image_path"
+        :alt="product.title"
+        loading="lazy"
+      />
     </span>
     <span class="activity-card__title">{{ product.title }}</span>
     <span v-if="showRating || showSold" class="activity-card__rating-row">
@@ -50,9 +55,17 @@ const showSold = computed(() => Boolean(soldAmount.value))
           />
         </svg>
       </span>
-      <span v-if="showRating" class="activity-card__rating-value">{{ ratingValue.toFixed(1) }}</span>
-      <span v-if="showRating && showSold" class="activity-card__rating-divider" aria-hidden="true"></span>
-      <span v-if="showSold" class="activity-card__sold">{{ t('product.soldCount', { n: soldAmount }) }}</span>
+      <span v-if="showRating" class="activity-card__rating-value">{{
+        ratingValue.toFixed(1)
+      }}</span>
+      <span
+        v-if="showRating && showSold"
+        class="activity-card__rating-divider"
+        aria-hidden="true"
+      ></span>
+      <span v-if="showSold" class="activity-card__sold">{{
+        t('product.soldCount', { n: soldAmount })
+      }}</span>
     </span>
     <span v-if="priceLabel(product)" class="activity-card__price">{{ priceLabel(product) }}</span>
     <span class="activity-card__self-operated">
@@ -115,11 +128,13 @@ const showSold = computed(() => Boolean(soldAmount.value))
   font-weight: 500;
   line-height: 20px;
   color: #1a1a1a;
+  /* 标题最多 2 行，超出省略号（min-height 40 = 2×20 保持卡片等高）。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   min-height: 40px;
+  word-break: break-word;
 }
 
 /* 评分行：与列表卡同口径（真站 starRating 14px/行高20）。 */

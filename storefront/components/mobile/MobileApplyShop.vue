@@ -410,7 +410,7 @@ function onFile(kind, event) {
   padding: 16px;
   border: 1px solid #dce0e7;
   border-radius: 14px;
-  background: #f5f6f8;
+  background: #ffffff;
   box-shadow: 0 10px 30px #161b2620;
 }
 

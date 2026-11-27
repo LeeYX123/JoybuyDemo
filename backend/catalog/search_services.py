@@ -183,6 +183,33 @@ def rebuild_search_document(
     return document
 
 
+def _localized_item_titles(
+    rows: list[ProductSearchDocument],
+    *,
+    market,
+    locale_code: str | None,
+    localize_locale,
+    localize_market=None,
+) -> dict[int, str]:
+    """本页卡片的本地化标题（一次批量，固定 ≤2 条查询）。
+
+    ``localize_locale`` 是请求 locale（不是文档快照的 locale）：文档只有
+    en-GB 时，请求 zh-CN 仍要按 zh-CN 换标题。请求 locale 与文档 locale
+    相同就不查库，保持英文（en-GB）响应逐字节不变。``localize_market`` 是
+    请求市场（文档可能来自回退市场，市场内容要按请求市场的链找，与 PDP 同口径）。
+    """
+
+    if localize_locale is None or not rows:
+        return {}
+    if locale_code and localize_locale.code == locale_code:
+        return {}
+    from catalog.localization_services import localized_titles_for_spus
+
+    return localized_titles_for_spus(
+        [row.spu_id for row in rows], localize_market or market, localize_locale
+    )
+
+
 def search_documents(
     *,
     market,
@@ -194,8 +221,15 @@ def search_documents(
     max_price=None,
     sort: str = "relevance",
     page: int = 1,
+    localize_locale=None,
+    localize_market=None,
 ) -> dict:
-    """Query search documents; returns a serializable result envelope."""
+    """Query search documents; returns a serializable result envelope.
+
+    ``localize_locale``（请求 locale）传入时，本页 ``items[].title`` 在读取时
+    按该 locale 批量替换（``spu_market_content`` → ``spu_translation``），
+    搜索索引本身不变；没有译文的商品保留英文原值。
+    """
 
     if sort not in SORT_CHOICES:
         raise SearchParamsInvalid(f"Unknown sort: {sort}.")
@@ -274,6 +308,13 @@ def search_documents(
     offset = (page - 1) * PAGE_SIZE
     rows = list(queryset[offset : offset + PAGE_SIZE])
     image_paths = _first_gallery_images(rows)
+    localized_titles = _localized_item_titles(
+        rows,
+        market=market,
+        locale_code=locale_code,
+        localize_locale=localize_locale,
+        localize_market=localize_market,
+    )
     return {
         "market": market.code,
         "locale": locale_code,
@@ -285,7 +326,12 @@ def search_documents(
         "total_pages": (total + PAGE_SIZE - 1) // PAGE_SIZE,
         "sort": sort,
         "items": [
-            serialize_search_row(row, image_path=image_paths.get(row.spu_id, "")) for row in rows
+            serialize_search_row(
+                row,
+                image_path=image_paths.get(row.spu_id, ""),
+                title=localized_titles.get(row.spu_id),
+            )
+            for row in rows
         ],
     }
 
@@ -329,7 +375,9 @@ def retail_price_text(spu) -> str | None:
     return str(spu.retail_price)
 
 
-def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") -> dict:
+def serialize_search_row(
+    row: ProductSearchDocument, *, image_path: str = "", title: str | None = None
+) -> dict:
     detail = None
     try:
         detail = row.spu.detail  # select_related("spu__detail") 时零额外查询
@@ -337,7 +385,9 @@ def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") ->
         detail = None
     return {
         "spu_public_id": str(row.spu.public_id),
-        "title": row.title,
+        # 读取时本地化：调用方按请求 locale 批量查出译文标题时覆盖，否则用
+        # 搜索文档快照（英文）。
+        "title": title or row.title,
         "brand": row.brand_name,
         "category_slug": row.local_category.slug if row.local_category else None,
         "price_min": str(row.min_price) if row.min_price is not None else None,
@@ -365,6 +415,8 @@ def recommendation_documents(
     page: int = 1,
     category=None,
     cycle: bool = False,
+    localize_locale=None,
+    localize_market=None,
 ) -> dict:
     """首页【为您推荐】池：全站 ACTIVE 商品跨品类混合，顺序确定性（需求文档03 11.6）。
 
@@ -435,6 +487,13 @@ def recommendation_documents(
     )
     rows.sort(key=lambda row: order[row.spu_id])
     image_paths = _first_gallery_images(rows)
+    localized_titles = _localized_item_titles(
+        rows,
+        market=market,
+        locale_code=locale_code,
+        localize_locale=localize_locale,
+        localize_market=localize_market,
+    )
     return {
         "market": market.code,
         "locale": locale_code,
@@ -444,6 +503,11 @@ def recommendation_documents(
         "total": total,
         "total_pages": total_pages,
         "items": [
-            serialize_search_row(row, image_path=image_paths.get(row.spu_id, "")) for row in rows
+            serialize_search_row(
+                row,
+                image_path=image_paths.get(row.spu_id, ""),
+                title=localized_titles.get(row.spu_id),
+            )
+            for row in rows
         ],
     }

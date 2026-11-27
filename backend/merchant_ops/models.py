@@ -10,6 +10,8 @@ from decimal import Decimal
 from django.db import models
 from django.db.models import Q
 
+from common.ids import new_after_sale_public_id, save_with_public_id_retry
+
 
 def _money(**kwargs):
     kwargs.setdefault("max_digits", 18)
@@ -215,7 +217,10 @@ class AfterSale(models.Model):
         COMPLETE = "COMPLETE", "完成处理"
         REJECT_RETURN = "REJECT_RETURN", "驳回退货申请"
 
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # 对外售后编号：JYA + YYYYMMDD + 6 位随机（见 common.ids）；主键仍是 bigint。
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_after_sale_public_id
+    )
     merchant = models.ForeignKey(
         "merchants.Merchant",
         on_delete=models.PROTECT,
@@ -254,6 +259,17 @@ class AfterSale(models.Model):
             models.Index(fields=["merchant", "state"], name="aftersale_merchant_idx"),
             models.Index(fields=["state", "created_at"], name="aftersale_state_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="after_sale",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
 
 
 class AfterSaleEvent(models.Model):

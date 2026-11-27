@@ -38,8 +38,8 @@
 
 /* Responsive text truncation for titles inside cards. */
 .truncate-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+
+  overflow: visible;
+  word-break: break-word;
 }

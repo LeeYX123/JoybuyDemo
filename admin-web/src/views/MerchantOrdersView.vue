@@ -256,7 +256,7 @@ onMounted(load)
         <table class="data-table">
           <thead>
             <tr>
-              <th>子单 / 订单</th>
+              <th>子单号 / 父订单号</th>
               <th>商家</th>
               <th>成交金额</th>
               <th>发货成本</th>
@@ -269,9 +269,11 @@ onMounted(load)
           </thead>
           <tbody>
             <tr v-for="row in state.items" :key="row.id">
+              <!-- 2026-11-27 全站编号改造：子单/父单号（JYO+YYYYMMDD+6 位）整号展示。
+                   两者是不同层级：子单=商家履约单元，父单=买家整体订单，加标签避免混淆。 -->
               <td>
-                <span class="cell-strong">{{ row.id.slice(0, 8) }}</span>
-                <span class="cell-sub">{{ row.order_id.slice(0, 8) }}</span>
+                <span class="cell-strong mono">{{ row.id }}</span>
+                <span class="cell-sub mono"><em class="cell-prefix">父单</em>{{ row.order_id }}</span>
               </td>
               <td>{{ row.merchant.name }}</td>
               <td class="num">¥ {{ row.items_total }}</td>
@@ -315,7 +317,7 @@ onMounted(load)
 
     <AppDrawer
       v-if="detail || detailLoading"
-      :title="detail ? `订单 ${detail.id.slice(0, 8)}` : '订单详情'"
+      :title="detail ? `订单 ${detail.id}` : '订单详情'"
       wide
       @close="closeDetail"
     >
@@ -380,6 +382,35 @@ onMounted(load)
             <dd>{{ formatTime(detail.settled_at) }}</dd>
           </div>
         </dl>
+
+        <h3 class="section-title">支付 / 退款 / 物流编号</h3>
+        <dl
+          v-if="detail.payments?.length || detail.refunds?.length || detail.shipments?.length"
+          class="detail-grid"
+        >
+          <div v-for="payment in detail.payments || []" :key="payment.public_id">
+            <dt>支付单号</dt>
+            <dd class="mono">
+              {{ payment.public_id }} · {{ payment.status }} · ¥ {{ payment.amount }}
+            </dd>
+          </div>
+          <div v-for="refund in detail.refunds || []" :key="refund.public_id">
+            <dt>退款单号</dt>
+            <dd class="mono">
+              {{ refund.public_id }} · {{ refund.status }} · ¥ {{ refund.amount }}
+            </dd>
+          </div>
+          <div v-for="shipment in detail.shipments || []" :key="shipment.public_id">
+            <dt>物流单号</dt>
+            <dd class="mono">
+              {{ shipment.public_id }} · {{ shipment.status }}
+              <span v-if="shipment.tracking_no || shipment.carrier" class="cell-sub">
+                {{ shipment.carrier || '承运商待补' }} · {{ shipment.tracking_no || '—' }}
+              </span>
+            </dd>
+          </div>
+        </dl>
+        <p v-else class="empty-state">暂无支付 / 退款 / 物流记录。</p>
 
         <h3 class="section-title">订单商品</h3>
         <table class="data-table">

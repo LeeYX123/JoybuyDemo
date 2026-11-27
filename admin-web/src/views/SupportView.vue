@@ -718,9 +718,10 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   font-size: 11px;
   color: #8493a9;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .support-chat {

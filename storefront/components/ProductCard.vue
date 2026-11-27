@@ -193,9 +193,17 @@ function toggleWishlist() {
             />
           </svg>
         </span>
-        <span v-if="showRatingStars" class="product-card__rating-value">{{ ratingValue.toFixed(1) }}</span>
-        <span v-if="showRatingStars && showSold" class="product-card__rating-divider" aria-hidden="true"></span>
-        <span v-if="showSold" class="product-card__sold">{{ t('product.soldCount', { n: soldAmount }) }}</span>
+        <span v-if="showRatingStars" class="product-card__rating-value">{{
+          ratingValue.toFixed(1)
+        }}</span>
+        <span
+          v-if="showRatingStars && showSold"
+          class="product-card__rating-divider"
+          aria-hidden="true"
+        ></span>
+        <span v-if="showSold" class="product-card__sold">{{
+          t('product.soldCount', { n: soldAmount })
+        }}</span>
       </div>
       <div class="product-card__footer">
         <p
@@ -323,19 +331,22 @@ function toggleWishlist() {
 
 .product-card__brand {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+
+  white-space: normal;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
   color: var(--colour-text);
+  word-break: break-word;
 }
 
-/* Two-line clamp with ellipsis (real card: 16px/500, 22px line height). */
+/* Two-line clamp with ellipsis (real card: 16px/500, 22px line height).
+ * 标题最多 2 行、超出用省略号（DOM 里保留全文，只做视觉截断）；min-height
+ * 44 = 2×22，让 1 行标题的卡片与 2 行卡等高、网格不错位。 */
 .product-card__title {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   min-height: 44px;
   margin: 0;
@@ -343,6 +354,7 @@ function toggleWishlist() {
   font-weight: var(--font-weight-medium);
   line-height: 22px;
   color: #1a1a1a;
+  word-break: break-word;
 }
 
 .product-card__title-link {

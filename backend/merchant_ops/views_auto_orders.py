@@ -101,14 +101,21 @@ class AdminAutoOrdersView(OpsAPIView):
                     business_code="ID_INVALID", message=f"{label} 格式不正确。", status_code=400
                 ) from exc
 
-        account = BuyerAccount.objects.filter(public_id=_uuid(payload.get("account_id"), "买家")).first()
-        # 商家 ID 已改为 MER+6 位数字（不是 UUID），按字符串精确匹配。
+        # 2026-11-27 全站编号改造：买家号是 JYU+10 位字符串，不再按 UUID 解析。
+        account_id = str(payload.get("account_id") or "").strip()
+        account = (
+            BuyerAccount.objects.filter(public_id__iexact=account_id).first()
+            if account_id
+            else None
+        )
+        # 商家 ID 是 JYM+10 位字符串，按字符串精确匹配。
         merchant_id = str(payload.get("merchant_id") or "").strip()
         if not merchant_id:
             raise StaffApiError(
                 business_code="ID_INVALID", message="商家 格式不正确。", status_code=400
             )
-        merchant = Merchant.objects.filter(public_id=merchant_id).first()
+        merchant = Merchant.objects.filter(public_id__iexact=merchant_id).first()
+        # 商品规格（Offer）仍是 UUID，保持原解析。
         offer = Offer.objects.select_related("sku__spu").filter(
             public_id=_uuid(payload.get("offer_id"), "商品规格")
         ).first()

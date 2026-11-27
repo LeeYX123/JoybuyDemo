@@ -741,12 +741,9 @@ const mobileRows = computed(() =>
 }
 
 .cart-item__name {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  text-overflow: ellipsis;
+  display: block;
+  overflow: visible;
+
   word-break: break-word;
   font-size: 16px;
   font-weight: 500;

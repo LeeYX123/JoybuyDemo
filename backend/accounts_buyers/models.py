@@ -4,13 +4,18 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 from django.db.models import Q
 
+from common.ids import new_buyer_public_id, save_with_public_id_retry
+
 
 class BuyerAccount(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         DISABLED = "DISABLED", "Disabled"
 
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # 对外用户编号：JYU + 10 位随机（见 common.ids）；主键仍是 bigint。
+    public_id = models.CharField(
+        max_length=32, unique=True, editable=False, default=new_buyer_public_id
+    )
     email = models.EmailField(max_length=254, unique=True, null=True, blank=True)
     phone_e164 = models.CharField(max_length=16, unique=True, null=True, blank=True)
     password = models.CharField(max_length=128)
@@ -42,6 +47,11 @@ class BuyerAccount(models.Model):
     # stage defaults every account to whitelisted so the storefront keeps
     # working; the admin can flip the flag to exercise the blocking popup.
     purchase_whitelisted = models.BooleanField(default=True)
+    # 平台管理后台 A13：是否允许下单支付（2026-11-27 管理端【编辑】新增）。
+    # 与 purchase_whitelisted 是两条独立闸门：白名单决定「能不能买」，本字段决定
+    # 「能不能付款」；关闭后 orders.place_order 抛 PAYMENT_DISABLED，已存在的
+    # 登录态与购物车不受影响。默认 True，保持历史账号行为不变。
+    payment_enabled = models.BooleanField(default=True)
     # 平台管理后台 A13/A14：白名单余额账户。与商家钱包是两套独立账户，不可互相覆盖。
     balance = models.DecimalField(max_digits=18, decimal_places=4, default=0)
     region = models.CharField(max_length=32, blank=True, default="")
@@ -63,6 +73,17 @@ class BuyerAccount(models.Model):
             ),
         ]
         indexes = [models.Index(fields=["status", "created_at"], name="buyer_status_created_idx")]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            return super().save(*args, **kwargs)
+        return save_with_public_id_retry(
+            self,
+            kind="buyer",
+            save_fn=super().save,
+            args=args,
+            kwargs=kwargs,
+        )
 
     def set_password(self, raw_password: str) -> None:
         self.password = make_password(raw_password)

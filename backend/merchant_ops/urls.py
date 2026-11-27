@@ -25,6 +25,7 @@ from merchant_ops import (
     views_merchants,
     views_notifications,
     views_orders,
+    views_payments,
     views_service,
     views_shop_application,
     views_support,
@@ -173,14 +174,30 @@ urlpatterns = [
         name="admin-merchant-orders-export",
     ),
     path(
-        "api/v1/admin/merchant-orders/<uuid:public_id>",
+        "api/v1/admin/merchant-orders/<str:public_id>",
         views_orders.AdminMerchantOrderDetailView.as_view(),
         name="admin-merchant-order-detail",
     ),
     path(
-        "api/v1/admin/merchant-orders/<uuid:public_id>/actions",
+        "api/v1/admin/merchant-orders/<str:public_id>/actions",
         views_orders.AdminMerchantOrderActionsView.as_view(),
         name="admin-merchant-order-actions",
+    ),
+    # 阶段 2：支付 / 退款 / 物流（订单详情已内嵌，这里补跨订单列表 + 退款补录）
+    path(
+        "api/v1/admin/payments",
+        views_payments.AdminPaymentsView.as_view(),
+        name="admin-payments",
+    ),
+    path(
+        "api/v1/admin/refunds",
+        views_payments.AdminRefundsView.as_view(),
+        name="admin-refunds",
+    ),
+    path(
+        "api/v1/admin/shipments",
+        views_payments.AdminShipmentsView.as_view(),
+        name="admin-shipments",
     ),
     # A06 资金审核
     path(
@@ -241,12 +258,12 @@ urlpatterns = [
         name="admin-after-sales",
     ),
     path(
-        "api/v1/admin/after-sales/<uuid:public_id>",
+        "api/v1/admin/after-sales/<str:public_id>",
         views_service.AdminAfterSaleDetailView.as_view(),
         name="admin-after-sale-detail",
     ),
     path(
-        "api/v1/admin/after-sales/<uuid:public_id>/actions",
+        "api/v1/admin/after-sales/<str:public_id>/actions",
         views_service.AdminAfterSaleActionsView.as_view(),
         name="admin-after-sale-actions",
     ),
@@ -372,19 +389,30 @@ urlpatterns = [
         name="admin-buyer-accounts",
     ),
     path(
-        "api/v1/admin/buyers/accounts/<uuid:public_id>",
+        "api/v1/admin/buyers/accounts/<str:public_id>",
         views_buyers.AdminBuyerDetailView.as_view(),
         name="admin-buyer-detail",
     ),
     path(
-        "api/v1/admin/buyers/accounts/<uuid:public_id>/profile",
+        "api/v1/admin/buyers/accounts/<str:public_id>/profile",
         views_buyers.AdminBuyerProfileView.as_view(),
         name="admin-buyer-profile",
     ),
     path(
-        "api/v1/admin/buyers/accounts/<uuid:public_id>/whitelist",
+        "api/v1/admin/buyers/accounts/<str:public_id>/whitelist",
         views_buyers.AdminBuyerWhitelistView.as_view(),
         name="admin-buyer-whitelist",
+    ),
+    # 2026-11-27 用户端管理【编辑】/【重设密码】
+    path(
+        "api/v1/admin/buyers/accounts/<str:public_id>/edit",
+        views_buyers.AdminBuyerEditView.as_view(),
+        name="admin-buyer-edit",
+    ),
+    path(
+        "api/v1/admin/buyers/accounts/<str:public_id>/reset-password",
+        views_buyers.AdminBuyerResetPasswordView.as_view(),
+        name="admin-buyer-reset-password",
     ),
     path(
         "api/v1/admin/buyers/lookup",
@@ -493,12 +521,12 @@ urlpatterns = [
         name="merchant-orders-export",
     ),
     path(
-        "api/v1/merchant/orders/<uuid:public_id>",
+        "api/v1/merchant/orders/<str:public_id>",
         views_merchant_orders.MerchantOrderDetailView.as_view(),
         name="merchant-order-detail",
     ),
     path(
-        "api/v1/merchant/orders/<uuid:public_id>/ship",
+        "api/v1/merchant/orders/<str:public_id>/ship",
         views_merchant_orders.MerchantOrderShipView.as_view(),
         name="merchant-order-ship",
     ),
@@ -546,12 +574,12 @@ urlpatterns = [
         name="merchant-after-sales",
     ),
     path(
-        "api/v1/merchant/after-sales/<uuid:public_id>",
+        "api/v1/merchant/after-sales/<str:public_id>",
         views_merchant_service.MerchantAfterSaleDetailView.as_view(),
         name="merchant-after-sale-detail",
     ),
     path(
-        "api/v1/merchant/after-sales/<uuid:public_id>/actions",
+        "api/v1/merchant/after-sales/<str:public_id>/actions",
         views_merchant_service.MerchantAfterSaleActionsView.as_view(),
         name="merchant-after-sale-actions",
     ),

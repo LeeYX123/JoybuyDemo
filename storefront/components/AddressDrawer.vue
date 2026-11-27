@@ -803,10 +803,11 @@ function applySelection() {
 .country-select__name {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow: visible;
+  white-space: normal;
+
   line-height: 20px;
+  word-break: break-word;
 }
 
 .country-select__chevron {
@@ -867,10 +868,11 @@ function applySelection() {
 .country-menu__name {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow: visible;
+  white-space: normal;
+
   line-height: 20px;
+  word-break: break-word;
 }
 
 .country-menu__check {

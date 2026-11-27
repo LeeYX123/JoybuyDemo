@@ -78,11 +78,21 @@ function priceLabel(product) {
           {{ sectionTitle(section) }}
         </h2>
         <ul class="m-activity__grid">
-          <li v-for="product in visibleProducts(section)" :key="product.item_key || product.spu_public_id">
+          <li
+            v-for="product in visibleProducts(section)"
+            :key="product.item_key || product.spu_public_id"
+          >
             <NuxtLink class="m-activity__card" :to="product.href">
-              <img v-if="product.image_path" :src="product.image_path" :alt="product.title" loading="lazy" />
+              <img
+                v-if="product.image_path"
+                :src="product.image_path"
+                :alt="product.title"
+                loading="lazy"
+              />
               <span class="m-activity__name">{{ product.title }}</span>
-              <span v-if="priceLabel(product)" class="m-activity__price">{{ priceLabel(product) }}</span>
+              <span v-if="priceLabel(product)" class="m-activity__price">{{
+                priceLabel(product)
+              }}</span>
             </NuxtLink>
           </li>
         </ul>
@@ -175,10 +185,12 @@ function priceLabel(product) {
   font-weight: 500;
   line-height: 18px;
   color: #1a1a1a;
+  /* 标题最多 2 行，超出省略号。 */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
+  word-break: break-word;
 }
 
 .m-activity__price {

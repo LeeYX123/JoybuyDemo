@@ -13,6 +13,7 @@
 """
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -160,10 +161,148 @@ class PageRunSpider(JoybuyRunSpider):
                         continue
         if clicked:
             self.logger.info("已点击 %d 个 View more：%s", clicked, url)
+        if "/store/" in url:
+            self._deep_scroll_store(page, url)
         for _ in range(8):
             page.scroll.to_bottom()
             time.sleep(0.6)
-        return page.html or ""
+        html = page.html or ""
+        # 2026-11-27：风控页的可靠判据是标题（实测匿名访问店铺页 = "Joybuy Risk Control"，正文只有 659 字）。
+        # 命中就记 RISK_CONTROL_FALLBACK，让 watch_rotate.py 按风控规则切节点，下一轮换 IP 再来；
+        # 否则会把「被风控」误判成「真站没有商品」。
+        try:
+            title = page.title or ""
+        except Exception:  # noqa: BLE001
+            title = ""
+        if "risk control" in title.lower():
+            from crawler_control.services import record_run_event
+
+            self.logger.warning("浏览器渲染命中风控页（title=%r）：%s", title, url)
+            record_run_event(
+                self.run,
+                level="WARNING",
+                code="RISK_CONTROL_FALLBACK",
+                message=(
+                    f"浏览器渲染命中风控页（title={title!r}，正文仅 {len(html)} 字节）：{url}。"
+                    "已按风控上报，watch_rotate.py 会切节点，下一轮重试。"
+                ),
+                source_url=url,
+            )
+        return html
+
+    def _deep_scroll_store(
+        self, page, url: str, *, target: int = 40, max_rounds: int = 12
+    ) -> int:
+        """店铺页深挖（2026-11-27，建任务方要求）：滚动 + 点 Load more，直到商品卡不再增长。
+
+        背景：店铺页是 Next 栈 + 懒加载，首屏只有 10~15 个商品。只 `to_bottom()` 几次
+        拿不到后续商品，清单会一直停在 7~15 件。这里按轮次：逐步滚动触发
+        IntersectionObserver → 到底 → 点「Load more / 查看更多」→ 数卡片；
+        连续两轮不再增长就停，或达到 target 件提前停。
+        返回最终卡片数（用于日志与事件，便于判断「真站就只有这么少」）。
+        """
+
+        def _count() -> int:
+            # 按「唯一 SKU」计数：一个商品卡通常有图片 + 标题两个 /dp/ 链接，
+            # 直接数 <a> 会翻倍（2026-11-27 Dyson 店铺页实测 10 个链接 = 7 个商品）。
+            count_js = r"""
+            (() => {
+              const ids = new Set();
+              document.querySelectorAll('a[href*="/dp/"]').forEach((a) => {
+                const href = (a.getAttribute('href') || '').split('?')[0].replace(/\/$/, '');
+                const sku = href.split('/').pop();
+                if (sku) ids.add(sku);
+              });
+              return ids.size;
+            })()
+            """
+            try:
+                result = page.run_cdp(
+                    "Runtime.evaluate", expression=count_js, returnByValue=True
+                )
+                return int(((result or {}).get("result") or {}).get("value") or 0)
+            except Exception:  # noqa: BLE001
+                return -1
+
+        click_js = r"""
+        (() => {
+          let n = 0;
+          const re = /^(load|show|view|see)\s*more$/i;
+          document
+            .querySelectorAll('button, a, div[role="button"], span[role="button"]')
+            .forEach((el) => {
+              const t = (el.textContent || '').trim();
+              if (!t || t.length > 24) return;
+              if (!(re.test(t) || /^查看更多$/.test(t) || /^加载更多$/.test(t))) return;
+              if (el.dataset.__jbDeepClicked) return;
+              el.dataset.__jbDeepClicked = '1';
+              el.scrollIntoView({block: 'center'});
+              el.click();
+              n += 1;
+            });
+          return n;
+        })()
+        """
+
+        def _click_more() -> int:
+            try:
+                result = page.run_cdp(
+                    "Runtime.evaluate", expression=click_js, returnByValue=True
+                )
+                return int(((result or {}).get("result") or {}).get("value") or 0)
+            except Exception:  # noqa: BLE001
+                return 0
+
+        best = _count()
+        stable = 0
+        for round_no in range(1, max_rounds + 1):
+            try:
+                height = int(page.run_js("return document.body.scrollHeight") or 0)
+            except Exception:  # noqa: BLE001
+                height = 0
+            if height:
+                for step in range(1, 5):
+                    try:
+                        page.run_js(f"window.scrollTo(0, {int(height * step / 5)})")
+                    except Exception:  # noqa: BLE001, S110 - 单步滚动失败继续
+                        pass
+                    time.sleep(0.4)
+            page.scroll.to_bottom()
+            time.sleep(1.5)
+            clicked = _click_more()
+            if clicked:
+                self.logger.info("店铺页 Load more 点击 %d 个：%s", clicked, url)
+                time.sleep(2.5)
+            now = _count()
+            self.logger.info(
+                "店铺页深挖 第%d轮：卡片 %s（best %s，点击 %s）：%s",
+                round_no, now, best, clicked, url,
+            )
+            if now > best:
+                best = now
+                stable = 0
+            else:
+                stable += 1
+                if stable >= 2:
+                    break
+            if best >= target:
+                break
+        try:
+            from crawler_control.services import record_run_event
+
+            record_run_event(
+                self.run,
+                level="INFO",
+                code="PAGE_STORE_DEEP_SCROLL",
+                message=(
+                    f"店铺页深挖结束 {url}：商品卡 {max(best, 0)} 个"
+                    f"（逐步滚动 + Load more，最多 {max_rounds} 轮）。"
+                ),
+                source_url=url,
+            )
+        except Exception as exc:  # noqa: BLE001 - 事件失败不影响采集
+            self.logger.warning("深挖事件记录失败：%s", exc)
+        return best
 
     def _pick_debug_port(self) -> int:
         """给本次 run 挑一个空闲的 devtools 端口。
@@ -219,6 +358,7 @@ class PageRunSpider(JoybuyRunSpider):
         profile = str(_Path(raw_profile).resolve())
         _Path(profile).mkdir(parents=True, exist_ok=True)
         ua = DEFAULT_UA
+        browser_proxy = (os.getenv("CRAWL_HTTPS_PROXY") or os.getenv("CRAWL_HTTP_PROXY") or "").strip()
         debug_port = self._pick_debug_port()
         proc = subprocess.Popen(
             [
@@ -230,6 +370,10 @@ class PageRunSpider(JoybuyRunSpider):
                 "--no-default-browser-check",
                 "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
+                # 2026-11-27：浏览器渲染也必须走出站代理。之前 Chrome 是裸启动，
+                # 页面与 XHR 全部用本机固定 IP 直连，既违背「不直连」口径，
+                # 也让「列表为空」无法判断是真站缺失还是被风控。
+                *([f"--proxy-server={browser_proxy}"] if browser_proxy else []),
                 f"--user-agent={ua}",
                 "--window-size=1896,960",
                 "about:blank",

@@ -385,15 +385,16 @@ useHead(() => ({ title: t('account.myAccount') }))
 }
 
 .profile-me__name {
-  overflow: hidden;
+  overflow: visible;
   max-width: 750px;
   margin: 0 0 0 12px;
   color: #1a1a1a;
   font-size: 28px;
   font-weight: 700;
   line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+  white-space: normal;
+  word-break: break-word;
 }
 
 .profile-me__links {

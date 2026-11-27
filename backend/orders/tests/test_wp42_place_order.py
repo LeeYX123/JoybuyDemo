@@ -116,6 +116,22 @@ class PlaceOrderWp42Tests(TestCase):
         self.assertEqual(raised.exception.code, "NOT_WHITELISTED")
         self.assertFalse(Order.objects.exists())
 
+    def test_payment_disabled_account_cannot_place_order(self):
+        # 管理端编辑关闭支付权限（与白名单独立）：下单侧抛 PAYMENT_DISABLED。
+        snapshot = self._snapshot()
+        BuyerAccount.objects.filter(pk=self.account.pk).update(payment_enabled=False)
+        self.account.refresh_from_db()
+        with self.assertRaises(OrderError) as raised:
+            place_order(
+                account=self.account,
+                cart_snapshot=snapshot,
+                address_snapshot={"public_id": str(self.address.public_id)},
+                payment_method="CARD",
+            )
+        self.assertEqual(raised.exception.code, "PAYMENT_DISABLED")
+        self.assertIn("关闭支付权限", raised.exception.message)
+        self.assertFalse(Order.objects.exists())
+
     def test_daily_stat_order_count_bumped(self):
         from merchants.models import MerchantDailyStat
 

@@ -228,8 +228,9 @@ function exportCsv() {
   window.open(`/api/v1/admin/merchants/export?${params}`, '_blank')
 }
 
+// 2026-11-27 全站编号改造：商家编号 JYM+10 位要整号展示（截 8 位会撞车）。
 function shortId(value) {
-  return value ? value.slice(0, 8) : '—'
+  return value || '—'
 }
 
 function formatTime(value) {

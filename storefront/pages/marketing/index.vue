@@ -2,10 +2,10 @@
 import { computed, ref } from 'vue'
 import { useFetch, useHead, useRoute, useRuntimeConfig } from '#imports'
 
-import { useLocale } from '../composables/useLocale'
+import { useLocale } from '../../composables/useLocale'
 
-import AppContainer from '../components/AppContainer.vue'
-import ProductCard from '../components/ProductCard.vue'
+import AppContainer from '../../components/AppContainer.vue'
+import ProductCard from '../../components/ProductCard.vue'
 
 // Activity landing page /marketing?activityId=&tagId= (需求文档03 14.2).
 // Real-site structure (joybuy.co.uk/marketing, measured 2026-11-20):
@@ -196,30 +196,28 @@ const visibleProducts = computed(() =>
   width: 632px;
   max-width: 100%;
   margin: 0 0 12px;
-  overflow: hidden;
+  overflow: visible;
   color: #fff;
   font-size: 44px;
   font-weight: 700;
   line-height: 44px;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+
+  display: block;
+  word-break: break-word;
 }
 
 .marketing-banner__subtitle {
   width: 632px;
   max-width: 100%;
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
   color: #fff;
   font-size: 18px;
   font-weight: 500;
   line-height: 24px;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+
+  display: block;
+  word-break: break-word;
 }
 
 /* Real content row: 234px filter column + product list, 34px below banner. */

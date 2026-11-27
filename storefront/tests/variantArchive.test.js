@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  resolveGalleryArchive,
   resolveVariantArchive,
   variantDetailField,
   variantGallery,
@@ -77,6 +78,37 @@ describe('variantGallery', () => {
       { url: '/base.webp' },
     ])
     expect(variantGallery(null, [{ url: '/base.webp' }])).toEqual([{ url: '/base.webp' }])
+  })
+})
+
+describe('resolveGalleryArchive（画廊数据驱动，不看 share_metadata）', () => {
+  it('sku 命中且档案自带画廊时返回档案', () => {
+    const payload = { variant_archive: ARCHIVE_FULL }
+    expect(resolveGalleryArchive(payload, 'sku-1')).toBe(ARCHIVE_FULL)
+  })
+
+  it('share_metadata=true 也返回档案（纯尺码只要有自己的一套图就换）', () => {
+    const shared = { ...ARCHIVE_FULL, share_metadata: true }
+    expect(resolveGalleryArchive({ variant_archive: shared }, 'sku-1')).toBe(shared)
+  })
+
+  it('档案 gallery 为空/缺失时返回 null（回退基础画廊，不出空画廊）', () => {
+    expect(
+      resolveGalleryArchive({ variant_archive: { ...ARCHIVE_FULL, gallery: [] } }, 'sku-1'),
+    ).toBeNull()
+    expect(
+      resolveGalleryArchive({ variant_archive: { ...ARCHIVE_FULL, gallery: null } }, 'sku-1'),
+    ).toBeNull()
+    expect(
+      resolveGalleryArchive({ variant_archive: { ...ARCHIVE_FULL, gallery: [null, ''] } }, 'sku-1'),
+    ).toBeNull()
+  })
+
+  it('sku 对不上 / 无档案时返回 null', () => {
+    expect(resolveGalleryArchive({ variant_archive: ARCHIVE_FULL }, 'sku-2')).toBeNull()
+    expect(resolveGalleryArchive({ variant_archive: ARCHIVE_FULL }, null)).toBeNull()
+    expect(resolveGalleryArchive({}, 'sku-1')).toBeNull()
+    expect(resolveGalleryArchive(null, 'sku-1')).toBeNull()
   })
 })
 

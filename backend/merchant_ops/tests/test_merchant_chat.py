@@ -394,8 +394,8 @@ class CrispMirrorWiringTests(MerchantChatTestBase):
         self.assertEqual(kwargs["sender_kind"], "user")
         self.assertEqual(kwargs["sender_name"], "小明")
         self.assertEqual(kwargs["body"], "镜像这条买家消息")
-        # 会话 meta 标题 = 买家昵称 · 店名（客服端 Inbox 只认这个）+ 邮箱。
-        self.assertEqual(kwargs["session_nickname"], "小明 · 会话测试店")
+        # 会话 meta 标题 = 买家昵称-->店名（客服端 Inbox 只认这个）+ 邮箱。
+        self.assertEqual(kwargs["session_nickname"], "小明-->会话测试店")
         self.assertEqual(kwargs["session_email"], "chat-buyer@joybuy.test")
         message = MerchantChatMessage.objects.get()
         self.assertEqual(kwargs["message_id"], str(message.pk))
@@ -424,7 +424,7 @@ class CrispMirrorWiringTests(MerchantChatTestBase):
         self.assertEqual(kwargs["sender_kind"], "merchant")
         self.assertEqual(kwargs["sender_name"], self.shop.display_name)
         self.assertEqual(kwargs["body"], "商家回复")
-        self.assertEqual(kwargs["session_nickname"], "小明 · 会话测试店")
+        self.assertEqual(kwargs["session_nickname"], "小明-->会话测试店")
         reply = MerchantChatMessage.objects.get(sender_kind="merchant")
         reply.refresh_from_db()
         self.assertEqual(reply.crisp_status, MerchantChatMessage.CrispStatus.SENT)

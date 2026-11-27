@@ -403,7 +403,8 @@ onMounted(async () => {
                       <span v-else class="listing-cell__img listing-cell__img--empty">无图</span>
                       <div>
                         <div class="cell-strong">{{ row.name }}</div>
-                        <div class="cell-sub mono">{{ row.product_id.slice(0, 8) }}…</div>
+                        <!-- 2026-11-27 全站编号改造：商品编号（UUID，商品回退 UUID 后）整号展示。 -->
+                        <div class="cell-sub mono">{{ row.product_id }}</div>
                       </div>
                     </div>
                   </td>
