@@ -3081,6 +3081,7 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - **迁移影响清单（已按此执行）**：① Spaces 兼容 S3 API——`MEDIA_S3_ENDPOINT` ✅；② 媒体本地重传 ✅ 进行中；③ DB 本地 dev dump ✅；④ 代码 git bundle ✅ 进行中；⑤ TLS：DO LB $12/月免费证书 或 certbot $0——上 TLS 回滚 cookie 降级；⑥ ssh 别名/.env 接线 ✅。
 - **Spaces 媒体腿已提前接通（2026-11-24 晚，上传进行中即切换）+ 媒体迁移 ✅ 收官（2026-11-25 晨对账完成）**：服务器 `.env` 切 `MEDIA_BACKEND=s3` + endpoint/bucket/prefix/region + Spaces AWS_* 凭据（chmod 600）；nginx `/media/` 从本地 alias 切 **Spaces 反代 + proxy_cache**（`/var/cache/nginx/media` 10G，conf.d/joybuy-media-cache.conf），resolver=127.0.0.53（systemd-resolved，以 /etc/resolv.conf 实际为准）。**两个 nginx 坑（403 现场证据）**：① `proxy_pass https://$spaces/joybuy-media/;` 带变量时 URI 部分被 as-is 传递、**不追加请求路径** → 匿名列目录 → AccessDenied；必须 `rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;` + proxy_pass 不带 URI；② rewrite 曾漏 `media/` 段（桶 key=media/<relative_path>）→ 403；正确终态=`rewrite ^/media/(.*)$ /joybuy-media/media/$1 break;`。验证：cms 键经代理 MISS 3684B→HIT 200；三个 derived 样本服务器侧 200（17ms 缓存命中）+ 本机 200；API sanity 200。**媒体迁移终态对账（2026-11-25 晨）**：主同步 exit 0 → 增量补传 8,540 个尾巴文件（与今晚爬虫导入并行吸收）→ 终版双侧清点**完全一致：本地 1,064,175 文件 / 91,599,685,570 字节 == Spaces 1,064,175 对象 / 91,599,685,570 字节，字节级零差**（含爬虫通宵新增）。**剩余必要动作：桶 Visibility 改 Public**（用户控制台一键）——服务器 Django put_object **不带 ACL**，应用侧新上传对象是 Private → 403；桶 Public 才能让其可见（sync 批量对象有 per-object public-read ACL 不受影响）。**运维常态化：爬虫持续导入新图 → 媒体 sync 需定期跑（建议每日一次 `bash var/do_migration_20261124/upload_media.sh`，凭据已填、断点安全；可复制为正式运维脚本或挂计划任务）**。本地→服务器 VPN 此间多次瞬断（000/SSH 断连），判服务器侧正常与否用"服务器侧 curl 地面真值"法，勿被本地噪音带偏。
 - **媒体 sync 常态化首跑（2026-11-26，今日爬虫批次媒体已全部上 Spaces）**：`upload_media.sh` 两轮——主轮 55,776 文件（exit 0）+ 收敛轮 69,248 文件（exit 0，爬虫边导边传持续吸收）→ Spaces 终版 **1,187,663 对象 / 101,939,746,478 字节**（本地同刻快照 1,156,099 / 99,450,126,169，差值 = 爬虫在清点窗口内继续导入的新文件，属移动目标正常态；**sync exit 0 的语义 = "扫描时点本地全部文件已在 Spaces"，爬虫运行期对不平是必然，批次结束/每日例行再跑即收敛**）。注意：**Spaces 端点（fra1.digitaloceanspaces.com）国内直连可达，不开 TUN 也能传**（与 Droplet 161.35.x 段不同，实测 11-26 无 TUN 全程正常）——媒体上传与爬虫可共存。**待办不变**：爬虫批次结束后跑一轮收尾 sync；或挂每日计划任务（user 未拍板，勿自建）。
+- **媒体 sync 第二日跑（2026-11-27，无 TUN 直连 Spaces 传成功再证实）**：本轮 **25,958 文件（exit 0）**；Spaces 终版 **1,320,813 对象 / 112,404,932,096 字节**；本地爬虫仍在实时导入（计数 1,309,146 → 1,325,992 十分钟内 +1.7 万，~28 文件/秒）→ 残余漂移 ~5 千文件 = 几分钟爬虫产量，属移动目标正常态。**口径已定：批次运行期每次 sync exit 0 即"扫描时点全量已在 Spaces"，最终一致时点 = 爬虫批次结束后的收尾轮。**
 - **档位确认（2026-11-24 用户问「$48 2核8G160G 够吗」→ 已定案；追加 Regular4C vs Premium2C 吞吐对比）**：官方默认区页 $48 是 Basic Regular 8G/**4C**/160G，但**用户实际选的是 FRA1 法兰克福 Premium Intel 线——该区该线最高档只放出 2C/8G/160G NVMe/5T @ $48**（DO 各区域可售档位不一致，之前"不存在 2核档"的说法只对默认区成立）。**定论：可买、当前够用**——内存需求 ~4.5G/8G、盘 160G NVMe、2 个 Premium 核单核性能比 Regular 高 20-30%（≈2.5-3 Regular 核），峰值 7-10 req/s 扛得住、余量薄于 4C；买前可再瞄一眼 FRA1 的 Basic→Regular 标签有无 4C/8G $48（有则优先），无则直接买 Premium Intel 2C。**DO CPU/内存可在线 resize（盘只增不减）→ 先买 2C 后升配不是陷阱**。别选 General Purpose $63（8G/2 专用核）：只有 25G 盘，硬伤。**4C-慢核 vs 2C-快核的吞吐对比（实测数据推演）**：聚合吞吐 4C Regular ≈ 4.0 标准核 vs Premium 2C ≈ 2.5（1.6× 差）；但 **Nuxt SSR 单线程只吃 1 核 → Premium 快核直接受益，4C 多核对 SSR 无用**；每页导航 CPU ≈ 0.33 核·秒（SSR 100ms + 4×API 45ms）→ 日常峰值 1.67 页/s ≈ 0.55 核（两档 ~15-25% 占用都稳）；突发 5× → Premium 接近满、4C ~65%；200 并发（12 页/s ≈ 4 核）→ Premium 顶不住、4C 边际（=容量报告原话）。批量任务（爬虫导入重建文档）4C 快 ~60%。
 - **本地侧准备完成（2026-11-24，弃 AWS→DO 的执行前置；本任务只做本地，未动任何远端/未动 dev 容器写路径）**：
   - **代码支持 S3 兼容端点（DO Spaces）**：`backend/config/settings.py` 新增 `MEDIA_S3_ENDPOINT`（空=AWS 虚拟主机式，行为不变；非空=S3 兼容端点）；`backend/media/storage.py::get_s3_client` 端点非空时 `boto3.client(endpoint_url=..., Config(s3={"addressing_style": "path"}))`（DO Spaces 用 path style 最稳），懒加载单例沿用 `reset_s3_client` 供测试重置；`s3_public_url` 端点非空拼 `{endpoint}/{bucket}/{prefix}{path}`（path-style），views 302 回退零改动。**commit `3332e26`（信息英文一行），已推送 origin main**。
@@ -6321,3 +6322,24 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 修复 3 个坑：店铺清单 URL 带 slug 的 source_id 解析、清单楼层标题为空=真站无标题文案（忠实保留）、搜索文档构建器换现行 family_key 版本；
 - 28 页标题/配色用真站探测重写（Electronics/Clearance/Razer/Nintendo/Baby/Dyson/Toy…）；
 - 3 个 Sports 页真站被拦 → 卡片保留外链，未建页。
+
+## 活动页楼层缺口回填：忠实口径落地（2026-11-27 09:10 本地，✅ 完成）
+
+**用户反馈**：活动页商品数量不够，不够的要启动爬虫入库再展示。
+
+**审计结论（归因脚本逐件核对）**：613 件缺口的构成与直觉相反——
+- ~515 件：**真站该层本来就只有 5~23 件**（白名单全部已入库），爬虫无能为力；
+- 88 件：真站同一商品**跨楼层重复展示**，建页时页内去重挤掉了（真站 DOM 实锤：uXqcuMAJBtVC 上 10343450 出现在 3 个楼层）；
+- 12 件：INACTIVE 被过滤（能量胶/功能饮料，食品下架批次误伤）；
+- 1 件：真正未导入（254vg 灯串 100005355071390）。
+
+**用户拍板**：①重复需真站实锤后放开（仅限验证过的页）；②真站少的层保持实有数量（不做关键词补位）；③INACTIVE 恢复；④Sports 3 页再试 + 店铺页深挖（爬虫活交给执行 agent）。
+
+**已执行**：
+- `scripts/refill_faithful_20261127.py`：5 个保健品页（2dawKz7FDU6o/31CyuPpBx7L9/3sQw3r9uY6MZ/uFx9zbR4hmgR/uXqcuMAJBtVC）按真站清单忠实重建——放开跨层重复、同层 (spu,sku) 去重、恢复 INACTIVE、纯白名单不补位；254vg 灯串层重填。
+- 12 件 INACTIVE → SPU/SKU/Offer ACTIVE、removed_by_platform=False，**不重建搜索文档**（仅活动页可见）。
+- 254vg 缺件：job#384 重跑（run#485 复用清单只采缺件）→ SPU 25163 入库上架 + Offer £45.99 ACTIVE + 搜索文档 1 条 → 灯串层 13/13。
+- 全量验收：41 页 2146 件楼层商品；低于 25 的楼层全部对应真站实有数量。
+- 执行方任务已就绪：Sports 3 页（state 重置 PENDING，直接跑队列）；店铺 4 任务删旧清单 + READY + 换账号，**已从 job_list.json 摘除**（防止自动跑复用薄清单），需先给 pages_run 店铺冻结加深挖（滚动到底 + Load more/翻页），跑完 @我重建店铺页。
+
+**坑**：job_list.json 是队列唯一输入，多页 job（如首批 job#293 一批 10 页）的 manifest 必须按 `page_url__icontains=<external_id>` 匹配，不能按 job/run 取 last（会拿到同批别的页的清单）。

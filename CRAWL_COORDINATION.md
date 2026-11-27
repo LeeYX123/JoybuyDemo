@@ -246,3 +246,19 @@ cd /e/code/AgentProject/Joybuy
 - [11-27 02:28] [执行方] job#416 `频道卡-active-kz6csttx 落地页采集 20261127` ❌ 重试 3 次仍失败（请建任务方介入）
 - [11-27 02:28] [执行方] 执行方收尾：全部任务到终态 {"388": "FAILED_FINAL", "389": "SUCCEEDED", "390": "SUCCEEDED", "391": "SUCCEEDED", "392": "SUCCEEDED", "393": "SUCCEEDED", "394": "FAILED_FINAL", "395": "SUCCEEDED", "396": "SUCCEEDED", "397": "SUCCEEDED", "398": "SUCCEEDED", "399": "FAILED_FINAL", "400": "SUCCEEDED", "401": "SUCCEEDED", "402": "SUCCEEDED", "403": "FAILED_FINAL", "404": "SUCCEEDED", "405": "SUCCEEDED", "406": "SUCCEEDED", "407": "FAILED_FINAL", "408": "SUCCEEDED", "409": "SUCCEEDED", "410": "SUCCEEDED", "411": "SUCCEEDED", "412": "FAILED_FINAL", "413": "SUCCEEDED", "414": "SUCCEEDED", "415": "SUCCEEDED", "416": "FAILED_FINAL", "417": "SUCCEEDED", "418": "SUCCEEDED"}（详见 crawl_state.json）
 - [02:50] [建任务方] **全部完成，可以下班**：31/31 落地页建好（28 活动 + 3 店铺；Sports 3 个被风控拦截的除外——卡片保留真站外链，报告见 `var/home_modules_20261125/overnight/overnight_report.md`）。执行方本次表现很好，队列脚本的三处修复和守护三件套都到位。
+- [09:05] [建任务方] **白天批：缺口回填收尾，4 件事（①②是你的活）**
+
+**① Sports 3 页再试（job#394 / 412 / 416，2bXHZci9 / LP15GX62 / kz6csttx）**
+- `crawl_state.json` 里这 3 条已重置 PENDING / attempts=0，**直接跑队列**（`job_list.json` 28 行）即可自动重试。
+- 之前 6 轮全失败在「列表被风控拦截/为空」——优先换全新节点 + 新会话。
+- 若这轮仍拿不到列表：置 FAILED_FINAL 并在请求区留言，**不再重试**（按真站缺失处理，卡片保留外链）。
+
+**② 店铺页深挖（job#388 Baby / #389 Toy / #390 Dyson / #294 Purco 100000744）**
+- 4 个任务的**旧清单我已删除**、任务 READY、账号已换新（可用池 57 个）。
+- ⚠️ 这 4 个 job 已从 `job_list.json` 摘除（388/389/390）或本来就不在（294）——**队列不会自动跑**，防止自动重跑只是「复用薄清单秒成功」。
+- 需要先给 `pages_run` 店铺清单冻结加深挖：渲染后**分多次滚动到底**触发懒加载、检查 Load more/翻页控件并点击，直到没有新商品再解析冻结；目标清单 ≥40 件，或确认真站就只有 7~15 件（如实报告）。
+- 跑法：`start_run` 建 run 后 `manage.py run_crawl_run --run <uuid>` 单任务执行。**跑完在请求区 @建任务方**，我用新清单重建 4 个店铺页。
+
+**③ 254vg 补 1 件（job#384）**：我已自己跑完（run#485 SUCCEEDED），灯串层 13/13，不用管。
+
+**④ 建页侧已完成（供你知悉）**：5 个保健品页已按真站清单忠实重建（真站 DOM 实锤跨楼层重复展示 → 放开页内跨层去重，同层仍去重）；12 件 INACTIVE 能量胶/功能饮料按豁免口径恢复（仅活动页可见）；254vg 新导入 1 件已上架 + 建搜索文档。
