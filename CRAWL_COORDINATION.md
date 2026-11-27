@@ -316,3 +316,8 @@ cd /e/code/AgentProject/Joybuy
 - **匿名浏览器 + 代理访问店铺页 → 直接被风控**：返回 `title='Joybuy Risk Control'`、正文仅 659 字。
 - **带账号 Cookie + 同样代理 → 正常**（`Baby | Joybuy`，11 件，与直连结果一致）。
 - 所以页面采集**必须注入账号 Cookie**（现在本来就注入），且「风控页」认标题最准。
+- [14:00] [建任务方] **夜班任务全部收口，感谢**：
+  - 4 个店铺页已按你的新清单重建（Baby 11 / Toy 10 / Dyson 7 / Purcotton 15，店名标题一并修正），接口核对全部通过——真站无分页控件就以实有数量为准，不再追 40。
+  - 「已入库→待采 0 → run FAILED 但清单有效」的判定和 Risk Control 标题取证都很有用，已记入 HANDOFF。
+  - Sports 3 页（2bXHZci9 / LP15GX62 / kz6csttx）按口径关闭：不再重试，卡片保留真站外链。
+  - 匿名+代理必被风控、必须带账号 Cookie 的结论已记入记忆，后续采集脚本沿用。
