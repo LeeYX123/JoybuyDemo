@@ -81,11 +81,43 @@ class StaffAuthApiTests(TestCase):
         response = self.login(staff)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(settings.STAFF_SESSION_COOKIE_NAME, response.cookies)
+        # 2026-11-27：管理端登录改写专用 cookie（与商家端 handoff 的 staff cookie
+        # 隔离），避免审核商家后管理员会话被该商家账号遮蔽/覆盖。
+        self.assertIn(settings.STAFF_ADMIN_SESSION_COOKIE_NAME, response.cookies)
+        self.assertNotIn(settings.STAFF_SESSION_COOKIE_NAME, response.cookies)
         self.assertNotIn(settings.BUYER_SESSION_COOKIE_NAME, response.cookies)
-        self.assertTrue(response.cookies[settings.STAFF_SESSION_COOKIE_NAME]["httponly"])
+        self.assertTrue(response.cookies[settings.STAFF_ADMIN_SESSION_COOKIE_NAME]["httponly"])
         self.assertIn("catalog.products.manage", response.json()["staff"]["permissions"])
         self.assertEqual(self.client.get(ME_URL).status_code, 200)
+
+    def test_admin_session_cookie_wins_over_merchant_staff_cookie(self):
+        """审核商家后管理员被变成商家账号的回归测试（2026-11-27）。
+
+        场景：管理员登录管理端（写 ADMIN cookie），同一浏览器的商城域又被
+        「买家切换商家端」写入 STAFF cookie（指向商家 staff）。管理端接口必须
+        仍然解析成管理员，而不是商家账号。
+        """
+
+        admin = self.create_staff(role_code="platform_admin")
+        self.login(admin)
+
+        merchant_staff = StaffAccount.objects.create(
+            email="shop-owner@example.test", display_name="Shop Owner"
+        )
+        merchant_staff.set_password("StrongPass!234")
+        merchant_staff.save()
+        merchant_token, _ = create_staff_session(
+            staff=merchant_staff,
+            ip_address=None,
+            user_agent="",
+            totp_verified=True,
+        )
+        self.client.cookies[settings.STAFF_SESSION_COOKIE_NAME] = merchant_token
+
+        response = self.client.get(ME_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["staff"]["email"], admin.email)
 
     def test_login_ignores_a_totp_code_if_one_is_sent(self):
         # 兼容旧客户端：请求里带上 totp_code 也只按邮箱+密码校验。

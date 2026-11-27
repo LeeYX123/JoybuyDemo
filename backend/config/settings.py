@@ -87,6 +87,10 @@ if DEBUG:
             _origin = f"http://{_ip}:{_port}"
             if _origin not in CSRF_TRUSTED_ORIGINS:
                 CSRF_TRUSTED_ORIGINS.append(_origin)
+        # runserver 绑 0.0.0.0 后，其他设备直连 :8000 时 Host 头是本机局域网 IP，
+        # 不在 ALLOWED_HOSTS 里会被 Django 直接 400 (DisallowedHost)。
+        if _ip not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_ip)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -285,6 +289,13 @@ IDENTIFIER_LOOKUP_LIMIT = int(os.getenv("IDENTIFIER_LOOKUP_LIMIT", "5"))
 IDENTIFIER_LOOKUP_WINDOW_SECONDS = int(os.getenv("IDENTIFIER_LOOKUP_WINDOW_SECONDS", "60"))
 
 STAFF_SESSION_COOKIE_NAME = os.getenv("STAFF_SESSION_COOKIE_NAME", "joybuy_staff_session")
+# 管理端专用会话 cookie（2026-11-27）。与商家端 handoff 写入的 STAFF cookie 分离：
+# 买家「切换商家端」会在商城同域写 staff cookie（正式域名下还会跨子域可见），
+# 若不隔离，同浏览器中的管理端登录态会被商家账号会话遮蔽（审核商家后管理员
+# 变成该商家账号）。中间件优先读本 cookie，读不到才回退到 STAFF cookie。
+STAFF_ADMIN_SESSION_COOKIE_NAME = os.getenv(
+    "STAFF_ADMIN_SESSION_COOKIE_NAME", "joybuy_admin_session"
+)
 # 员工会话要同时服务平台端（/api/v1/admin/*）与商家端（/api/v1/merchant/*），
 # 所以作用域是整个 /api/v1/。历史值曾是 "/api/v1/admin/"，见 LEGACY 常量。
 STAFF_SESSION_COOKIE_PATH = os.getenv("STAFF_SESSION_COOKIE_PATH", "/api/v1/")

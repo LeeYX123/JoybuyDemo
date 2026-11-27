@@ -156,7 +156,7 @@ def revoke_staff_session(session: StaffSession | None) -> None:
         session.save(update_fields=["revoked_at"])
 
 
-def set_staff_session_cookie(response, token: str) -> None:
+def set_staff_session_cookie(response, token: str, domain: str | None = None) -> None:
     response.set_cookie(
         key=settings.STAFF_SESSION_COOKIE_NAME,
         value=token,
@@ -165,6 +165,33 @@ def set_staff_session_cookie(response, token: str) -> None:
         secure=settings.SESSION_COOKIE_SECURE,
         samesite="Lax",
         path=settings.STAFF_SESSION_COOKIE_PATH,
+        domain=domain,
+    )
+
+
+def set_admin_session_cookie(response, token: str) -> None:
+    """管理端专用会话 cookie。
+
+    商家端 handoff 写的是 STAFF_SESSION_COOKIE_NAME；管理端单独一个键，
+    同浏览器里两者互不遮蔽（2026-11-27 修复：审核商家后管理员被变成商家账号）。
+    """
+
+    response.set_cookie(
+        key=settings.STAFF_ADMIN_SESSION_COOKIE_NAME,
+        value=token,
+        max_age=settings.STAFF_SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite="Lax",
+        path=settings.STAFF_SESSION_COOKIE_PATH,
+    )
+
+
+def delete_admin_session_cookie(response) -> None:
+    response.delete_cookie(
+        key=settings.STAFF_ADMIN_SESSION_COOKIE_NAME,
+        path=settings.STAFF_SESSION_COOKIE_PATH,
+        samesite="Lax",
     )
 
 

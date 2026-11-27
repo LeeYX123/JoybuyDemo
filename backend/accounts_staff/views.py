@@ -20,13 +20,14 @@ from accounts_staff.serializers import StaffLoginSerializer, StaffRoleUpdateSeri
 from accounts_staff.services import (
     clear_rate_limit,
     create_staff_session,
+    delete_admin_session_cookie,
     delete_staff_session_cookie,
     get_staff_permission_codes,
     increment_rate_limit,
     rate_limit_key,
     rate_limit_reached,
     revoke_staff_session,
-    set_staff_session_cookie,
+    set_admin_session_cookie,
 )
 from audit.services import record_audit
 
@@ -109,7 +110,9 @@ class StaffLoginView(StaffCsrfAPIView):
             totp_verified=True,
         )
         response = Response({"staff": _staff_payload(staff)})
-        set_staff_session_cookie(response, token)
+        # 管理端登录写「管理端专用」cookie：商家端 handoff 写的是另一个键，
+        # 同浏览器里互不覆盖（2026-11-27 修复审核商家后管理员变商家账号）。
+        set_admin_session_cookie(response, token)
         return response
 
 
@@ -118,6 +121,7 @@ class StaffLogoutView(StaffCsrfAPIView):
         revoke_staff_session(getattr(request, "staff_session", None))
         response = Response(status=204)
         delete_staff_session_cookie(response)
+        delete_admin_session_cookie(response)
         return response
 
 

@@ -449,7 +449,13 @@ class BuyerMerchantConsoleSessionView(BuyerCsrfAPIView):
                 "expires_in": int(settings.STAFF_SESSION_MAX_AGE_SECONDS),
             }
         )
-        set_staff_session_cookie(response, token)
+        # 商家端在独立子域（merchant.joyfumi.com）：正式域名下把 cookie 域放宽到
+        # .joyfumi.com，子域才能收到；本地（127.0.0.1/localhost）保持 host-only。
+        # 管理端用的是另一个 cookie 键（STAFF_ADMIN_SESSION_COOKIE_NAME），
+        # 所以这里写 cookie 不会再覆盖管理端登录态。
+        host = request.get_host().split(":")[0].lower()
+        cookie_domain = ".joyfumi.com" if host.endswith("joyfumi.com") else None
+        set_staff_session_cookie(response, token, domain=cookie_domain)
         return response
 
 
