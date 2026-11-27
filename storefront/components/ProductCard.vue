@@ -185,12 +185,16 @@ function toggleWishlist() {
       </h3>
       <p v-if="viewed" class="product-card__viewed">{{ viewed }}</p>
       <div v-if="showRatingStars || showSold" class="product-card__rating-row">
-        <BaseRatingStars
-          v-if="showRatingStars"
-          :rating="ratingValue"
-          :show-count="false"
-        />
+        <span v-if="showRatingStars" class="product-card__star" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="12" height="12">
+            <path
+              d="M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5l-5.9 3.1 1.2-6.5L2.5 9.5l6.6-.9z"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
         <span v-if="showRatingStars" class="product-card__rating-value">{{ ratingValue.toFixed(1) }}</span>
+        <span v-if="showRatingStars && showSold" class="product-card__rating-divider" aria-hidden="true"></span>
         <span v-if="showSold" class="product-card__sold">{{ t('product.soldCount', { n: soldAmount }) }}</span>
       </div>
       <div class="product-card__footer">
@@ -203,15 +207,23 @@ function toggleWishlist() {
           <s v-if="originalPrice" class="product-card__price-original">{{ originalPrice }}</s>
         </p>
         <span v-if="badge" class="product-card__badge">{{ badge }}</span>
+      </div>
+      <div v-if="showSelfOperated" class="product-card__self-operated">
+        <span class="product-card__self-operated-left">
+          <img
+            class="product-card__self-operated-icon"
+            src="/images/icons/sold-by-joybuy.png"
+            alt=""
+            loading="lazy"
+          />
+          <span>{{ t('product.soldByJoybuy') }}</span>
+        </span>
         <NuxtLink class="product-card__add" :to="href" :aria-label="t('detail.addToCart')">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
           </svg>
         </NuxtLink>
       </div>
-      <p v-if="showSelfOperated" class="product-card__self-operated">
-        {{ t('product.soldByJoybuy') }}
-      </p>
     </div>
   </article>
 </template>
@@ -344,32 +356,65 @@ function toggleWishlist() {
   font-size: 13px;
 }
 
-/* 评分 | 已售行（ADR-0003，真站 starRating 口径）：星 + 数值 + X sold。 */
+/* 评分 | 已售行（真站 starRating 实测 2026-11-27）：黑色单星 + 数值 + 灰色竖线
+ * + 已售，全行 14px / 行高 20 / #1A1A1A。 */
 .product-card__rating-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-height: 20px;
   margin-top: 2px;
+  color: var(--colour-text, #1a1a1a);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.product-card__star {
+  display: inline-flex;
+  color: var(--colour-text, #1a1a1a);
 }
 
 .product-card__rating-value {
-  color: var(--colour-text);
-  font-size: 13px;
   font-weight: var(--font-weight-medium, 500);
+}
+
+/* 评分与已售之间的灰色竖线（真站为分隔 SVG，这里用等价细线）。 */
+.product-card__rating-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 4px;
+  background: var(--colour-border, #d5d5d5);
 }
 
 .product-card__sold {
-  color: var(--colour-muted);
-  font-size: 13px;
+  color: var(--colour-text, #1a1a1a);
 }
 
-/* 自营徽标（真站 marketingLabelText）：14px / #1A1A1A / 500，价格行下方。 */
+/* 自营行（真站 marketingLabel 实测）：18px 品牌图标 + 14px/500 文本，
+ * 【+】加购按钮移到本行右端（原在价格行右侧，2026-11-27 用户口径）。 */
 .product-card__self-operated {
-  margin: 4px 0 0;
-  color: var(--colour-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: 4px;
+  color: var(--colour-text, #1a1a1a);
   font-size: 14px;
   font-weight: var(--font-weight-medium, 500);
+}
+
+.product-card__self-operated-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.product-card__self-operated-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .product-card__footer {

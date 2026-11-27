@@ -196,7 +196,8 @@ describe('minihome channel page', () => {
     expect(picked.exists()).toBe(true)
     expect(picked.props('moreLabel')).toBe('More')
     expect(picked.props('categorySlug')).toBe('home-living')
-    expect(picked.props('showRating')).toBe(false)
+    // ADR-0003（2026-11-27）：minihome 卡与真站一致显示评分行，不再隐藏。
+    expect(picked.props('showRating')).toBe(true)
     expect(picked.props('useRetailPrice')).toBe(true)
     expect(picked.props('showBrand')).toBe(false)
   })
@@ -213,11 +214,12 @@ describe('minihome channel page', () => {
     const picked = wrapper.get('.channel-picked')
     expect(picked.classes()).toContain('channel-pool')
     expect(picked.classes()).not.toContain('channel-floor')
-    // 精选好物卡与楼层卡同款：无评分行、无品牌行。
-    expect(picked.find('.rating-stars').exists()).toBe(false)
+    // ADR-0003：精选好物卡与楼层卡同款——有评分行（真站 minihome 卡带评分已售）、
+    // 无品牌行。
+    expect(picked.find('.product-card__star').exists()).toBe(true)
     expect(picked.find('.product-card__brand').exists()).toBe(false)
     // 推荐接口不带 retail_price → 回退 price_min。
-    expect(picked.get('.product-card__price').text()).toBe('$3.00')
+    expect(picked.get('.product-card__price').text()).toBe('£3.00')
   })
 
   it('shows a single configured banner as a static image without arrows', async () => {
@@ -659,8 +661,8 @@ describe('minihome channel page', () => {
     const wrapper = await mountPage()
     const prices = wrapper.findAll('.cms-pool .product-card__price')
     expect(prices).toHaveLength(2)
-    expect(prices[0].text()).toBe('$25.00')
-    expect(prices[1].text()).toBe('$8.50')
+    expect(prices[0].text()).toBe('£25.00')
+    expect(prices[1].text()).toBe('£8.50')
     expect(wrapper.findAll('.cms-pool s')).toHaveLength(0)
     expect(wrapper.find('.cms-pool .product-card__price--discount').exists()).toBe(false)
   })
@@ -672,7 +674,7 @@ describe('minihome channel page', () => {
       title: 'Rated thing',
       price_min: 5,
       rating_average: 4.5,
-      review_count: 9,
+      rating_count: 9,
     }
     const shared = mount(ProductCard, {
       props: { product: rated },
@@ -681,7 +683,7 @@ describe('minihome channel page', () => {
         stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
       },
     })
-    expect(shared.find('.rating-stars').exists()).toBe(true)
+    expect(shared.find('.product-card__rating-row').exists()).toBe(true)
     shared.unmount()
 
     channelModuleItems.value = [
@@ -690,6 +692,75 @@ describe('minihome channel page', () => {
     const wrapper = await mountPage()
     expect(wrapper.findAll('.cms-pool .product-card')).toHaveLength(1)
     expect(wrapper.find('.cms-pool .rating-stars').exists()).toBe(false)
+  })
+
+  // ADR-0003（2026-11-27）评分口径：卡片行 = 星级 + 评分数值 + 已售快照
+  // （真站 starRating：★5.0 · 60+ sold）；评价数不再展示；全空整行不渲染，
+  // 自营徽标默认显示。
+  it('renders rating value with sold snapshot and hides empty rows', () => {
+    function mountCard(product, props = {}) {
+      return mount(ProductCard, {
+        props: { product, ...props },
+        global: {
+          components: { BaseRatingStars },
+          stubs: { NuxtLink: RouterLinkStub, BaseSkeleton: true },
+        },
+      })
+    }
+
+    const rated = mountCard({
+      spu_public_id: 'rated-count',
+      title: 'Rated with count',
+      price_min: 5,
+      rating_average: '4.37',
+      rating_count: 970,
+      sold_amount: '1.5k+',
+    })
+    expect(rated.get('.product-card__rating-value').text()).toBe('4.4')
+    expect(rated.get('.product-card__rating-value').text()).toBe('4.4')
+    expect(rated.get('.product-card__sold').text()).toBe('1.5k+ sold')
+    // 自营徽标默认显示（i18n 文案）。
+    expect(rated.get('.product-card__self-operated').text()).toBe('Sold by Joybuy')
+    // 评价数行不再渲染（真站展示的是已售）。
+    expect(rated.find('.product-card__rating-divider').exists()).toBe(true)
+    rated.unmount()
+
+    const soldOnly = mountCard({
+      spu_public_id: 'sold-only',
+      title: 'No rating but sold',
+      price_min: 5,
+      rating_average: null,
+      sold_amount: '60+',
+    })
+    expect(soldOnly.find('.product-card__star').exists()).toBe(false)
+    expect(soldOnly.get('.product-card__sold').text()).toBe('60+ sold')
+    soldOnly.unmount()
+
+    // 评分与已售全空 → 整行不渲染；商家页（showSelfOperated=false）无徽标。
+    const plain = mountCard({
+      spu_public_id: 'plain',
+      title: 'No data',
+      price_min: 5,
+      rating_average: null,
+      sold_amount: null,
+    })
+    expect(plain.find('.product-card__rating-row').exists()).toBe(false)
+    expect(plain.get('.product-card__self-operated').text()).toBe('Sold by Joybuy')
+    plain.unmount()
+
+    const merchant = mountCard(
+      {
+        spu_public_id: 'merchant-card',
+        title: 'Merchant card',
+        price_min: 5,
+        rating_average: '4.9',
+        sold_amount: '300+',
+      },
+      { showSelfOperated: false },
+    )
+    expect(merchant.get('.product-card__rating-row').exists()).toBe(true)
+    expect(merchant.find('.product-card__self-operated').exists()).toBe(false)
+    merchant.unmount()
   })
 
   // 品类卡行距：fill='row'（家居/宠物/母婴）32px，fill='column'（电子/家电）20px。

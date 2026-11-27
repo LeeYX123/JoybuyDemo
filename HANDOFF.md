@@ -67,6 +67,33 @@
 - 并行会话（或下一会话）把以下正式入库后按新坑1流程重新拉齐服务器：3 个 utils、marketing/index.vue 的 `../../` 修复、weekly/marketing 图片、`export_activity_pages` 扩展 weekly 卡（本次是 shell 手工同步的）。
 - 全量 45 页包（含 31 频道卡落地页）等商品同步后导入（坑4）。
 
+## 0d0m. A 类同值重复族合并（101 族 / 118 SPU）（2026-11-27，✅ 已写库，未 commit）
+
+### 口径（重要，别按旧理解重算）
+- **合并单元是桶 `(family_id, axis_label, base_title, brand_id)`，不是 `(family_id, axis_label)`**。CSV 的 `bucket_size` 印证 133 桶；family 19 同一空轴组里是 `1.5m` 与 `15m` 两根**不同**网线，按组并会误合。
+- 只处理 `dedupe_analysis.csv` 里 **class=A**；class=B（619 族，不同商品撞名）**未动**。
+- keep 优先级：a=族代表（113 桶）→ b=有详情正文（9 桶）→ c=最低价（0 桶）。**同族可有多 keep**（19/39/194/408 各有 2 个不同 `base_title` 桶），每个归档 SPU 指向自己桶的 keep。
+
+### 结果（主代理抽验库内计数）
+- **101 族 / 118 个 SPU 归档**（`SpuAlias.reason="dupA/20261127"` 恰好 118 条）；桶 133（可执行 122 / 跳过 11）。
+- 计数：`spu` 总量不变；ACTIVE **18,023→17,905（−118）**；ACTIVE Offer **29,515→29,373（−142）**；搜索文档 **17,913→17,795（−118）**；`spu_alias` **712→830（+118）**；族成员行 **6,274→6,132（−142）**；`variant_family` 1,758 不变。
+- 排除目标后 `Spu`/`Offer` 状态变化 0、文档删除非目标 0、alias 非本批 0、成员行新增 0。
+- 抽样：118/118 旧 `/p/` **301 正确**（主代理实测 `c4fc8af9`→`1c8ac062` 301），105/105 keep 的 `/p/` 200 且标题/SKU 价格/SKU 数/正文与规格表数量前后一致。
+- 全站 `/api/v1/search` total **16,384 → 16,384（Δ0）**：118 个归档 SPU 合并前**全部已是非代表卡**，原本可见=0。
+- 族一致：全库 1,758 族 `member_count == 实际 DISTINCT spu_id`，0 不一致；`backfill_family_search_fields` 只读预览修前/修后 `need_update=0`。
+- 唯一有意变化：归档件原为族内最高价的 18 个族，代表卡 `family_max_price` 回落（如族 1437 18.09→15.55），逐条在 `apply_result*.json`。
+
+### 跳过 11 族
+155/165/402/431/432/434/701（组内两个都 INACTIVE）、298/405（都 DRAFT）、377（ACTIVE+DRAFT）、435（ACTIVE+INACTIVE）。
+
+### 回滚
+`var/dup_merge_A_20261127/`：`rollback_merge.py`（默认 dry-run，`--rehearse` 已实跑通过：恢复后 6 张表 md5 与演练前完全一致）。`--apply` 真回滚。
+
+### 坑
+1. `rebuild_search_document` 会重置 `published_at` 影响「最新上架」排序 —— 本批只改 3 个族字段（`family_key`/`is_family_representative`/`family_max_price`）。
+2. 同一 SPU 可在同族多个轴桶里重复出现：只能归档一次，每族允许多 keep；第一版按「每族 1 keep」把 4 族整族回滚过，改用 `--resume` 补齐。
+3. `json.dump` 不能序列化 `UUID`（`Spu.public_id`），备份一律 `str()`。
+
 ## 0d0l. 新建 2 个类目节点 + 迁移 20 条（2026-11-27，✅ 已写库，未 commit）
 
 - 用户拍板：建 2 个节点、汽车用品 8 条维持「汽车类目排除」不建。
@@ -78,6 +105,45 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d0o. PDP 画廊按规格切换：数据驱动（2026-11-27，✅ 完成，未 commit）
+
+### 用户口径
+「颜色切换不换画廊 —— 有数据的就换，无数据的就不换。」
+
+### 实测结论（先查后改）
+- 颜色路径**原本就能换**：抽查 10 个 `share_metadata=false` 的合并族，点颜色后 `?sku=`、选中态、缩略图/主图都随 SKU 变，`useFetch` 也确实带 sku 重新请求。
+- 真正的两个缺口：
+  1. **纯尺码/容量规格（`share_metadata=true`，83 组 / 194 个有图 SKU）有自己一整套图却永远不换** —— 画廊挂在 `variantArchive` 上，而它要求 `share_metadata===false`。
+  2. **切到有档案的规格会把视频挤掉** —— `mediaItems` 在档案生效时故意不混入 SPU 视频。
+
+### 改动（4 处，未动后端、未补档案数据）
+1. `storefront/utils/variantArchive.js` 新增 `resolveGalleryArchive(payload, selectedSkuId)`：**只看「档案 sku 命中 + gallery 非空」**，不看 `share_metadata`；档案缺失 / sku 不符 / gallery 空 → `null`。这是「有数据就换、没数据不换」的唯一判据。
+2. `storefront/pages/p/[id].vue`：新增 `galleryArchive` computed（依赖 `data` + 当前 `selectedSku.public_id`），`gallery = variantGallery(galleryArchive, baseGallery)`；`variantArchive` 仍按 `share_metadata` 管标题/评分/已售/详情。
+3. `p/[id].vue` 的 `mediaItems` 不再因档案丢弃视频，始终「视频在前 + 图片在后」；重置 watch 监听整个媒体 key 串。
+4. `MobilePDP.vue` `.m-pdp__dots` 加 `flex-wrap` + `max-width:calc(100% - 24px)`（29 个圆点在 375 下溢出 13px）。
+
+### 验证
+- 有档案 3 个（721 29→10 张、5958 71→10/9、17605 44→3/4），回到第一个规格恢复原画廊；手机端一致。
+- 无档案 2 个（iPhone `8010d778` 7 张、`b2705fcc` 6 张）：切色后张数与主图**不变**、不空、0 error。主代理 curl 复验 iPhone 两个 SKU 的主图 hash 相同。
+- 视频场景（3679）：切换后视频仍第一、`mainVideo=1`。
+- `vitest` 26 passed（`variantArchive` 新增 4 条边界：`share_metadata=true` 仍换 / 空 gallery / 空数组 / null / sku 不符）；e2e `variant-switch`+`variant-family` 7 passed；eslint/prettier 通过。
+
+### 坑 / 回滚
+- **`storefront/pages/p/[id].vue`、`MobilePDP.vue` 里混着其它并行批次的未提交改动**（规格卡 UI、DB 批次）——**禁止整文件 `git checkout`**，只能反向编辑本次 4 处 hunk。
+- `storefront/utils/variantArchive.js` 与 `tests/e2e/variant-switch.spec.js` 仍 **untracked**，提交时别漏。
+- 产物 `var/variant_gallery_20261127/`（`verify.mjs` + `results.json` + 60+ 截图）。
+
+## 0d0n. 源类目映射 medium 批：29 条已写入（2026-11-27，✅ 已写库，未 commit）
+
+- 用户批准：`mapping_plan.csv` 里 `confidence=medium` 的 30 行，**排除 `joybuy_uk/Smart Home`（44 SPU，父级不一致）**，写其余 **29 行，29/29 成功**（0 跳过、0 冲突）；写前逐行核对名字/父级与 CSV 一致、目标节点全部存在、29 行原本都是 `local_category_id IS NULL`。
+- **必须记住的修正**：源节点 `Nutrition`（Health Wellness，669+3 SPU）**映射到 `nutrition-supplements`（Vitamins & Supplements）**，不是 `sports-nutrition-performance`——原提议是词面包含误判；抽样商品为综合维生素/胶原蛋白/生物素，无运动营养。
+- 抽查（主代理实测）：spu 250 的 PDP 面包屑已是 ``<a href="/minihome/UK-Mini-HP-Health-and-Wellness">Health & Wellness</a> / <a href="/c/nutrition-supplements">Vitamins & Supplements</a>``，两级可点。
+- 计数：只有 `ProductCategory` 29 行 `local_category_id`（+updated_at）变化；`Spu` 23,303 / `Offer` 34,803 / 搜索文档 17,795 行数与 sha 全等（**本批无需重建搜索文档**，映射只影响面包屑）。
+- 写后剩余未映射：**39 节点 / 1,162 SPU**（`joybuy` 27/27 全通、`joybuy_nl` 16/16 全通、`joybuy_uk` 228/267）。Top：Frozen Food 742、Ice 112、Car Electronics 71、Smart Home 44（本批挂起）、Motorcycle Equipments 31、Auto Accessories 17、Hand Care 17。清单 `var/category_mapping_medium_20261127/remaining_unmapped.json` + `var/category_mapping_20261127/unmapped_68.csv`。
+- 用户口径：**「排除」= 只排除那 8 条汽车用品商品**；汽车/摩托 160 条源节点映射**未排除、暂不做**，等用户看完清单再定。
+- 产物 `var/category_mapping_medium_20261127/`（`apply_medium.py`、`backup_before.json`、`rollback.py`、`breadcrumb_diff.txt`、`before|after/`、`report`）。回滚：`.venv/Scripts/python.exe -I var/category_mapping_medium_20261127/rollback.py --apply`（只还原仍是本批写入值的行）。
+- 坑：PDP 路由必须用**带连字符** public_id（DB 存无连字符 32-hex）；`Spu` 无 `title` 字段（走 `SpuMarketContent`→`SpuTranslation`）；`Offer` 关联是 `sku__spu`。
 
 ## 0d0j. 源类目树 → 本地类目映射补齐（36 节点）（2026-11-27，✅ 已写库，未 commit）
 
@@ -150,6 +216,20 @@
 - **实测（主代理复验 1440）**：`scrollWidth 2036`、max `scrollLeft 950`、最后一张（Batteries）右缘 `1357`、箭头左缘 `1365` → **余量 8px，不再被压**。三个宽度 1280/1440/1920 余量均 8px；拖 thumb 160px → scrollLeft `349/298/263`，URL 与 h1 不变（不触发卡片跳转）。
 - e2e `verify_scroll.cjs` **59/59**；单测 `CategoryTileCarousel.test.js` **7 passed**；频道页 before/after 像素 diff `None`。
 - 注意：**真站本身没有右侧留白**，这 28px 是按用户要求的有意偏离（仅 listing 场景）。
+
+### 第三轮修复（用户报「点二级品类后拖滚动条，滚动条抽搐」）
+- **根因（第 6 点，不在原怀疑列表里）**：`:ref="bindScroller"` 的**函数 ref 在每次 Vue patch 都会重跑**，里面无条件 `restoreScroll()`。于是闭环成立：`pointermove 写 scrollLeft → scroll 事件 → sync 写 thumbLeft → Vue patch → bindScroller → 恢复记忆 left`，每帧把拖动拽回记忆位置。**只在「点过二级品类（有 scroll 快照）」后出现**，与用户描述完全吻合。
+- 复现（修复前，真实鼠标 + 页内 rAF 逐帧）：用户场景 `before {sl:389} → after {sl:389}`、`violations 1 / maxBackPx 132`；从 0 开始拖则拖动完全无效（每帧被拉回 0）。
+- 修法：
+  1. `bindScroller` 加 `restoredOnce` 守卫（一次性），`restoreScroll` 加 `draggingThumb` 守卫；
+  2. 拖动期间 `sync()` 不写 thumb（只更新 `overflowing/atStart/atEnd` + 记忆），`pointerup` 后 `sync()` 对齐；
+  3. 拖动映射改**纯 delta**（`thumbLeft = startThumbLeft + (clientX−startX)`，再换算 scrollLeft）；
+  4. `scroll-behavior:auto` 只在 pointerdown 设、pointerup 还原；
+  5. `sync()` 用 rAF 合并（`scheduleSync`）；
+  6. **thumb 从 `%` 改为像素**（原 `Math.round` 到 1% ≈ 10.9px 台阶，肉眼就是「抽搐」的直接来源）。
+- 结果：三宽度 1280/1440/1920 拖动 `violations 0`、映射误差 0.2–0.3px、松手 10 帧漂移 0；用户场景 `389→637` 无回跳；wheel 严格单调（最多落后 1 帧，≤0.5px）。
+- e2e `verify_scroll.cjs` **77/77**；单测 **8 passed**（新增「拖动期间 sync 不改 thumbLeft」）；频道页像素 diff `None`。
+- 坑：**Vue 函数 ref 不是只调一次**（patch 时重跑）——任何「在 ref 回调里恢复状态」的逻辑都必须自己加一次性守卫。
 
 ## 0d0g. 首页畅销榜单按子类目 3:2 选品（2026-11-27，✅ 完成，未 commit）
 
@@ -6841,3 +6921,15 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **验证**：Playwright 实测 49nyGg titleFontSize=65px/黑/lh82、gridCols=5、卡宽 218px；截图确认大标题 + 5 列布局与真站风格一致（`title_65px_5col.png`）。Hde2p 无标题元素属正常（该层真站本就无标题文案）。
 
 **注意**：babel 模板的老 10 页（4VQ7/24EG 等）标题仍是 28px（真站实测值，不同模板不同样式），未动；移动端标题不读 title_size，未受影响。
+
+## 商品卡四项优化：徽标 icon/加购挪位/评分行/活动页同款（2026-11-27 18:00 本地，✅ 完成）
+
+1. **自营徽标加 icon**：从本地保存的真站快照（`pages/campaign_active_*.html`）提取徽标结构——18×18 `marketing_img`（Joybuy 红色笑脸 logo，CDN png 已下载入库 `public/images/icons/sold-by-joybuy.png`）+ 14px/500 文本。真站当时 403 限流（浏览器/WebFetch 全被拦），快照是关键证据源。
+2. **【+】挪到自营行右端**：列表卡加购从价格行移到「Sold by Joybuy」行右（真站实测 AddCart 40×40 与价格不同行）；商家页卡片补加加购、保持价格行右端（真站商家页口径，原本无加购按钮）。
+3. **评分行对齐真站**：真站结构 = 单个黑色星形图标（joybuy-icons 字体 10px）+ 评分数值 + **灰色竖线分隔** + 已售，全行 14px/行高20/#1A1A1A。已弃用 5 星组件改单星 SVG + 细线分隔。
+4. **/active/ 楼层卡同款**：`ActivityProductCard` 补评分行 + 自营行（icon/文本/+）——活动页 payload 本就带 rating/sold 字段。
+5. **顺带修两个真站一致性 bug**：
+   - Market `display_currency_symbol` 种子全写死 `$`（迁移 0006）→ 新增 offers/0007 按 default_currency 修正（GB=£、EUR 市场=€）；
+   - `formatDisplayPrice` 按 2026-11-03「一律 $」旧规则硬编码 USD → **反转为 en-GB/£**（2026-11-27，全站 GBP 且真站显示 £；旧规则作废记录在 utils/display.js 注释）。列表页实测 £899.00。
+
+**验证**：Playwright 三类页面（列表/活动/商家）实测——列表与活动页 icon 加载、评分「★4.0|300+ sold」分隔线、加购在自营行右端、价格行无加购；商家页加购在价格行右端、无徽标。前端 156/156（display/minihome 用例按新契约更新：£ 符号、单星结构）。截图 `card_final.png`。
