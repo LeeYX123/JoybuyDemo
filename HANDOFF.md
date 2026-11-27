@@ -2,6 +2,22 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0sf. 管理端编辑页底部操作栏吸底（2026-11-28，✅ 完成，未 commit）
+
+- **用户要求**：管理后台所有编辑页的【保存】/【关闭·取消】固定在底部，滚动页面时按钮不跟着滚走。
+- **根因**：`AppModal` 原来是 `.modal{max-height:90vh; overflow:auto; padding:24px}`，header/body/footer **整块一起滚动**，长表单（如商品池编辑 5227px）滚到底就要找按钮。`AppDrawer` 本来就是 body 单滚动区（没问题），但一键下单向导把「上一步/下一步/创建」写在 body 末尾。
+- **改动（4 文件，覆盖 31 处弹窗）**：
+  1. `admin-web/src/components/AppModal.vue`：改**三段式**——`.modal` = flex column + `overflow:hidden` + `max-height: min(90vh,100%)`；`.modal__body` = 唯一滚动区（`flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain`）；`.modal__foot` = `flex:none` + 实底白 + 上边框。**新增 `footer` 具名插槽，默认内容 = 原「取消 | confirmText」**，未传插槽的 31 处调用零改动即吸底（向后兼容）。
+  2. `admin-web/src/styles/admin.css`：modal 三段式样式重写、drawer 三段加固（`flex:none`/`min-height:0`）、新增全局 `.form-sticky-bar`（页内长表单吸底条）、新增 ≤768 规则（遮罩 12px、modal 满宽、footer `nowrap`、按钮 `flex:1` + `min-height:44px`）。
+  3. `admin-web/src/views/AutoOrdersView.vue`：`.wizard-foot` 从 body 移入 `<template #footer>`。
+  4. `admin-web/src/views/CrawlersView.vue`：新建任务表单（含类目树 913px）末尾按钮改 `.form-sticky-bar`（取消 + 创建任务）。
+- **实测（IAB 1440×900 + 390×844，登录既有超管，未提交任何写操作、未造数据）**：商品池编辑弹窗 body 5227px，scrollTop 0→2270→4539 时 footer **恒为 793–855（缝隙 0.00）**、按钮 `elementFromPoint` 命中；订单详情抽屉 body 1699px，scrollTop 0→921 时 footer **恒为 838–900**；爬虫页内表单 scrollY=0 时吸底条 831–900 贴视口底、到表单末尾随之上移、滚出后消失（不遮挡下方表格）；390 宽弹窗两按钮各 155.5×44、抽屉 171×44 不换行；只读抽屉仍无 footer；确认框取消/点遮罩关闭正常；4 模块 console error 0。截图 27 张 `var/admin_sticky_footer_20261128/`。
+- **验证（按验证纪律仅针对性验证）**：`npx vite build` 通过；`vitest` 7/9（2 个失败为既有 `LoginView.test.js` 找 `input[type=email]` 而模板自 3fc249a 起是 `type=text`，与本次无关）；4 个改动文件 prettier 通过、3 个 .vue eslint exit 0；无单测断言弹窗 DOM 结构。
+- **坑（不得再踩）**：①`.modal` 现在 `overflow:hidden`，**弹窗内容只能在 `.modal__body` 里滚**，以后加固定工具条要放进 body 或 footer，不要再依赖「整弹窗滚动」；②`.modal` 的 `max-height` 必须 `min(90vh, 100%)`，不要写 `calc(100vh-48px)`（窄屏有横向滚动条时会顶出遮罩）；③窄屏 `.modal__foot > .btn` 必须用**直接子选择器**，否则会把 drawer 里嵌套的 wizard 按钮也拉成等分。
+- **保留未吸底（有意）**：订单详情抽屉内「保存节点时间」（分区级保存，抽屉 footer 已被「一键完成/刷新」占用，再叠一条会遮挡时间轴）；Buyers「重设密码」（子动作，与保存资料无关）；爬虫账号组/库存调整/CMS 发布（2–3 字段单屏可见，吸底反而悬浮遮挡）；活动页返佣规则面板（页面中部 tab 面板）。
+- **遗留**：商品池编辑弹窗在 390 宽仍有内容自身横向溢出（`.pool-editor-block__tools` 固定宽，改前同样存在，只是滚动条从 `.modal` 移到 `.modal__body`）。
+
+
 ## 0jy. 全站编号改造：JY 编号体系（2026-11-27，✅ 代码 + dev 数据 + 三端前端完成，未 commit）
 
 - **用户拍板的规则**：平台订单 `JYO+YYYYMMDD+6位`、商家子单 `JYO+YYYYMMDD+6位`、商家 `JYM+10位`、用户 `JYU+10位`、售后 `JYA+YYYYMMDD+6位`、支付 `JYPAY+YYYYMMDD+6位`、退款 `JYR+YYYYMMDD+6位`、物流 `JYLOG+YYYYMMDD+6位`。字符集 **36 进制全字母数字不排除易混字符**、日期按 `settings.TIME_ZONE`、**不做旧号兼容（旧号立即失效）**、只改 `public_id` 不动主键。**商品 SPU 用户中途改为「不用改」，已回退为原 UUID**（见本节末）。
@@ -268,6 +284,34 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d0x. 语言设置新增日语/韩语 + GB 补齐 de/fr/nl（2026-11-28，✅ 完成，未 commit）
+
+### 需求
+购物端语言设置增加【日语】【韩语】；用户追加「一起补」= 把 GB 下拉里早就有、但后端没登记的 de-DE / fr-FR / nl-NL 一起补。
+
+### 前端（`storefront/`）
+- `composables/useMarketLocale.js`：GB 的 `locales` 在 `nl-NL` 后新增 `{code:'ja-JP',name:'日本語'}`、`{code:'ko-KR',name:'한국어'}` → GB 下拉 **7 项**；其它 5 个市场未动。
+- `composables/useLocale.js`：`localeAliases` 加 `ja: 'ja-JP'`、`ko: 'ko-KR'`。
+- `locales/messages.js`：新增 `ja` / `ko` 两个语言块，**各 663 key**（与 en 完全一致，missing/extra 均空）；用本地 Ollama `hy-mt2:7b-q4km` 翻译（并发 2，ja 78.8s / ko 92.6s）+ 人工全量过一遍修约 60 处义项。
+- `tests/use-market-locale.test.js` 新增「GB 7 项、末尾 ja/ko、name 正确」用例。
+- 校验：17 个占位符 token **0 丢失/改写**；模型给无占位符 key 硬造 `{name}/{store_name}` 的 2 条已修；ko 仅 3 个品牌串无谚文；ja 简体字检测 0 命中。
+- 浏览器实测：下拉 7 项；日本語 → 顶栏「言語」、导航「ショップ開設の申請」、搜索框「Joybuyで検索」、`/cart`「概要 / 購入手続きへ」；한국어 → 「언어 / 스토어 개설 신청 / 결제하기」；刷新保持；key 泄漏扫描 0；console error 0（手机端 1 条 hydration mismatch 是既有行为，zh-CN 对照同样出现）。
+- 主代理复验：带 `joybuy-locale=ja-JP` 的 SSR HTML 含「カート」「検索」「言語」；ja/ko 各 663 key。
+
+### 后端（纯数据，无迁移）
+- `locale` **11→13**（`ja-JP`/`ko-KR`，含 native_name 日本語/한국어）；`market_locale` **11→16**，GB 新增 5 行 de-DE(2)/fr-FR(3)/nl-NL(4)/ja-JP(5)/ko-KR(6)，`is_default=0`；其它市场未动。
+- 主代理复验：GB 7 行顺序 = 前端下拉；`/api/v1/search?...&locale=ja-JP` 的 **`requested_locale` = ja-JP**（改前回落 en-GB）。
+- 正向副作用：`de-DE` 现在真返回德语（`C&S Toiletpapier…`，改前英文）；**老坑未复发**：只有中文译文的商品请求 de-DE 仍回退英文（`content_origin=FALLBACK_SOURCE`）。
+- 回归：en-GB / zh-CN 的 search、categories、PDP 响应与改前 **sha256 逐字节一致**；148 张表仅 `locale`/`market_locale` 变化。
+- 单测：`test_localization + test_search + test_product_detail_api` 52 OK；`offers.tests` 11 OK。
+- 脚本/备份/回滚：`backend/var/locale_ja_ko_20261128/`（`seed_ja_ko.py --apply`、`rollback.py`、`http_before|after`）。回滚实测删 5+2 行 → GB 只剩 en/zh，再 seed 恢复 7 行且幂等。
+
+### 必须记住的边界
+1. **生产/新库不会自动生效**：`offers/migrations/0006_seed_european_markets.py` 里 GB 的 market_locale 硬编码 `["en-GB","zh-CN"]`，本次是数据脚本只改 dev；上线要跑 `seed_ja_ko.py --apply` 或补 data migration。
+2. **搜索响应的 `locale` 字段是「索引 locale」**（全库只有 GB/en-GB 文档，恒为 en-GB）；判断请求语言是否生效看 **`requested_locale`**；PDP 回退看 `content_locale` + `content_origin`。
+3. **ja/ko 商品内容不存在**：`spu_translation` 只有 en-GB/zh-CN（de 1,699、fr/nl 各 55），日/韩界面下商品标题与详情回退英文，属预期；要日/韩商品内容需跑离线翻译管线（全量约 80h）。
+4. `offers/market_services.py` 的 `LOCALE_ALIASES` 仍无 `ja`/`ko` 短码（购物端传完整码，无实际影响）。
 
 ## 0d0w. 【联系商家】从商家主页移除 + PDP 改客服同款（2026-11-27，✅ 完成，未 commit）
 
@@ -1449,6 +1493,29 @@
 - PENDING→APPROVED/REJECTED 的状态切换是直接改 DB 模拟管理端审核（接口契约未动、未新增字段）。
 - 手机版 375 下右下角「客服」悬浮按钮会盖住表单右侧一小块（全站既有组件，非本页引入），未处理。
 - 本轮未 commit；改动的 2 个文件 + 3 个新文件均在 storefront。
+
+## 0d55. 重启后冷启动（2026-11-28 01:06，✅ 完成 / 仓库零改动）
+
+### 我们在做什么
+机器 **11-27 22:50 重启**，用户凌晨要求启动服务。检查发现只有 MySQL 活着：`docker ps -a` 显示 **redis 与 mailpit 都是 `Exited (0)` 2 小时前**（干净退出，未被 restart 策略拉起），Web 四端全停。
+
+### 动作（实跑）
+1. `cd infra && docker-compose --env-file .env -f compose.dev.yml up -d` → redis/mailpit 重新 Started，三容器 9s 内全 healthy，端口仍是 `0.0.0.0`（33060/63790/1025/8025）。
+2. `migrate --noinput` → `No migrations to apply`。
+3. `bash var/start_keepalives_detached.sh`（后端 + storefront 脱管看护）。
+4. `npx vite --port 5173/5174 --host 0.0.0.0`。
+
+### 验证（按验证纪律仅针对性验证）
+- 七端口 `0.0.0.0` LISTENING（3000=37472、5173=41240、5174=32460、8000=37524、8025/33060/63790=1872）。
+- `/api/v1/health` = `ok`；`localhost:3000` + `192.168.1.165` 上 3000/5173/5174/8025/8000 全 200；代理 `/api/v1/cart` 200/0.27s。
+- 局域网 MySQL `-h192.168.1.165:33060` → `lan-ok`；Redis `PING` → `+PONG`。
+- 数据 `spu=23307 offer=34807 sku=36387`（与 11-27 巡检一致，无丢失）。
+
+### 坑 / 注意（新）
+**重启后不要只看 `docker ps`**：停止状态（`Exited (0)`）的容器不会出现在里面，`restart: unless-stopped` 也不会把「被干净停止过」的容器拉回来。启动流程应先 `docker ps -a`（或直接 `docker-compose up -d`）确认三容器全在，否则后端起来后 `/api/v1/health` 会报 cache error（Redis 没起）。
+
+### 下一步
+无遗留。
 
 ## 0d54. 本地服务巡检（2026-11-27 21:49，无需启动 / 仓库零改动）
 
@@ -7294,3 +7361,42 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
    - `formatDisplayPrice` 按 2026-11-03「一律 $」旧规则硬编码 USD → **反转为 en-GB/£**（2026-11-27，全站 GBP 且真站显示 £；旧规则作废记录在 utils/display.js 注释）。列表页实测 £899.00。
 
 **验证**：Playwright 三类页面（列表/活动/商家）实测——列表与活动页 icon 加载、评分「★4.0|300+ sold」分隔线、加购在自营行右端、价格行无加购；商家页加购在价格行右端、无徽标。前端 156/156（display/minihome 用例按新契约更新：£ 符号、单星结构）。截图 `card_final.png`。
+
+## 全站 $ 符号回退 + 两个活动页真站对齐（2026-11-27 晚 ~ 11-28 凌晨，✅ 完成）
+
+**⚠️ 推翻上面条目里的 GBP 决策**：用户明确拍板全站所有价格一律 `$`（2026-11-27 18:20），
+0007 迁移与 formatDisplayPrice 的 £/€ 本地化已全部推翻，禁止再做按市场本地化：
+
+- `formatDisplayPrice` 恢复 en-US/USD；活动楼层卡 priceLabel、客服订单金额、钱包余额固定 `$`；
+  offers/0008 迁移把所有市场 `display_currency_symbol` 重置 `$`（已应用）。
+  爬虫 fixture 与真站楼层标题里的 £ 是源数据，保留。
+- commit `0031379`（前端 367/367 全绿）。
+
+**活动页 2dawKz7FDU6oYukbjAiHPmssXb1Q（Discover our range / 消化健康）对齐真站**：
+真站已改版为 hero banner + 单楼层 28 件（无子楼层标题），旧版 5 子楼层已删除重建。
+真站该楼层商品会轮换（probe 快照 28 件 vs 实时抓取 29 件仅重叠 21 件）——页面以
+materialData 快照顺序为准。缺的 4 件（10367649/10367637/10372506/10377282）亲爬入库
+（DrissionPage + parse_uk_product_detail + ingest/import 管线，挂 PAGE_SET run），按活动页
+豁免口径激活（SPU/SKU/Offer→ACTIVE，不动搜索文档）。新导入 SPU 默认 DRAFT 必须手动豁免激活。
+坑：详情页 SSR 标题语言由 cookie `_lang=en_GB` 决定；重导入不覆盖已有 translation
+（apply_source_field_values 保护），需直接改 SpuTranslation 与规格轴。commit `9ad6687`。
+
+**活动页 3sQw3r9uY6MZMdBUVsn57PB7sDSR（Discover our range / 睡眠健康）对齐真站**：
+无 banner，5 标题楼层，每层首屏 5 件 + View more；源站楼层共用商品池（2/3/4 层渲染相同
+测试数据），如实复刻。PAGE_SET 任务（数据抓取07 组账号 61593593828891；08 组因风控事件
+全组冷却 6h）phase-1 逐层点 View more 冻结 18/8/6/6/23 → phase-2 入库 32 件 →
+`refill_faithful_20261127.rebuild('3sQw3r9uY6MZ')` 重建楼层。
+用户后续手动调整：删「Wind Down Evening Routine」层（与上一层重复）；「Stay Asleep Longer」
+层 show_more 改 True（重建管线只换商品不更新 show_more 标志——坑，已记录）。
+commit `2065975`。
+
+**商家页/移动端首页评分|已售竖线**：`pages/merchants/[slug].vue` 与 `MobileHome.vue` 推荐卡
+补灰色分隔线（1px/12px/#d5d5d5，与其他列表页同口径）。
+
+**jnSk 活动页 hero 替换（2026-11-28 01:53）**：用户提供的
+`C://Users//lyx//Downloads//hreo.webp` 覆盖
+`storefront/public/images/activity/pages/jnSkLxDvRZwLtD4x8aTEy5cCAwF/hero.webp`
+（旧图备份 `var/hero_jnSk_backup.webp`）。路径不变，验证页面服务的文件与用户图字节一致。
+注意：浏览器可能缓存旧 hero（URL 未变），需强刷。
+
+**验证纪律**：以上均按针对性验证执行（受影响测试 + SSR/截图/API 核对），未跑全量后端套件。
