@@ -59,8 +59,14 @@
 - **PDP 抽 5 个：5/5 PASS**（HTTP 200 + `detail__content-paragraph` + `Product Description` + 在售）。其中 `59b6378c` 不在搜索列表里是 **0cub 同款族去重**（`is_family_representative=false`，按设计只出族代表卡），PDP 直达可买，不是下架。
 
 ### 剩余 8 条（`remaining.csv`，根因已核）
-1. **6 条 `failed_empty_parse`**：源 `SpuSourceIdentity.source_id` 是 UK 榜单导入时生成的**合成 id（`uk-best-<hash>`）**；`GET /dp/uk-best-…` 返回 HTTP 200 的 SPA「Page Not Found / no longer available」壳页（约 544KB，无 `productId`）→ 空解析。**不是风控**；要补齐必须先把源 id 反查成真实 `/dp/<数字 id>`。
+1. **6 条 `failed_empty_parse`**：其中 **5 条**源 `SpuSourceIdentity.source_id` 是 UK 榜单导入时生成的**合成 id（`uk-best-<hash>`）**；`GET /dp/uk-best-…` 返回 HTTP 200 的 SPA「Page Not Found / no longer available」壳页（约 544KB，无 `productId`）→ 空解析。**不是风控**；要补齐必须先把源 id 反查成真实 `/dp/<数字 id>`。
+   - **第 6 条 `1c874b2f`（spu 8316 帆布托特包）源 id 是真实数字 `100034375125829`**，同样返回 544KB 壳页 → 更可能是**源站已下架**而非合成 id 问题；这条要单独判断（下架就应本地下架，别硬补）。
 2. **2 条 `skipped_no_bindable_sku_offer`**：`seed-watch` / `seed-cable` 种子测试商品，`OfferSourceIdentity` 是 `seed-watch-offer` 这类非 `<spu>#<sku>` 结构 → 导入会新建 Offer（变相加价），按纪律跳过。
+
+### 2026-11-27 交付：8 条清单已交用户人工核查（只读查库，未改任何数据）
+- 用户要求「把 id、spu 列一下，我去检查看看」；已按库内实时状态逐条给出 `public_id` / `spu_pk` / `source_id` / 标题 / 现价 / 本地 PDP 链接 / 失败原因。
+- 复查口径：8 个 SPU **全部 `status=ACTIVE` 且各有 1 条 ACTIVE Offer**（价 4.99–39.99），**价格与上下架均未被本批改动**；其中只有 `1c874b2f`（spu 8316）有 `SpuDetail` 行（4.37/1319 评、3.8k+ 已售）但 `content_sections` 为空。
+- 查库注意：`Spu.public_id` 在 MySQL 里存的是**无连字符 32-hex**，用带 `-` 的 UUID 直接查会 0 行（先去横线再查）。
 
 ### 下一步计划
 1. 若要把 77% 拉到 90%：只能处理「来源无图文」的 34 条，属于**源头内容缺失**（页面 SSR 里无 description/无 structuredFloors，i18n 里的 `descriptionText` 只是文案键），需要产品/运营决定是否允许生成文案，技术侧无解。
@@ -6411,3 +6417,15 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 新清单 manifest#144/151/152/153 已建页（`build_watcher.build_store` 幂等重建），店名标题修正（write_page 会把 title 重置为 external_id 的坑：重建后 title 需回写 store_name）。接口核对：11/10/7/15 全对，评分已售已随 ADR-0003 序列化带出（Toy 6/10 有评分为真站快照缺失，按「有啥显啥」）。
 - **Sports 3 页（2bXHZci9/LP15GX62/kz6csttx）正式关闭**：多轮换节点仍被真站风控拦截，卡片保留真站外链（joybuy.nl），真站恢复后可重开。
 - 执行方方法论沉淀：匿名+代理必被真站风控（标题 "Joybuy Risk Control"），采集必须注入账号 Cookie；「run FAILED 但清单有效」的判定（全部已入库 → 待采 0）属正常。
+
+## Dyson 店铺页 /products 亲爬补齐 17 件（2026-11-27 14:20 本地，✅ 完成）
+
+**用户发现**：真站 `/store/100004093/products` 有 17 件，我们只有 7 件。根因：执行方深挖的是无后缀 `/store/100004093`（真站 7 件）——**`/products` 后缀是独立页面**，商品更多（17 件、无分页、滚动全加载）。
+
+**处理（本会话亲爬）**：
+- `PAGE_URL_RE` 放宽接受 `/store/<id>/products`（`crawler_control/services.py`），建 job#419；
+- **坑**：给 job 赋 `job.account` 后不 `save()` 就调 `mark_job_ready`（只 update status）→ 账号没落库 → run#499 匿名跑 → 真站风控（"Joybuy Risk Control"）。重跑必须 `save(update_fields=[...account...])`；
+- run#500（带账号 Cookie）SUCCEEDED：清单 17 件、导入 16 件、1 件 `IMPORT_SOURCE_CONFLICT`（变体兄弟，SKU 兜底落位）；
+- 按 run500 清单重建 Dyson 页：**17 件**（+10），4 个新商品上架（Offer+搜索文档），接口实测 17/17 评分、15/17 已售。
+
+**遗留**：其它 3 个店铺页（Baby/Toy/Purcotton）无后缀与 /products 数量一致（11/10/15），无需处理；如后续发现别的店铺 `/products` 更大，同法补采。

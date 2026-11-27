@@ -1220,7 +1220,11 @@ def purge_expired_raw_responses(*, now=None) -> int:
     return purged
 
 
-PAGE_URL_RE = re.compile(r"^https?://(?:www\.)?joybuy\.co\.uk/(?:campaign/active|store)/([0-9A-Za-z]+)/?$")
+# 店铺页允许 /products 后缀（真站 /store/<id>/products 是独立页面，商品数可能
+# 多于无后缀页——2026-11-27 Dyson：无后缀 7 件，/products 17 件）。
+PAGE_URL_RE = re.compile(
+    r"^https?://(?:www\.)?joybuy\.co\.uk/(?:campaign/active|store)/([0-9A-Za-z]+)(/products)?/?$"
+)
 
 
 def normalize_page_urls(entries) -> list[dict]:
