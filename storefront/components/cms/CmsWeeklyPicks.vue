@@ -81,7 +81,8 @@ function itemSubtitle(item) {
 
 .weekly-picks__list {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* 2026-11-27：模块换成 4 张本地营销页卡，与真站每周甄选 4 卡一排一致。 */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-top: 16px;
   padding: 0;
@@ -154,7 +155,7 @@ function itemSubtitle(item) {
   white-space: nowrap;
 }
 
-@media (max-width: 80rem) {
+@media (max-width: 64rem) {
   .weekly-picks__list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

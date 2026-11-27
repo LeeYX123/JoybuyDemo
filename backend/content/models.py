@@ -352,6 +352,7 @@ class ActivityPage(models.Model):
     class Kind(models.TextChoices):
         ACTIVITY = "ACTIVITY", "活动页"
         STORE = "STORE", "店铺页"
+        MARKETING = "MARKETING", "营销页"
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     kind = models.CharField(
@@ -361,6 +362,8 @@ class ActivityPage(models.Model):
     external_id = models.CharField(max_length=64)
     title = models.CharField(max_length=200)
     title_zh = models.CharField(max_length=200, blank=True, default="")
+    #: 营销页（MARKETING）banner 里的副标题（如 "Feel good this winter"）。
+    subtitle = models.CharField(max_length=200, blank=True, default="")
     #: 店铺页顶栏店铺名（活动页留空）。
     store_name = models.CharField(max_length=160, blank=True, default="")
     #: 店铺页顶部黑色条里的商家头像（2026-11-26）。

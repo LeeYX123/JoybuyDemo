@@ -75,3 +75,23 @@ _Avoid_: 动态选品、实时推荐、规则楼层
 **选品白名单（Manifest Whitelist）**:
 真站该楼层实际展示过的商品集合，作为本地选品的首选来源与主题判据；白名单不足时才按楼层语义补充。
 _Avoid_: 真站清单（那是采集层的商品链接清单）、推荐池
+
+**自营徽标（Sold by Joybuy）**:
+商品卡上的平台自营标识，多语言文案（英文 "Sold by Joybuy"、中文「Joybuy自营」）。全站商品卡默认显示，唯一例外是 /merchants/ 商家页只显评分已售行。2026-11-03「营销标签一律不渲染」的旧规则就此作废。
+_Avoid_: 自营标签、官方直营
+
+**已售快照（Sold Snapshot）**:
+导入时抓取的商品已售件数快照（SpuDetail.sale_amount，格式如 "1.5k+" / "721"），商品卡按真站样式展示为 "X sold"，不实时更新；无快照的商品该段不显示。
+_Avoid_: 销量、实时销量
+
+**营销落地页（Marketing Page）**:
+复刻真站 /marketing?activityId=xxx 的营销专题页：本地路由 /marketing/<activityId>（ID 与真站 activityId 一致），ActivityPage kind=MARKETING。结构为 banner + 副标题 + 单一商品网格，无真站的类目切换 tab、无 Filter 侧栏。
+_Avoid_: 活动页（那是 /active/ 楼层页）、专题页
+
+**每周甄选（Weekly Picks）**:
+首页底部的一排活动卡片模块（HomeCampaignCard section=weekly），当前 4 张卡指向本地营销落地页；旧 6 张真站外链卡已下线。
+_Avoid_: 周精选、Weekly deal
+
+**配额选品（Quota Selection）**:
+快照选品的变体：不采真站商品清单，按指定二级类目分配件数配额（如 9 类均分 40 件）从本地库随机选品，建页时随机一次并写死。
+_Avoid_: 随机推荐、动态选品

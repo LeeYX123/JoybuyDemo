@@ -90,12 +90,13 @@ def _product_image(spu, gallery_paths: dict[int, str]) -> str:
     return gallery_paths.get(spu.pk) or PRODUCT_PLACEHOLDER_IMAGE
 
 
-def _product_payload(offer: Offer, *, image: str, family=None) -> dict:
+def _product_payload(offer: Offer, *, image: str, family=None, stats=None) -> dict:
     spu = offer.sku.spu
     translation = (
         spu.translations.filter(locale__in=["zh-CN", "zh", "en-GB", "en"]).order_by("pk").first()
         or spu.translations.order_by("pk").first()
     )
+    stats = stats or {}
     return {
         "product_id": str(spu.public_id),
         "offer_id": str(offer.public_id),
@@ -105,6 +106,10 @@ def _product_payload(offer: Offer, *, image: str, family=None) -> dict:
         "currency": offer.currency.code,
         "merchant_category": spu.merchant_category,
         "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
+        # 评分/已售快照（ADR-0003）：商家页显示评分已售行，但无自营徽标。
+        "rating_average": stats.get("rating_average"),
+        "rating_count": stats.get("rating_count", 0),
+        "sold_amount": stats.get("sold_amount"),
         # 批次 DB（2026-11-27）：族信息只做增量字段，老前端忽略也不影响。
         "family_key": family["family_key"] if family else "",
         "family_representative_public_id": str(family["representative_public_id"]) if family else "",
@@ -223,11 +228,24 @@ def merchant_detail(request, slug):
     )
     picks = _dedupe_by_family(offers, family_by_spu, limit=50)
     gallery_paths = _gallery_paths(offer.sku.spu_id for offer, _family in picks)
+    # 评分/已售（ADR-0003）：一次批量取 SpuDetail 快照。
+    from catalog.models import SpuDetail
+
+    detail_stats = {}
+    for row in SpuDetail.objects.filter(
+        spu_id__in={offer.sku.spu_id for offer, _family in picks}
+    ).only("spu_id", "rating_average", "rating_count", "sale_amount"):
+        detail_stats[row.spu_id] = {
+            "rating_average": str(row.rating_average) if row.rating_average is not None else None,
+            "rating_count": row.rating_count or 0,
+            "sold_amount": row.sale_amount or None,
+        }
     payload["products"] = [
         _product_payload(
             offer,
             image=_product_image(offer.sku.spu, gallery_paths),
             family=family,
+            stats=detail_stats.get(offer.sku.spu_id) or {},
         )
         for offer, family in picks
     ]

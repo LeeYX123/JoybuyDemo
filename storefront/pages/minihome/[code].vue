@@ -293,7 +293,6 @@ useHead(() => ({
           class="channel-pool channel-picked"
           :category-slug="channelRoot.slug"
           :more-label="t('channel.more')"
-          :show-rating="false"
           :use-retail-price="true"
           :show-brand="false"
         />

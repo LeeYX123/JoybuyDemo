@@ -13,8 +13,11 @@ import { formatDisplayPrice, isDeliveryLabel, isPromoLabel } from '../utils/disp
 // clamped with an ellipsis, red price on the left with a 40px round add
 // button on the right. Bestseller mode (`rank` > 0) shows the positional
 // badge and hides the rating stars like the real floor; marketing labels
-// never render (requirement 5-6). An optional `viewed_count` on the product
-// renders the real floor's "viewed in 72 hours" line when data exists.
+// ADR-0003（2026-11-27）：自营徽标（Sold by Joybuy）默认渲染、评分行全卡
+// 显示、已售快照按真站样式展示；2026-11-03「营销标签一律不渲染」的旧口径
+// 仅对 discount/promo/delivery 标签继续生效。商家页通过 show-self-operated
+// 关闭徽标。An optional `viewed_count` on the product renders the real
+// floor's "viewed in 72 hours" line when data exists.
 const props = defineProps({
   product: {
     type: Object,
@@ -40,6 +43,12 @@ const props = defineProps({
   // 首页/搜索/购物车卡片渲染结果不变；频道页楼层仍由页面 :deep() 隐藏，
   // 精选好物走该 prop。
   showBrand: {
+    type: Boolean,
+    default: true,
+  },
+  // 自营徽标（ADR-0003）：默认显示「Sold by Joybuy / Joybuy自营」；
+  // /merchants/ 商家店铺页不显示（用户 2026-11-27 口径），传 false 关闭。
+  showSelfOperated: {
     type: Boolean,
     default: true,
   },
@@ -99,13 +108,22 @@ const viewed = computed(() => {
 const ratingValue = computed(() =>
   Number(props.product.rating_average ?? props.product.rating ?? 0),
 )
-const ratingCount = computed(() => {
-  const count = Number(props.product.rating_count)
-  return Number.isFinite(count) && count > 0 ? count : 0
-})
+// 评价数仍随评分行语义保留在 payload 上（ADR-0003 后卡片不展示评价数，
+// 真站展示的是已售件数）；字段留给未来需要时使用。
 const showRatingStars = computed(
-  () => props.showRating && props.rank === 0 && ratingValue.value > 0,
+  // ADR-0003（2026-11-27）：全站卡片显示评分行（真站楼层卡/营销页卡都有评分），
+  // 不再限定 rank===0；无评分商品整行不渲染。
+  () => props.showRating && ratingValue.value > 0,
 )
+
+// 已售快照（SpuDetail.sale_amount，如 "1.5k+"/"60+"）与自营徽标（ADR-0003）。
+const soldAmount = computed(() => {
+  const raw = props.product.sold_amount
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : ''
+})
+const showSold = computed(() => Boolean(soldAmount.value))
+// 自营徽标：全站默认显示；/merchants/ 商家页由调用方传 false 隐藏。
+const showSelfOperated = computed(() => props.showSelfOperated)
 
 const badge = computed(() => {
   // Marketing labels (新客福利/优惠x%/送达/满减/自营) never render (req 5-6);
@@ -166,12 +184,15 @@ function toggleWishlist() {
         <NuxtLink class="product-card__title-link" :to="href">{{ props.product.title }}</NuxtLink>
       </h3>
       <p v-if="viewed" class="product-card__viewed">{{ viewed }}</p>
-      <BaseRatingStars
-        v-if="showRatingStars"
-        :rating="ratingValue"
-        :count="ratingCount"
-        :show-count="ratingCount > 0"
-      />
+      <div v-if="showRatingStars || showSold" class="product-card__rating-row">
+        <BaseRatingStars
+          v-if="showRatingStars"
+          :rating="ratingValue"
+          :show-count="false"
+        />
+        <span v-if="showRatingStars" class="product-card__rating-value">{{ ratingValue.toFixed(1) }}</span>
+        <span v-if="showSold" class="product-card__sold">{{ t('product.soldCount', { n: soldAmount }) }}</span>
+      </div>
       <div class="product-card__footer">
         <p
           v-if="price"
@@ -188,6 +209,9 @@ function toggleWishlist() {
           </svg>
         </NuxtLink>
       </div>
+      <p v-if="showSelfOperated" class="product-card__self-operated">
+        {{ t('product.soldByJoybuy') }}
+      </p>
     </div>
   </article>
 </template>
@@ -318,6 +342,34 @@ function toggleWishlist() {
   margin: 0;
   color: var(--colour-muted);
   font-size: 13px;
+}
+
+/* 评分 | 已售行（ADR-0003，真站 starRating 口径）：星 + 数值 + X sold。 */
+.product-card__rating-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  margin-top: 2px;
+}
+
+.product-card__rating-value {
+  color: var(--colour-text);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.product-card__sold {
+  color: var(--colour-muted);
+  font-size: 13px;
+}
+
+/* 自营徽标（真站 marketingLabelText）：14px / #1A1A1A / 500，价格行下方。 */
+.product-card__self-operated {
+  margin: 4px 0 0;
+  color: var(--colour-text);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium, 500);
 }
 
 .product-card__footer {

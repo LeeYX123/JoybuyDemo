@@ -31,6 +31,15 @@ def _serialize_cards(rows):
 
     image_paths = _gallery_paths([row.spu_id for row in rows])
     market = Market.objects.filter(code="GB", is_active=True).first()
+    # 评分/已售快照（ADR-0003）：批量取 SpuDetail，避免逐卡查库。
+    from catalog.models import SpuDetail
+
+    detail_stats = {
+        row.spu_id: row
+        for row in SpuDetail.objects.filter(spu_id__in={row.spu_id for row in rows}).only(
+            "spu_id", "rating_average", "rating_count", "sale_amount"
+        )
+    }
     cards = []
     for row in rows:
         document = (
@@ -40,6 +49,7 @@ def _serialize_cards(rows):
         )
         translation = row.spu.translations.order_by("pk").first()
         title = document.title if document else (translation.title if translation else "")
+        detail = detail_stats.get(row.spu_id)
         cards.append(
             {
                 "spu_public_id": str(row.spu.public_id),
@@ -53,6 +63,7 @@ def _serialize_cards(rows):
                     else None
                 ),
                 "rating_count": document.rating_count if document else 0,
+                "sold_amount": (detail.sale_amount or None) if detail else None,
                 "added_at": (
                     row.created_at.isoformat()
                     if getattr(row, "created_at", None)

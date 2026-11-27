@@ -54,7 +54,7 @@ def _documents(spu_ids, *, market, locale_code):
         row.spu_id: row
         for row in ProductSearchDocument.objects.filter(
             market=market, locale_code=locale_code, spu_id__in=spu_ids
-        ).select_related("spu", "local_category")
+        ).select_related("spu", "spu__detail", "local_category")
     }
 
 
@@ -101,6 +101,9 @@ def _fallback_product(spu, image_path: str) -> dict:
     )
     price = str(offer.current_price) if offer else None
     translation = spu.translations.first()
+    detail = getattr(spu, "detail", None)
+    rating_average = str(detail.rating_average) if detail and detail.rating_average is not None else None
+    rating_count = detail.rating_count if detail else 0
     return {
         "spu_public_id": str(spu.public_id),
         "title": translation.title if translation else "",
@@ -109,8 +112,9 @@ def _fallback_product(spu, image_path: str) -> dict:
         "price_min": price,
         "price_max": price,
         "currency": offer.currency.code if offer and offer.currency_id else None,
-        "rating_average": None,
-        "rating_count": 0,
+        "rating_average": rating_average,
+        "rating_count": rating_count or 0,
+        "sold_amount": (detail.sale_amount or None) if detail else None,
         "image_path": image_path,
     }
 

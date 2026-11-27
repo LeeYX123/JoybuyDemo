@@ -227,7 +227,12 @@ def serialize_card(card: ChannelPageCard) -> dict:
 
 
 def _page_local_path(page: ActivityPage) -> str:
-    prefix = "store" if page.kind == ActivityPage.Kind.STORE else "active"
+    if page.kind == ActivityPage.Kind.STORE:
+        prefix = "store"
+    elif page.kind == ActivityPage.Kind.MARKETING:
+        prefix = "marketing"
+    else:
+        prefix = "active"
     return f"/{prefix}/{page.external_id}"
 
 

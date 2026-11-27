@@ -151,6 +151,19 @@ def serialize_section_items(items, *, market, locale_code: str = "en-GB") -> lis
     images = _image_for_spus(spu_ids)
     prices_spu = _prices_for_spus(spu_ids, market=market)
     prices_sku = _prices_for_skus(sku_ids, market=market)
+    # 评分/已售（2026-11-27 ADR-0003）：楼层卡与搜索/推荐同一口径——评分回退
+    # 源站快照（SpuDetail.rating_*），已售取导入快照（sale_amount，"1.5k+"）。
+    detail_stats: dict[int, dict] = {}
+    from catalog.models import SpuDetail
+
+    for row in SpuDetail.objects.filter(spu_id__in=spu_ids).only(
+        "spu_id", "rating_average", "rating_count", "sale_amount"
+    ):
+        detail_stats[row.spu_id] = {
+            "rating_average": str(row.rating_average) if row.rating_average is not None else None,
+            "rating_count": row.rating_count or 0,
+            "sold_amount": row.sale_amount or None,
+        }
     spus = {
         spu.pk: spu
         for spu in Spu.objects.filter(pk__in=spu_ids)
@@ -189,6 +202,9 @@ def serialize_section_items(items, *, market, locale_code: str = "en-GB") -> lis
                 "currency": currency,
                 "image_path": images.get(spu.pk, ""),
                 "href": href,
+                "rating_average": (detail_stats.get(spu.pk) or {}).get("rating_average"),
+                "rating_count": (detail_stats.get(spu.pk) or {}).get("rating_count", 0),
+                "sold_amount": (detail_stats.get(spu.pk) or {}).get("sold_amount"),
             }
         )
     return cards
@@ -252,6 +268,7 @@ def activity_page_payload(
         "external_id": page.external_id,
         "title": page.title,
         "title_zh": page.title_zh,
+        "subtitle": getattr(page, "subtitle", ""),
         "store_name": page.store_name,
         "logo_image": page.logo_image,
         "hero_image": page.hero_image,

@@ -2,6 +2,32 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0cz. 白天批（执行方）：Sports 3 页判定 + 店铺页深挖（2026-11-27，✅ 完成 / 未 commit）
+
+### 我们在做什么
+`CRAWL_COORDINATION.md`「白天批」派给执行方两件事（建任务方 = Moss）：① Sports 3 页（job#394/412/416）换新节点新会话再试一次；② 4 个店铺页（job#388 Baby / 389 Toy / 390 Dyson / 294 Purcotton）做「深挖式清单冻结」（滚动 + Load more，目标 ≥40 件，或如实证明真站只有 7~15 件）。
+
+### 结论
+- **① Sports 3 页：真站缺失，非风控，不再重试。** 换 `HK丨香港1`（出口 IP 163.53.18.233）+ 账号组 05/07/08，各跑满 3 次（run#486~495）全部 0 商品；代理直取 HTML 是 200 + 正常标题、无 `/login`、无风控页，但**页面里没有任何 productId/skuId**；带 Cookie 的浏览器渲染同样解析不出商品卡。已按 Moss 口径置 FAILED_FINAL。
+- **② 店铺深挖：4 个新清单就绪，且证明真站就只有 7~15 件。** 带 Cookie 渲染 + 滚动到底后：Purcotton **15**、Baby **11**、Toy **10**、Dyson **7**；**4 个店铺都没有 Load more / 翻页控件**（只有分类 "Learn more" 与 Download APP），滚动前后 SKU 数一致。清单 id：144(388,11) / 151(389,10) / 152(390,7) / 153(294,15)。
+  - ⚠️ 这 4 个 run 的 `status=FAILED` **不是采集失败**：清单商品全部/大部分「已入库」（待采 0）或剩余全 `IMPORT_SOURCE_CONFLICT`。清单有效，直接用。
+
+### 代码改动（只有 `crawler/joybuy_crawler/spiders/pages_run.py`）
+1. 新增 `_deep_scroll_store()`：逐步滚动 → 到底 → 点 Load more/查看更多（防重复点击）→ 数唯一 SKU；**连续两轮不增长才停**（≤12 轮，≥40 件提前停），收尾写 `PAGE_STORE_DEEP_SCROLL` 事件。
+2. SKU 计数按「唯一 SKU」：商品卡有图片+标题两个 `/dp/` 链接，数 `<a>` 会翻倍（Dyson 10 链接 = 7 商品）。
+3. **页面采集的 Chrome 也走代理**：原来裸启动（页面/XHR 全用本机固定 IP 直连），现在带 `--proxy-server=$CRAWL_HTTPS_PROXY`。
+4. **风控页识别**：`title` 含 `Joybuy Risk Control` → 记 `RISK_CONTROL_FALLBACK`，`watch_rotate.py` 按风控规则切节点重试，避免把风控误判成「真站没商品」。
+- 验证：`py_compile` OK；`ruff check` 仍只有 3 条**改动前就有**的告警（F841 `cookies` 未用、S112、S110）；该文件本来没有跑过 `ruff format`，未做全文件重排。实跑验证：4 个店铺任务 + 取证探针全部按预期。
+
+### 关键发现（口径级）
+- **匿名浏览器 + 代理访问店铺页 = 直接被风控**：`title='Joybuy Risk Control'`、正文仅 659 字。
+- **带账号 Cookie + 同一代理 = 正常**（`Baby | Joybuy`，11 件，与直连结果完全一致）。
+- 所以：页面采集**必须注入账号 Cookie**；判风控**看页面标题最准**（比正文关键字可靠）。
+
+### 下一步
+- 等 Moss 用新清单重建这 4 个店铺页；若再提补爬请求，按 `skip_imported` 重跑即可。
+- Sports 3 页要真数据只能等真站恢复活动或换采集通道，别重复跑。
+
 ## 0cv. 在售无详情补抓（2026-11-27，⚠️ 完成主线 / 90% 目标按口径部分未达 / 未 commit）
 
 > 完整报告：`var/backfill_nodeail_20261127/report.md`；产物 `targets.csv` / `result.csv`（含 `account`）/ `remaining.csv` / `verify.json` / `run.log` / `html/` / `pdp_pages/`。
@@ -6343,3 +6369,27 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 执行方任务已就绪：Sports 3 页（state 重置 PENDING，直接跑队列）；店铺 4 任务删旧清单 + READY + 换账号，**已从 job_list.json 摘除**（防止自动跑复用薄清单），需先给 pages_run 店铺冻结加深挖（滚动到底 + Load more/翻页），跑完 @我重建店铺页。
 
 **坑**：job_list.json 是队列唯一输入，多页 job（如首批 job#293 一批 10 页）的 manifest 必须按 `page_url__icontains=<external_id>` 匹配，不能按 job/run 取 last（会拿到同批别的页的清单）。
+
+## 商品卡自营徽标/评分已售 + 每周甄选 4 卡营销页（2026-11-27 10:50 本地，✅ 完成）
+
+**任务**（grill 定稿 12 项决策，ADR-0003）：①全站商品卡加「Sold by Joybuy / Joybuy自营」徽标 + 评分|已售行（/merchants/ 只显评分已售）；②首页每周甄选换 4 张卡，落地 4 个 /marketing/<activityId> 页（结构复刻真站 marketing、无 tab 无 Filter、配额选品 40 件、首屏 20 + 一次查看更多）。
+
+**后端**：
+- 序列化补 `sold_amount`（SpuDetail.sale_amount，97% 填充）与评分回退：搜索/推荐（`serialize_search_row` + `spu__detail` 预取）、活动页/店铺页（`activity_services.serialize_section_items` 批量 detail_stats）、CMS 楼层（`channel_module_services` 主路径复用 serialize_search_row + 兜底函数补字段）、商家页（`merchants/public_views._product_payload` 批量 stats）、收藏/浏览历史（`accounts_buyers/activity_views`）。
+- `ActivityPage` 新增 `kind=MARKETING`（0028）与 `subtitle` 字段（0029）；payload 带出 subtitle；`_page_local_path` 支持 marketing 前缀；对外路由 `/api/v1/activity-pages/marketing/<id>`。
+
+**前端**：
+- `ProductCard`：评分行改为全卡显示（不再限 rank0，ADR-0003 推翻 2026-11-24 楼层隐藏口径），行 = 星级 + 评分数值 + `{n} sold`；新增 `product-card__self-operated` 徽标行（价格下方，`show-self-operated` prop 默认 true）；新增 `sold_amount` 渲染；i18n 五语言（soldByJoybuy/soldCount）。
+- `pages/marketing/[id].vue` 新建（banner + 5 列网格 + 首屏 20/查看更多 40；移动 2 列）；**坑**：`pages/marketing.vue` 与 `pages/marketing/[id].vue` 并存时 Nuxt 把前者当父路由且无 `<NuxtPage>` 出口 → 子页永不渲染（SSR 一直出旧页）。已把旧页挪成 `pages/marketing/index.vue`。
+- `CmsWeeklyPicks` 一排 6 → 4（断点 80rem→64rem 修正 1280 视口撞 3 列）；`MobileHome` 推荐卡补评分已售 + 徽标；`merchants/[slug]` 卡补评分已售行（无徽标）；minihome 移除 `:show-rating="false"`。
+
+**数据**：
+- 真站探测：marketing 页为「深蓝装饰 banner（1865×384 共用图）+ 标题/副标题 + tab + Filter + 网格」结构；4 页标题/副标题已抓取（NL 页文字本就是英文/已换英文）；每周甄选模块 4 张卡图（384→768 webp）正好就是用户给的 4 个 activityId，已下载入库（`public/images/weekly/`、`public/images/marketing/banner-bg.webp`）。
+- `scripts/build_marketing_pages.py`（幂等）：4 页配额选品（健康 9 二级平分 40/家电 5 类×8/母婴 4 类×10/美妆面部护肤 40，种子=activityId 可复现，单网格混排），全部 40/40 命中、评分 40/40、已售 35~40/40；DRAFT 上架流程内置（本轮 published=0，全部已在库）。每周甄选：旧 6 卡 disabled、4 新卡 upsert（href=/marketing/<id>）。
+
+**验证**：后端 content+catalog 243/243 OK；前端 18 文件 152/152 OK（minihome 用例按 ADR-0003 更新契约：评分行全卡显示、已售快照、徽标默认开、商家页关）；Playwright 实测：marketing 桌面首屏 20→查看更多 40、m 站 20、首页每周甄选 4 卡一排、minihome 卡带徽标/评分/已售、商家页 sold 显示且徽标 0 个；截图 `var/home_modules_20261125/mkt_*.png`、`home_weekly*.png`、`minihome_cards.png`、`merchant_page.png`。
+
+**注意**：
+- dev server 是 --noreload / nuxt dev 需重启才能注册新路由——本次 SSR 一直出旧 marketing 页浪费两轮排查；
+- 其他会话并行改动（oauth/settings/crawler/pdpAlias 等）未纳入本提交；
+- 旧 `/marketing?activityId=xxx` 查询串路由保留（index.vue），未做 301。

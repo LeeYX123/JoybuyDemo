@@ -107,7 +107,7 @@ function imgOf(item) {
 function priceOf(item) {
   const raw = item?.retail_price
   if (typeof raw === 'string' && raw.trim()) return raw.trim()
-  const price = item?.price_min ?? item?.price
+  const price = item?.family_max_price ?? item?.price_min ?? item?.price
   return price == null ? '' : String(price)
 }
 
@@ -312,6 +312,18 @@ const aboutBullets = computed(() => [
               <span class="m-reco__name">{{
                 locale === 'zh' && item.title_zh ? item.title_zh : item.title
               }}</span>
+              <span
+                v-if="Number(item.rating_average) > 0 || item.sold_amount"
+                class="m-reco__meta"
+              >
+                <span v-if="Number(item.rating_average) > 0" class="m-reco__rating">
+                  ★ {{ Number(item.rating_average).toFixed(1) }}
+                </span>
+                <span v-if="item.sold_amount" class="m-reco__sold">
+                  {{ t('product.soldCount', { n: item.sold_amount }) }}
+                </span>
+              </span>
+              <span class="m-reco__self-operated">{{ t('product.soldByJoybuy') }}</span>
               <span class="m-reco__price">{{ priceOf(item) }}</span>
             </NuxtLink>
           </li>
@@ -747,6 +759,28 @@ const aboutBullets = computed(() => [
   font-size: 14px;
   line-height: 20px;
   min-height: 48px;
+}
+
+/* 评分 | 已售 + 自营徽标（ADR-0003，真站 m 站卡片同款行）。 */
+.m-reco__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--colour-muted, #666);
+  font-size: 12px;
+}
+
+.m-reco__rating {
+  color: var(--colour-text, #1a1a1a);
+  font-weight: 500;
+}
+
+.m-reco__self-operated {
+  padding: 2px 10px 0;
+  color: var(--colour-text, #1a1a1a);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .m-reco__price {

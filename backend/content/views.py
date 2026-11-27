@@ -199,6 +199,7 @@ def activity_page(request, kind, external_id):
     kind_map = {
         "active": ActivityPage.Kind.ACTIVITY,
         "store": ActivityPage.Kind.STORE,
+        "marketing": ActivityPage.Kind.MARKETING,
     }
     page_kind = kind_map.get(str(kind or "").strip().lower())
     if page_kind is None:

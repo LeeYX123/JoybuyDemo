@@ -211,7 +211,7 @@ def search_documents(
         locale_code=locale_code,
         is_searchable=True,
         is_family_representative=True,
-    ).select_related("spu", "local_category")
+    ).select_related("spu", "spu__detail", "local_category")
     query = (query or "").strip()
     if query:
         cleaned = " ".join(query.split())[:100]
@@ -330,6 +330,11 @@ def retail_price_text(spu) -> str | None:
 
 
 def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") -> dict:
+    detail = None
+    try:
+        detail = row.spu.detail  # select_related("spu__detail") 时零额外查询
+    except Exception:  # noqa: BLE001 - detail 缺失时 SpuDetail.DoesNotExist
+        detail = None
     return {
         "spu_public_id": str(row.spu.public_id),
         "title": row.title,
@@ -341,6 +346,7 @@ def serialize_search_row(row: ProductSearchDocument, *, image_path: str = "") ->
         "currency": row.currency_code,
         "rating_average": str(row.rating_average) if row.rating_average is not None else None,
         "rating_count": row.rating_count,
+        "sold_amount": (detail.sale_amount or None) if detail is not None else None,
         "image_path": image_path,
         # 批次 DB：族去重字段。卡片价格优先 ``family_max_price``（族内最高价），
         # 缺失（不在族里/无价）时前端回退 ``price_min``。
@@ -425,7 +431,7 @@ def recommendation_documents(
     order = {spu_id: index for index, (spu_id, _) in enumerate(page_slice)}
     rows = list(
         ProductSearchDocument.objects.filter(spu_id__in=order)
-        .select_related("spu", "local_category")
+        .select_related("spu", "spu__detail", "local_category")
     )
     rows.sort(key=lambda row: order[row.spu_id])
     image_paths = _first_gallery_images(rows)

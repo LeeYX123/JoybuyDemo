@@ -108,6 +108,17 @@ useHead(() => ({
               <template v-else>···</template>
             </span>
             <span class="shop-product-card__name">{{ product.name }}</span>
+            <span
+              v-if="Number(product.rating_average) > 0 || product.sold_amount"
+              class="shop-product-card__meta"
+            >
+              <span v-if="Number(product.rating_average) > 0" class="shop-product-card__rating">
+                ★ {{ Number(product.rating_average).toFixed(1) }}
+              </span>
+              <span v-if="product.sold_amount" class="shop-product-card__sold">
+                {{ t('product.soldCount', { n: product.sold_amount }) }}
+              </span>
+            </span>
             <b class="shop-product-card__price">
               {{ formatDisplayPrice(product.price) }}
             </b>
@@ -294,6 +305,20 @@ useHead(() => ({
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* 评分 | 已售行（ADR-0003）：商家页只显示此行，不显示自营徽标。 */
+.shop-product-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  font-size: 12px;
+  color: #1a1a1a;
+}
+
+.shop-product-card__sold {
+  color: #666;
 }
 
 .shop-product-card__price {
