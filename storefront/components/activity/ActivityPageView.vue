@@ -359,7 +359,9 @@ const pageTitle = computed(() =>
   background: #333;
 }
 
-@media (max-width: 80rem) {
+/* 1280 视口（80rem 正好命中 max-width）不该降 3 列——楼层设计是 5 列
+ * （首屏 20 = 4 行 × 5），断点降到 64rem（2026-11-27，与 CmsWeeklyPicks 同修）。 */
+@media (max-width: 64rem) {
   .activity-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

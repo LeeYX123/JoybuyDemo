@@ -67,6 +67,43 @@
 - 并行会话（或下一会话）把以下正式入库后按新坑1流程重新拉齐服务器：3 个 utils、marketing/index.vue 的 `../../` 修复、weekly/marketing 图片、`export_activity_pages` 扩展 weekly 卡（本次是 shell 手工同步的）。
 - 全量 45 页包（含 31 频道卡落地页）等商品同步后导入（坑4）。
 
+## 0d0l. 新建 2 个类目节点 + 迁移 20 条（2026-11-27，✅ 已写库，未 commit）
+
+- 用户拍板：建 2 个节点、汽车用品 8 条维持「汽车类目排除」不建。
+- 新节点（主代理抽验）：`motorcycle-riding-gear` **id 240**，父 37 `outdoor-sports`，path `/37/240/`，sort 24；`mobility-daily-living-aids` **id 241**，父 21 `health-wellness`，path `/21/241/`，sort 15；均 ACTIVE。
+- 迁移 20 条（名单严格取自 `var/category_fix_20261127/` 的 fashion/safety CSV「判定=错误 且 需新建节点」）：摩托骑行 **11**、护理辅具 **9**；20 条迁移前全部在 `safety-equipment`(142)，无人抢先改动，skipped 0。
+- 结果（`/api/v1/search` 实测）：`motorcycle-riding-gear` **11**、`mobility-daily-living-aids` **9**、`safety-equipment` **64→44**、`fashion-accessories` **28 不变**（它剩下的 8 条就是汽车用品）。
+- 计数：`LocalCategory` 205→207；`Spu`/`Offer` 状态计数前后一致（未改上下架/价格）；搜索文档 17,913 不变，`touched=20 / touched_other=0`。
+- **面包屑不变是预期**：PDP 面包屑只认 `ProductCategory.local_category`，改 `Spu.local_category` 不改面包屑；mobility 的源类目 8440/1068/8195 分别被 143/46/188 条商品共享，无法只对名单 9 条生效 → 本轮面包屑保持原样，如要改需单独拍板。
+- 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
+- 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
+- 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d0j. 源类目树 → 本地类目映射补齐（36 节点）（2026-11-27，✅ 已写库，未 commit）
+
+- 背景：面包屑漏源站英文名（`Household Laundry / Kitchen Roll…`）的根因是源类目节点 `local_category_id` 为空。
+- 写前/写后：`joybuy`（旧目录，catalog_id=1）**0/27 → 23/27**；`joybuy_nl` **0/16 → 12/16**；`joybuy_uk` **206/267 → 207/267**；合计 **206/310 → 242/310**，写库 **36 行（全部 high 置信）**。
+- 置信度拆分（104 个未映射）：high 36（inherit 35 + exact_name 1，如 UK `5114 Networking Devices→networking-devices` 44 SPU）已写；**medium 30 / unmatched 38 只入清单未写**（unmatched 大头：汽车摩托 168、Frozen Food 742、Ice 112，本地无对应节点）。
+- 验收：那 12 条卫生纸/厨房纸 PDP 面包屑已变 ``<a href="/minihome/UK-Mini-HP-Home-Living">Home & Living</a> / <a href="/c/kitchen-toilet-roll">Kitchen Roll, Toilet Roll & Tissues</a>``（12/12）。全站抽样 30 个 PDP：已补节点 11/11 干净，未映射节点 13/13 仍漏源站名（符合预期）。
+- 剩余影响面：**68 节点 / 4,135 SPU**（joybuy 8、uk 4,095、nl 32）；最大项 Frozen Food 742、Nutrition 672、Women 486、Men 469、Home Fragrance 214、Play Figures 151、Vehicles 145、Office Electronics 139、Baby Food 129。
+- 计数：只有 `ProductCategory` 36 行 `local_category_id`（+updated_at）变化；`Spu`/`Offer`/搜索文档行数与 sha 全等。
+- 产物 `var/category_mapping_20261127/`（`audit.py`、`unmapped_nodes.csv`、`mapping_plan.csv`、`backup_mapping.json`、`rollback_mapping.py`、`report.md`）。回滚：`.venv/Scripts/python.exe -I var/category_mapping_20261127/rollback_mapping.py --apply`（条件更新，只还原仍是本批写入值的行）。
+
+### 坑
+1. **验收面包屑不能整页 grep**：源站名仍留在 Nuxt 水合 JSON 的 `category_breadcrumb[].name`（后端契约保留源名、前端本地化），必须限定 `<nav class="detail__crumbs">`。
+2. Git Bash 里 grep `href="/c/..."` 会被当路径改写，先 `export MSYS_NO_PATHCONV=1`。
+3. 跨目录继承映射必须要求同 `source_id` 目标唯一；`exact_name` 必须过「父级层级一致 / 非 HIDDEN」校验，否则裸 `Accessories` 会落 `fashion-accessories`。
+
+## 0d0k. `/c/mobile-phones`、`/c/tablets` 错归修复（2026-11-27，✅ 已写库，未 commit）
+
+- 用户报：手机目录混进手机配件；平板目录混进别品类。
+- 结果（主代理抽验 API）：`mobile-phones` **154→111**、`tablets` **88→46**，写库 **85 个 SPU**（`Spu.local_category` + 逐 SPU 重建搜索文档），失败 0。
+- 流向：手机 43 条 → electronics-accessories 36、玩具 3、wearables/cleaning/存储/音箱各 1；平板 42 条 → nutrition-supplements 27、cleaning-supplies 4、pharmacy-health 4、bath 2、其余各 1。
+- 被影响的其他目录 21 个（其余 135 个 0 变化）：electronics-accessories +37、nutrition-supplements +27、cleaning-supplies +5、pharmacy-health +4…；父级 electronics −46、health-wellness +31、home-living +10。
+- 存疑 4 条未动（跑步腰包 ×2、儿童 E-ink 画板 ×2）。
+- **未动 `ProductCategory`**：所以个别 PDP 面包屑仍可能与列表归属不一致（DJI Osmo 列表在 electronics-accessories，面包屑仍 cameras-photo），不是漏修，是两类映射各管一处。
+- 产物 `var/category_fix_phones_20261127/`（`inventory.py`、`audit.py`、`api_totals.py`、`verify_fix.py`、`backup_before.json`、`rollback_category.py`、`report.md`、两份 CSV）。回滚：`.venv/Scripts/python.exe var/category_fix_phones_20261127/rollback_category.py --apply`（默认 dry-run）。
+
 ## 0d0i. 申请开店页：卡片灰底改白 + 保留阴影（2026-11-27，✅ 完成，未 commit）
 
 - 用户口径（已确认）：只改**卡片那层**灰底，「去掉背景色，转换成阴影」；外层页面灰底保留。
@@ -105,6 +142,14 @@
 ### 限制
 - 偏移记忆是**会话级**（刷新失效）；真站跳转后 `scrollLeft` 与箭头图标颜色未能取渲染态（CSS 未声明 color，内联 SVG）。
 - 真站 Playwright 09:00 后持续 `risk605_pic` 风控（200 + 「服务暂时中断」壳页）——量真站沿用「SSR HTML + 线上 CSS bundle 原文」路线。
+
+### 第二轮修复（用户报「最后一张被箭头挡住 / 拖滚动条划不过去」）
+- **根因**：最大 `scrollLeft` 时最后一张卡右缘正好在 track 右边界，叠层箭头（20px，`inset:0`）压在它右边缘；自绘滚动条纯展示、无 pointer 逻辑。
+- **末端余量**：`.category-carousel--default :deep(.category-tiles--row)::after { content:''; flex:0 0 20px }`。实测 `track{padding-right}` 与 `last li{margin-right}` **都不计入 scrollable overflow**（scrollWidth 仍 2008），只有行尾 flex 伪元素有效 → `scrollWidth 2008→2036`（20+8 gap=28px）。仅 listing 变体生效，频道页 `::after` 为 `none`。
+- **滚动条可拖**：`__bar` 加 `pointerdown/pointermove/pointerup/pointercancel` + `setPointerCapture`，thumb 中心跟随指针映射 `scrollLeft`（拖动时临时关 `scroll-behavior`）；命中区 thumb 上下扩 6px（视觉 4px）、`touch-action:none`、拖动加 `bar--dragging`；默认 `pointer-events:none`，仍只在 hover/focus-within 可交互。
+- **实测（主代理复验 1440）**：`scrollWidth 2036`、max `scrollLeft 950`、最后一张（Batteries）右缘 `1357`、箭头左缘 `1365` → **余量 8px，不再被压**。三个宽度 1280/1440/1920 余量均 8px；拖 thumb 160px → scrollLeft `349/298/263`，URL 与 h1 不变（不触发卡片跳转）。
+- e2e `verify_scroll.cjs` **59/59**；单测 `CategoryTileCarousel.test.js` **7 passed**；频道页 before/after 像素 diff `None`。
+- 注意：**真站本身没有右侧留白**，这 28px 是按用户要求的有意偏离（仅 listing 场景）。
 
 ## 0d0g. 首页畅销榜单按子类目 3:2 选品（2026-11-27，✅ 完成，未 commit）
 
@@ -6786,3 +6831,13 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **处理**（营销页同款口径：真站结构 + 本地选品）：`scripts/build_sports_pages.py` 建 3 个 ActivityPage（kind=ACTIVITY，id 与真站一致），9 层各 25 件从 Outdoor & Sports 类目配额选品（fitness-training/outdoor-gear/sports-apparel-shoes/garden/diy-tools，池 762 件），主题层用标题关键词过滤（Hats/Tops/Bottoms/Recovery），show_more=True（>5 件带按钮），标题 16px/700/lh40。3 张卡（含停用的 joyfumi 行）绑落地页，接口实测 3 卡全部 `/active/<id>`。
 
 **验证**：Playwright 实测 3 页各 15 卡可见 + 3 按钮（3 层×5 首屏）；选择配额全命中。
+
+## 楼层标题字号修正：65px 大字（2026-11-27 17:30 本地，✅ 完成）
+
+**用户反馈**：活动页标题字号过小，参考 49nyGg。真站实测揭示此前误判：49nyGg 每层有**两个**同名标题元素——16px/700 的是**顶部锚点导航 tab**（anchor-item，我们不复刻），真正的楼层标题是 **65.28px/700/黑/行高 81.6px** 的大字（sc-kIKDeO 类、通栏 1120px）。此前建页时把 16px 误写入 extra.title_size。
+
+**修正**：14 页 34 层（7 平铺页 + 4 美妆保健品页 + 3 Sports 页）extra.title_size=65、title_lh=82、title_color=#000000。顺带发现并修复：`ActivityPageView` 的网格断点 `max-width: 80rem`（=1280px）正好命中标准桌面视口，把 5 列强降 3 列——断点降为 64rem（与 CmsWeeklyPicks 同款修法）。
+
+**验证**：Playwright 实测 49nyGg titleFontSize=65px/黑/lh82、gridCols=5、卡宽 218px；截图确认大标题 + 5 列布局与真站风格一致（`title_65px_5col.png`）。Hde2p 无标题元素属正常（该层真站本就无标题文案）。
+
+**注意**：babel 模板的老 10 页（4VQ7/24EG 等）标题仍是 28px（真站实测值，不同模板不同样式），未动；移动端标题不读 title_size，未受影响。
