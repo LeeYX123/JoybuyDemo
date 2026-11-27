@@ -34,6 +34,9 @@ function titleStyle(section) {
 function visibleProducts(section) {
   const items = section.products || []
   if (props.kind === 'store') return items
+  // show_more=false = 真站该层平铺全部商品，直接展示（与桌面 ActivityPageView
+  // 同口径，2026-11-27 修复 2wPM8 只出首屏 4 件的问题）。
+  if (!section.show_more) return items
   return revealAll[section.public_id] ? items : items.slice(0, FIRST_BATCH)
 }
 

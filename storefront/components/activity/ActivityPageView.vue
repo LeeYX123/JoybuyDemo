@@ -44,6 +44,10 @@ function visibleProducts(section) {
   const items = section.products || []
   // 店铺页是一次性快照，直接展示全部商品（用户 2026-11-26 口径）。
   if (props.kind === 'store') return items
+  // show_more=false = 真站该层本就平铺全部商品（无【View more】按钮），
+  // 直接全部展示（2026-11-27 用户反馈 2wPM8 只出 5 件的根因：此前无条件
+  // 截到首屏 5 件，又因按钮条件不满足导致剩余商品永远不可见）。
+  if (!section.show_more) return items
   return revealAll[section.public_id] ? items : items.slice(0, FIRST_BATCH)
 }
 

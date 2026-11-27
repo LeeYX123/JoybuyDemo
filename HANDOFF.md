@@ -2,6 +2,68 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0d1. DO 生产同步 29990da → 3c65ae7（2026-11-27，✅ 部署完成且验证全绿 / ⚠️ main 上 storefront 构建是坏的，见「新坑1」/ 未 commit）
+
+### 同步范围与服务器动作（全部实跑）
+- 部署区间 `29990da..3c65ae7`（17 提交）：同款合并 SpuAlias+301、变体档案/商品族、频道卡落地页、活动页缺口回填、商品卡自营徽标/评分已售行、每周甄选 4 张营销页（ADR-0003）、店铺页重建交接、补抓记录。requirements/pnpm-lock **零变化**（未跑 pip install）；merchant-web 未涉及（未重建）。
+- pull 前已把服务器两个未跟踪命令文件备份到 `/root/joybuy_backup_20261127/` 再 rm；pull 后逐字节 diff 确认与仓库版**完全一致**（零丢失）。HEAD=3c65ae7。
+- **migrate 应用 7 项全 OK**：catalog 0018_spu_alias_sku_merge_managed / 0019_spuvariantarchive / 0020_variant_family；content 0026_channel_card_activity_page_binding / 0027_seed_channel_card_settings / 0028_activity_page_marketing_kind / 0029_activity_page_subtitle。cart/reviews 的 W036 MySQL 条件约束告警是**改动前就有**的旧现象。showmigrations pending 复核=0。
+- collectstatic：0 copied / 154 unmodified（admin 静态无漂移）。`.env` 600 未动。
+- 重建：storefront `.output`（最终 exit 0）+ admin-web `vite build --base=/admin/`（exit 0，dist hash index-OZ0lp0Zd 已上线）。重启 joybuy-api（06:28 UTC）与 joybuy-storefront（最终 06:35 UTC）均 active。
+
+### 数据同步（代码+迁移不落数据，营销页数据是本会话补的）
+- 本地 `export_activity_pages --kind MARKETING` → scp → 服务器 DRY RUN（resolved spu=160/160 **missing_spu=0**）→ `--apply`：4 张 MARKETING 页（21210005/26890013/19370009/16330021）各 1 楼层 40 商品，IMPORTED items=160 skipped=0，`enabled=True` 全确认。
+- weekly 甄选卡：**export 命令只导 `section='campaign'`**，weekly 卡不在包里 → 用本地 dump（`backend/var/deploy/weekly_cards_20261127.json`）+ 服务器 manage.py shell 按 `(section, sort_order)` upsert：updated 6（4 启用 href=/marketing/<id> + 2 禁用旧卡）。
+- 5 张图（weekly 4 卡 webp + marketing/banner-bg.webp）**不在 git**，本地未跟踪 → scp 到服务器 `storefront/public/images/{weekly,marketing}/` 后**重建 storefront**才生效（见新坑3）。
+
+### 验证矩阵（服务器本机 + 本地外网各跑一遍，全 200）
+- `www.joyfumi.com/`、`/api/v1/categories`、`/admin/`、`/api/v1/health`（body: database ok, cache ok）、`m.joyfumi.com/`、`merchant.joyfumi.com/`、IP 直访 `161.35.23.231/` —— 7/7 = 200。
+- 新功能抽验：① 首页 SSR 含 `product-card__self-operated` + `product-card__rating-row` + "Sold by Joybuy"；营销页截图每卡「评分|已售|自营徽标」齐全（ADR-0003 落地）；② 4 张 `/marketing/<id>` 全 200 且是真内容（如 21210005 "Winter wellness deals"，Playwright 实测首屏 20 → 查看更多 → 40）；③ `/store/100000744` 200；PDP `/p/<uuid>` 200（标题+breadcrumb）；④ 首页 weekly_picks 模块 API 返回 4 个 `/marketing/<id>` href，4 张卡图 200。
+- Playwright 冒烟（本地跑，产物在 `var/do_sync_20261127/`：home.png / marketing_top.png / marketing_more.png / admin_login.png / admin_login_error.png / smoke_results.json / smoke.py）：首页+营销页 **console 0 error**；admin 登录页正常渲染、错误凭据返回「邮箱或密码不正确。」（401 是预期网络错误；**无真实凭据，未做登录后冒烟**——admin 有 TOTP，凭据不在仓库/env）。
+
+### 新坑（绝对不要再踩）
+1. **main@3c65ae7 的 storefront 构建是坏的，线上是靠服务器就地修补才构建成功的**。两处：① `pages/p/[id].vue` import 的 `utils/variantFamily.js`、`utils/variantArchive.js`、`server/middleware/pdp-alias.js` import 的 `utils/pdpAlias.js` **从未 git add**（ac132a6 提交了 variantArchive.test.js 却漏了实现；本地是并行会话未跟踪 WIP）；② f2dcd1a 把 `pages/marketing.vue` 纯改名成 `pages/marketing/index.vue`（0 行改动），**没把 `../composables`、`../components` 升到 `../../`** → rollup 解析到不存在的 `pages/composables/`。服务器处置：3 个 utils 从本地拷贝（CRLF 已转 LF）+ `pages/marketing/index.vue` 就地 sed 修 3 行 import；全部加进 `.git/info/exclude`（图片目录 `storefront/public/images/{weekly,marketing}/` 也在 exclude）。**下次部署 pull 前必须**：`rm storefront/utils/{variantFamily,variantArchive,pdpAlias}.js` + `git checkout -- storefront/pages/marketing/index.vue`（否则 untracked/改动会拒 pull，而 checkout 回来的又是坏版本），等并行会话把这些正式入库后 pull 才能恢复干净。
+2. **`nuxt build` 失败会先清空 `.output`**：第一次构建失败后线上 `.output` 没了，joybuy-storefront 是靠内存里的旧进程活着，**离一次重启就是全站宕机**——构建失败必须立刻修好重试，不能留给下一个会话。
+3. **nitro 静态资源按构建时清单服务**：往 `.output/public/` 事后拷文件再重启也 404（JSON "Page not found"，是 nitro 路由层 404 不是 sirv）——必须把文件放 `storefront/public/` 后**重建+重启**。
+4. `export_activity_pages` 只带 campaign 卡不带 weekly 卡；服务器全量 45 页包 `activity_pages_20261127.json` **未应用**（dry run missing_spu=292/1684，频道卡页的商品大量只在本地库），已存 `/srv/joybuy/var/deploy/`，需先商品同步再全量导入（幂等）；本次只按 kind=MARKETING 应用了 4 页。
+5. `/dp/<x>` 别名 301 中间件已上线，但 prod 库还没有 SpuAlias 行（合并工具跑不跑是运营决策），`/dp/` 未知 id → 404 属正常；别把它当 bug 修。
+
+### 下一步
+- 并行会话（或下一会话）把以下正式入库后按新坑1流程重新拉齐服务器：3 个 utils、marketing/index.vue 的 `../../` 修复、weekly/marketing 图片、`export_activity_pages` 扩展 weekly 卡（本次是 shell 手工同步的）。
+- 全量 45 页包（含 31 频道卡落地页）等商品同步后导入（坑4）。
+
+## 0d0. 8 条残余收尾：4 下架 + 4 补详（2026-11-27，✅ 6/8 完成，2 条待拍板，未 commit）
+
+### 我们在做什么
+`0cv` 补抓剩的 8 条：用户人工找回 4 个商品的真实源站链接（要求补详情），另 4 个确认源站已下架（要求本地也下架）。
+
+### 已完成（全部实跑 + 主代理抽验）
+- **下架 4 个**（语义 = 平台管理端 `unpublish`，`backend/merchant_ops/views_catalog.py:590-625`）：`fa787296`(pk 103) / `1c874b2f`(8316) / `467c7755`(2, 种子) / `e55e455c`(3, 种子) → `Spu.status=INACTIVE` + 各自唯一 Offer `INACTIVE`/`removed_by_platform=1`/`removed_at` + 搜索文档删除；未删行、未改价、未动 `Sku.status`。
+  - 计数精确对应：SPU ACTIVE 18029→18025、ACTIVE Offer 29520→29516、搜索文档 17919→17915；排除这 4 个 pk 的 ACTIVE 计数 0 变化。
+  - 引用预检：`cms_module` / `channel_module_product` / `channel_page_card` / `home_banner` / `home_campaign_card` / `channel_banner` / `activity_section_product` 按 public_id 命中 **0**；首页 4 模块卡数 10/6/12/4 不变。按标题搜会撞另一个同款 IAGREEA（`512b62da` 24.99），不是目标。
+  - 产物 `var/delist_20261127/`（`delist.py` / `rollback_delist.py` / `backup_before.json`(+`.orig`) / `backup_after.json` / `verify.py` / `report.md`）。**回滚**：`python var/delist_20261127/rollback_delist.py --apply`（已做「下架→回滚→再下架」往返，快照逐字段一致）。
+- **补详 2 个成功**：`93356610`(pk 88←真实源 id **10554419**) / `148dc4fe`(pk 104←**100006995081936**)：先抓 `/dp/`+`/dg/` 解析 → 事务内把 **3 张身份表 12 行**从 `uk-best-*` 重绑真实 id（备份 `backup_identity.json` + `rollback_identity.py`）→ 走既有导入链路。结果：正文 3/2 区块、规格表 5/15 行、画廊 5/11 图（**物理文件 5/5、11/11 存在**）；价格 0 变价、新建 SPU/Offer/SKU 均 0；搜索文档 4/4 重建（`min_price` == 最低 ACTIVE Offer）；主代理 curl 抽验 PDP：9 / 14 个 `detail__content-paragraph` + 各 1 个 `<table>`。产物 `var/backfill_realid_20261127/`。
+
+### 当前卡在哪里（2 条等用户拍板）
+- **`0f53c78b`(pk 89) 与 `eee8339a`(pk 105) 的真实源 id 在同一源系统里已被别的 SPU 占用**：`joybuy_uk:10012645` → spu **2430**（同标题、已有详情、价 10.99），`joybuy_uk:100030150014526` → spu **3981**（同标题、已有详情、价 39.99）。`spu_source_identity` 唯一键 `(source_system, source_id)` → 重绑必撞键，事务整体回滚，**身份仍是 `uk-best-*`，未写入任何详情**（预检已加「同系统持有者」检查，重跑记 `skipped_preflight`）。
+- 关键证据：**页面价与重复 SPU 价一致（10.99 / 39.99）**，即 89 现价 5.99、105 现价 17.89 是**过时价**；2430/3981 才是抓过详情、价对的那条。
+- 三个处置选项：①**合并重复**（89→2430、105→3981，301 别名，列表少 2 张重复卡，显示 10.99/39.99）；②**就地补正文**（继续用旧 `uk-best` 身份导入，保住 5.99/17.89，重复卡保留）；③**下架 89/105**（详情由 2430/3981 承载）。已交用户选择，未擅自执行。
+
+### 未解价差（按纪律冻结未改，业务需确认）
+- `93356610`：页面 17.99 vs 库 **8.99**；`0f53c78b`：页面 10.99 vs 库 **5.99**；`eee8339a`：页面 39.99 vs 库 **17.89**；`148dc4fe` 页面未渲染价，库 39.99（另一条重复 `43` 是 69.99）。
+
+### 下一步
+1. 等用户对 89/105 选 ①②③，再执行并复验。
+2. `/p/<下架id>` 仍是 **HTTP 200**（只渲染「不可用」态，`storefront/pages/p/[id].vue` 从不设状态码，随机 UUID 也 200）；后端 API 4/4 = 404。要真 404 需前端加 `setResponseStatus(404)`，属独立改动，未做。
+3. 未 commit（本批只新增 `var/` 脚本与产物 + 本段 HANDOFF）。
+
+### 坑（新会话必看）
+1. **重绑源身份前必须先查「同系统持有者」**：`spu_source_identity` 唯一键是 `(source_system, source_id)`；同一商品在 `joybuy` / `joybuy_uk` 各一行是库内历史常态，甚至同系统内也已有重复（本次 2430/3981）。
+2. **`var/` 脚本**：`Spu.updated_at` 是 `auto_now`，回填原值必须 `queryset.update()`（`save()` 会被覆盖）；`update()` 后内存对象不刷新 → 后续逻辑读到旧状态，需 `refresh_from_db()`，否则会漏建搜索文档。
+3. **备份文件不能被重跑覆盖**：一次性脚本默认 DRY_RUN，`--apply` 遇已存在基线应拒绝（本次已加固并复测 md5 不变）。
+4. **验收「PDP 应 404」不能看页面状态码**（永远 200），要用后端 API 状态码或页面内容判定。
+5. Git Bash 里 `curl` 不在 `/usr/bin`，用 `/c/Windows/System32/curl.exe`；`docker` 用 `/d/Docker/resources/bin/docker`；Python 用 `E:/code/AgentProject/Joybuy/.venv/Scripts/python.exe`。
+
 ## 0cz. 白天批（执行方）：Sports 3 页判定 + 店铺页深挖（2026-11-27，✅ 完成 / 未 commit）
 
 ### 我们在做什么
@@ -6429,3 +6491,13 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 - 按 run500 清单重建 Dyson 页：**17 件**（+10），4 个新商品上架（Offer+搜索文档），接口实测 17/17 评分、15/17 已售。
 
 **遗留**：其它 3 个店铺页（Baby/Toy/Purcotton）无后缀与 /products 数量一致（11/10/15），无需处理；如后续发现别的店铺 `/products` 更大，同法补采。
+
+## 修复：show_more=false 楼层被前端藏成 5 件（2026-11-27 14:50 本地，✅ 完成）
+
+**用户反馈**：/active/2wPM8（Heater）真站 12 件我们只显示 5 件。**数据层是对的**（API 12 件、show_more=false），根因在 `ActivityPageView.visibleProducts`：无条件截到首屏 5 件，而【View more】按钮只在 `show_more=true` 时渲染 → show_more=false 的楼层剩余商品**永远不可见**（连按钮都没有）。移动端 MobileActivityPage 同款问题（首屏 4）。
+
+**修复**：show_more=false 的楼层直接全部平铺（真站该层本就没有按钮）；show_more=true 楼层保持首屏 5/4 + 一次查看更多。受影响楼层 24 个（含单楼层 Electronics 11 / Heater 12 / Turtle beach 13 / Razer 11、保健品多楼层 6~20 件等）。
+
+**验证**：Playwright 实测 2wPM8=12、2f7id=11、4JfiDg=18（两层 10+8）、uXqcuM=51（6 层混排：平铺层全出 + show_more 层 5+按钮）、Dyson 店铺=17、TLgE=25+5 按钮（show_more 层不受影响）。真站核对：2wPM8 UK/NL 实测均 12 件单层平铺（页高 2587，无推荐流）——数据层本就忠实，这次修的是显示层。
+
+**顺带发现**：真站家电频道卡的 Dyson 卡跳 `/store/100004093/products`（/products 后缀页），与我们已上线的 `/store/100004093` 同一店铺、商品一致（17 件已补齐）。
