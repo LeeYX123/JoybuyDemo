@@ -2,6 +2,41 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0d3. 【每周甄选】4 卡样式排查（2026-11-27，🔍 排查完成：桌面端两端完全一致；差异只在移动端 + 发现图片未入库；未改代码未提交）
+
+**用户报障**：生产 https://www.joyfumi.com 首页【每周甄选】下方 4 张卡片样式与本地不一致。
+
+### 排查结论（逐层排除，全部实测）
+
+| 层 | 方法 | 结果 |
+|---|---|---|
+| 卡片数据行 | dev 库 vs 托管库 `home_campaign_card` weekly 区 | **完全相同**（4 启用 + 2 停用，title/href 一字不差；href=`/marketing/21210005|26890013|19370009|16330021`） |
+| 4 个 MARKETING 活动页 | 两端 `activity_page` WHERE kind=MARKETING | **字段一致**（title/subtitle/hero_image=`/images/marketing/banner-bg.webp`） |
+| 首页接口 payload | `GET /api/v1/storefront/home` 两端 weekly_picks | **JSON 完全相同**（含 image_path/subtitle/中英标题） |
+| 卡片图片 | `/images/weekly/card-*.webp` 4 张 | 两端 **200 且字节数完全相同**（63350/70088/125018/78620） |
+| 组件代码 | CmsWeeklyPicks.vue 自 3c65ae7 后 | **零变更**（3c65ae7..HEAD diff 为空） |
+| 渲染指标 | Playwright 同测 1280 / 1536 / 1920 | **三项宽度下全部指标完全一致**：secW 1184/1440/1512、四列等宽栅格、cardW=cardH 284/348/366、radius 8px、bg #f5f6fa、object-fit cover、标题 28px、text 绝对定位 bottom 16px、mask 渐变 `rgba(0,0,0,0) 51.92% → rgba(0,0,0,.4)` |
+| 截图 | `var/weekly_fix_20261127/{prod,dev}_weekly.png` | **像素级一致**（CmsWeeklyPicks 每张卡：图 + 底部渐变 + 白字标题 + 副标题） |
+| 营销落地页 | `/marketing/21210005` 两端 1440 截图 | 版式一致（仅商品评价/已售数等数据微差；顶部促销条文案不同：prod「Quality Guaranteed」 vs dev「Unlock Your Welcome Offers…」；**dom.js 卡数 prod 255 vs dev 266 = prod 缺 11 个商品引用**） |
+
+### 唯一的真实差异：移动端 m 站根本没有【每周甄选】模块
+
+- `storefront/pages/index.vue`：桌面走 `CmsRenderer`（含 `weekly_picks`），移动走 `MobileHome`（docs/19）。
+- **`MobileHome.vue` 里没有任何 weekly 渲染**（grep `weekly` 零命中）→ m.joyfumi.com 上该模块**整体缺失**。
+- m 站现有的是 `.m-offers`（「Offers for you」）——**另一个模块**，数据来自 campaignTiles（10 项），设计完全不同：卡 248×267、radius 16、横滑、标题 22px 黑字压在图上且**带下划线**（`text-decoration: underline` 在 m-offers 相关规则里，覆盖率不足），白遮罩 `linear-gradient(180deg,#ffffffb8,#fff0 55%)` 只在顶部极淡。
+- 截图 `var/weekly_fix_20261127/prod_m_moffers.png` 可见：标题压在商品图上、可读性差、下划线明显——**若用户在手机/iPad 或 m 域看到的就是这套**。
+- 补充：`m.joyfumi.com` 在 1440 桌面宽度打开**依然渲染 MobileHome**（host 判定，不看宽度）→ 桌面上打开 m 域会看到手机版布局，容易误判为"样式坏了"。
+
+### 附带发现（repo 卫生，建议尽快处理）
+
+- **`storefront/public/images/weekly/` 与 `storefront/public/images/marketing/` 全部未被 git 跟踪**（`git ls-files` 为空，文件仅存在于工作区，创建时间 2026-11-27 10:20）。生产能 200 是因为部署时人工拷贝（见 0d1 的服务器就地补丁做法），**全新 clone + build 会 404 这 9 张图**。需由建图方 `git add` 入库。
+- 本地工作区当前有 26 个未提交改动（另一会话在做 oauth/tests/export-import 等），与本次排查无关，未触碰。
+
+### 待用户确认（决定性分叉）
+
+1. **若用户在手机/m 域看到** → 需要给 `MobileHome` 补【每周甄选】模块（复用同一 payload，样式按桌面白字压底部渐变适配，顺带修 `.m-offers` 的 `text-decoration` 与遮罩可读性）。
+2. **若用户在桌面 www 看到** → 请强刷（Ctrl+Shift+R）；实测两端已像素级一致，若强刷后仍不同请提供截图与浏览器宽度。
+
 ## 0d1. DO 生产同步 29990da → 3c65ae7（2026-11-27，✅ 部署完成且验证全绿 / ⚠️ main 上 storefront 构建是坏的，见「新坑1」/ 未 commit）
 
 ### 同步范围与服务器动作（全部实跑）
@@ -32,7 +67,112 @@
 - 并行会话（或下一会话）把以下正式入库后按新坑1流程重新拉齐服务器：3 个 utils、marketing/index.vue 的 `../../` 修复、weekly/marketing 图片、`export_activity_pages` 扩展 weekly 卡（本次是 shell 手工同步的）。
 - 全量 45 页包（含 31 频道卡落地页）等商品同步后导入（坑4）。
 
-## 0d0. 8 条残余收尾：4 下架 + 4 补详（2026-11-27，✅ 6/8 完成，2 条待拍板，未 commit）
+## 0d0d. PDP 规格选择器对齐真站（2026-11-27，✅ 桌面/手机已改，未 commit）
+
+### 我们在做什么
+用户报两个 PDP 的规格区与真站不一致：`/p/8010d778…`（iPhone，源 10404457）与 `/p/c8482190…`（充电宝，源 100003950105469）。
+
+### 真站实测结论（1440 宽，`var/pdp_spec_ui_20261127/measurements.md`）
+- **真站按「维度」二选一，不是按商品**：该维度有图 → 竖向卡片（图在上/名在下）；无图 → 文字胶囊。两个样例形态因此不同，不是同一商品两种样式。
+- 图片卡：**80×103**，padding 3，radius 4，bg `#f5f6fa`，图 **72×72 正方形**（radius 3，contain，白底），名称 14px/500/lh20，居中省略号。
+- 文字胶囊：padding `8px 12px`、min-height 36（实测 38）、radius 4、bg `#f5f6fa`、14px/500/lh20。
+- 轴标题：16px/500/lh22/`#1a1a1a`，第二段「当前值」600，格式 `Color/Colour: Mist Blue`（轴名与值间 4px）。
+- 选中态：**只换边框 `#1a1a1a` + 字重 600**，底色/字色不变；hover `rgba(0,16,71,.06)`。
+- 轴间距：每轴 `padding:12px 0`（标题→选项 12、轴与轴 24）。
+
+### 已改
+- `storefront/pages/p/[id].vue`：`variantAxes` 加 `axis.has_image`；`isSingleSku` 短路下移到 spec_options 分支之后（单值真实规格也出卡片）；新增 `axisSelectedValue()`；轴加 `detail__axis--spec` + 两段式标题 + `--spec-image`/`--spec` 按钮；只读文本加 `!variantAxes.length`；约 100 行 scoped CSS。**未动** `.detail__variant` / `--family` / `--merchant` 与 `familyAxisName`/`memberLabel`。
+- `storefront/components/mobile/MobilePDP.vue`：同结构同数值（m 站无真站实测，沿用桌面值，报告已标注）。
+
+### 验证
+- 对比图 `var/pdp_spec_ui_20261127/after/compare_{iphone,powerbank}_1440.png`：充电宝与真站**逐像素一致**（卡片 80×103、图 72×72、选中黑边、名称同样截断为「5000m…」）。主代理已肉眼复核该对比图。
+- 单测 5 文件 **45 passed**；e2e `variant-switch` + `variant-family` **7 passed**；prettier/eslint 两文件 0 问题；375/768 宽无横向溢出。
+
+### 数据缺口（未修，需补抓/回填）
+- **SPU `8010d778` 等历史导入商品的 `SpuDetail.spec_options[].values[].image_url` 为空**（源站 `colorSizePartList[].buttonPartList[].C-P#dimensionButton&dimensionButton.imgUrl` 每色一图，解析器 `parsers/joybuy_uk.py::extract_spec_options` 本来就支持），所以 iPhone 的颜色维度仍渲染成文字胶囊。前端已支持 `has_image`，**补数据即自动出图卡**。两条路：`skip_imported=False` 重爬该 SPU，或从存档 HTML 回填 image_url 走本地媒体管线。
+- 这次没有伪造图片（按纪律）。
+
+### 坑（新会话必看）
+1. **真站 Playwright 只带 cookie 仍 403**，必须同时带 `crawler/debug_session.py` 的 `headers`；且真站 CSS 在 `st.joy-sourcing.com` 被 WAF 403 → 要拿真实 computedStyle 必须「下载 HTML/CSS/图到本地、去掉 `<link crossorigin>`、起本地 http 服务」再量（`file://` 会被 CORS 拦）。
+2. 真站规格图是 **72×72 正方形**，不是 3:4；卡片 80×103 的 103 来自 padding + 名称两行。
+3. 手机端 `MobilePDP.vue` 的样式块必须放在基础规则**之后**，否则同权重被覆盖。
+
+## 0d0c. `/c/` 品类错归商品纠错：5 个品类 250 条（2026-11-27，✅ 已写库，未 commit）
+
+### 我们在做什么
+用户报 5 个 `/c/<slug>` 品类混入不该出现的商品：cleaning-supplies（美妆）、fashion-accessories（电子配件/美妆/家居）、pet-health（人用保健）、safety-equipment（成人头盔/骑行服/劳保，真站只应是婴幼儿安全设备）、baby-clothing（成人服饰）。
+
+### 机制（实测，别再猜）
+- `/c/<slug>` → `ProductListing` → `GET /api/v1/search?category=<slug>` → `LocalCategory.get(slug)` → `ProductSearchDocument.filter(is_searchable, is_family_representative, local_category_id in 本节点+path 后代)`。
+- **列表只吃 `Spu.local_category` 的搜索文档快照**；`ProductCategory.local_category` 只影响 PDP 面包屑，**不参与列表**。反证：SPU 24184 的 `Spu.local_category=190 fashion-accessories`，文档=190，即便 `ProductCategory.local_category=113` 也照样出现在 fashion 列表。
+- 根因五品类共通：导入按**类目名**匹配而非父级路径（Accessories / Safety Equipment / Clothing / Healthcare & Wellness / Cleaning 同名全落进来）。
+
+### 已完成（250 个 SPU，`refresh_spu_search_documents` 全量重建对应文档）
+| 品类 | 可见数 前→后 | 错误/存疑/正确 | 已改 |
+|---|---|---|---|
+| cleaning-supplies | 95→85 | 10/16/73 | 10 → skincare |
+| fashion-accessories | 65→28 | 46/15/9 | 40（电子/电脑/相机/游戏/美妆/浴室/办公/家居） |
+| pet-health | 92→14 | 85/13/1 | 85（营养补充剂 54 / 护肤 14 / 医疗保健 8 等） |
+| safety-equipment | 162→64 | 134/18/28 | 112（运动服饰 36 / 宠物 26 / DIY 25 / 浴室 20 / 户外 4） |
+| baby-clothing | 30→27 | 3/3/36 | 3 → womens-clothing |
+- 主代理抽验：`/api/v1/search?category=` 实测 total **85 / 28 / 14 / 64 / 27**，与报告一致；样例 `3D Snake 手机壳` 已不在 fashion-accessories。
+- 没删商品、没改上下架（Spu/Offer 状态计数与快照逐项一致）。
+- safety-equipment 判据来自真站 79 SKU 抓取：只应为床护栏/楼梯门/儿童锁/护耳器/观察镜/防走失包，无成人头盔/骑行服/助浴/劳保。
+- 产物 `var/category_fix_20261127/`（`audit.py`、`backup_before.json` 250 条、`rollback_category.py`、5 份 CSV、`report.md`、`verify_fix.py`）。回滚：`.venv/Scripts/python.exe -I var/category_fix_20261127/rollback_category.py --apply`（干跑已验证 250 条全可回滚）。
+
+### 未收口（只进清单，未写库）
+- **28 条判定错误但库内没有正确节点**：摩托骑行装备 11、护理辅具/成人床栏 9、汽车用品 8（fashion 6 + safety 2）。要收口需运营新建节点，再跑 `audit.py --apply`（规则表已带判定与依据）。
+- **65 条存疑**只进 CSV。
+
+### 下一步
+1. 等用户决定是否为上述 28 条建新节点；建好后重跑审计即可。
+2. 本批未 commit（只改了 DB + `var/` 产物 + 本段 HANDOFF）。
+
+### 坑
+1. **改归属必须重建搜索文档**，否则 `/c/` 列表不动（列表读文档快照，不读 `Spu` 实时值）。
+2. `python -I` 会忽略 `PYTHONIOENCODING`，Windows GBK 控制台打印 `‑/™` 能直接把批量脚本打断且备份未落盘（本次崩过一次，续跑补回 54 条）；清单重生成用 `rebuild_csv_from_snapshot.py`，别直接重跑 `audit.py`。
+3. 查中文类目/标题必须带 `--default-character-set=utf8mb4`。
+
+## 0d0b. 变体规格轴：改用真实规格名 + 修正截断值（2026-11-27，✅ 完成，未 commit）
+
+### 我们在做什么
+用户报：合并同款时「把标题当成规格名」，规格应由差异文本/真实规格得出。样例族 spu 3633（遥控机器狗）。
+
+### 根因（关键，别再误判）
+- **成员按钮文案不是读 DB 的 `axis_label`**：`backend/catalog/detail_views.py:_variant_family_payload`（约 218-230 行）优先用「标题减去族内公共词前缀后的残差」，再回退 SKU 规格值，`axis_label` 只是最后兜底 —— DB 里 `"Colour: 黑色3"` 根本到不了前端。
+- 族轴名来自 `variant_family.axis_hint`（`Model/Style` 之类系统推导值），不是真实规格名。
+- `黑1` 是脏值：源站真实值 `黑色1`（源 sku 100020255147425 / 100020985457964 实测）。
+
+### 已改（4 处）
+1. `backend/catalog/detail_views.py`：族 payload 新增 `axis_name`（族代表 `SpuDetail.spec_options[0].name`，本例 `Colour`；无则空串），保留 `axis_hint`。
+2. `storefront/pages/p/[id].vue`：`familyAxisName = axis_name || axis_hint || t('detail.modelAxis')`；`memberLabel(member, index, familyAxisName)`。
+3. `storefront/utils/variantFamily.js`：新增 `stripAxisPrefix()`（只按第一个 `": "` 切、已知规格名白名单，`Ratio 16: 9` 不切）；剥除只在这一处。
+4. 数据（只 2 个 SPU）：spu **4093** / **4274** 的 `Sku.specification`、`variant_family_member.axis_label`、`SpuDetail.spec_options` 值、en-GB 标题尾 `黑1`→`黑色1`（签名用 `canonicalize_source_specification` 重算，搜索文档已重建）。zh-CN 标题原是「黑色1款」，未动。
+
+### 验证
+- `curl /p/15dbf8bb…` 购买区实测：`$140.00 / 黑色3 / Colour / 黑色3 黑色2 灰色3 灰色2 灰色1 黑色1 灰色1 黑色1`（8 个按钮仍在，重复属数据重复）。
+- `vitest variantFamily.test.js` 6/6、`manage.py test catalog.tests.test_variant_family` 9/9、Playwright `variant-family/variant-switch` 7/7、prettier/eslint 目标文件通过。
+- 后端 `--noreload`：按既有流程 kill :8000 监听进程让看护脚本重启（**:3000 未重启**），`/api/v1/health` 200。
+- 回滚：`.venv/Scripts/python.exe -I var/variant_spec_fix_20261127/rollback_spec.py --apply`。
+
+### 卡点：同值重复族要不要合并（等用户拍板）
+- 量级：**719 个重复族 / 958 组 / 1,631 SPU（ACTIVE 1,467）**；「每组留 1 个」需处理 **1,177 个 SPU**。
+- 分类（`var/variant_spec_fix_20261127/dedupe_analysis.csv` + `report.md`，**只读未归档**）：
+  - **A 类（同商品不同 listing，可合并）**：131 组 / **112 族 / 245 SPU / ACTIVE 225**；
+  - **B 类（不同商品撞名，不可合并）**：845 组 / 619 族 / 1,387 SPU / ACTIVE 1,243（例：不同品牌充电宝都叫「黑色1」；标题只差一个逗号的美甲套装）。
+- 建议：只对 A 类批量合并（归档 + `SpuAlias` 301 + 删搜索文档 + 修 `member_count`/`family_max_price`），B 类保留多卡。**未执行，等确认。**
+
+### 下一步
+1. 用户确认后：A 类 112 族合并（先抽 5 族预览再批量；沿用 `var/dup_merge_20261127` 的脚本口径）。
+2. 可选 UI 收尾：SPU 只有 1 个 SKU 且其规格值已被族轴覆盖时，隐藏购买区那行孤立的只读规格值（样例页现在仍多一行 `黑色3`）。
+3. 本批未 commit。
+
+### 坑
+1. **`axis_label` 不是前端实际显示来源**（见根因），改标签/改 DB 前先看 `_variant_family_payload` 的残差逻辑。
+2. 中文标题/规格值查库必须带 `--default-character-set=utf8mb4`，否则 GBK 乱码会让「黑1 / 黑色1」看起来像库坏值。
+3. 别用无 cookie 的裸请求抓真站（风控壳页）；`crawler/debug_session.py` 的 `headers`/`cookies` 实测可用。
+
+## 0d0. 8 条残余收尾：4 下架 + 4 补详 + 2 条重复合并 + 1 条改价（2026-11-27，✅ 全部完成，未 commit）
 
 ### 我们在做什么
 `0cv` 补抓剩的 8 条：用户人工找回 4 个商品的真实源站链接（要求补详情），另 4 个确认源站已下架（要求本地也下架）。
@@ -44,25 +184,38 @@
   - 产物 `var/delist_20261127/`（`delist.py` / `rollback_delist.py` / `backup_before.json`(+`.orig`) / `backup_after.json` / `verify.py` / `report.md`）。**回滚**：`python var/delist_20261127/rollback_delist.py --apply`（已做「下架→回滚→再下架」往返，快照逐字段一致）。
 - **补详 2 个成功**：`93356610`(pk 88←真实源 id **10554419**) / `148dc4fe`(pk 104←**100006995081936**)：先抓 `/dp/`+`/dg/` 解析 → 事务内把 **3 张身份表 12 行**从 `uk-best-*` 重绑真实 id（备份 `backup_identity.json` + `rollback_identity.py`）→ 走既有导入链路。结果：正文 3/2 区块、规格表 5/15 行、画廊 5/11 图（**物理文件 5/5、11/11 存在**）；价格 0 变价、新建 SPU/Offer/SKU 均 0；搜索文档 4/4 重建（`min_price` == 最低 ACTIVE Offer）；主代理 curl 抽验 PDP：9 / 14 个 `detail__content-paragraph` + 各 1 个 `<table>`。产物 `var/backfill_realid_20261127/`。
 
-### 当前卡在哪里（2 条等用户拍板）
-- **`0f53c78b`(pk 89) 与 `eee8339a`(pk 105) 的真实源 id 在同一源系统里已被别的 SPU 占用**：`joybuy_uk:10012645` → spu **2430**（同标题、已有详情、价 10.99），`joybuy_uk:100030150014526` → spu **3981**（同标题、已有详情、价 39.99）。`spu_source_identity` 唯一键 `(source_system, source_id)` → 重绑必撞键，事务整体回滚，**身份仍是 `uk-best-*`，未写入任何详情**（预检已加「同系统持有者」检查，重跑记 `skipped_preflight`）。
-- 关键证据：**页面价与重复 SPU 价一致（10.99 / 39.99）**，即 89 现价 5.99、105 现价 17.89 是**过时价**；2430/3981 才是抓过详情、价对的那条。
-- 三个处置选项：①**合并重复**（89→2430、105→3981，301 别名，列表少 2 张重复卡，显示 10.99/39.99）；②**就地补正文**（继续用旧 `uk-best` 身份导入，保住 5.99/17.89，重复卡保留）；③**下架 89/105**（详情由 2430/3981 承载）。已交用户选择，未擅自执行。
+### 用户拍板后已执行（2 项，全部实跑 + 主代理抽验）
+- **合并 2 条重复 SPU**（用户选「合并重复」）：`89(0f53c78b) → 2430(ce65d979)`、`105(eee8339a) → 3981(d3378956)`。
+  - 每条形如：`SpuAlias`（id 715/716，reason `dup/20261127`）+ 归档 SPU `INACTIVE` + 删搜索文档 + 其唯一 Offer（91/107）`INACTIVE`/`removed_by_platform=1`/`removed_at`；**SKU/Offer 不迁移、价格不动**，保留 SPU 的价格仍是 10.99 / 39.99。
+  - **spu 89 是变体族 1250 的非代表成员**：已删除它的族成员行（否则族内会带归档成员，PDP 切规格撞死链）；族代表 spu 9 与其文档未受影响。
+  - **没有用 `merge_variant_spus.py`**：那是给变体族派生规格轴标签用的，空规格重复品套进去会强造标签。这里按「归档 + 别名」约定手写脚本。
+  - 抽验：`curl /p/0f53c78b…` → **301** → `/p/ce65d979…`（6 段正文+表格）；`/p/eee8339a…` → 301 → `/p/d3378956…`（38 段正文）。
+- **spu 88 按源站价改价**（用户选「按源站价更新」）：`Offer 90.current_price 8.99→17.99`、`Spu 88.retail_price 8.99→17.99`、`list_price` 保持 NULL、`promotion_label`/状态/库存未动；`is_activity=False` → **未跑 reprice**；搜索文档 `min=max=17.99`；PDP 显示 `$17.99`。全库恰好 1 Offer + 1 Spu 变价。
+- **派生缓存修复**（我们改动导致的 2 处，已精确修）：`variant_family 1250.member_count 2→1`；`product_search_document(spu 7).family_max_price 16.99→17.99`（族 1249 代表卡）。官方命令 `backfill_family_search_fields` 只读预览双向证明：修前 `need_update=1`、修后 `0`。
+- 产物：`var/dup_merge_20261127/`（merge_dups.py / price_fix.py / 两个 rollback / report.md / verify.json）、`var/family_cache_fix_20261127/`（fix.py / rollback.py / verify.py / report.md）。回滚命令见 README 式段落：`.venv/Scripts/python.exe -I var/dup_merge_20261127/rollback_merge.py --apply`、`... rollback_price.py --apply`、`var/family_cache_fix_20261127/rollback.py --apply`。
 
-### 未解价差（按纪律冻结未改，业务需确认）
-- `93356610`：页面 17.99 vs 库 **8.99**；`0f53c78b`：页面 10.99 vs 库 **5.99**；`eee8339a`：页面 39.99 vs 库 **17.89**；`148dc4fe` 页面未渲染价，库 39.99（另一条重复 `43` 是 69.99）。
+### 全库计数（本批累计，已逐行核对）
+`Spu` 23300（ACTIVE 18029→18023）、`Offer` 34800（ACTIVE 29520→29514）、搜索文档 17919→17913、`SpuAlias` 710→712、族成员行 −1（89）；排除目标 pk 的 ACTIVE 计数 0 变化。
+
+### 已澄清 / 不再算遗留
+- **后端 API 用旧 id 请求返回 200 + `canonical_public_id`**（不是 404）：`backend/catalog/detail_views.py:505-516` 既有的别名回退设计，与 301 互斥，属预期，不要当 bug 修。
+- **`/p/<下架id>` 页面仍是 HTTP 200**（只渲染「不可用」态，`storefront/pages/p/[id].vue` 从不设状态码，随机 UUID 也 200）；后端 API 4/4 = 404。要真 404 需前端加 `setResponseStatus(404)`，属独立改动，未做（用户未要求）。
+- **币符是 `$` 不是 `£`**：全站 `formatDisplayPrice` 既有口径，数值正确。
 
 ### 下一步
-1. 等用户对 89/105 选 ①②③，再执行并复验。
-2. `/p/<下架id>` 仍是 **HTTP 200**（只渲染「不可用」态，`storefront/pages/p/[id].vue` 从不设状态码，随机 UUID 也 200）；后端 API 4/4 = 404。要真 404 需前端加 `setResponseStatus(404)`，属独立改动，未做。
-3. 未 commit（本批只新增 `var/` 脚本与产物 + 本段 HANDOFF）。
+1. 本批未 commit（只新增 `var/` 脚本与产物 + 本段 HANDOFF）。需要入库时说一声。
+2. 若日后要给 PDP 真 404：在 `storefront/pages/p/[id].vue` 的「商品不可用」分支加 `setResponseStatus(404)`，并确认不影响别名 301 与 e2e。
+3. 剩余价格口径问题不在本批：全站价格与真站的系统性差异留给后续统一价格同步批次（本次只按用户指示改了 spu 88 一条）。
 
 ### 坑（新会话必看）
-1. **重绑源身份前必须先查「同系统持有者」**：`spu_source_identity` 唯一键是 `(source_system, source_id)`；同一商品在 `joybuy` / `joybuy_uk` 各一行是库内历史常态，甚至同系统内也已有重复（本次 2430/3981）。
-2. **`var/` 脚本**：`Spu.updated_at` 是 `auto_now`，回填原值必须 `queryset.update()`（`save()` 会被覆盖）；`update()` 后内存对象不刷新 → 后续逻辑读到旧状态，需 `refresh_from_db()`，否则会漏建搜索文档。
-3. **备份文件不能被重跑覆盖**：一次性脚本默认 DRY_RUN，`--apply` 遇已存在基线应拒绝（本次已加固并复测 md5 不变）。
-4. **验收「PDP 应 404」不能看页面状态码**（永远 200），要用后端 API 状态码或页面内容判定。
-5. Git Bash 里 `curl` 不在 `/usr/bin`，用 `/c/Windows/System32/curl.exe`；`docker` 用 `/d/Docker/resources/bin/docker`；Python 用 `E:/code/AgentProject/Joybuy/.venv/Scripts/python.exe`。
+1. **`variant_family.member_count` 的语义是「不同 SPU 数」，不是成员表行数**：成员表按 SPU×SKU×Offer 展开多行（`sum(member_count)=3467` vs 成员行 6274），所以「按行数比对」会看到 **728 个不一致族，全是设计使然**，千万不要按行数批量重算，会把语义写坏。改族成员后只需修受影响族的 `member_count`。
+2. **删族成员行后还要修 `member_count`，改价后还要修代表卡的 `family_max_price`**：这两个都是派生缓存，没有任何信号自动刷新；用 `backfill_family_search_fields` 只读预览做双向证明。
+3. **重绑源身份前必须先查「同系统持有者」**：`spu_source_identity` 唯一键是 `(source_system, source_id)`；同一商品在 `joybuy` / `joybuy_uk` 各一行是库内历史常态，甚至同系统内也已有重复（本次 2430/3981）。
+4. **`var/` 脚本**：`Spu.updated_at` 是 `auto_now`，回填原值必须 `queryset.update()`（`save()` 会被覆盖）；`update()` 后内存对象不刷新 → 后续逻辑读到旧状态，需 `refresh_from_db()`，否则会漏建/漏删文档。
+5. **备份文件不能被重跑覆盖**：一次性脚本默认 DRY_RUN，`--apply` 遇已存在基线应拒绝（exit 3，本批 3 个脚本都已加固并实测）。
+6. **改动别用全局 bulk_update 兜验证**：爬虫在写库时全局 `--apply` 无法保证「只改 N 行」；按同口径 ORM 精确写 + 命令预览证明等价更安全。
+7. **验收「PDP 应 404」不能看页面状态码**（永远 200），要用后端 API 状态码或页面内容判定。
+8. Git Bash 里 `curl` 不在 `/usr/bin`，用 `/c/Windows/System32/curl.exe`；`docker` 用 `/d/Docker/resources/bin/docker`；Python 用 `E:/code/AgentProject/Joybuy/.venv/Scripts/python.exe`。
 
 ## 0cz. 白天批（执行方）：Sports 3 页判定 + 店铺页深挖（2026-11-27，✅ 完成 / 未 commit）
 
@@ -6501,3 +6654,11 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 **验证**：Playwright 实测 2wPM8=12、2f7id=11、4JfiDg=18（两层 10+8）、uXqcuM=51（6 层混排：平铺层全出 + show_more 层 5+按钮）、Dyson 店铺=17、TLgE=25+5 按钮（show_more 层不受影响）。真站核对：2wPM8 UK/NL 实测均 12 件单层平铺（页高 2587，无推荐流）——数据层本就忠实，这次修的是显示层。
 
 **顺带发现**：真站家电频道卡的 Dyson 卡跳 `/store/100004093/products`（/products 后缀页），与我们已上线的 `/store/100004093` 同一店铺、商品一致（17 件已补齐）。
+
+## 活动页展示口径修正六项 + 店铺扩容（2026-11-27 16:40 本地，✅ 完成）
+
+1. **7 页全平铺**（Hde2p Electronics / 2924o76p Clearance / 47h3jn / Lg17uz / 2u4VzZ / Z8i93 / 3geJUK）：楼层 show_more→False，Playwright 实测 25 件全出无按钮。
+2. **4 页改「一行 5 + 查看更多」+ 标题样式**（24prdU/49nyGg/2dawKz7/3sQw3r9u）：真站实测（配对探测：标题模块+商品模块）每层 5 卡+按钮——show_more 按白名单 >5 件才带按钮的规律改（24prdU Best Seller 13→True、49nyGg Body Hair 17→True、2dawKz7 #4/#5→True、3sQw3r9u #1/#2/#5→True，#3/#4 仅 5 件保持平铺）；标题样式真站 16px/700/行高40（非 babel 模板的 28px），写进 section.extra.title_size/title_lh，`titleStyle` 按需套用。实测 24prdU 20 卡 + 4 按钮 + 标题 16px。
+3. **店铺头像**：真站店铺黑条头部有白底方形 logo（48×48）。抓 Dyson/Toy/Baby 三张头像入库（`public/images/activity/pages/<id>/logo.webp`）并设 logo_image，前端黑条已渲染（Purcotton 原本就有）。
+4. **Toy 店扩容 10→40**：+乐高套装/拼装玩具/角色扮演&想象游戏各 10；**Baby 店扩容 11→41**：+哺育喂养/手推车旅行/洗护各 10（`scripts/extend_store_pages.py`，种子可复现，整层打乱，快照与配额混排）。
+5. **Sports 3 卡**：亲测真站——NL 版 3 页存在但楼层全是「使用测试数据 (4 条记录)」占位符（真站半成品、无商品），此前「风控拦截」实为空数据。按口径不造内容：joyfumi 重复行 is_active=False，3 张卡 link_url → `/minihome/mini-hp-nl-sports-outdoor` 回退频道页。

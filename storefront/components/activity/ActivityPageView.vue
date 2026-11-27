@@ -69,6 +69,15 @@ function titleStyle(section) {
     style.padding = '16px 0'
   }
   style.color = section.title_color || '#a33838'
+  // 标题字号逐页配置（2026-11-27：24prdU 等美妆/保健品页真站为 16px/700/行高40，
+  // 与 babel 楼层模板的 28px 不同——由建页探测写入 section.extra）。
+  const titleSize = Number(section.extra?.title_size)
+  if (titleSize > 0) {
+    style.fontSize = `${titleSize}px`
+    style.fontWeight = 700
+    const titleLh = Number(section.extra?.title_lh)
+    style.lineHeight = `${titleLh > 0 ? titleLh : Math.round(titleSize * 2.5)}px`
+  }
   return style
 }
 
