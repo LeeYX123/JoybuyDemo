@@ -219,7 +219,7 @@ describe('minihome channel page', () => {
     expect(picked.find('.product-card__star').exists()).toBe(true)
     expect(picked.find('.product-card__brand').exists()).toBe(false)
     // 推荐接口不带 retail_price → 回退 price_min。
-    expect(picked.get('.product-card__price').text()).toBe('£3.00')
+    expect(picked.get('.product-card__price').text()).toBe('$3.00')
   })
 
   it('shows a single configured banner as a static image without arrows', async () => {
@@ -661,8 +661,8 @@ describe('minihome channel page', () => {
     const wrapper = await mountPage()
     const prices = wrapper.findAll('.cms-pool .product-card__price')
     expect(prices).toHaveLength(2)
-    expect(prices[0].text()).toBe('£25.00')
-    expect(prices[1].text()).toBe('£8.50')
+    expect(prices[0].text()).toBe('$25.00')
+    expect(prices[1].text()).toBe('$8.50')
     expect(wrapper.findAll('.cms-pool s')).toHaveLength(0)
     expect(wrapper.find('.cms-pool .product-card__price--discount').exists()).toBe(false)
   })

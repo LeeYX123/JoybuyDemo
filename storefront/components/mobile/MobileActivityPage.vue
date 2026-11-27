@@ -47,7 +47,7 @@ function hasMore(section) {
 
 function priceLabel(product) {
   if (!product?.price) return ''
-  const symbol = product.currency === 'GBP' ? '£' : ''
+  const symbol = '$'
   const [integer, decimals] = String(product.price).split('.')
   return `${symbol}${integer}.${(decimals === undefined ? '00' : decimals).padEnd(2, '0').slice(0, 2)}`
 }

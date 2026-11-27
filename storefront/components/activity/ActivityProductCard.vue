@@ -19,7 +19,7 @@ const { t } = useLocale()
 
 function priceLabel(product) {
   if (!product?.price) return ''
-  const symbol = product.currency === 'GBP' ? '£' : ''
+  const symbol = '$'
   const value = String(product.price)
   const [integer, decimals] = value.split('.')
   const minor = decimals === undefined ? '00' : decimals.padEnd(2, '0').slice(0, 2)

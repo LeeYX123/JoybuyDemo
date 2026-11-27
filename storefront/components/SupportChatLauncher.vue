@@ -511,9 +511,9 @@ function shortOrderId(value) {
 function orderAmount(order) {
   const numeric = Number(order?.total)
   if (!Number.isFinite(numeric)) return ''
-  const currency = String(order?.currency || 'GBP').toUpperCase()
   try {
-    return new Intl.NumberFormat('en-GB', { style: 'currency', currency }).format(numeric)
+    // 全站统一 $ 符号（2026-11-27 站点规则），不再按订单货币切换符号。
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(numeric)
   } catch {
     return String(order?.total ?? '')
   }

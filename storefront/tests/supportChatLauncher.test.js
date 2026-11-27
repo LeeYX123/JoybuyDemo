@@ -272,7 +272,7 @@ describe('SupportChatLauncher 发送订单', () => {
     const checkboxes = dialog.findAll('[data-testid="support-chat-order-checkbox"]')
     expect(checkboxes).toHaveLength(3)
     expect(dialog.text()).toContain('#AAAA1111')
-    expect(dialog.text()).toContain('£12.50')
+    expect(dialog.text()).toContain('$12.50')
     expect(dialog.text()).toContain('To receive')
 
     const confirm = wrapper.get('[data-testid="support-chat-order-confirm"]')
@@ -288,10 +288,10 @@ describe('SupportChatLauncher 发送订单', () => {
     const lines = state.posts[0].split('\n')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain(ORDERS[0].public_id)
-    expect(lines[0]).toContain('£12.50')
+    expect(lines[0]).toContain('$12.50')
     expect(lines[0]).toContain('To receive')
     expect(lines[1]).toContain(ORDERS[1].public_id)
-    expect(lines[1]).toContain('£40.00')
+    expect(lines[1]).toContain('$40.00')
     expect(lines[1]).toContain('Pending payment')
     // 弹层关闭，消息流出现订单文本。
     expect(wrapper.find('[data-testid="support-chat-order-dialog"]').exists()).toBe(false)

@@ -228,7 +228,7 @@ describe('ChannelPickedForYou (13.4)', () => {
     const cards = wrapper.findAll('.product-card')
     expect(cards).toHaveLength(2)
     // 无评分行、无品牌行、无划线原价。
-    expect(wrapper.find('.rating-stars').exists()).toBe(false)
+    expect(wrapper.find('.product-card__star').exists()).toBe(false)
     expect(wrapper.find('.product-card__brand').exists()).toBe(false)
     expect(wrapper.find('s').exists()).toBe(false)
     // 有 retail_price 用它；没有则回退 price_min。
@@ -262,7 +262,7 @@ describe('ChannelPickedForYou (13.4)', () => {
       },
     })
     await flushPromises()
-    expect(wrapper.find('.rating-stars').exists()).toBe(true)
+    expect(wrapper.find('.product-card__star').exists()).toBe(true)
     expect(wrapper.get('.product-card__brand').text()).toBe('ACME')
     expect(wrapper.get('.product-card__price').text()).toBe('$1.50')
     wrapper.unmount()

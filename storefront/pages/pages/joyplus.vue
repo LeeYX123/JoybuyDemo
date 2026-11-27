@@ -4,9 +4,9 @@ import { computed, ref } from 'vue'
 import { useLocale } from '../../composables/useLocale'
 
 // 需求 12.1：JoyPlus = 真站 /membership（"Joybuy Plus"）落地页结构复刻：
-// hero（年省 £206 + 免费试用）→ JoyPlus exclusive deals（品类 tab + Plus Price 商品卡）
-// → 会员惊喜福利（£5 券）→ 专属权益（Spotify/ClassPass）→ 会员权益 4 项
-// → 会员方案（£3.99/月、£19.99/年、学生 30 天试用）→ FAQs。
+// hero（年省 $206 + 免费试用）→ JoyPlus exclusive deals（品类 tab + Plus Price 商品卡）
+// → 会员惊喜福利（$5 券）→ 专属权益（Spotify/ClassPass）→ 会员权益 4 项
+// → 会员方案（$3.99/月、$19.99/年、学生 30 天试用）→ FAQs。
 // EN 文案取自真站实测（measurement.md §2 #4）；商品卡取本站商品池
 //（GET /api/v1/recommendations），Plus Price 按真站口径约 95 折计算，非真站同一批商品。
 definePageMeta({ layout: 'footer-page' })
@@ -17,7 +17,7 @@ const T = computed(() => {
   const en = {
     hero: {
       title:
-        'Spend a little, get a whole lot back with JoyPlus - with average savings of £206 per year.',
+        'Spend a little, get a whole lot back with JoyPlus - with average savings of $206 per year.',
       cta: 'Try JoyPlus FREE',
     },
     deals: {
@@ -46,7 +46,7 @@ const T = computed(() => {
       title: 'Member Bonus',
       subtitle: 'Claim your JoyPlus offers',
       off: 'Off',
-      minSpend: 'Min. spend £59.00',
+      minSpend: 'Min. spend $59.00',
       note: 'Applicable to all categories, excluding selected products',
       claim: 'Claim',
     },
@@ -76,7 +76,7 @@ const T = computed(() => {
         },
         {
           t: 'Collect Joybuy Points on every order',
-          d: 'Collect 1 Joybuy point on every £1 you spend and use them to save more on future orders.',
+          d: 'Collect 1 Joybuy point on every $1 you spend and use them to save more on future orders.',
         },
         {
           t: 'Special deals on thousands of products',
@@ -88,8 +88,8 @@ const T = computed(() => {
       title: 'Select your membership plan',
       subtitle: 'Ongoing subscription until cancelled',
       items: [
-        { t: 'Monthly Plan', price: '£3.99/month', d: 'renews every month' },
-        { t: 'Annual Plan', price: '£19.99/year', d: 'renews every year' },
+        { t: 'Monthly Plan', price: '$3.99/month', d: 'renews every month' },
+        { t: 'Annual Plan', price: '$19.99/year', d: 'renews every year' },
         { t: 'Special offers for students', price: '30-day free trial', d: '' },
       ],
       agree: 'I agree to',
@@ -119,7 +119,7 @@ const T = computed(() => {
   }
   const zh = {
     hero: {
-      title: '加入 JoyPlus 会员，锁定超值回报：年均可节省 £206。',
+      title: '加入 JoyPlus 会员，锁定超值回报：年均可节省 $206。',
       cta: '立即免费试用 JoyPlus',
     },
     deals: {
@@ -148,7 +148,7 @@ const T = computed(() => {
       title: '会员惊喜福利',
       subtitle: '领取你的 JoyPlus 专属优惠',
       off: '优惠',
-      minSpend: '购物满 £59.00',
+      minSpend: '购物满 $59.00',
       note: '全品类（部分商品除外）',
       claim: '领取',
     },
@@ -178,7 +178,7 @@ const T = computed(() => {
         },
         {
           t: '单单返积分',
-          d: '每消费 £1 获得 1 个 Joybuy 积分，可在未来订单中抵扣，持续帮您省钱。',
+          d: '每消费 $1 获得 1 个 Joybuy 积分，可在未来订单中抵扣，持续帮您省钱。',
         },
         { t: '千款商品会员特惠', d: '精选优质商品，享受每日会员专属优惠价。' },
       ],
@@ -187,8 +187,8 @@ const T = computed(() => {
       title: '选择您的会员方案',
       subtitle: '订阅持续生效，直至取消',
       items: [
-        { t: '月费会员', price: '£3.99/月', d: '每月自动续订' },
-        { t: '年费会员', price: '£19.99/年', d: '每年自动续订' },
+        { t: '月费会员', price: '$3.99/月', d: '每月自动续订' },
+        { t: '年费会员', price: '$19.99/年', d: '每年自动续订' },
         { t: '学生专享优惠', price: '30 天免费试用', d: '' },
       ],
       agree: '我已阅读并同意',
@@ -328,7 +328,7 @@ useHead({ title: () => 'Joybuy Plus' })
         <h2 class="plus-section__title">{{ T.bonus.title }}</h2>
         <p class="plus-bonus__subtitle">{{ T.bonus.subtitle }}</p>
         <div class="plus-bonus__voucher">
-          <span class="plus-bonus__amount">£5.00</span>
+          <span class="plus-bonus__amount">$5.00</span>
           <span class="plus-bonus__off">{{ T.bonus.off }}</span>
           <div class="plus-bonus__terms">
             <p class="plus-bonus__min">{{ T.bonus.minSpend }}</p>

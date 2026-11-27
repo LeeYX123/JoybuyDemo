@@ -4,10 +4,10 @@ import { formatDisplayPrice, isDeliveryLabel, isPromoLabel } from './display'
 
 describe('formatDisplayPrice', () => {
   it('formats every price with the US dollar symbol', () => {
-    expect(formatDisplayPrice('19.99')).toBe('£19.99')
-    expect(formatDisplayPrice('39.5000')).toBe('£39.50')
-    expect(formatDisplayPrice(54)).toBe('£54.00')
-    expect(formatDisplayPrice(0)).toBe('£0.00')
+    expect(formatDisplayPrice('19.99')).toBe('$19.99')
+    expect(formatDisplayPrice('39.5000')).toBe('$39.50')
+    expect(formatDisplayPrice(54)).toBe('$54.00')
+    expect(formatDisplayPrice(0)).toBe('$0.00')
   })
 
   it('returns null for empty or non-numeric values', () => {

@@ -261,10 +261,10 @@ describe('SupportChatLauncher', () => {
     const lines = sendCall.options.body.body.split('\n')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain(ORDERS[0].public_id)
-    expect(lines[0]).toContain('£12.50')
+    expect(lines[0]).toContain('$12.50')
     expect(lines[0]).toContain('To receive')
     expect(lines[1]).toContain(ORDERS[1].public_id)
-    expect(lines[1]).toContain('£40.00')
+    expect(lines[1]).toContain('$40.00')
     expect(wrapper.find('[data-testid="support-chat-order-dialog"]').exists()).toBe(false)
   })
 

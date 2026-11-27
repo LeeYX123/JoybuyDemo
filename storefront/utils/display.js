@@ -3,9 +3,9 @@
 // These rules live purely in the display layer; crawled and stored data is
 // never rewritten to match them.
 //
-// - Prices render with the GB pound symbol (2026-11-27 reversal of the
-//   2026-11-03 "always $" rule): the storefront is UK/GBP and the real site
-//   shows £ — listing cards must match. Amounts are formatted with en-GB.
+// - Prices render with the "$" symbol everywhere (site-wide rule, 2026-11-27):
+//   the user explicitly requires "$" across the whole storefront, overriding
+//   the 2026-11-27 GBP attempt. Amounts are formatted with en-US.
 // - Delivery-estimate labels ("arrives today" style) are never rendered;
 //   matching badge text is suppressed at render time (2026-11-03 requirement).
 // - Discount/promotion labels ("70% off", "Save 60% on RRP", "-30%", "满减")
@@ -21,9 +21,9 @@ export function formatDisplayPrice(value) {
     return null
   }
   try {
-    return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(numeric)
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(numeric)
   } catch {
-    return `£${numeric.toFixed(2)}`
+    return `$${numeric.toFixed(2)}`
   }
 }
 

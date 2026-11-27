@@ -49,10 +49,10 @@ function kindLabel(entry) {
   return t(KIND_KEYS[entry.kind] || 'account.walletKindAdjustment')
 }
 
-// Balance is a Decimal string with up to 4dp; the site-facing currency is GBP.
+// Balance is a Decimal string with up to 4dp; display uses the site-wide "$" symbol.
 function formatMoney(value) {
   const number = Number(value)
-  return `£${Number.isFinite(number) ? number.toFixed(2) : value}`
+  return `$${Number.isFinite(number) ? number.toFixed(2) : value}`
 }
 
 function formatDate(value) {
