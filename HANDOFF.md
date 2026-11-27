@@ -67,6 +67,122 @@
 - 并行会话（或下一会话）把以下正式入库后按新坑1流程重新拉齐服务器：3 个 utils、marketing/index.vue 的 `../../` 修复、weekly/marketing 图片、`export_activity_pages` 扩展 weekly 卡（本次是 shell 手工同步的）。
 - 全量 45 页包（含 31 频道卡落地页）等商品同步后导入（坑4）。
 
+## 0d0i. 申请开店页：卡片灰底改白 + 保留阴影（2026-11-27，✅ 完成，未 commit）
+
+- 用户口径（已确认）：只改**卡片那层**灰底，「去掉背景色，转换成阴影」；外层页面灰底保留。
+- 改动 2 行：
+  - `storefront/pages/account/apply-shop.vue` `.shop-apply__card`：`#f5f6f8` → `#ffffff`
+  - `storefront/components/mobile/MobileApplyShop.vue` `.m-apply__card`：`#f5f6f8` → `#ffffff`
+  - `border: 1px solid #dce0e7` 与 `box-shadow: 0 10px 30px #161b2620` 均未改（阴影实测足够分层）。
+- 实测（Playwright）：桌面 1440 `.shop-apply__card` = `rgb(255,255,255)` + shadow；`.shop-apply` 仍 `rgb(237,240,244)`；手机 390（**必须用 `m.localhost:3000`**，localhost+390 宽仍渲染桌面模板）`.m-apply__card` 同样变白。页面 200、控制台 0 error。
+- 卡片内白色面板 `.shop-apply__panel` 改动前后对比度都靠 `border` 撑住（改前灰卡与白面板仅 1.04 对比），**不加额外修正**。
+- ⚠️ 验证前提：该页有 onMounted 登录守卫（未登录会跳 `/auth/login`），要量「未申请」态需在隔离 context mock `buyer/session` 与 `merchant-application`，别去登录/改用户会话。
+- 产物 `var/apply_shop_card_20261127/`（before/after 截图、computed 指标 json、脚本）。
+
+## 0d0h. `/c/` 二级品类横条：保持滚动位置 + hover 才显示箭头/滚动条（2026-11-27，✅ 完成，未 commit）
+
+### 需求
+点二级品类后横条滚回最左（应保持）；滚动条常显（真站 hover 才显示，含左右箭头）。
+
+### 真站口径（CSS bundle 原文取证，`var/category_strip_20261127/real_css/fc1c52870bc05c43.css`）
+- 箭头：**20×24**、绝对定位 `left/right:0; top:42.8%; translateY(-50%); z-index:2`、`#c7c7c7`（hover `#888`）、单侧 12px 圆角、**默认 `opacity:0`，容器 `:hover` 才 `1`，`transition: all .5s ease`**；真站是 `div`（无键盘入口，我们保留 `focus-within`）。
+- 滚动条：`::-webkit-scrollbar` 高 4px、track `#fff`、thumb 默认 `transparent` → 容器 hover `rgba(0,0,0,.14)` → thumb hover `.28`、radius 4。
+- 结构：`container > category-window(overflow:auto;padding-bottom:4px) > wrapper(flex,gap 8) > item(136×136)`。
+
+### 改动
+- 新增 `storefront/utils/categoryStripScroll.js`：模块级 Map（键 = 父类目 slug）记住 `scrollLeft`。
+- `CategoryTileCarousel.vue`：加 `scrollKey`，元素 `:ref` 回调里**创建即瞬时恢复**（临时关 `scroll-behavior`，不从 0 滑入），`rAF` 再校一次；恢复后若选中卡不在视口，用 `ensureActiveVisible()` 最小幅度修正（冲突时取「选中项可见」）。
+- `ProductListing.vue`：只加 `:scroll-key="currentRoot.slug"`。
+- hover 显示：listing 变体（`--default`）箭头改叠层 `inset:0` 不占行、`opacity 0/pointer-events:none` → `:hover`/`:focus-within` 0.5s 淡入；滚动条自绘 4px 全宽（高度常驻，thumb 透明→hover `.14`→thumb hover `.28`）。
+- **不要改回原生 `scrollbar-width:thin`**：Chromium 走浮层滚动条，gutter=0 且 hover 不绘制（实测截图全无）。
+- 频道页（`--channel` 覆盖）保持像素级不变：补 `position:static/opacity:1/transition:none` 与 `bar{display:none}`。
+
+### 验证
+- e2e `var/category_strip_20261127/verify_scroll.cjs after` **19/19 通过**：滚到最右 `2074` → 点最后一个品类 → `2074`（**差值 0**）且选中卡可见；`before`（换回 HEAD 组件）9/17 复现原 bug。
+- 单测 `CategoryTileCarousel.test.js` **6 passed**（新增「按 key 记/恢复」「无 key 不记忆」）；lint/prettier 全过。
+- `/minihome/UK-Mini-HP-Home-Appliances` before/after **像素 diff bbox=None**（0 差异）。
+
+### 限制
+- 偏移记忆是**会话级**（刷新失效）；真站跳转后 `scrollLeft` 与箭头图标颜色未能取渲染态（CSS 未声明 color，内联 SVG）。
+- 真站 Playwright 09:00 后持续 `risk605_pic` 风控（200 + 「服务暂时中断」壳页）——量真站沿用「SSR HTML + 线上 CSS bundle 原文」路线。
+
+## 0d0g. 首页畅销榜单按子类目 3:2 选品（2026-11-27，✅ 完成，未 commit）
+
+### 需求
+家居生活 tab 的 5 个商品要从【家具】+【床上用品】选（3:2）；健康保健 tab 从【维生素 & 补充剂】+【运动 & 体能】选（3:2）。
+
+### 实现（后端零改动）
+- 新增 `storefront/utils/bestsellerCurations.js`：配置表 `BESTSELLER_CURATIONS` + 纯函数 `composeCuratedItems()` + `isRenderableCard()`（有图/有价，拒绝 `is_family_representative=false`）。
+- 新增 `storefront/composables/useBestsellerFeed.js`：两端共用加载器；有配置 → 并行请求子类目后拼装（主类 3 + 次类 2，`reserved` 集合防同一条被两边重复计数）；拼不足/请求失败 → `console.warn('[bestsellers] …')` 并**回退该 tab 原单请求**；无配置 tab 行为完全不变。
+- `HomeBestsellers.vue`（初始 tab 走 `useAsyncData('home-bestsellers')`，SSR 即 curated）、`MobileBestsellers.vue`（同加载器，只改脚本区；另一批次的 `family_max_price` 改动保留）。
+- 以后加品类**只改配置表**，不动后端。
+
+### 结果（主代理抽验 SSR）
+- 家居生活：家具 3（Lift Top Coffee Table $279 / 10 Tier Shoe Rack $16.98 / Bedside Table $75.99）+ 床上用品 2（Duvet Cover Set $26 / 4-Piece Bedding Set $99.88）；改造前是「家居生活 1 + 浴室用品 4，0 家具 0 床上」。
+- 健康保健：维生素 3（Wellwoman Max $19.99 / Pregnancy Multivitamin $14.99 / Boron Bone Health $9.09）+ 运动&体能 2（Protein Collagen $14.99 / BodyFuel Sticks $9.99）；改造前是维生素 5。
+- 供应池充足：furniture 93 / bedding 70 / nutrition 146 / sports 87，无跨品类硬凑。
+- 其余 7 个 tab：桌面 5 条、移动 10 条与改造前快照**逐位一致**；移动端 curated 两 tab 与桌面逐位相同（移动端这两 tab 只 5 张，是按需求）。
+- 测试：`vitest` 4 文件 18 passed；eslint/prettier 干净；SSR 实测首页 HTML 含 curated id（主代理复核 home-living 两条 → 命中）。
+
+### 坑
+1. **搜索接口 `page_size` 不生效**（永远 24/页），子类目补足只能多取候选或回退，别反复试参数。
+2. 拼装不足时会 `console.warn('[bestsellers] …')` 并回退；线上看到该 warn 说明某子类目在售变少。
+3. `MobileBestsellers.vue` 里已有的 `family_max_price` 未提交改动属另一批次，**禁止整文件 checkout 回滚**；撤销选品只需删配置表条目。
+
+## 0d0f. 【每周甄选】活动页对齐真站（2026-11-27，✅ 5 条全改，未 commit）
+
+### 我们在做什么
+用户报 `/marketing/21210005` 与真站 5 处差异：背景非纯白、按钮「更多」应为「查看更多」且样式不同、hero 高度不同、第二张卡（智能家居）混了美妆/女士脱毛商品、每张卡底部多余文案。
+
+### 已改（`storefront/pages/marketing/[id].vue` +47/−32，唯一改动文件）
+1. **背景**：计算值 `rgb(246,247,249)` → `#fff`。真站 17 个 CSS 里没有 `body` 背景规则（浏览器默认白）。改 `.marketing-page{background:#fff}` + 本页 `useHead bodyAttrs`（离开页面自动回收，**未动全局 token**）。
+2. **按钮**：`More/更多` 130.5×44 白底灰边圆角 22 → **`View more/查看更多` 131×48、`#1A1A1A` 白字、radius 4、16px/500**（与真站 `style_btn__T8rQQ` 一致）；复用 `AppMoreButton`（组件本身未改，频道页的 More 不受影响）+ 文案 key `activity.viewMore`。
+3. **hero**：220 → **384px**（1440/390 同）、`background-size:auto 100%`、容器 **1264**、标题 **44/700/44**+下边距 12、副标题 **18/500/24**；网格容器同步 1264。
+4. **第二张卡**（活动页 external_id `26890013`）：`activity_section_product` **原位替换 16 行**（男士理容 8 + 女士脱毛仪 8 → smart-home 16），行数仍 40、`sort_order` 不变。主代理复验类目分布：smart-home 16 / toothbrushes-flossers 8 / coffee-machines 8 / air-fryers 8，**美妆系 0**。
+5. **卡片底部文案**：真站 weekly 卡只有 `img+mask+cardTitle`；我们 4 张启用卡的 `home_campaign_card.subtitle/subtitle_zh` 有旧种子文案 → 清空这 4 行（主代理复验：weekly section 的 22–25 卡 subtitle 已空；26/27 是未启用卡，仍带文案但不渲染）。
+
+### 验证
+- `/marketing/21210005`、`/marketing/26890013`、`/` 全 200；首屏 20 → 点查看更多 40；中文态按钮「查看更多」131×48 `#1A1A1A`；第二卡 40 件 0 美妆、40 有图有价。
+- 表行数不变（`activity_page 45 / activity_section 115 / activity_section_product 2375 / home_campaign_card 26`），只 16+4 行 UPDATE，无 INSERT/DELETE。
+- eslint exit 0、prettier 通过；该页无既有单测/e2e，未跑全量。
+- 回滚：代码 `git checkout -- "storefront/pages/marketing/[id].vue"`；数据 `python -I var/marketing_weekly_20261127/scripts/rollback_data.py --apply`。
+
+### 坑
+1. **真站 Playwright 必被风控 403**：量真站只能 curl（`debug_session` headers+cookies）抓 SSR HTML + CSS bundle（`var/marketing_weekly_20261127/before/real_css/`，17 个），读原规则。
+2. `pages/marketing/index.vue` 旧路由的 banner 副标题仍走 `marketing.subtitle` 兜底文案（未改，别当回归）。
+3. 改背景只加本页作用域 + `useHead bodyAttrs`，别改全局 `--colour-canvas`。
+
+## 0d0e. 画廊重复/模糊图去重 + 旧源目录面包屑批次清单（2026-11-27，✅ 图已改，清单只读，未 commit）
+
+### 我们在做什么
+用户报两个 PDP 画廊里同一张图出现两次、其中一张模糊；同时这两个商品面包屑显示 `Home / Household Laundry / Kitchen Roll, Toilet Roll Tissues`，要求查这批商品的导入时间并出清单（id、spu、可点链接）。
+
+### 画廊（已写库，只这 2 个 SPU）
+- 数据链：PDP 画廊来自 **`media_usage`**（`content_type=Spu` + `object_id`），`detail_views.product_detail` 无 `order_by`，MySQL 实际按 usage 主键升序；`Spu.image_urls` 是**废弃字段**。
+- spu 57 `e6889b90…`：删 usage 54（asset 104，**135×135 / 3,392B** 模糊），保留 asset 15529（**1248×1248 / 299,601B**）→ 画廊 5→**4**（视频仍在第 1 位）。
+- spu 12 `e9e92d2a…`：删 usage 9（asset 9，**360×360 / 17,286B**），保留 asset 191294（**1248×1248 / 991,175B**）→ 8→**7**。
+- 判据：源 URL 归一化（剥 `s<W>x<H>_` / `!qNN` / `.png.webp` 壳）后逐字相同 + 白底像素平均差（4.055 / 2.852，阈值 8）+ 面积与字节更小；人工复核图 `pair_compare.png`。**只删 media_usage 引用，asset 与磁盘文件全保留。**
+- 主代理复验：库内 `media_usage` 行数 4 / 7。
+- 回滚：`.venv/Scripts/python.exe -I var/gallery_breadcrumb_20261127/rollback_gallery.py --apply`（注意回滚重插行 id 会变，而接口不排序 → 该图会排到画廊末尾）。
+
+### 面包屑根因（不是前端 bug）
+- 这两个 SPU 的 `Spu.product_category` 挂在**旧源目录 `SourceCatalog=joybuy`（catalog_id=1）**的节点（297→969、296→926），该旧目录 **27/27 节点 `local_category_id` 全为 NULL**；2026-11-23 的回填命令只覆盖 `catalog='joybuy_uk'`（206/267）。
+- 于是 `category_breadcrumb` 两级 `local_slug=null` → `pdpBreadcrumb.js` 按名字回退，本地树没有 `Household Laundry` / `Kitchen Roll, Toilet Roll Tissues`（本地叫 `Home & Living` / `Kitchen Roll, Toilet Roll & Tissues`）→ 原样渲染源站名且无链接。
+- 同一 `source_id` 在 `joybuy_uk` 里映射是完整的：926→`home-living`、969→`kitchen-toilet-roll`(188)。**修法 = 补旧目录 `joybuy` 的 `ProductCategory.local_category` 映射**（或把 SPU 改挂 `joybuy_uk` 节点），不是改前端。
+
+### 同批清单（50 条，只读未写库）
+- 判据（同时成立）：`product_category.catalog.source_system='joybuy'` + `created_at` 在 2026-11-03~11-04 + `SpuSourceIdentity.source_system='joybuy'`；交叉验证 50/50 两级映射全 NULL、50/50 ACTIVE、抽 5 条 PDP 200。
+- 两波次：11-03 10:33:48~10:38:00（20 个）、11-04 09:52:43~10:00:51（30 个）。按源类目链：`926/969`=**12 条**（卫生纸/厨房纸）、`199/275`=10、其余 12 条链各 1~3 个。
+- 产物：`var/gallery_breadcrumb_20261127/batch_list.csv`（UTF-8 BOM，Excel 直开）+ `batch_list_table.md`。建议类目 = 同 `source_id` 在 `joybuy_uk` 的映射；无映射的（Office Electronics ×3、Nutrition ×3、Men/Women ×2）标「需运营决定」。
+- **`kitchen-toilet-roll` 已存在** → 这 12 条不需要新建类目。
+
+### 同类风险面（未修）
+- `joybuy_nl`：76 个 SPU、16/16 节点未映射；`joybuy_uk`：161 个 SPU 至少一级未映射。修面包屑需统一补映射后重建，**建议单独一批做「源类目树 → local_category 全量映射」**。
+
+### 坑
+1. **`Spu.image_urls` 是废弃字段**，画廊顺序/内容只认 `media_usage`；且接口不加 `order_by`、依赖主键顺序 —— 删除/回滚后顺序会变。
+2. 判断「模糊图」要用源 URL 归一化 + 尺寸/字节 + 像素差三重判据，别只看文件名。
+
 ## 0d0d. PDP 规格选择器对齐真站（2026-11-27，✅ 桌面/手机已改，未 commit）
 
 ### 我们在做什么
@@ -6662,3 +6778,11 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
 3. **店铺头像**：真站店铺黑条头部有白底方形 logo（48×48）。抓 Dyson/Toy/Baby 三张头像入库（`public/images/activity/pages/<id>/logo.webp`）并设 logo_image，前端黑条已渲染（Purcotton 原本就有）。
 4. **Toy 店扩容 10→40**：+乐高套装/拼装玩具/角色扮演&想象游戏各 10；**Baby 店扩容 11→41**：+哺育喂养/手推车旅行/洗护各 10（`scripts/extend_store_pages.py`，种子可复现，整层打乱，快照与配额混排）。
 5. **Sports 3 卡**：亲测真站——NL 版 3 页存在但楼层全是「使用测试数据 (4 条记录)」占位符（真站半成品、无商品），此前「风控拦截」实为空数据。按口径不造内容：joyfumi 重复行 is_active=False，3 张卡 link_url → `/minihome/mini-hp-nl-sports-outdoor` 回退频道页。
+
+## 户外运动 3 卡落地页建成（2026-11-27 17:20 本地，✅ 完成）
+
+**真相还原**：用户反馈真站 NL 迷你首页 3 张卡点击后有数据。亲测多轮（账号 Cookie/匿名/手动 bootstrap/网络抓包/全局状态 dump）：3 个 NL 活动页存在、楼层标题真实（New arrivals·Winter must-haves·Workout gear / Clothing·Equipment·Recovery / Hats·Tops·Bottoms），但服务端下发的楼层素材 `materialData` 本身就是**测试占位**（sync 模式、只有 goodsId1_0/time 键，渲染「使用测试数据 (4 条记录)」）——此前判「风控拦截」实为真站自己的空数据，任何会话都拿不到真站商品。
+
+**处理**（营销页同款口径：真站结构 + 本地选品）：`scripts/build_sports_pages.py` 建 3 个 ActivityPage（kind=ACTIVITY，id 与真站一致），9 层各 25 件从 Outdoor & Sports 类目配额选品（fitness-training/outdoor-gear/sports-apparel-shoes/garden/diy-tools，池 762 件），主题层用标题关键词过滤（Hats/Tops/Bottoms/Recovery），show_more=True（>5 件带按钮），标题 16px/700/lh40。3 张卡（含停用的 joyfumi 行）绑落地页，接口实测 3 卡全部 `/active/<id>`。
+
+**验证**：Playwright 实测 3 页各 15 卡可见 + 3 按钮（3 层×5 首屏）；选择配额全命中。
