@@ -49,14 +49,14 @@ async function submit() {
       <h1 id="login-title">平台管理登录</h1>
       <form @submit.prevent="submit">
         <div class="field">
-          <label for="login-email">员工邮箱</label>
+          <label for="login-email">员工账号 / 邮箱</label>
           <input
             id="login-email"
             v-model="email"
-            type="email"
+            type="text"
             autocomplete="username"
             required
-            placeholder="name@joybuy.test"
+            placeholder="账号或 name@joybuy.test"
           />
         </div>
         <div class="field">
