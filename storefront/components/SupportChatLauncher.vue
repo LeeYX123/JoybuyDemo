@@ -1084,18 +1084,10 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
-/* 整段选择器必须一起放进 :global()：Vue scoped 编译器会丢弃
-   `:global(body.x) .child` 里的后代部分（只剩 body.x 规则）。
-   PDP 上【联系商家】（right 24 / bottom 96 / height 44，顶边 140）可见时，
-   客服按钮整体上移到 156，保证两个 bounding box 不相交。 */
-:global(body.pdp-merchant-contact .support-chat__launcher) {
-  bottom: 156px;
-}
-
-/* 购物条出现且【联系商家】同时存在：入口在 148 + 44 = 192 之上。 */
-:global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__launcher) {
-  bottom: 212px;
-}
+/* 2026-11-27：PDP【联系商家】已改成与本按钮同款（贴右 80 宽、60 高以上），
+   两者改为纵向堆叠：【客服】仍在 bottom 100（顶边 160），【联系商家】底边 168
+   （8px gap），互不重叠。因此 body.pdp-merchant-contact 不再需要上移客服按钮，
+   也不要再给两者加相互位移规则（改宽度/高度时同步改 PDP 的 .detail__contact）。 */
 
 /* 真站客服面板（findings C2）：375 宽、80% 高（max 720）、right 84 /
    bottom 104.5、#F5F6FA 底、8px 圆角、#F0F1F2 边框、
@@ -1118,16 +1110,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* 面板底边跟随按钮上移，避免遮住【联系商家】；高度同步收窄防止顶出视口。 */
-:global(body.pdp-merchant-contact .support-chat__panel) {
-  bottom: 228px;
-  max-height: min(720px, calc(100vh - 260px));
-}
-
-:global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
-  bottom: 284px;
-  max-height: min(720px, calc(100vh - 316px));
-}
+/* 面板底边与按钮底边对齐即可：面板 right 84，与贴右的 80 宽按钮不横向相交。 */
 
 /* header：60px 白底，标题 24px/700 #1a1a1a，左右图标 24px 距边 16px。 */
 .support-chat__head {
@@ -1792,25 +1775,7 @@ onBeforeUnmount(() => {
     max-height: none;
   }
 
-  :global(body.pdp-merchant-contact .support-chat__launcher) {
-    bottom: 156px;
-  }
-
-  :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__launcher) {
-    bottom: 212px;
-  }
-
-  :global(body.pdp-merchant-contact .support-chat__panel) {
-    bottom: 228px;
-    height: calc(100vh - 316px);
-    max-height: none;
-  }
-
-  :global(body.pdp-merchant-contact.pdp-buybar-visible .support-chat__panel) {
-    bottom: 284px;
-    height: calc(100vh - 372px);
-    max-height: none;
-  }
+  /* 手机版（MobilePDP）没有【联系商家】入口，客服按钮保持 bottom 84 不动。 */
 }
 
 @media (prefers-reduced-motion: reduce) {

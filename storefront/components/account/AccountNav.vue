@@ -69,7 +69,9 @@ const ICONS = {
 }
 
 onMounted(() => {
-  if (isAuthenticated.value) loadStatus({ force: true })
+  // 2026-11-27：不再强制刷新——useBuyerAuth 在客户端路由完成时做一次节流再校验
+  // （TTL 20s），进账号区不会固定多打一条 session 请求。
+  if (isAuthenticated.value) loadStatus()
 })
 </script>
 

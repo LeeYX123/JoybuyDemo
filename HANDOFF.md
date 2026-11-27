@@ -33,6 +33,15 @@
   * 已 grep `admin-web/src`、`merchant-web/src`、`storefront/components` 的 `5000/最多200`：其余命中均为轮询间隔 5000ms（CrawlersView/SupportView/MessagesView、storefront 聊天轮询等）或无关业务，**无第二处「图文详情块」长度限制**；merchant-web 无同类编辑器。
 - **未做**：未 commit / 未 push；未改商家端（无该编辑器）。
 
+## 0d10. 代码提交（2026-11-27，✅ 两个提交已 push origin/main）
+
+- **9abd1cf** 管理端会话改用专用 cookie（修复审核商家后管理员被商家账号遮蔽，详见 0d9）。
+- **7bd0ecd** 同步并行会话积压：167 个文件（全站 JY 编号体系 + 迁移、管理端与商家端界面/客服、storefront 变体与最佳销量、活动/营销页图片资源入库）+ **修复 `storefront/pages/marketing/index.vue` 相对导入（`../` → `../../`）**——此修复解除了 0d1「新坑1」的 main 构建坏掉问题。
+- **提交前验证**：`manage.py check` 无问题、pending migrations = 0；**三个前端全部构建通过**（admin-web / merchant-web vite build，storefront nuxt build 在修完 import 后 exit 0）；产物 dist/.output 均 gitignore。
+- **未提交**：`backend/var/{crisp_title_check_20261127.py,id_migration_20261127/,variant_spec_fix_20261127/}`——并行会话的一次性脚本/快照，保留在工作区不入库。
+- 工作区其余部分干净，本地 = origin/main（0/0）。
+- **注意**：生产服务器仍在 9abd1cf（后端修复已部署）；**7bd0ecd 的前端改动尚未部署**（storefront/admin-web/merchant-web 需重建），需要时另开同步任务。
+
 ## 0d9. 修复：审核商家通过后管理员被"变成"该商家账号（会话被遮蔽）（2026-11-27，✅ 已修复并部署产线+dev，未 commit HANDOFF）
 
 ### 现象与根因（有数据证据）
@@ -238,6 +247,87 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d0w. 【联系商家】从商家主页移除 + PDP 改客服同款（2026-11-27，✅ 完成，未 commit）
+
+### 用户要求
+1. 商家列表/主页「总曝光度」右侧的【联系商家】删掉，只在点进该商家商品后再显示；
+2. 商品详情里的【联系商家】样式做成与【客服】按钮一致。
+
+### 改动
+- `storefront/pages/merchants/[slug].vue`：**整颗移除** header 的 `.shop-contact` 按钮 + 相关 CSS + `canContactSeller`/`chatBlocked`/`chatMerchant`/`chatOpen` + `useBuyerAuth` 导入 + 页尾 `<MerchantChatPanel>`（已无触发器，属死代码）。保留商家信息、Followers/Exposure、商品卡与加购。`metrics` 右边现在等于内容区右边（零残留空隙）。
+- `storefront/pages/p/[id].vue` `.detail__contact`：逐项照抄 `.support-chat__launcher`（`right:0 / width:80 / padding 8px 5px / gap 4 / border 1px rgba(0,0,0,5.9%) 且 border-right:none / radius 8px 0 0 8px / #fff / #1a1a1a / 12px/16 / 竖排 / hover 仅文字下划线`），图标 16→24，`bottom:168`（客服 100 + 60 + 8 gap）；≤40rem 为 `bottom:152 / width:72`；删掉 `pdp-buybar-visible` 位移规则；`focus-visible` 保留。
+- `storefront/components/SupportChatLauncher.vue`：删掉 4 条 `body.pdp-merchant-contact` 位移规则（launcher 156/212、panel 228/284 及移动端同名），注释改为「纵向堆叠、不再位移」；手机端客服按钮不再被 phantom body 类顶高（实测 156→84）。
+- `MobilePDP.vue` 本来就没有联系商家入口（`grep contact` 零命中），未改。
+
+### 验证（`var/contact_entry_20261127/verify.mjs` FAILURES 0 + 主代理源码复验）
+- 商家页：`.shop-contact`/`MerchantChatPanel` 引用数 **0**；白名单买家登录后头部无按钮、无空隙。
+- PDP 三状态 × 1440/375：客服 `(1360,740) 80×60`、联系商家 `(1360,654) 80×78`，**gap 8px 不相交**；购物条 68px 在下方不动；无横向溢出、console 0。
+- 375 宽两按钮计算样式逐项相同；点击仍能打开商家会话抽屉；非白名单/未登录不渲染入口。
+- vitest 18 + 29 passed；e2e 商家族去重 1 passed；prettier/eslint 通过。
+- **唯一偏离**：EN 文案 `Contact seller` 在 80px 宽内必折两行 → 高 78px（zh 单行 62px）。要严格 60 只能把 EN 改成 `Contact`（属文案改动，未擅自做）。
+
+### 坑
+- `body.pdp-merchant-contact` 已不再驱动客服位移；**不要把这些规则加回去**，否则两按钮会互相错位。
+- 回滚：`git checkout -- storefront/pages/p/[id].vue storefront/pages/merchants/[slug].vue storefront/components/SupportChatLauncher.vue`（三文件不含其他批次改动）。
+
+## 0d0v. 开店审核通过后购物端入口不更新（2026-11-27，✅ 修复，未 commit）
+
+### 现象
+管理端审核通过后，购物端仍显示【申请店铺】，必须先点进申请页一次才变【切换商家端】。
+
+### 根因（假设「多申请取错行」被证伪）
+- `MerchantApplication.buyer` 是 **OneToOneField**（DB `UNIQUE KEY buyer_id`），全表仅 2 条申请，**不存在同一买家多条**；驳回重申是原行重置 PENDING（`views_shop_application.py`）。`.first()` 无排序不构成问题。
+- **后端与 SSR 本来就是对的**：`GET /api/v1/auth/buyer/session` 对已通过买家返回 `APPROVED + merchant_id`，SSR HTML 直出 `Switch to Seller console`。
+- **真正缺口**：`useBuyerAuth` 的会话是 SSR payload 首帧快照，客户端 `started=true` 后**整个 SPA 生命周期不再取**。用户说的「刷新」实际是应用内跳转；点进 `/account*` 会 `force` 刷新一次，所以表现成「点一次才好」。
+
+### 修复
+1. `storefront/composables/useBuyerAuth.js`：新增 `revalidate()` —— 节流后台再校验（导航 TTL 20s、切标签页 5s），在途请求复用，失败不清登录态；挂 `page:finish`、`window focus`、`visibilitychange`、`pageshow(persisted)`；`refresh()` 记录快照时间；导出 `revalidate`。
+2. `components/account/AccountNav.vue` / `pages/account/index.vue`：mount 的 `loadStatus({force:true})` 改为节流 `loadStatus()`（避免每次进账号区固定多打一条）。
+3. `backend/accounts_buyers/views.py`：`BuyerSessionView.get` 响应加 `Cache-Control: no-store`，保证再校验必打到后端。
+4. 测试：`accounts_buyers/tests/test_auth_api.py` +3（no-store、buyer 唯一回归、PENDING→APPROVED 同会话立即读到）；新增 `storefront/composables/useBuyerAuth.test.js` 5 例。
+
+### 验证
+- 端到端 `var/bug_merchant_entry_20261127/verify.cjs` **24/24 PASS**、console error 0：
+  - 硬刷新 `/account` 与首页 → `Switch to Seller console`；
+  - 切回标签页（模拟跨标签审核）→ 头部与账号磁贴同步更新；
+  - **SPA 导航**（首页→`/cart`、首页→`/account`）→ 也变 `Switch to Seller console`（修复前 `/cart` 一直 stale），且只补 1 次 session 请求；
+  - 手机端 `m.localhost:3000` 硬刷新后 pill 与抽屉同步；
+  - 三种状态回归（PENDING/REJECTED/APPROVED），APPROVED 点【切换商家端】仍 200 → 落到 `5174/dashboard`。
+- 单测：后端 6 OK；前端 49/49（useBuyerAuth 5 + AppHeader 20 + AccountNav 6 + MobileDrawer 6 + mobile-apply-shop 12）。
+- 环境：并行批次遗留未迁移的 `accounts_buyers.0010`（payment_enabled）会让新 Django 进程 SELECT buyer_account 失败，已 `migrate accounts_buyers` 应用；`:8000` 按 keepalive 重启过，**:3000 未动**。
+
+### 坑
+- headless Playwright 不派发真实 `focus`/`visibilitychange`（`bringToFront` 前后 `document.hasFocus()` 恒 true），验证需显式派发同名事件。
+- `revalidate` 必须有**在途请求复用 + TTL**，否则每个导航都会多一次 session 请求。
+
+## 0d0u. 管理端【用户端管理】新增编辑 + 重设密码（2026-11-27，✅ 完成；已被并行会话 commit 7bd0ecd 带入库）
+
+### 需求
+列表/详情加【编辑】，可改：用户名、邮箱、手机号、支付权限、余额、白名单、状态，并可重设密码。
+
+### 关键发现
+- 「支付权限」原来是 `_buyer_payload` 里的**硬编码假值** `"全部可用"`，没有真实字段 → 本次补真字段并**在真实下单链路生效**，否则只是装饰开关。
+
+### 改动
+1. **新字段** `BuyerAccount.payment_enabled = BooleanField(default=True)`，迁移 `accounts_buyers/0010_buyeraccount_payment_enabled.py`（主代理核验：列已存在、迁移已记录、`makemigrations --check` 无待生成）。
+2. **新接口**（沿用 `/admin/buyers/accounts/<public_id>/...` 路由族，主代理核验两条路由已注册）：
+   - `POST .../edit`：`buyers.manage`；入参带 `balance` 或 `purchase_whitelisted` 时**动态追加** `whitelist.manage`；单事务 `select_for_update`。
+   - `POST .../reset-password`：`buyers.manage`，可手填 8–64 位或 `generate=true` 生成 16 位；明文只回当前响应、审计只记「已重设」。
+3. **校验**：用户名 ≤32；邮箱 `normalize_email` + 排除自身唯一；手机 `normalize_phone`→E.164 + 唯一；改后 email/phone 皆空且未绑三方 → `BUYER_IDENTIFIER_REQUIRED`；停用补 `disabled_at`；停用账号不能新加入白名单；余额走 `adjust_buyer_balance`（写 `BuyerWalletEntry(ADJUSTMENT)` 台账）；全部 `record_audit(BUYER_EDIT)`。
+4. **支付权限真正生效**：`orders/order_services.py::place_order`（函数名是 `place_order`，不是 `create_order`）与 `orders/auto_order_services.py`（创建任务 + 到点执行两处）加 `PAYMENT_DISABLED`，排在支付/余额校验前，不产生订单状态变更；收银台补 5 个 locale 文案。
+5. **会话失效**：买家登录态是 DB 表 `buyer_session`（cookie 存随机 token、库存 HMAC 摘要）；重设密码时 `UPDATE buyer_session SET revoked_at=now() WHERE account_id=? AND revoked_at IS NULL`，所有设备立即失效（实测 true→false）。
+6. **admin UI**（`BuyersView.vue`）：列表【编辑】+ 详情【编辑用户】→ `AppModal` + `.form-grid` 两列；底部【重设密码】；只提交实际改动字段；错误码映射进 `admin-web/src/lib/api.js`；列表「支付权限」列改真实值。
+
+### 验证
+- 单测：`test_admin_buyer_edit` **13 OK**；加 `test_doc02_round3` + `orders.tests.test_wp42_place_order` 合跑 **39 OK**（含 `PAYMENT_DISABLED` 三处）；`test_admin_round2` 白名单/搜索 8 OK。
+- E2E 17 步、console error 0：改 3 字段 + 关支付权限 + 余额 88.66 → 列表/详情同步、台账 `ADJUSTMENT 88.66`；自动生成密码 → 会话失效、旧密码 401、新密码 200；测试买家已清理。
+- 截图 `var/admin_buyer_edit_20261127/`。
+- **两处既有失败与本任务无关**：`test_admin_round2.NotificationApiTests` 2 例仍按旧口径（`order_id` 自 `3e936b4` 起必填）。
+
+### 回滚
+- 迁移：`manage.py migrate accounts_buyers 0009_buyer_public_id_jyu_format`（删列，181 行均 True）。
+- 代码需同步移除两个视图/路由、`payment_permission` 改动、`PAYMENT_DISABLED`、BuyersView 弹窗、`api.js` 映射、checkout i18n 一条。**先回代码再回迁移**。
 
 ## 0d0t. 首页畅销榜单接语言参数（2026-11-27，✅ 完成，未 commit）
 

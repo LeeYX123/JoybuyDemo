@@ -92,7 +92,8 @@ const modules = computed(() => [
 ])
 
 onMounted(() => {
-  if (isAuthenticated.value) loadStatus({ force: true })
+  // 2026-11-27：同 AccountNav——节流再校验由 useBuyerAuth 在路由完成时统一负责。
+  if (isAuthenticated.value) loadStatus()
 })
 
 // 真站 /profile 昵称优先用账号 display_name（与右上角下拉一致），旧 payload

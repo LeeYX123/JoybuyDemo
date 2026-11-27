@@ -501,8 +501,9 @@ watch(
   { immediate: true },
 )
 
-// 需求 21（批次 Y）：底部购物条出现时 body 挂 pdp-buybar-visible，让全局
-// 【客服】按钮与【联系商家】一起上移，避免压在购物条上或彼此重叠。
+// 需求 21（批次 Y）：底部购物条出现时 body 挂 pdp-buybar-visible。购物条高
+// 68px，全局【客服】（bottom 100）与【联系商家】（bottom 168）都在它上方，
+// 不再需要随购物条上移；该类名保留给其它联动规则/后续调整使用。
 const BUYBAR_CLASS = 'pdp-buybar-visible'
 watch(
   stickyBarVisible,
@@ -1293,9 +1294,9 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
         </div>
       </div>
 
-      <!-- 需求 20.3：PDP 右下角【联系商家】（图标 + 文字，固定定位）。
-           入口显示期间 Crisp 启动器由 body 类隐藏；同时按钮定位在 Crisp 启动器
-           常规区域（底部 ~20–80px）之上，双保险避免重叠。 -->
+      <!-- 需求 20.3：PDP 右下角【联系商家】（2026-11-27 起与【客服】同款：
+           贴右边缘、80 宽、图标 24 在上文字 12px 在下，纵向堆在【客服】上方）。
+           入口显示期间 Crisp 启动器由 body 类隐藏，避免与业务按钮在右下角重叠。 -->
       <button
         v-if="canContactSeller"
         class="detail__contact"
@@ -1303,7 +1304,7 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
         data-testid="pdp-contact-seller"
         @click="chatOpen = true"
       >
-        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+        <svg viewBox="0 0 20 20" width="24" height="24" aria-hidden="true">
           <path
             d="M3 4.5h14v9H8.5L5 16.5v-3H3z"
             fill="none"
@@ -2404,45 +2405,73 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
   font-size: var(--font-size-sm);
 }
 
-/* 需求 20.3：PDP 右下角【联系商家】浮动入口（图标 + 文字，非 Crisp 挂件）。
-   bottom 96px 位于 Crisp 启动器（约底部 20–80px）与底部购物条（68px）之上。 */
+/* 需求 20.3：PDP 右下角【联系商家】浮动入口。
+   2026-11-27 用户要求：样式与全站右下角【客服】入口完全同款
+   （SupportChatLauncher 的 .support-chat__launcher，真站 #jdi-floating-toolbar
+   实测）：贴右边缘 right 0、宽 80、白底、1px rgba(0,0,0,.059) 左边框（无右边框）、
+   圆角 8px 0 0 8px、图标 24px 在上、文字 12px 在下、hover 仅文字下划线。
+   位置：与【客服】（bottom 100、高 60，顶边 160）纵向堆叠，底边 168（留 8px gap），
+   两者不重叠；底部购物条只有 68px 高，两者都在它上方，无需随购物条上移。 */
 .detail__contact {
   position: fixed;
-  right: 24px;
-  bottom: 96px;
+  right: 0;
+  bottom: 168px;
   z-index: 45;
+  box-sizing: border-box;
   display: inline-flex;
+  width: 80px;
+  /* 与【客服】同宽同款：单行文案（如 联系商家）渲染 62px（图标 24 + gap 4 +
+     文字 16 + 内边距 16 + 边框 2，与客服按钮 60px 只差 2px 的可视误差）；
+     EN 的 Contact seller 在 80px 宽内必然折两行 → 按内容变高（78）。
+     图标/字号/内边距/边框/圆角都与客服完全一致。 */
+  min-height: 60px;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 18px;
-  border: 1px solid var(--colour-accent);
-  border-radius: var(--radius-pill);
-  background: var(--colour-surface);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 16%);
-  color: var(--colour-accent);
+  justify-content: center;
+  height: auto;
+  gap: 4px;
+  padding: 8px 5px;
+  border: 1px solid rgb(0 0 0 / 5.9%);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: #fff;
+  box-shadow: none;
+  color: #1a1a1a;
   font: inherit;
-  font-size: 14px;
-  font-weight: var(--font-weight-semibold);
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: normal;
   cursor: pointer;
   transition: bottom 160ms ease;
 }
 
-.detail__contact:hover {
-  background: var(--colour-accent-soft);
+.detail__contact svg {
+  flex: none;
 }
 
-/* 需求 21：底部购物条出现时全局【客服】按钮上移到 84px，入口随之上移到
-   148px，两者仍纵向错开且都不压在购物条上。整段选择器一起放进 :global()，
-   否则 Vue scoped 会丢弃后代部分（只留 body 规则）。 */
-:global(body.pdp-buybar-visible .detail__contact) {
-  bottom: 148px;
+.detail__contact span {
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.detail__contact:hover {
+  background: #fff;
+  text-decoration: underline;
 }
 
 .detail__contact:focus-visible {
   outline: 2px solid var(--colour-focus-ring);
   outline-offset: 2px;
+}
+
+/* 小屏（≤40rem，例如 375 宽窗口）与【客服】同步收窄到 72 宽：
+   客服 bottom 84（顶边 144），入口底边 152 保持 8px gap。 */
+@media (max-width: 40rem) {
+  .detail__contact {
+    bottom: 152px;
+    width: 72px;
+  }
 }
 
 /* 入口显示期间隐藏 Crisp 启动器，避免与业务按钮在右下角重叠。 */
