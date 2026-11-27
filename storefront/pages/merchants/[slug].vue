@@ -115,6 +115,12 @@ useHead(() => ({
               <span v-if="Number(product.rating_average) > 0" class="shop-product-card__rating">
                 ★ {{ Number(product.rating_average).toFixed(1) }}
               </span>
+              <!-- 评分与已售之间的灰色竖线，与其他列表页同口径（2026-11-27）。 -->
+              <span
+                v-if="Number(product.rating_average) > 0 && product.sold_amount"
+                class="shop-product-card__divider"
+                aria-hidden="true"
+              ></span>
               <span v-if="product.sold_amount" class="shop-product-card__sold">
                 {{ t('product.soldCount', { n: product.sold_amount }) }}
               </span>
@@ -321,6 +327,13 @@ useHead(() => ({
   min-height: 18px;
   font-size: 12px;
   color: #1a1a1a;
+}
+
+.shop-product-card__divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 4px;
+  background: #d5d5d5;
 }
 
 .shop-product-card__sold {

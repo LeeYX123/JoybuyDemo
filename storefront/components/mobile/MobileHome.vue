@@ -319,6 +319,11 @@ const aboutBullets = computed(() => [
                 <span v-if="Number(item.rating_average) > 0" class="m-reco__rating">
                   ★ {{ Number(item.rating_average).toFixed(1) }}
                 </span>
+                <span
+                  v-if="Number(item.rating_average) > 0 && item.sold_amount"
+                  class="m-reco__divider"
+                  aria-hidden="true"
+                ></span>
                 <span v-if="item.sold_amount" class="m-reco__sold">
                   {{ t('product.soldCount', { n: item.sold_amount }) }}
                 </span>
@@ -774,6 +779,14 @@ const aboutBullets = computed(() => [
 .m-reco__rating {
   color: var(--colour-text, #1a1a1a);
   font-weight: 500;
+}
+
+/* 评分与已售之间的灰色竖线（与其他列表页同口径）。 */
+.m-reco__divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 4px;
+  background: var(--colour-border, #d5d5d5);
 }
 
 .m-reco__self-operated {
