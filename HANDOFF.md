@@ -33,6 +33,27 @@
   * 已 grep `admin-web/src`、`merchant-web/src`、`storefront/components` 的 `5000/最多200`：其余命中均为轮询间隔 5000ms（CrawlersView/SupportView/MessagesView、storefront 聊天轮询等）或无关业务，**无第二处「图文详情块」长度限制**；merchant-web 无同类编辑器。
 - **未做**：未 commit / 未 push；未改商家端（无该编辑器）。
 
+## 0d12. 备份/回滚台账独立成文（2026-11-27，✅ 完成，已 commit）
+
+- 用户要求把「回滚的路径和备份的东西」单独记录成文档。
+- **产出 docs/BACKUP_AND_ROLLBACK.md**（8 节）：三份数据分布图、生产 DB 备份清单（含 SHA256）、异地 Spaces 副本、DO 平台自动备份、整库/单表/业务级回滚命令、服务器配置备份（nginx 5 份 + .env 3 份）、代码回滚（关键 commit 与「JY 编号体系不可回退」告警）、本地 var/ 留档清单、媒体恢复、保留策略、演练记录。
+- **本次实际执行的加固（不只是写文档）**：
+  1. 把 `/tmp` 里的 3 份关键备份迁到 **`/srv/backups/`**（目录 700、文件 600）——`/tmp` 重启即清空，之前一直是个隐患；
+  2. 计算并记录 SHA256：`joybuy_predeploy_20261127.sql.gz` = `eb47982d…f558`（229,285,208 B）、`joybuy_dump_20261126.sql.gz` = `a901b053…0d1c`（183,262,892 B）；
+  3. **上传异地副本到 Spaces**：`s3://joybuy-media/backups/db/…`（同区上传，秒级）；已实测**匿名访问备份对象 403**（桶策略只开放 `media/*`），`media/` 对照仍 200 —— 备份不会泄露；
+  4. 重装服务器 AWS CLI v2.42.4（此前装的被清掉了，这次装完立刻用于上传）。
+- README「数据与秘密」加了指向该文档的链接。
+
+## 0d11. 产线部署 7bd0ecd + a285a4b（2026-11-27 深夜，✅ 完成并验证，未 commit HANDOFF）
+
+- **部署范围**：服务器 `/srv/joybuy` 从 `9abd1cf` → **`a285a4b`**（含 `7bd0ecd` 全站 JY 编号体系 + `a285a4b` 开店审核入口状态/联系商家迁 PDP）。pull 前 git 干净（无遗留补丁）。
+- **迁移前备份**：`mysqldump --single-transaction --routines --triggers` → 服务器 `/tmp/joybuy_predeploy_20261127.sql.gz`（**219MB**）。回滚方式：FK checks off 后整库重灌该 dump。
+- **应用 10 个迁移（全部 OK）**：accounts_buyers 0009（买家 JYU）/0010（payment_enabled）；catalog 0022（SPU public_id 恢复 UUID）；merchant_ops 0008（售后 JYA）；merchants 0011（商家 JYM）；offers 0007/0008（货币符号修正）；orders 0006（订单 JYO）/0007（payment/refund/shipment 新模型）/0008（回填）。
+- **前端重建（全部 exit 0）**：storefront（`pnpm --filter @joybuy/storefront build`，.output 4.19MB）、admin-web（`vite build --base=/admin18vm6u4b83sf/`）、merchant-web（`vite build`，含 dist/mobile.html）。
+- **服务**：`systemctl restart joybuy-api joybuy-storefront` → active；nginx active。
+- **验证矩阵（真实 curl + Playwright）**：www / m.joyfumi.com / merchant.joyfumi.com / `/admin18vm6u4b83sf/` / `/api/v1/health` / IP 直访 **全 200**；`/images/weekly/card-winter-wellness.webp` 200（图片资源已随 git 入库）；storefront 路由 `/c/home-living`、`/s?k=milk`、`/active/7Uw83…`、`/store/100000744`、`/marketing/21210005` 全 200；PDP `/p/1de04615-…` 200；admin 登录（lshm2026admin）落地 `/merchants`，**console error 0**；**ID 新格式生效实测**：商家 `JYMGQMWOWYVK3`、订单 `JYO20261127HGSDV6`、买家 `JYUGCE6SK6X8C`；merchants/orders/buyers 三个列表接口全 200。
+- **注意**：prod 的 public_id 已被迁移重写为 JY 体系（旧 ID 链接/书签失效属预期）；买家 Google 登录走 buyer_identity 的 FK（未受影响）。
+
 ## 0d10. 代码提交（2026-11-27，✅ 两个提交已 push origin/main）
 
 - **9abd1cf** 管理端会话改用专用 cookie（修复审核商家后管理员被商家账号遮蔽，详见 0d9）。
