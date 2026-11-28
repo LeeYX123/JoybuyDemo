@@ -104,6 +104,8 @@ def _filtered_orders(request):
         # 直接按字符串（大小写不敏感）精确匹配，不再 uuid.UUID() 解析。
         condition |= Q(public_id__iexact=query)
         condition |= Q(order__public_id__iexact=query)
+        # 2026-11-28 可搜索下拉框：商家编号 JYM 整号/部分号也能搜。
+        condition |= Q(merchant__public_id__icontains=query)
         queryset = queryset.filter(condition).distinct()
     start = (request.query_params.get("start") or "").strip()
     end = (request.query_params.get("end") or "").strip()

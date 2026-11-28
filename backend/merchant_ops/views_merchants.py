@@ -166,7 +166,8 @@ def _filtered_queryset(request):
     if query:
         condition = Q(display_name__icontains=query) | Q(slug__icontains=query)
         # 2026-11-27 全站编号改造：商家编号 JYM+10 位字符串。
-        condition |= Q(public_id__iexact=query)
+        # 2026-11-28 可搜索下拉框：编号改为 icontains，完整号/部分号都能命中。
+        condition |= Q(public_id__icontains=query)
         queryset = queryset.filter(condition)
     return queryset.order_by("-created_at", "-pk")
 

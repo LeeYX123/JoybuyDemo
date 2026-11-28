@@ -281,6 +281,8 @@ class AdminProductPoolView(OpsAPIView):
                 condition |= Q(public_id=uuid.UUID(query))
             except ValueError:
                 pass
+            # 2026-11-28 可搜索下拉框：支持按部分 UUID 前缀搜商品（完整 UUID 走上面的精确分支）。
+            condition |= Q(public_id__icontains=query)
             queryset = queryset.filter(condition)
         category = (request.query_params.get("category") or "").strip()
         if category:
@@ -1150,7 +1152,12 @@ class AdminMerchantOptionsView(OpsAPIView):
         query = (request.query_params.get("q") or "").strip()
         queryset = Merchant.objects.exclude(onboarding_status=Merchant.OnboardingStatus.DRAFT)
         if query:
-            queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
+            # 2026-11-28 可搜索下拉框：店铺编号 JYM 整号/部分号都能搜。
+            queryset = queryset.filter(
+                Q(display_name__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(public_id__icontains=query)
+            )
         return Response(
             {
                 "items": [

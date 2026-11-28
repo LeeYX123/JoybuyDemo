@@ -102,8 +102,11 @@ class AdminAfterSalesView(OpsAPIView):
             queryset = queryset.filter(kind=kind)
         query = (request.query_params.get("q") or "").strip()
         if query:
+            # 2026-11-28 可搜索下拉框：商家编号 JYM 整号/部分号也能搜。
             queryset = queryset.filter(
-                Q(merchant__display_name__icontains=query) | Q(issue__icontains=query)
+                Q(merchant__display_name__icontains=query)
+                | Q(merchant__public_id__icontains=query)
+                | Q(issue__icontains=query)
             )
         rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request)
         return Response({"items": [_after_sale_payload(row) for row in rows], **meta})

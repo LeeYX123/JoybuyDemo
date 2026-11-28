@@ -126,7 +126,8 @@ class AdminBuyersView(OpsAPIView):
                 | Q(display_name__icontains=query)
             )
             # 2026-11-27 全站编号改造：用户编号 JYU+10 位字符串。
-            condition |= Q(public_id__iexact=query)
+            # 2026-11-28 可搜索下拉框：编号改为 icontains，完整号/部分号都能命中。
+            condition |= Q(public_id__icontains=query)
             queryset = queryset.filter(condition)
         rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request)
         return Response({"items": [_buyer_payload(row) for row in rows], **meta})

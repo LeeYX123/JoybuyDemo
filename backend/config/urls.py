@@ -92,6 +92,11 @@ urlpatterns = [
         name="admin-override-diff",
     ),
     path(
+        "api/v1/admin/offers",
+        admin_views.AdminOfferSearchView.as_view(),
+        name="admin-offer-search",
+    ),
+    path(
         "api/v1/admin/offers/<uuid:offer_public_id>/inventory",
         admin_views.AdminInventoryAdjustView.as_view(),
         name="admin-inventory-adjust",

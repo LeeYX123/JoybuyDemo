@@ -139,8 +139,10 @@ class AdminWithdrawalsView(OpsAPIView):
             queryset = queryset.filter(state=state)
         query = (request.query_params.get("q") or "").strip()
         if query:
+            # 2026-11-28 可搜索下拉框：商家编号 JYM 整号/部分号也能搜。
             queryset = queryset.filter(
                 Q(merchant__display_name__icontains=query)
+                | Q(merchant__public_id__icontains=query)
                 | Q(bank_holder__icontains=query)
                 | Q(bank_account__icontains=query)
             )
@@ -330,7 +332,12 @@ class AdminMerchantPickerView(OpsAPIView):
         query = (request.query_params.get("q") or "").strip()
         queryset = Merchant.objects.exclude(onboarding_status=Merchant.OnboardingStatus.DRAFT)
         if query:
-            queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
+            # 2026-11-28 可搜索下拉框：店铺编号 JYM 整号/部分号都能搜。
+            queryset = queryset.filter(
+                Q(display_name__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(public_id__icontains=query)
+            )
         rows = queryset.order_by("-created_at")[:20]
         return Response(
             {
@@ -378,7 +385,12 @@ class AdminDepositsView(OpsAPIView):
         queryset = Merchant.objects.filter(deposit_enabled=True)
         query = (request.query_params.get("q") or "").strip()
         if query:
-            queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
+            # 2026-11-28 可搜索下拉框：占位提示「店铺 ID」此前实际不生效，补上编号搜索。
+            queryset = queryset.filter(
+                Q(display_name__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(public_id__icontains=query)
+            )
         rows, meta = paginate(queryset.order_by("-created_at"), request)
         return Response({"items": [_deposit_payload(row) for row in rows], **meta})
 

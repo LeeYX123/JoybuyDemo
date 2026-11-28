@@ -20,7 +20,6 @@ from merchant_ops.api_utils import OpsAPIView, iso, money_str, paginate
 from orders.auto_order_services import (
     AutoOrderError,
     cancel_auto_order_task,
-    check_account_balance,
     create_auto_order_task,
     execute_due_auto_orders,
 )
@@ -78,10 +77,13 @@ class AdminAutoOrdersView(OpsAPIView):
             queryset = queryset.filter(status=status)
         query = (request.query_params.get("q") or "").strip()
         if query:
+            # 2026-11-28 可搜索下拉框：买家号（JYU）/商家号（JYM）整号或部分号也能搜。
             queryset = queryset.filter(
                 Q(product_title__icontains=query)
                 | Q(account__email__icontains=query)
+                | Q(account__public_id__icontains=query)
                 | Q(merchant__display_name__icontains=query)
+                | Q(merchant__public_id__icontains=query)
             )
         rows, meta = paginate(queryset, request)
         return Response({"items": [_task_payload(row) for row in rows], **meta})
@@ -146,15 +148,8 @@ class AdminAutoOrdersView(OpsAPIView):
             raise StaffApiError(
                 business_code="MERCHANT_NOT_FOUND", message="商家不存在。", status_code=404
             )
-        # 迭代02 反馈：创建时余额不足直接拒绝并提醒（触发时还会再校验一次）。
-        # 注意在 create_auto_order_task 之前校验，避免拒绝后残留任务。
-        balance_warning = check_account_balance(account, offer, quantity)
-        if balance_warning:
-            raise StaffApiError(
-                business_code="BALANCE_INSUFFICIENT",
-                message=balance_warning,
-                status_code=400,
-            )
+        # 2026-11-28 用户拍板「不扣除余额」：一键下单不再校验/扣减买家余额
+        # （与 place_order 的余额口径一致——BALANCE 仅记录支付方式，另行结算）。
         try:
             task = create_auto_order_task(
                 account=account,
@@ -183,7 +178,6 @@ class AdminAutoOrdersView(OpsAPIView):
                 "offer": str(offer.public_id),
                 "quantity": quantity,
                 "trigger_at": iso(task.trigger_at),
-                "balance_warning": balance_warning,
             },
         )
         return Response({"task": _task_payload(task)}, status=201)
@@ -225,14 +219,19 @@ class AdminAutoOrderActionsView(OpsAPIView):
 
 
 class AdminAutoOrderOptionsView(OpsAPIView):
-    """向导第 3/4 步数据源：某商家的可售商品 + 规格（已下架商品不展示）。"""
+    """向导第 3/4 步数据源：某商家的可售商品 + 规格（已下架商品不展示）。
+
+    2026-11-28 改版：向导【选商品】恢复「顶部搜索 + 下方商品卡片区」，
+    卡片区按 SPU 服务端分页（page/page_size + has_next），不再 30 条截断；
+    搜索词（标题 / SPU UUID 整号或部分号）在 SQL 侧过滤，与卡片列表共用。
+    """
 
     permission_classes = [StaffRbacPermission]
     required_permissions = ["orders.manage"]
     view_permissions = ["orders.view"]
 
     def get(self, request):
-        from catalog.models import Spu
+        from catalog.models import Spu, SpuTranslation
         from merchants.models import Merchant
         from offers.models import Offer
 
@@ -245,43 +244,61 @@ class AdminAutoOrderOptionsView(OpsAPIView):
                 business_code="MERCHANT_NOT_FOUND", message="商家不存在。", status_code=404
             )
         query = (request.query_params.get("q") or "").strip()
-        offers = (
-            Offer.objects.filter(
-                merchant=merchant,
-                status=Offer.Status.ACTIVE,
-                sku__spu__status=Spu.Status.ACTIVE,
-                source_availability__in=[Offer.SourceAvailability.IN_STOCK, Offer.SourceAvailability.UNKNOWN],
-            )
-            .select_related("sku__spu", "currency")
-            .prefetch_related("sku__spu__translations")
+        # 该商家在售（ACTIVE offer + 可售 SPU + 有货/未知可售性）。
+        listed_offers = Offer.objects.filter(
+            merchant=merchant,
+            status=Offer.Status.ACTIVE,
+            sku__spu__status=Spu.Status.ACTIVE,
+            source_availability__in=[
+                Offer.SourceAvailability.IN_STOCK,
+                Offer.SourceAvailability.UNKNOWN,
+            ],
         )
+        spu_ids = listed_offers.values_list("sku__spu_id", flat=True).distinct()
+        queryset = Spu.objects.filter(pk__in=spu_ids)
+        if query:
+            # 标题走子查询避免 JOIN 重复行（与 /admin/products 同一做法）；
+            # 商品 SPU UUID 整号/部分号也能搜。
+            condition = Q(
+                pk__in=SpuTranslation.objects.filter(title__icontains=query).values("spu_id")
+            )
+            condition |= Q(public_id__icontains=query)
+            queryset = queryset.filter(condition)
+        rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request)
+
+        page_spu_ids = [row.pk for row in rows]
+        page_offers = (
+            listed_offers.filter(sku__spu_id__in=page_spu_ids)
+            .select_related("sku", "currency")
+            .order_by("current_price", "pk")
+        )
+        offers_by_spu = {}
+        for offer in page_offers:
+            offers_by_spu.setdefault(offer.sku.spu_id, []).append(offer)
+
         items = []
-        seen = {}
-        for offer in offers:
-            spu = offer.sku.spu
-            if query and query.lower() not in _spu_title(spu).lower():
-                continue
-            entry = seen.setdefault(
-                spu.pk,
+        for spu in rows:
+            spu_offers = offers_by_spu.get(spu.pk, [])
+            first = spu_offers[0] if spu_offers else None
+            items.append(
                 {
                     "id": str(spu.public_id),
                     "title": _spu_title(spu),
                     "image": (spu.image_urls or [""])[0],
-                    "price": money_str(offer.current_price),
-                    "currency": offer.currency.code,
-                    "offers": [],
-                },
-            )
-            entry["offers"].append(
-                {
-                    "offer_id": str(offer.public_id),
-                    "specification": offer.sku.specification or {},
-                    "price": money_str(offer.current_price),
-                    "inventory": offer.local_inventory,
+                    "price": money_str(first.current_price) if first else None,
+                    "currency": first.currency.code if first else "",
+                    "offers": [
+                        {
+                            "offer_id": str(offer.public_id),
+                            "specification": offer.sku.specification or {},
+                            "price": money_str(offer.current_price),
+                            "inventory": offer.local_inventory,
+                        }
+                        for offer in spu_offers
+                    ],
                 }
             )
-        items = list(seen.values())[:30]
-        return Response({"items": items})
+        return Response({"items": items, **meta})
 
 
 def _spu_title(spu) -> str:

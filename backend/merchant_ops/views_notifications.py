@@ -293,7 +293,12 @@ class AdminNotificationMerchantsView(OpsAPIView):
             onboarding_status=Merchant.OnboardingStatus.DRAFT
         )
         if query:
-            queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
+            # 2026-11-28 可搜索下拉框：店铺编号 JYM 整号/部分号都能搜。
+            queryset = queryset.filter(
+                Q(display_name__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(public_id__icontains=query)
+            )
         return Response(
             {
                 "items": [
@@ -329,7 +334,9 @@ class AdminNotificationOrdersView(OpsAPIView):
         )
         queryset = queryset.exclude(review_notifications__isnull=False)
         if query:
-            queryset = queryset.filter(public_id=str(query))
+            # 2026-11-28 可搜索下拉框：订单 UUID 改为 icontains，支持按部分号搜索
+            # （列表展示的订单号本身就是 UUID 前 8 位）。
+            queryset = queryset.filter(public_id__icontains=str(query))
         rows = []
         for order in queryset.order_by("-settled_at", "-pk")[:30]:
             first_item = order.items.first()

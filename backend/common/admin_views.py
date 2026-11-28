@@ -14,12 +14,13 @@ from accounts_staff.api_exceptions import StaffApiError
 from accounts_staff.permissions import StaffRbacPermission
 from accounts_staff.views import StaffCsrfAPIView
 from audit.services import record_audit
-from catalog.models import ProductSearchDocument, Spu
+from catalog.models import ProductSearchDocument, Spu, SpuTranslation
 from catalog.override_services import (
     clear_local_override,
     propose_local_override,
     review_local_override,
 )
+from merchant_ops.api_utils import money_str, paginate
 from offers.services import adjust_offer_inventory
 
 
@@ -193,6 +194,61 @@ class AdminOverrideDiffView(StaffCsrfAPIView):
             after_state={"status": override.status, "version": override.version},
         )
         return Response({"status": override.status, "version": override.version})
+
+
+class AdminOfferSearchView(StaffCsrfAPIView):
+    """管理端「销售报价」可搜索下拉框数据源（2026-11-28）。
+
+    供商品目录页的库存调整表单选择 Offer：按报价 UUID（整号/部分号）、
+    商品标题、商家名称/编号搜索。只读，返回结构与 /admin/products 一致
+    的分页元数据（page/page_size/total/has_next），供下拉「加载更多」。
+    """
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["offers.manage"]
+    view_permissions = ["offers.manage"]
+
+    def get(self, request):
+        from offers.models import Offer
+
+        queryset = Offer.objects.select_related(
+            "merchant", "sku__spu", "currency"
+        ).prefetch_related("sku__spu__translations")
+        query = (request.query_params.get("q") or "").strip()
+        if query:
+            # 标题走子查询避免 JOIN 产生重复行（与 /admin/products 同一做法）。
+            condition = Q(
+                sku__spu__pk__in=SpuTranslation.objects.filter(title__icontains=query).values(
+                    "spu_id"
+                )
+            )
+            condition |= Q(public_id__icontains=query)
+            condition |= Q(merchant__display_name__icontains=query)
+            condition |= Q(merchant__public_id__icontains=query)
+            queryset = queryset.filter(condition)
+        rows, meta = paginate(queryset.order_by("-updated_at", "-pk"), request, default_size=20)
+        items = []
+        for offer in rows:
+            spu = offer.sku.spu
+            title = next(
+                (t.title for t in spu.translations.all() if t.title), f"SPU {str(spu.public_id)[:8]}"
+            )
+            items.append(
+                {
+                    "id": str(offer.public_id),
+                    "product": {"id": str(spu.public_id), "name": title},
+                    "specification": offer.sku.specification or {},
+                    "merchant": {
+                        "id": str(offer.merchant.public_id),
+                        "name": offer.merchant.display_name,
+                    },
+                    "price": money_str(offer.current_price),
+                    "currency": offer.currency.code,
+                    "inventory": offer.local_inventory,
+                    "status": offer.status,
+                }
+            )
+        return Response({"items": items, **meta})
 
 
 class AdminInventoryAdjustView(StaffCsrfAPIView):

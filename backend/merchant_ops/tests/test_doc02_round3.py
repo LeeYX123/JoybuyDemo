@@ -107,13 +107,12 @@ class AutoOrderBase(TestCase):
 
 
 class AutoOrderCreateTests(AutoOrderBase):
-    def test_create_task_rejected_when_balance_insufficient(self):
-        # 迭代02 反馈：创建时余额不足直接拒绝并提醒，不生成任务。
+    def test_create_task_allowed_when_balance_insufficient(self):
+        # 2026-11-28 用户拍板「不扣除余额」：余额不足也能创建任务
+        # （与 place_order 的 BALANCE 口径一致——只记录支付方式）。
         response = self._create(quantity=1, balance="5.00")
-        self.assertEqual(response.status_code, 400, response.content)
-        self.assertEqual(response.json()["error"]["code"], "BALANCE_INSUFFICIENT")
-        self.assertIn("余额不足", response.json()["error"]["message"])
-        self.assertFalse(AutoOrderTask.objects.exists())
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(AutoOrderTask.objects.exists())
 
     def test_create_rejects_non_whitelisted(self):
         BuyerAccount.objects.filter(pk=self.buyer.pk).update(purchase_whitelisted=False)
@@ -152,9 +151,53 @@ class AutoOrderCreateTests(AutoOrderBase):
         )
         self.assertEqual(response.json()["items"], [])
 
+    def test_options_support_server_side_pagination(self):
+        # 2026-11-28 向导【选商品】改版：卡片区服务端分页（不再 30 条截断）。
+        for index in range(4):
+            spu = Spu.objects.create(status=Spu.Status.ACTIVE)
+            SpuTranslation.objects.create(spu=spu, locale="zh-CN", title=f"分页商品 {index}")
+            sku = Sku.objects.create(
+                spu=spu, specification={"序号": str(index)}, specification_signature=f"pg{index}"
+            )
+            Offer.objects.create(
+                merchant=self.shop,
+                sku=sku,
+                market=self.market,
+                currency=self.currency,
+                current_price=Decimal("10.00"),
+                cost_price=Decimal("5.00"),
+                local_inventory=10,
+                status=Offer.Status.ACTIVE,
+                listed_at=timezone.now(),
+            )
+        base = f"/api/v1/admin/auto-orders/options?merchant_id={self.shop.public_id}&page_size=2"
+        first = self.client.get(f"{base}&page=1").json()
+        second = self.client.get(f"{base}&page=2").json()
+        self.assertEqual(first["total"], 5)
+        self.assertEqual(len(first["items"]), 2)
+        self.assertTrue(first["has_next"])
+        self.assertEqual(len(second["items"]), 2)
+        self.assertTrue(second["has_next"])
+        third = self.client.get(f"{base}&page=3").json()
+        self.assertEqual(len(third["items"]), 1)
+        self.assertFalse(third["has_next"])
+
+    def test_options_q_filters_by_title_and_partial_uuid(self):
+        # 搜索词与卡片列表共用同一数据源：标题与部分 UUID 都能命中。
+        by_title = self.client.get(
+            f"/api/v1/admin/auto-orders/options?merchant_id={self.shop.public_id}&q=定时商品"
+        ).json()
+        self.assertEqual(len(by_title["items"]), 1)
+        prefix = str(self.spu.public_id)[:8]
+        by_uuid = self.client.get(
+            f"/api/v1/admin/auto-orders/options?merchant_id={self.shop.public_id}&q={prefix}"
+        ).json()
+        self.assertEqual(len(by_uuid["items"]), 1)
+        self.assertEqual(by_uuid["items"][0]["id"], str(self.spu.public_id))
+
 
 class AutoOrderExecuteTests(AutoOrderBase):
-    def test_due_task_places_order_and_deducts_balance(self):
+    def test_due_task_places_order_without_deducting_balance(self):
         trigger = timezone.now() - timedelta(minutes=1)
         task = AutoOrderTask.objects.create(
             account=self.buyer,
@@ -173,8 +216,9 @@ class AutoOrderExecuteTests(AutoOrderBase):
         task.refresh_from_db()
         self.assertEqual(task.status, AutoOrderTask.Status.EXECUTED)
         self.assertIsNotNone(task.executed_order)
+        # 2026-11-28 用户拍板「不扣除余额」：执行后买家余额不变。
         self.buyer.refresh_from_db()
-        self.assertEqual(self.buyer.balance, Decimal("460.00"))
+        self.assertEqual(self.buyer.balance, Decimal("500.00"))
         # 商家端正常生成待处理子单
         self.assertTrue(
             MerchantOrder.objects.filter(order=task.executed_order, merchant=self.shop).exists()
@@ -197,7 +241,8 @@ class AutoOrderExecuteTests(AutoOrderBase):
         self.assertEqual(task.status, AutoOrderTask.Status.FAILED)
         self.assertIn("失效", task.failure_reason)
 
-    def test_task_fails_when_balance_insufficient(self):
+    def test_task_executes_when_balance_insufficient(self):
+        # 2026-11-28 用户拍板「不扣除余额」：余额不足不再让任务失败。
         trigger = timezone.now() - timedelta(minutes=1)
         task = AutoOrderTask.objects.create(
             account=self.buyer,
@@ -209,12 +254,13 @@ class AutoOrderExecuteTests(AutoOrderBase):
         BuyerAccount.objects.filter(pk=self.buyer.pk).update(balance=Decimal("1.00"))
         from orders.auto_order_services import execute_due_auto_orders
 
-        execute_due_auto_orders()
+        result = execute_due_auto_orders()
+        self.assertEqual(result["executed"], 1)
         task.refresh_from_db()
-        self.assertEqual(task.status, AutoOrderTask.Status.FAILED)
-        self.assertIn("余额不足", task.failure_reason)
-        # 没有生成订单
-        self.assertFalse(Order.objects.filter(auto_order_tasks=task).exists())
+        self.assertEqual(task.status, AutoOrderTask.Status.EXECUTED)
+        self.assertTrue(Order.objects.filter(auto_order_tasks=task).exists())
+        self.buyer.refresh_from_db()
+        self.assertEqual(self.buyer.balance, Decimal("1.00"))
 
     def test_task_fails_when_payment_disabled_at_trigger(self):
         trigger = timezone.now() - timedelta(minutes=1)

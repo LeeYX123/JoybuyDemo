@@ -1,8 +1,9 @@
 """一键下单任务的创建校验与到点执行（迭代02，doc02「一键下单」整节）。
 
 - 触发时间按**电脑（服务器）时间**判定，不做时区换算；
-- 下单前检查：白名单身份、规格（offer）是否仍有效、买家钱包余额是否足够；
-- 下单复用 ``place_order``（余额支付真扣），买家端/商家端正常生成订单与子单；
+- 下单前检查：白名单身份、规格（offer）是否仍有效；
+- 下单复用 ``place_order``（payment_method=BALANCE 仅记录方式；2026-11-28
+  用户拍板「不扣除余额」——余额不校验、不扣款，与直购/购物车链路同口径）；
 - 任一检查失败 → 任务置 FAILED 并记录原因（管理端可见"提醒"），不再自动重试。
 """
 
@@ -34,22 +35,6 @@ def validate_task_offer(offer) -> str:
         return "所选规格已无库存"
     if offer.source_availability == Offer.SourceAvailability.UNAVAILABLE:
         return "所选规格已不可售"
-    return ""
-
-
-def check_account_balance(account, offer, quantity: int) -> str:
-    """余额检查：余额 < 商品金额则提醒（触发时不足不下单）。"""
-
-    from checkout.checkout_views import compute_shipping
-
-    subtotal = (offer.current_price * quantity).quantize(Decimal("0.01"))
-    shipping_cost, _method = compute_shipping(subtotal, offer.currency.code)
-    total = subtotal + Decimal(str(shipping_cost))
-    if account.balance < total:
-        return (
-            f"买家钱包余额不足（需约 {total}，可用 {account.balance}），"
-            "请先充值或更换买家。"
-        )
     return ""
 
 
@@ -162,10 +147,6 @@ def _execute_one(task: AutoOrderTask) -> str:
         return "买家没有可用收货地址，无法自动下单。"
     quantity = task.quantity
     subtotal = (offer.current_price * quantity).quantize(Decimal("0.01"))
-    if account.balance < subtotal:
-        return (
-            f"买家钱包余额不足（需约 {subtotal}，可用 {account.balance}），已停止下单。"
-        )
 
     cart_snapshot = {
         "items": [{"offer_public_id": str(offer.public_id), "quantity": quantity}],

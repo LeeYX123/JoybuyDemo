@@ -41,7 +41,12 @@ class AdminGrowthView(OpsAPIView):
         )
         query = (request.query_params.get("q") or "").strip()
         if query:
-            queryset = queryset.filter(Q(display_name__icontains=query) | Q(slug__icontains=query))
+            # 2026-11-28 可搜索下拉框：占位提示「店铺 ID」此前实际不生效，补上编号搜索。
+            queryset = queryset.filter(
+                Q(display_name__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(public_id__icontains=query)
+            )
         rows, meta = paginate(
             # 按入驻时间固定排序：调整关注/曝光后列表顺序不变（用户要求）。
             queryset.order_by("-created_at", "-pk"),
