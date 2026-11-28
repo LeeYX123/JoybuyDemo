@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useRoute } from '#imports'
+
 
 import { useLocale } from '../composables/useLocale'
 
@@ -11,11 +11,11 @@ import { useLocale } from '../composables/useLocale'
 // We support 支付行；© 行（Personalised settings / Manage cookies）；法规段落。
 // 颜色/尺寸取自真站 CSS 原文（--sys-background-MainGray #F5F6FA 等）。
 // /checkout 仍走需求 8-8 的极简变体。
-const route = useRoute()
 // 需求 13.6：顶行（含语言切换按钮）注释不渲染后 toggleLocale 一并停用，避免孤儿引用。
 const { t } = useLocale()
 
-const simplified = computed(() => route.path === '/checkout')
+// 2026-11-28（用户拍板）：页脚全站统一——/checkout 不再走精简分支，
+// 与其他页面一样展示【了解我们】【我们的政策】【帮助中心】等完整栏目。
 
 // 需求 16.5（批次 S）：三栏内容按本轮口径调整 ——
 // 了解 Joybuy 去掉 JoyPlus（页面保留，页脚不再链接）；我们的政策补销售条款与无障碍
@@ -74,25 +74,8 @@ function subscribe() {
 </script>
 
 <template>
-  <footer class="site-footer" :class="{ 'site-footer--simplified': simplified }">
-    <div v-if="simplified" class="site-footer__inner site-footer__slogan-row">
-      <p class="site-footer__slogan"><strong>Joybuy</strong> | {{ t('footer.tagline') }}</p>
-      <!-- 2026-11-28：底部【支付方式】改为官方品牌 icon（8 银行卡品牌 + GPay/PayPal/Klarna）。 -->
-      <p class="site-footer__support site-footer__support--icons">
-        {{ t('footer.weSupport') }}
-        <img
-          v-for="brand in paymentBrands"
-          :key="brand.name"
-          class="footer-support__icon"
-          :src="brand.icon"
-          :alt="brand.name"
-          width="38"
-          height="24"
-          loading="lazy"
-        />
-      </p>
-    </div>
-    <div v-else class="site-footer__inner">
+  <footer class="site-footer">
+    <div class="site-footer__inner">
       <!-- 需求 13.6（2026-11-20）：顶行（logo+口号 / 语言·货币·国家）注释不渲染，
            代码保留；语言切换交互（toggleLocale）随之停用。 -->
       <div v-if="false" class="footer-top">
@@ -260,28 +243,6 @@ function subscribe() {
   color: #1a1a1a; /* 真站 --sys-Text-Primary */
 }
 
-/* Simplified checkout footer: slogan + payment brands only (requirement 8-8). */
-.site-footer--simplified .site-footer__inner {
-  padding-block: var(--space-6);
-}
-
-.site-footer__slogan-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.site-footer__slogan {
-  margin: 0;
-  font-size: var(--font-size-lg);
-}
-
-.site-footer__slogan strong {
-  color: var(--colour-accent);
-}
-
 .site-footer__support {
   display: flex;
   align-items: center;
@@ -292,19 +253,6 @@ function subscribe() {
 }
 
 /* icon 变体：11 个官方 logo 换行排布，白色小卡底衬托官方 logo。 */
-.site-footer__support--icons {
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.site-footer__support--icons .footer-support__icon {
-  height: 22px;
-  padding: 3px 6px;
-  border: 1px solid #e6e8ec;
-  border-radius: 4px;
-  background: #fff;
-}
-
 .site-footer__brand {
   padding: 2px var(--space-2);
   border: 1px solid var(--colour-border);
