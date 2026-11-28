@@ -219,13 +219,9 @@ function subscribe() {
         />
       </div>
 
-      <!-- © 行 -->
+      <!-- © 行（2026-11-28 用户拍板：个性推荐/Cookie 管理两个链接移除） -->
       <div class="footer-bottom">
         <p class="footer-bottom__copyright">{{ t('footer.copyright') }}</p>
-        <span class="footer-bottom__links">
-          <a href="#" @click.prevent>{{ t('footer.personalised') }}</a>
-          <a href="#" @click.prevent>{{ t('footer.manageCookies') }}</a>
-        </span>
       </div>
 
       <!-- 法规段落（真站仅 EN 页脚展示）；需求 13.6：最底部【内部研究演示项目…】
