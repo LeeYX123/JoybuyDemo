@@ -8236,3 +8236,71 @@ HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径�
 **验证（测试商家 800，真实数据）**：初始 2 条未读（1 条 NORMAL + 1 条 REVIEW）→ 顶栏红标 `2`；点开普通通知 → `1`；再点开商品好评 → 红标消失（DOM 里无 `.topnotice-badge`）；console/pageerror 0；`npm run build` 通过，eslint 只剩既有 `API_BASE_URL` unused。
 **复位演示数据**：`MerchantNotification.objects.filter(merchant_id=800).update(read_at=None)`（通知）+ `SupportConversation...update(merchant_last_read_at=None)`（会话未读）。
 **未动**：手机壳（`base-4.js` 铃铛、`merchant-mobile.js` 导航）仍是原样，无红标需求前不改。
+
+
+## 商家端语言跟随购物端 + 商品数据本地化（2026-11-29，✅ 完成，commit 7237b34）
+
+**任务**：购物端中文 → 商家端中文、英文 → 商家端英文；商品名称等数据跟随同一语言。购物端语言单向同步到商家端，商家端手动切换不回写购物端。
+
+**语言链路（谁传谁读）**
+1. **购物端（写）**：`storefront/composables/useMerchantEntry.js::openMerchantConsole` 拿到 `POST /account/merchant-console-session` 的 `url` 后，用 `new URL(response.url, location.origin)` + `searchParams.set('lang', localeCode.value)` 追加参数再 `location.assign`（保留后端已有 query/hash）。后端 `_merchant_web_url` 保持原样、不接收 lang——**理由**：跳转地址本来就是前端拿到的普通 URL，在最后一跳拼接最简单，且后端不用感知前端语言，prod `MERCHANT_WEB_URL` 与 dev 按 Origin 推导两条路径都不需要改。
+2. **商家端（读）**：`folio/i18n.js::applyLocaleFromUrl()`（boot-desktop.js / boot.js 在模块顶层调用）读 `?lang=` → `normalizeLocale`（en→en-GB、zh→zh-CN、de→de-DE…）→ `uiLangForLocale`（zh*→zh，其余一律 en，用户口径）→ `setLang`（写 `joybuy.merchant.language='English'|'简体中文'`、`joybuy.merchant.locale=` 原始 locale）→ `stripLocaleParam()` 用 `history.replaceState` 清掉 `lang`（其它 query/hash 保留）。
+3. **无 lang 参数**：不改 localStorage、不改 UI；壳读既有值，都没有时默认中文（与历史一致，未改成英文）。
+4. **商品数据 locale**：`joybuy.merchant.locale` 由 `merchant-web/src/lib/api.js::getApiLocale()` 在每个请求上带 `Accept-Language`（跨端口同 host cookie 不适用，但同源 localStorage 天然共享）。手动切语言时 `setLang` 把 locale 收敛为 en-GB/zh-CN 并触发 `reloadData`；handoff 带入的第三方 locale（de-DE 等）保持原值，直到用户手动切。
+
+**i18n 接线（不重写静态稿）**
+- `boot-desktop.js` / `boot.js`：`installDebugI18n()`（挂 `window.__MERCHANT_I18N__`）→ `applyLocaleFromUrl()` → `stripLocaleParam()` → `startAutoLocalize()`；`bootEngine` 之后再 `localize()` 一次消除首屏中文闪烁。MutationObserver 的 30ms 防抖覆盖后续 re-render。
+- 桌面 `merchant-desktop.js::setLanguage` / 手机 `merchant-mobile.js` 语言 sheet：改为调用 `__MERCHANT_I18N__.setLang(option)`（真正中英切换）+ `__JOYPLAY_ACTIONS__.reloadData()`（重拉数据重渲染，列表回第 1 页，同整页刷新口径），toast 改成「已切换为 English / 已切换为简体中文」。
+- `folio/api.js` 新增 `reloadData` action：`fetchAll → 清 convLoaded/reviewDetailLoaded → populateGlobals → rebuildProducts → render`。
+- `i18n.js` 修正两处「整块跳过」造成的 UI 漏译：`.merchant-order .order-top > span` → `> span:first-child`（手机订单状态 tag 之前被连坐）；新增 `NO_TRANSLATE_EXCEPTIONS`：`.system-notice button/.link`（通知卡里的「查看详情」）、`.conversation.pinned .conversation-text small`（客服会话副标题）。商品名/店名/买家昵称/消息正文仍是 NO_TRANSLATE（数据侧已本地化，DOM 不二次翻译）。
+
+**后端商品名本地化（`backend/merchant_ops/localization.py`，新文件）**
+- `request_locale(request)`：`?lang=` 优先，其次 `Accept-Language`（取第一项、去 q），默认 `zh-CN`（保持商家端历史中文口径，无头请求/测试不变）。
+- `pick_title(translations, locale)` 用于已 prefetch 的列表（零额外查询）；`title_map_by_spu_id` / `title_map_by_public_id` 用于订单行/通知快照（一次 IN 查询 + 缺失时的「任何译文」兜底，最多 2 条查询）。
+- 回退链：zh → (zh-CN, zh, en-GB, en)；en → (en-GB, en, zh-CN, zh)；其它 → (该 locale, en-GB, en, zh-CN, zh)；全部缺失才任意译文。
+- 覆盖面：`/merchant/catalog/products`（列表+详情，复用既有 prefetch）、`/merchant/listings`、`/merchant/orders`（列表与详情、发货返回体）、`/merchant/after-sales/<id>` 商品行、`/merchant/notifications` 与详情的好评快照 `name`（按 snapshot.id 覆盖）、`/merchant/conversations` 商品卡（`name`，并把 `spu__translations` 改 prefetch）。`/admin/auto-orders` 未改（管理端不在本任务范围，其下单产生的订单在商家端走同一条本地化链路）。
+
+**英文覆盖率（实测 10 个桌面页 + 10 个手机页，1440×900 / 390×844）**
+- 本轮补进 `locale-en.js` 的未命中项：壳头（`账号`、`切换回商城`、`寰球优选 · 商家工作空间`、`商家中心　/`、`◉ 全球站 · 中国商家`、`商家服务中心　↗`）、日期（`◷ 2026年11月29日 星期日` 带前缀）、图表（`11/22 · 0 笔/次`）、`每页 8 条`、状态（`● 接单中/已封店/店铺受限/待补缴`）、店铺页（`店铺 ID：…`、`不可修改`、空态长句）、钱包（`店铺总收益`、`暂无提现申请记录`）、保证金（`待补缴/记录时间/明细类型/单号/余额/首次缴纳/补缴提醒示例…`）、订单表头（`订单状态`）、订单详情（`商品数量 × 1`、`收货人`、`未提供`、`订单收益`）、通知详情（`商品好评详情/回复记录/平台回复/继续回复`）、活动（`好商品，值得被世界看见`、`精选活动资源 · 持续提升曝光 · 助力全球经营`、`我的活动参与记录`、`暂无参与记录`、参与 toast）、`商品ID · 品类` 组合、`未分类`、`耳机`、`提交售后`、`中文→EN`（语言按钮标签）。同时删掉一条 HEAD 就存在的重复键 `提现申请已提交后台审核`。
+- **仍为中文的残留（全部是数据，不是 UI 文案，符合预期）**：店名 `测试商家`/头像首字 `测`；买家昵称 `演示买家`/`演`；demo 数据 `[demo] 平台结算周期调整通知`、`[demo] 首次缴纳保证金`、`[demo] 买家反馈外包装破损，申请退货。`、售后进度 `已联系买家核实情况`、活动 `黑五限时`/`[demo] 黑五限时促销`/`秋季家居`/`[demo] 秋季家居焕新`。这些来自后台录入或演示种子，后端无翻译表；要英文化需另建活动/通知翻译数据，不在本任务范围。
+- 非中英 locale（de/fr/nl/ja/ko）：UI 按用户口径一律英文；商品名按原始 locale 请求（有译文用译文，缺失回退 en-GB），未逐语言细验。
+
+**性能前后（同一 dev 库，3 次中位数；脚本 `backend/var/l10n_20261129/measure_lists.py`，结果 `before.json`/`after.json`）**
+
+| 接口 | 前 SQL/墙钟 | 后 SQL/墙钟 |
+|---|---|---|
+| catalog 默认 | 8 / 29.75ms | 8 / 22.83ms |
+| catalog q=coffee | 8 / 102.40ms | 8 / 90.21ms |
+| listings 默认 | 7 / 26.05ms | 7 / 19.83ms |
+| orders 列表 | 12 / 18.70ms | 13 / 23.35ms |
+| orders 详情 | 8 / 18.37ms | 9 / 18.25ms |
+| notifications | 10 / 19.90ms | 11 / 15.54ms |
+| conversations | 13 / 22.18ms | 13 / 22.42ms |
+| after-sales 列表 | 8 / 14.85ms | 8 / 15.76ms |
+
+结论：**无 N+1**。只有 orders/notifications 各 +1 条批量 IN 查询（确定性），catalog/listings 复用既有 prefetch 0 增量，conversations 用 prefetch 替掉逐行查译文；墙钟差异在噪声范围（±20%），无回退。
+
+**验证矩阵（按验证纪律仅做针对性验证）**
+- 后端 `DJANGO_DATABASE_ENGINE=sqlite manage.py test merchant_ops.tests.test_merchant_localization` → **7/7 OK**（新增：商品池/本店商品 Accept-Language、`?lang=` 优先、订单列表+详情、缺译文回退、售后详情、好评通知快照、会话商品卡）；`test_merchant_modules` → **39/39 OK**；`ruff check` 全过；`manage.py check` 0 issue。
+- 前端：`merchant-web npm run build` exit 0；`storefront npm run build`（nuxt）exit 0；`storefront vitest components/AppHeader.test.js` **21/21**（断言改为 `http://localhost:5174/?lang=en-GB`）；eslint 改动文件 0 error。
+- 浏览器端到端（Playwright/IAB，真实接口）：
+  - 购物端 zh-CN 登录 → 点【切换商家端】→ 落 `/dashboard`，`html lang=zh-CN`、localStorage `简体中文/zh-CN`、URL 无 `lang`、商品名中文（`Anker Soundcore R60i 降噪功能耳塞 - 白色`、`三星 Galaxy Buds4 Pro 黑色款`，与 `SpuTranslation` zh-CN 完全一致）。
+  - 购物端 en-GB → 再切 → UI 全英文、商品名英文（`Anker Soundcore R60i Noise Cancelling Earbuds - White`、`Samsung Galaxy Buds4 Pro Black`，与 en-GB 一致）；抽查页面：订单列表/订单详情/好评通知详情/消息商品卡/商品上架中心（≥3 页、≥5 个商品名，含 Dyson/NOW Foods 两个只有 en-GB 的 SPU，中文态正确回退英文）。
+  - 手机 390×844：`mobile.html?lang=en-GB` → URL 清成 `/mobile.html`、UI/商品名英文、订单三态 tag `Completed/Shipped/To ship`（订单号保留）；再验证无参数直连 → 默认中文、不写 localStorage。
+  - 商家端手动 中→英→中 往返：UI 与商品名同步切换、`joybuy.merchant.language/locale` 同步更新、console 0 error。
+  - 10 个桌面页 SPA 逐页遍历 console error/pageerror **0**；提现状态文案（`转账成功/转账中/转账失败/已打回/提现申请已提交后台审核`）经 i18n 管线实测全英文；钱包 PIN 输入仍 `type=text + -webkit-text-security:disc`（i18n 不碰 input value/样式）。
+
+**踩坑（不得再踩）**
+1. `locale-en.js` 的键含全角标点/空格（如 `已切换为 English`、`好商品，值得被世界看见`）**必须加引号**，否则 build 直接语法错误。
+2. 组合文案里的全角空格是 U+3000（`电子产品　·　SKU 00001`）：正则必须写 `\s*`，写字面普通空格永远不命中。
+3. `.merchant-order .order-top > span` 会把手机订单状态 `tag` 一起跳过 → 必须 `:first-child`；`.system-notice` 整卡跳过会连「查看详情」按钮吞掉 → 用 `NO_TRANSLATE_EXCEPTIONS` 局部放行，不要为了按钮把整卡移出 NO_TRANSLATE（通知标题/正文是数据）。
+4. i18n 是 30ms 防抖的渲染后本地化：页面 `fetchAll` 慢时 1.1s 等待会扫到整页中文（假象），验证脚本等待 ≥2s。
+5. 本地 8000 是 `runserver --noreload`：改后端必须重启（本次已用同参数重启，日志 `var/django_8000.log`）。
+6. 共享 MySQL 测试库 `test_joybuy` 已被并行会话跑成不一致（`crawler_account already exists`），**不要删它**；本次后端测试改用 `DJANGO_DATABASE_ENGINE=sqlite`（内存库）跑，结论有效。
+7. `test_merchant_console_session` 有 9 个失败是**既有债务**（`_submit` 只传 shop_name，与现行 7 字段表单不符），不是本次引入，未修。
+8. 跨 host 不能共享 `joybuy-locale`（host-only cookie；Chromium 对 `Domain=.localhost` 无效），语言只能走 handoff query；商家端 staff cookie 是 HttpOnly，E2E 想换店只能重走购物端登录。
+9. `locator("selector", { hasText })` 在本 IAB 实现里不过滤（count 仍是全部）→ 用 `.filter({ hasText })`。
+
+**dev 数据临时变更（已全部还原）**：为走通 E2E，临时给买家 `123456789@joybuy.com` / `123456@joybuy.com` 设过已知密码、并把 `123456@joybuy.com` 的申请从 `REJECTED` 临时改成 `APPROVED + merchant 800`；结束后密码与申请状态（`REJECTED`/merchant=NULL/reject_reason）均已按备份还原，备份在 `backend/var/l10n_20261129/`（含密码哈希，**不要提交/外传**）。截图证据同目录：`desktop_en_dashboard.png`、`desktop_en_orders.png`、`desktop_en_catalog.png`、`mobile_en_orders.png`。
+
+**遗留**：①活动/通知/售后进度等后台录入中文未翻译（数据侧，需另建翻译表）；②手机文档入口仍靠 `mobile.html`/`m.` 主机，购物端 handoff 固定跳根路径（桌面文档），手机端只能直开 `mobile.html?lang=`；③非中英 locale 的商品名回退策略未逐语言验收。**未碰**：admin-web、`backend/catalog/models.py`、migrations 0023/0024/0025、`backend/cart`、`backend/orders/order_services.py`；未部署产线。
