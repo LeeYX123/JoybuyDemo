@@ -12,6 +12,7 @@
 """
 
 from django.db import transaction
+from django.db.models import Count
 from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
@@ -82,14 +83,21 @@ class AdminActivityPagesView(OpsAPIView):
 
     def get(self, request):
         kind = _resolve_kind(request.query_params.get("kind"), default=ActivityPage.Kind.ACTIVITY)
-        rows = ActivityPage.objects.filter(kind=kind).order_by("sort_order", "pk")
+        # 2026-11-28：列表计数改 SQL 聚合。原写法逐页 ``page.sections.count()`` +
+        # 逐分区 ``section.items.count()``，产线一次请求 235 条 SQL / 769ms。
+        rows = (
+            ActivityPage.objects.filter(kind=kind)
+            .order_by("sort_order", "pk")
+            .annotate(
+                section_count=Count("sections", distinct=True),
+                product_count=Count("sections__items", distinct=True),
+            )
+        )
         items = []
         for page in rows:
-            data = serialize_page(page, include_products=False)
-            data["section_count"] = page.sections.count()
-            data["product_count"] = sum(
-                section.items.count() for section in page.sections.all()
-            )
+            data = serialize_page(page, include_products=False, include_sections=False)
+            data["section_count"] = page.section_count
+            data["product_count"] = page.product_count
             items.append(data)
         return Response({"kind": kind, "items": items, "total": len(items)})
 

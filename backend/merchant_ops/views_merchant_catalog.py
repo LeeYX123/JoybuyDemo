@@ -12,14 +12,14 @@ WP-42（文档 M03 §2，2026-11-10 最终口径）：零售价 = 抓取到的�
 """
 
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.utils import timezone
 from rest_framework.response import Response
 
 from accounts_staff.api_exceptions import StaffApiError
 from audit.services import record_audit
 from catalog.detail_views import _spec_options_payload
-from catalog.models import Spu
+from catalog.models import Spu, SpuTranslation
 from merchant_ops.api_utils import money_str, paginate, require
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import compute_listing_cost
@@ -116,6 +116,28 @@ class MerchantCatalogProductsView(MerchantAPIView):
 
     permission_any = ("merchant.listings.manage",)
 
+    # 列表只取页面真正用到的列（2026-11-28 性能优化）：不再整行 SELECT spu，
+    # 也不 preload 翻译的 description 长文本。
+    list_fields = (
+        "id",
+        "public_id",
+        "local_category_id",
+        "status",
+        "cost_price",
+        "retail_price",
+        "is_activity",
+        "merchant_category",
+        "description",
+        "image_urls",
+        "specs",
+        "created_at",
+        "local_category__public_id",
+        "local_category__name",
+        "local_category__name_zh",
+        "local_category__name_en",
+        "local_category__path",
+    )
+
     def get(self, request):
         merchant = request.merchant
         listed_exists = Offer.objects.filter(
@@ -126,7 +148,15 @@ class MerchantCatalogProductsView(MerchantAPIView):
         queryset = (
             Spu.objects.filter(status=Spu.Status.ACTIVE)
             .select_related("local_category")
-            .prefetch_related("translations", "skus")
+            .prefetch_related(
+                Prefetch(
+                    "translations",
+                    queryset=SpuTranslation.objects.only("spu_id", "locale", "title"),
+                    to_attr="list_translations",
+                ),
+                "skus",
+            )
+            .only(*self.list_fields)
             .annotate(listed=Exists(listed_exists))
         )
 
@@ -139,14 +169,20 @@ class MerchantCatalogProductsView(MerchantAPIView):
 
         query = (request.query_params.get("q") or "").strip()
         if query:
-            condition = Q(translations__title__icontains=query) | Q(model_number__icontains=query)
+            # 2026-11-28：标题匹配改子查询，不再 JOIN translations + DISTINCT。
+            # 原写法要无条件 ``.distinct()`` 去重，COUNT 变成
+            # ``SELECT COUNT(*) FROM (SELECT DISTINCT 全列 … JOIN …)``——prod 实测
+            # q=coffee 353ms、q=co 492ms（8,151 命中）。子查询不产生重复行。
+            condition = Q(
+                pk__in=SpuTranslation.objects.filter(title__icontains=query).values("spu_id")
+            ) | Q(model_number__icontains=query)
             try:
                 import uuid as uuid_module
 
                 condition |= Q(public_id=uuid_module.UUID(query))
             except ValueError:
                 pass
-            queryset = queryset.filter(condition).distinct()
+            queryset = queryset.filter(condition)
 
         rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request, default_size=8)
         images = _primary_images([spu.pk for spu in rows])
@@ -256,14 +292,20 @@ class MerchantListingsView(MerchantAPIView):
         # M02：支持商品名称与商品 ID 搜索；品类只显示本店已上架商品所属品类。
         query = (request.query_params.get("q") or "").strip()
         if query:
-            condition = Q(sku__spu__translations__title__icontains=query)
+            # 2026-11-28：改子查询，不再 JOIN sku__spu__translations + DISTINCT。
+            # 原写法 COUNT 退化成 ``SELECT COUNT(*) FROM (SELECT DISTINCT offer 全列 …)``。
+            condition = Q(
+                sku__spu_id__in=SpuTranslation.objects.filter(
+                    title__icontains=query
+                ).values("spu_id")
+            )
             try:
                 import uuid as uuid_module
 
                 condition |= Q(sku__spu__public_id=uuid_module.UUID(query))
             except ValueError:
                 pass
-            queryset = queryset.filter(condition).distinct()
+            queryset = queryset.filter(condition)
         category = (request.query_params.get("category") or "").strip()
         if category and category.upper() != "ALL":
             if category.upper() == ACTIVITY_CATEGORY:

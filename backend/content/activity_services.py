@@ -473,11 +473,17 @@ def replace_section_products(section: ActivitySection, spu_public_ids: list[str]
     return len(ids)
 
 
-def serialize_page(page: ActivityPage, *, include_products: bool = True) -> dict:
-    """管理端详情：页面 + 分区 + 商品 id 列表（编辑用）。"""
+def serialize_page(
+    page: ActivityPage, *, include_products: bool = True, include_sections: bool = True
+) -> dict:
+    """管理端详情：页面 + 分区 + 商品 id 列表（编辑用）。
+
+    ``include_sections=False`` 供列表页使用（2026-11-28）：列表只要页级字段 +
+    SQL 聚合出的 section_count/product_count，逐页遍历分区会造成 N+1。
+    """
 
     sections = []
-    for section in page.sections.all().order_by("sort_order", "pk"):
+    for section in page.sections.all().order_by("sort_order", "pk") if include_sections else []:
         data = {
             "public_id": str(section.public_id),
             "kind": section.kind,

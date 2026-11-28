@@ -150,6 +150,13 @@ class Offer(models.Model):
             ),
             models.Index(fields=["merchant", "status"], name="offer_merchant_status_idx"),
             models.Index(fields=["sku", "status"], name="offer_sku_status_idx"),
+            # 2026-11-28 商家端「本店在售」列表性能：ORDER BY listed_at DESC, id DESC
+            # + merchant/status 等值过滤。缺它时 9,193 条 offer 要整行 filesort
+            # （prod EXPLAIN ANALYZE 单页 1,110ms）；本索引可反向扫描直接取前 20 行。
+            models.Index(
+                fields=["merchant", "status", "listed_at", "id"],
+                name="offer_mch_status_listed_idx",
+            ),
         ]
 
     @property
