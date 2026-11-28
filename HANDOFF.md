@@ -70,7 +70,7 @@
 - **坑（不得再踩）**：①base-3 compactCopy 会删 welcome-strip/bottomnote/banner/support-context——桌面断言与排查别依赖 welcome-strip（本轮 02/15 两例假 FAIL 都源于此）；②未知路径冷启动断言要等 `.stats .stat` 这类settled 元素，boot 期 #app 里有 base-2 自渲染的瞬态 DOM（含 welcome-strip，visibility:hidden），waitForSelector 会撞上瞬态节点后永远等不到 visible；③切换回商城的 route 拦截 redirect_url **必须指回本站**，给 localhost:3000 会让引擎真的导航走、后续检查全挂；④folio classic 脚本（merchant-desktop/merchant-mobile）共享 base 全局词法，eslint 用文件级 `/* eslint-disable no-undef */`，行内 disable 会变 unused-directive 噪声；⑤Playwright/Node 装仓库外 %TEMP%（本轮复用 /tmp/pw_scratch_20261128）；⑥**并行会话会 checkout 回滚他人未提交改动（2026-11-28 18:45 实锤：本任务 3 个已跟踪文件改动+git rm 暂存被整体回滚，靠上下文重放与 var/ 备份恢复）——重要未提交改动必须同步留 `var/<task>/backup/` 快照（含恢复命令 README），并尽早请用户 commit，不要假设工作区状态会保持到下一轮**。
 - **遗留/下一步**：①**产线未部署**：merchant.joyfumi.com 仍是 Vue 桌面版，需重建 merchant-web 并发布 dist（nginx 需保证 `/src/folio/*.js` 可达——dist 已自带，或沿用服务器旧拷贝方式）；产线静态资源若有 CDN 缓存需刷新。②`<760` 桌面→手机自动切换本次按拍板未做：同域窄窗口访问 `/` 会得到桌面 folio 紧凑断点（800px 断点可用），m.\* 主机与直连 /mobile.html 不受影响；若用户要回该协议再开任务（改 boot-desktop.js 一处）。③popstate 用 baseGo：后退到列表页筛选/页码回默认（与点侧栏一致），未做深度视图栈恢复（手机版有，桌面可选优化）。④popstate 深链依赖 nginx/vite 的 SPA fallback（dev/preview 默认支持；产线 nginx 对 merchant 域名的 history fallback 需在部署时确认）。⑤i18n.js/locale-en.js 仍是孤儿模块（用户已叫停接入），未删。
 
-## 0mf-b. 商家端移除登录页：入口唯一化购物端【切换商家端】，无会话/登出/过期一律回商城（2026-11-28，✅ dev 端到端 8/8 PASS，commit 见下方提交记录）
+## 0mf-b. 商家端移除登录页：入口唯一化购物端【切换商家端】，无会话/登出/过期一律回商城（2026-11-28，✅ dev 端到端 8/8 PASS，commit `5f59057` 已推 origin/main；产线未部署，待用户批准）
 
 > **改动清单（5 文件，最小 diff）**：
 > - `src/folio/api.js`：①新增 `storefrontUrl()` 单一来源（优先 `VITE_STOREFRONT_URL` > host 推导：localhost/127.0.0.1/*.localhost→同 host :3000、joyfumi.com 子域→https://www.joyfumi.com > 兜底 www）；②删除 `loginRequest`（登录表单移除后零引用）；③`__JOYPLAY_ACTIONS__.logout` 桌面/手机统一为 `logoutRequest() + location.replace(STOREFRONT_URL)`（原桌面→/login、手机→/mobile.html 均废除）。
@@ -84,6 +84,24 @@
 > - **验证（dev 全链端到端，Playwright，截图 var/desktop_folio_20261128/dev_nologin/）：8/8 PASS**——T1 无会话 5174/wallet→弹回 :3000 无登录表单；T2 买家 123456789@joybuy.com 登录→【切换商家端】→直达 5174/dashboard（stats=6，全程无登录表单）；T2b /orders 列表渲染 + 未知单号深链归一 /orders（dev 事实：切换目标商家 1042 无订单，真实 /orders/:id 详情渲染引擎未改动，沿用 d682109 已验证）；T4 手机 mobile.html 无会话→弹回；T5 手机带会话看板渲染（模块=10）+消息页可达；T3 登出→回商城→再访弹回（会话已清）；T6 console/pageerror/HTTP 失败=0；`npm run build` exit 0。
 > - **坑（勿再踩）**：①staff 会话 cookie path 限定 `/api/v1/`（STAFF_SESSION_COOKIE_PATH）——跨上下文搬运会话要用 `context.cookies()` 全量取（按裸 URL 过滤会漏掉它）；②dev 能走通正向切换链的买家=123456789@joybuy.com（dev 库唯一 APPROVED 申请的买家，密码=邮箱数字段 `123456789`，staff 131 绑 merchant 1042 ACTIVE）；chiq@joybuy.test 在 dev 无买家身份，lookup 未命中会转注册流。③dev storefront 登录两步式：#auth-identifier → button.auth-submit → #auth-password → button.auth-submit。④5174 被并行会话 vite 占用属常态——同工作树同代码可直接共用，自起服务须落回 5174（CSRF 白名单）。
 > - **遗留**：无阻塞项。生产部署待用户批准（本任务只 commit 代码）。
+
+## 0mf-c. 产线部署 d65dbf1→5f59057（含其他 agent 的 9 提交一并部署；2026-11-28 用户批准）
+
+> **部署内容（d65dbf1..origin/main 共 9 提交，逐提交审查后全部可部署）**：
+> - `5f59057` 商家端移除登录页（merchant-web，0mf-b）；`42b707d`/`178e9d4`/`e55ae98` 三个纯 HANDOFF 台账提交（无部署动作）；
+> - `e8e3af1` 支付页改版（storefront checkout 卡品牌直选 + admin-web MerchantOrdersView 映射展示 + backend orders/models.py **仅 PAYMENT_METHODS 常量扩展，非 schema，无迁移**）；
+> - `81d9844` 购物端四项（backend accounts_buyers 修改密码端点 + orders 直购 offer_public_id 路径 + storefront ChangePasswordModal 等，新增 2 个测试文件）；
+> - `d2a3adc` checkout 去直购提示条；`bcdb0e2` 申请开店页去 placeholder（7 语言）；`257d3a6` checkout 地址表单像素校准。
+> - **风险审查**：本地 `makemigrations --check`=No changes detected + 服务器同检无变化 → **零迁移**；无 package.json/requirements/.env/nginx 变更；本地 `manage.py test checkout.tests.test_direct_purchase accounts_buyers.tests.test_change_password` = **23/23 OK**；storefront 本地 `nuxt build` exit 0。API 契约核对：checkout 直购 offer_public_id/payment_method 扩展前后端匹配。
+> - **DB 备份（回滚锚点）**：`/srv/backups/joybuy_predeploy_20261128b.sql.gz`（230MB，gzip -t 过，1276 INSERT）——backend 有代码变更故按纪律备份；**实际零迁移未动库结构**。
+> - **服务器**：/srv/joybuy 干净 pull --ff-only d65dbf1→**`5f59057`**（部署时刻 origin/main，无中途新推）；`manage.py check` 0 issue；重建 merchant-web（exit0，dist 6 引擎脚本）+ admin-web（vite build --base=/admin18vm6u4b83sf/，exit0）+ storefront（pnpm build，exit0）→ restart joybuy-api + joybuy-storefront 均 active；**nginx 零改动**。
+> - **验证矩阵**：
+>   * 服务器 curl 全 200：merchant / 引擎脚本 / mobile.html / dashboard / wallet / orders 深链 + www / health / auth/login / checkout + m.joyfumi.com + admin 登录页（admin 新 bundle hash 现网命中）。
+>   * 商家端无会话弹回（外网 Playwright，截图 var/deploy_20261128b/）：**A1/A2/A3/B1 = 4/4 PASS**——/wallet、/orders/:id 深链、旧 /login 书签、手机 mobile.html 全部弹回 www 且全程无登录表单。
+>   * **正向切换链产线未验（数据性遗留）**：prod `merchant_application` 表为**空**（无任何 APPROVED 申请）→ 任何买家都拿不到【切换商家端】入口；chiq@joybuy.test 只有 staff 直登路径（登录门已移除）。该链 dev 已 8/8 验证，本轮部署无人改动相关后端视图。
+>   * 支付页改版验证（外网，**全程未下单未支付**）：注册测试买家 `deploy0mf-1795869229696@joybuy.test`（密码 Deploy-20261128!）→ PDP 加购 → checkout 填地址（POST addresses 201）→ Save 进支付步 → **4 卡品牌直选渲染（Visa/Mastercard/AmEx/银联）→ 银联选中态生效**，汇总精简（Subtotal/Order Total 两行）+ 无卡号输入框，console/pageerror/HTTP 失败=0。admin 登录页渲染 + console 0。
+>   * 坑：①checkout/quote 对无购物车返回 400 CART_INVALID——PDP 加购点击对**非白名单买家静默无效**（gateBlocked/NOT_WHITELISTED 拦截，无 toast）；验证时把测试买家 `purchase_whitelisted` 0→1（单字段数据修改，演示口径内，见遗留）。②register/login 页对已登录用户会重定向走，脚本等待 #auth-identifier 会超时——先 networkidle 再判断。
+> - **遗留**：①prod 缺 APPROVED 申请数据（正向链/管理端申请审核链路待真实数据）；②测试数据残留：2 个 `deploy0mf-*@joybuy.test` 买家（其一为误注册未用）、1 条地址（Deploy Test/SW1A 1AA）、白名单标志=1（仅限该测试买家），如需清理走 admin 或手工 DELETE；③admin-web 支付方式映射展示（MerchantOrdersView）无登录冒烟（无 admin 凭据）。
 
 ## 0sg. 产线同步活动页 48 页 + 首页 16 卡 + 2 张 minihome banner（2026-11-28，✅ 完成并三层验证，未 commit HANDOFF）
 
@@ -7605,3 +7623,14 @@ UNIONPAY + Payment 记录一致。
 
 **坑**：后端 --noreload 改 PAYMENT_METHODS 后必须重启 Django（端口 8000 杀进程重启），
 否则 PAYMENT_METHOD_INVALID。dev 重启命令见 memory：taskkill /PID + runserver 后台。
+
+## 支付页商品行优化 + Address Line 1* 恢复（2026-11-28 20:50，✅ 完成）
+
+- 支付页 Items 商品行：72px 缩略图 + 标题(2行) + 规格灰字 + Qty + 右侧行小计
+  （复用购物车 GET /api/v1/products/:id 增强模式），行间分隔线。commit 5ae5595。
+- **用户澄清（重要）**：最初「删【地址】栏」指的是真站的 Address 查找框
+  （带搜索 icon），不是 Address Line 1*。Line 1 必填保留、Line 2 选填、同行
+  左右布局；后端 line1 恢复必填；错误文案泛化为「请填写所有必填项」。
+  commit 4c1e318。教训：删字段的指令要对照真站字段表逐个确认，"地址"在
+  真站是两个不同字段（Address 查找框 vs Address Line 1）。
+- 验证：56/56 + 162/162；E2E 空 line1 拦截、填写后正常跳支付。
