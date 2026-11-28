@@ -2,6 +2,68 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0ph. 全站 SQL/索引体检 + 商家端商品搜索性能修复（2026-11-28，✅ 已上产线，commit `2d6a58a`）
+
+- **用户抱怨**：商家端【商家商品管理】（店铺管理/商品上架中心）搜索也很慢；要求全站体检、慢 SQL 就地优化、缺索引补索引。
+- **商家端搜索实锤（prod EXPLAIN ANALYZE）**：两个端点共用旧反模式——`/merchant/catalog/products` q 走 `JOIN spu_translation + 无条件 DISTINCT`，COUNT 退化成 `SELECT COUNT(*) FROM (SELECT DISTINCT 全列…)`：**q=coffee 424ms（count 353ms）、q=co 648ms（count 492ms）**；`/merchant/listings` 大商户（9,193 条）`ORDER BY listed_at DESC,id DESC` 无索引 → **单页 1,110ms** 整行 filesort。
+- **修复（5 文件，path-limited commit `2d6a58a`，已 push）**：
+  1. `views_merchant_catalog.py`：catalog q → `pk__in` 子查询 + 列表 `.only()` 轻列 + `Prefetch(translations only spu_id/locale/title, to_attr=list_translations)`；listings q → `sku__spu_id__in` 子查询；两处去 `.distinct()`。
+  2. `offers/models.py` + `offers/migrations/0009_offer_merchant_listed_index.py`：新增 `offer_mch_status_listed_idx (merchant_id,status,listed_at,id)`（依赖 catalog 0025 + offers 0008 + merchants 0011，prod 均已应用）。
+  3. `views_activity_pages.py` + `content/activity_services.py`：`AdminActivityPagesView` 计数改 `annotate(Count)`，`serialize_page(include_sections=False)` 跳过逐页分区遍历（**prod 769ms/235 SQL → 32ms/4 SQL**）。
+- **前后对照（同一 prod 库 A/B 实测，非估算）**：商家端 q=coffee count **391.7→136.0ms（2.9x）**、q=co count **577.2→169.7ms（3.4x）**；listings 大商户 list **1,110→33.3ms（34x，EXPLAIN `Backward index scan`）**、count 363→113-283ms；活动页 **769→32ms**。dev：catalog q 141→86ms、活动页 413→8.6ms。
+- **等价性（prod 实核）**：活动页 40 页 annotate 计数 == 逐页 count 全一致；admin 列表 payload 仍含 sections/section_count/product_count；商家端 catalog 24 字段齐全、q=coffee 仍 306、listings 37。
+- **部署记录**：备份 `/srv/backups/joybuy_pre_offer0009_20261128_151556.sql`（1,223,688,941B，SHA256 `c33e4441d1defe543f8b75f02e92f538ce5dbdf5eee89c0b916adb738aeefd2e`）→ `migrate --plan` 仅 1 条 → `Applying offers.0009… OK` **4.46s** → `SHOW INDEX FROM offer` 确认索引在场 → 重启 joybuy-api（storefront 未动）→ 回归全 200（www/health/search/PDP/active/m/merchant/merchant mobile/admin 登录页），API 零 error 日志，临时会话遗留 0。
+- **验证（按验证纪律仅针对性验证）**：`test_merchant_modules`+`test_wp42_discount_listing`+`test_doc02_round1`+`content.test_activity_pages` = 65 OK；`test_admin_commerce`+`test_merchant_app` = 70 OK；隔离 worktree（HEAD+5 文件）`makemigrations --check` = No changes detected；`sqlmigrate offers 0009` = 1 条 CREATE INDEX。
+- **体检结论**：其余端点（商家端 orders/wallet/entries/after-sales/notifications/conversations/chats/activities；管理端 merchants/buyers/finance/auto-orders/categories；商城端 search/categories 走 search_document）dev 14-49ms、prod 38-97ms，**已达可接受区间未改**。
+- **建议但未做**：①FULLTEXT nGram（`spu_translation.title` / `spu.model_number`）——商家端 q 剩余成本几乎全在 `LIKE '%x%'` 全扫（LIKE 本身 66-89ms），要 <50ms 必须换搜索口径，需单独评估；②listings 大商户 count 122ms→~21ms 可用「总数 − spu 非 ACTIVE 的少数 offer」（实测 10.7ms + 11.1ms），但需自研分页绕过 `paginate()`，复杂度高于收益；③admin `/admin/products?q=` 同为 LIKE 全扫（0pg 遗留）。
+- **坑（不得再踩）**：①`manage.py shell < script.py` 不能给脚本传位置参数（`sys.argv` 归 manage.py），要传参用环境变量（本轮 `PERF_TAG`）；②prod 是远程托管库，单次 EXPLAIN ANALYZE 波动可达 ±40%，before/after 必须**同库同脚本 back-to-back A/B**（本轮 `prod_ab.py` 直接在现网把旧 SQL 与新 SQL 各跑 5 次取中位）；③`Offer` / `MerchantCatalogProductsView` 的 `.only()` 必须覆盖 `_spu_payload`/`_category_payload` 用到的所有列，否则会触发额外查询；④`serialize_page` 的 `include_sections` 默认 True，改默认值会波及详情页，必须保持默认值不动。
+- **产物**：`var/perf_sitewide_20261128/`（README=体检表+执行记录、`dev_audit.py`/`dev_audit.json`、`prod_sitewide_probe.py`、`prod_evidence/`=before/after JSON+原始日志+形态 A/B 脚本）。
+
+
+## 0pl. 管理端三条补充需求：向导商品区回旧版 / 活动页图片修复 / 隐藏客服中心（2026-11-28，✅ 完成，未 commit）
+
+接 0pk（同一批未提交改动之上继续，仍未 commit）。
+
+### 1. 一键下单向导改版（`admin-web/src/views/AutoOrdersView.vue` + 后端）
+
+- **步骤 3【选择商品】恢复旧版形态**：顶部搜索输入框 + 下方「该商家已上架商品」卡片区（缩略图 / 名称 / SPU 全号 / 规格 chips / 价格），点卡片选中（选中卡片高亮、底部已选摘要不变），**服务端分页**（`PRODUCT_PAGE_SIZE = 8`，共用 `AppPager`）。顶部搜索与卡片区**共用同一数据源** `/auto-orders/options`，搜索词服务端过滤（标题 / SPU UUID 整号或部分号），改词自动回第 1 页；换商家清空商品与搜索词并回第 1 页。AppPicker 在该阶段不再承担主选入口（买家/商家两步的 AppPicker 保留不动）。
+- **后端 `/auto-orders/options` 改造**（`views_auto_orders.py`）：原实现把该商家全部 offer 拉进 Python 去重后切片 `[:30]`，改为 **SPU 级 SQL 分页**（`page/page_size/total/has_next` 走 `api_utils.paginate`），只对当前页 SPU 取 offer；`q` 用子查询匹配翻译标题 + `public_id__icontains`。返回结构向后兼容（`items[].id/title/image/price/currency/offers[]` 不变），**无迁移**。
+- **步骤 5【确认创建】去余额**：删除向导内全部 `余额 ¥` 显示（买家下拉 meta、买家选中卡、确认页买家行）与旧文案「若买家余额不足或规格已失效，任务会标记失败并给出原因。」（改为只提规格失效）；任务详情抽屉买家行也去掉余额、改显示用户编号。**后端 payload 仍带 `buyer.balance`（供其它消费方），前端不再展示**。
+
+### 2. 后端余额逻辑核查结论（**本次动了业务逻辑**）
+
+- `HEAD` 上 `orders/order_services.py::place_order` **已由另一会话改为「余额支付不校验、不扣款，只记录支付方式」**（注释 2026-11-28 用户拍板），即直购/购物车链路早已不扣余额。
+- 一键下单链路仍残留 3 处旧闸门：① 创建接口 `check_account_balance` 余额不足直接 400 `BALANCE_INSUFFICIENT`；② 到点执行 `_execute_one` 中 `account.balance < subtotal` → 任务 FAILED；③ `orders/auto_order_services.py::check_account_balance` 函数本体。
+- 按用户口径「不扣除余额了」**已移除③处**（函数删除、创建与执行两处闸门删除）；执行时仍保留白名单 / 支付权限 / 规格有效性 / 收货地址校验。**这是业务逻辑变更**：余额不足也可创建并成功下单（余额不变）。单测已同步。
+
+### 3. 活动页/活动卡片图片「全部无法访问」——根因与修法
+
+- **根因（dev-only，prod 正常）**：业务数据里的图片是站内相对路径（`/images/activity/pages/<id>/hero.webp`、`/images/activity/cards/*.webp`），文件物理存在于 `storefront/public/images/...`（按「查物理文件」纪律核实：10 个 hero + 10 张卡片文件均在）。**admin-web 的 vite dev server 没有托管该目录**，请求被 SPA 回退成 `index.html`（HTTP 200 + `text/html`）——状态码正常但图片全裂。prod 实测 `https://www.joyfumi.com/images/activity/pages/7Uw83…/hero.webp` = **200 image/webp 77288B**，prod 无问题。
+- **修法**：`admin-web/vite.config.js` 增加 `joybuy-storefront-static` 中间件（仅 dev），把 `/images/`、`/videos/`、`/fonts/` 映射到 `../storefront/public`（**相对 `vite.config.js` 是一层 `..`**，写两层会指到仓库上一级——本次踩过的坑），带 MIME 表、目录穿越 403、缺失 **404（不再回退 index.html 假 200）**、`Cache-Control: no-cache`。**未改数据、未补文件、未走 Spaces**。
+- **顺带修的真实缺陷**：`ActivityPagesView` / `CampaignCardsView` 的 `.campaign-thumb` 类**从未有样式定义**（图片不显示时看不出来），图片恢复后按原图（最大 4000px）撑破表格 → `admin.css` 补 120×64 `object-fit: cover`。
+
+### 4. 隐藏【客服中心】
+
+- `layouts/AdminLayout.vue`：移除「服务与运营」组【客服中心】导航项。
+- `router/index.js`：`/support` 去掉组件，改 `beforeEnter`：先 `loadSession()` 再返回第一个有权限模块路径；**不能只用 `redirect`**——重定向在守卫前解析，会话未载入时 `canView` 全 false，整页刷新会落到 `/no-access`（本次踩到并修正）；`LANDING_CANDIDATES` 同步移除 `/support`。
+- **`views/SupportView.vue` 代码完整保留**（恢复：把组件指回该路由、删 `beforeEnter`）。全仓已无残留 `/support` 链接。
+
+### 5. 验证（按验证纪律仅针对性验证）
+
+- 后端：`merchant_ops.tests.test_doc02_round3`（一键下单 15 例，含新增「余额不足可创建」「执行不扣款」「options 服务端分页」「options 标题/部分 UUID 过滤」）**15/15 OK**；`test_admin_picker_search` 在 MySQL 下 **18/18 OK**。⚠️ 并行会话正用 `test_joybuy` 跑 i18n 迁移，会与 `--keepdb` 撞库（`Table 'attribute_definition_translation' already exists`），本次改用 **`DJANGO_DATABASE_ENGINE=sqlite DJANGO_CACHE_BACKEND=locmem` 隔离跑**；该环境下 `test_product_pool_q_matches_partial_uuid` 因 sqlite 无 `JSON_LENGTH` 报错（环境限制，非回归）。ruff 通过（`orders/auto_order_services.py`、`merchant_ops/views_auto_orders.py`、`test_doc02_round3.py`）。
+- 前端：`npx vite build` exit 0；`vite.config.js` / `router/index.js` / `AdminLayout.vue` / `AutoOrdersView.vue` eslint + prettier 全过。
+- **vite dev 必须重启**（改了 `vite.config.js`）：本次已重启（`0.0.0.0:5173` → `127.0.0.1:5173`）。实测 `/images/activity/pages/7Uw83…/hero.webp` = **200 image/webp 77288B**，缺失路径 404 text/plain，穿越路径不泄漏。
+- 浏览器（5173 超管，1440×900）：
+  * 向导：步骤 1/2 AppPicker 正常且无余额字样；选 DESKIVO（45 件在售）→ 步骤 3 **8 张/页、共 45 件、6 页**；翻第 2 页首项变化；搜索 "envelope" → 1 张且页码复位；点卡片选中（高亮 + SPU 全号）；7 规格商品不自动选规格（符合「唯一规格才自动选」）；步骤 4/5 无「余额」、无旧失败文案，确认页字段=买家/商家/商品/规格/单价数量/触发时间。**全程未点「创建任务」**，DB `AutoOrderTask` 仍 4 条（最新 2026-11-08），**零写入**。
+  * 活动页：`/activity-pages` 10 张 hero **全部 naturalWidth>0（0 损坏）**、缩略图 120×64、页面无横向溢出；`/campaign-cards` 10 张卡片图同样全部加载。
+  * 客服中心：导航无该项、页面全文无「客服中心」；整页刷新 `/support` → **跳 `/merchants`**；客户端跳转同样回 `/merchants`。
+  * console error：`/auto-orders`、`/activity-pages`、`/campaign-cards`、`/merchants`、`/support` 全部 **0**。
+
+### 6. 快照与遗留
+
+- 快照扩到 **34 个文件**（本批新增 9 个：`vite.config.js`、`router/index.js`、`AdminLayout.vue`、`admin.css`、`AutoOrdersView.vue`、`ActivityPagesView.vue`、`orders/auto_order_services.py`、`merchant_ops/views_auto_orders.py`、`test_doc02_round3.py`），`var/admin_pickers_20261128/backup/README.md` 已补第二批清单。
+- 遗留：① `test_doc02_round2.BuyerBalanceTests` 仍是旧断言（余额扣款 / 不足拒单），**因属另一会话 place_order 口径产物，按红线未纳入本批**，需该会话或用户统一处理（当前 MySQL 上为红）；② 后端 payload 仍带 `buyer.balance`（前端不展示），如需彻底清理可后续移除；③ 向导步骤 3 卡片图依赖商品 `image_urls`，无图商品显示「无图」占位（与旧版一致）。
+
 ## 0pk. 管理端可搜索下拉框（AppPicker）全站改造（2026-11-28，✅ 完成，未 commit）
 
 - **用户要求**：admin-web 所有涉及输入「商家 / 用户 / 商品」的输入框全部改成可搜索下拉框（combobox），支持按 ID 和名称查询，下拉项同时显示名称与 ID 全号（商品 UUID 36 位整号不截断）。只动 admin-web 与其依赖的后端 admin 查询（merchant-web 由另一并行会话处理，未触碰）。
