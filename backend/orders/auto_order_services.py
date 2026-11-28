@@ -2,8 +2,9 @@
 
 - 触发时间按**电脑（服务器）时间**判定，不做时区换算；
 - 下单前检查：白名单身份、规格（offer）是否仍有效；
-- 下单复用 ``place_order``（payment_method=BALANCE 仅记录方式；2026-11-28
-  用户拍板「不扣除余额」——余额不校验、不扣款，与直购/购物车链路同口径）；
+- 下单复用 ``place_order``（2026-11-28 用户拍板「不扣除余额」——余额不校验、
+  不扣款，与直购/购物车链路同口径）；2026-11-29 起支付方式可选（默认
+  ``BALANCE``），取值限定在 ``Order.PAYMENT_METHODS`` 内；
 - 任一检查失败 → 任务置 FAILED 并记录原因（管理端可见"提醒"），不再自动重试。
 """
 
@@ -13,8 +14,18 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from orders.models import AutoOrderTask
+from orders.models import AutoOrderTask, Order
 from orders.order_services import OrderError, place_order
+
+DEFAULT_PAYMENT_METHOD = "BALANCE"
+
+
+def normalize_payment_method(value) -> str:
+    """空值回落默认余额支付；返回值仍需调用方按 PAYMENT_METHODS 校验。"""
+
+    method = str(value or "").strip().upper()
+    return method or DEFAULT_PAYMENT_METHOD
+
 
 
 class AutoOrderError(Exception):
@@ -46,8 +57,9 @@ def create_auto_order_task(
     quantity: int,
     trigger_at,
     created_by=None,
+    payment_method: str = DEFAULT_PAYMENT_METHOD,
 ) -> AutoOrderTask:
-    """创建任务：白名单/规格/数量/触发时间校验（余额只提醒不阻断）。"""
+    """创建任务：白名单/规格/数量/触发时间/支付方式校验（余额只提醒不阻断）。"""
 
 
     if account is None or not account.purchase_whitelisted:
@@ -57,6 +69,10 @@ def create_auto_order_task(
         raise AutoOrderError("PAYMENT_DISABLED", "该买家已关闭支付权限，不能创建自动下单任务。")
     if quantity < 1:
         raise AutoOrderError("QUANTITY_INVALID", "数量至少为 1。")
+    # 2026-11-29：支付方式可选（默认余额），非法值直接拒绝（中文提示）。
+    payment_method = normalize_payment_method(payment_method)
+    if payment_method not in Order.PAYMENT_METHODS:
+        raise AutoOrderError("PAYMENT_METHOD_INVALID", "不支持的支付方式。")
     invalid_reason = validate_task_offer(offer)
     if invalid_reason:
         raise AutoOrderError("OFFER_INVALID", invalid_reason)
@@ -78,6 +94,7 @@ def create_auto_order_task(
         specification=offer.sku.specification or {},
         quantity=quantity,
         unit_price=offer.current_price,
+        payment_method=payment_method,
         trigger_at=trigger_at,
         status=AutoOrderTask.Status.PENDING,
         created_by=created_by,
@@ -160,7 +177,8 @@ def _execute_one(task: AutoOrderTask) -> str:
             account=account,
             cart_snapshot=cart_snapshot,
             address_snapshot={"public_id": str(address.public_id)},
-            payment_method="BALANCE",
+            # 2026-11-29：按任务所选支付方式下单（默认余额）；订单记录该值。
+            payment_method=normalize_payment_method(task.payment_method),
         )
     except OrderError as exc:
         return f"自动下单被拒绝：{exc.message}"

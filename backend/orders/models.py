@@ -240,6 +240,9 @@ class AutoOrderTask(models.Model):
     specification = models.JSONField(default=dict, blank=True)
     quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    # 2026-11-29：一键下单可选支付方式（不再固定余额）。取值校验用
+    # ``Order.PAYMENT_METHODS``；历史任务回填 ``BALANCE``（与旧行为一致）。
+    payment_method = models.CharField(max_length=32, blank=True, default="BALANCE")
     trigger_at = models.DateTimeField(db_index=True)
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True

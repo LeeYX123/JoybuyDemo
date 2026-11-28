@@ -25,8 +25,36 @@ from orders.auto_order_services import (
 )
 from orders.models import AutoOrderTask
 
+# 2026-11-29：一键下单可选支付方式（与购物端支付页 12 项一致），并保留
+# 订单支付方式枚举中其余历史值的中英文展示名（与订单详情同口径）。
+PAYMENT_METHOD_LABELS = {
+    "BALANCE": ("余额支付", "Balance"),
+    "CARD": ("银行卡", "Card"),
+    "VISA": ("Visa", "Visa"),
+    "MASTERCARD": ("Mastercard", "Mastercard"),
+    "MAESTRO": ("Maestro", "Maestro"),
+    "AMEX": ("American Express", "American Express"),
+    "DINERS": ("Diners Club", "Diners Club"),
+    "DISCOVER": ("Discover", "Discover"),
+    "JCB": ("JCB", "JCB"),
+    "UNIONPAY": ("银联", "UnionPay"),
+    "GOOGLE_PAY": ("Google Pay", "Google Pay"),
+    "APPLE_PAY": ("Apple Pay", "Apple Pay"),
+    "WECHAT_PAY": ("微信支付", "WeChat Pay"),
+    "PAYPAL": ("PayPal", "PayPal"),
+    "REVOLUT_PAY": ("Revolut Pay", "Revolut Pay"),
+    "NEW_PAY": ("NewPay", "NewPay"),
+    "KLARNA": ("Klarna", "Klarna"),
+}
+
+
+def _payment_labels(value: str) -> tuple[str, str]:
+    value = str(value or "").strip().upper()
+    return PAYMENT_METHOD_LABELS.get(value, (value, value))
+
 
 def _task_payload(task: AutoOrderTask) -> dict:
+    label_zh, label_en = _payment_labels(task.payment_method)
     return {
         "id": str(task.public_id),
         "buyer": {
@@ -39,6 +67,9 @@ def _task_payload(task: AutoOrderTask) -> dict:
         "specification": task.specification or {},
         "quantity": task.quantity,
         "unit_price": money_str(task.unit_price) if task.unit_price is not None else None,
+        "payment_method": task.payment_method,
+        "payment_method_label": label_zh,
+        "payment_method_label_en": label_en,
         "trigger_at": iso(task.trigger_at),
         "status": task.status,
         "failure_reason": task.failure_reason,
@@ -150,6 +181,8 @@ class AdminAutoOrdersView(OpsAPIView):
             )
         # 2026-11-28 用户拍板「不扣除余额」：一键下单不再校验/扣减买家余额
         # （与 place_order 的余额口径一致——BALANCE 仅记录支付方式，另行结算）。
+        # 2026-11-29：支付方式随任务提交（非法值由服务层校验并返回 400）。
+        payment_method = str(payload.get("payment_method") or "").strip().upper()
         try:
             task = create_auto_order_task(
                 account=account,
@@ -158,6 +191,7 @@ class AdminAutoOrdersView(OpsAPIView):
                 quantity=quantity,
                 trigger_at=trigger_at,
                 created_by=request.staff_account,
+                payment_method=payment_method,
             )
         except AutoOrderError as exc:
             raise StaffApiError(
@@ -177,6 +211,7 @@ class AdminAutoOrdersView(OpsAPIView):
                 "merchant": str(merchant.public_id),
                 "offer": str(offer.public_id),
                 "quantity": quantity,
+                "payment_method": task.payment_method,
                 "trigger_at": iso(task.trigger_at),
             },
         )

@@ -19,7 +19,41 @@ const TASK_STATUS_LABELS = {
   CANCELED: '已取消',
 }
 
-const STEP_LABELS = ['选择买家', '选择商家', '选择商品', '规格数量时间', '确认创建']
+const STEP_LABELS = ['选择买家', '选择商家', '选择商品', '规格数量时间', '支付方式', '确认创建']
+
+// 2026-11-29：一键下单不再固定余额支付，可选购物端支付页支持的支付方式。
+// 12 项 = 余额支付 + Google Pay / PayPal / Klarna + 银行卡 8 品牌，
+// 取值直接用订单支付方式枚举（Order.PAYMENT_METHODS）。
+const PAYMENT_OPTIONS = [
+  { value: 'BALANCE', label: '余额支付' },
+  { value: 'GOOGLE_PAY', label: 'Google Pay' },
+  { value: 'PAYPAL', label: 'PayPal' },
+  { value: 'KLARNA', label: 'Klarna' },
+  { value: 'VISA', label: 'Visa' },
+  { value: 'MASTERCARD', label: 'Mastercard' },
+  { value: 'MAESTRO', label: 'Maestro' },
+  { value: 'AMEX', label: 'American Express' },
+  { value: 'DINERS', label: 'Diners Club' },
+  { value: 'DISCOVER', label: 'Discover' },
+  { value: 'JCB', label: 'JCB' },
+  { value: 'UNIONPAY', label: '银联' },
+]
+
+// 列表/详情展示名（与订单详情同一套文案）。
+const PAYMENT_METHOD_LABELS = Object.fromEntries(
+  PAYMENT_OPTIONS.map((option) => [option.value, option.label]),
+)
+
+const DEFAULT_PAYMENT_METHOD = 'BALANCE'
+
+// 分两组渲染：余额/电子钱包/先买后付（4 项）+ 银行卡品牌（8 项）。
+const WALLET_PAYMENT_OPTIONS = PAYMENT_OPTIONS.slice(0, 4)
+const CARD_PAYMENT_OPTIONS = PAYMENT_OPTIONS.slice(4)
+
+function paymentMethodLabel(value) {
+  if (!value) return '—'
+  return PAYMENT_METHOD_LABELS[value] || value
+}
 
 const state = reactive({
   status: 'ALL',
@@ -43,6 +77,7 @@ const wizard = reactive({
   offerId: '',
   quantity: 1,
   triggerAt: '',
+  paymentMethod: DEFAULT_PAYMENT_METHOD,
 })
 
 // 2026-11-28 可搜索下拉框：向导选 买家/商家 改为 AppPicker 远程搜索，
@@ -198,6 +233,7 @@ function openCreate() {
     offerId: '',
     quantity: 1,
     triggerAt: '',
+    paymentMethod: DEFAULT_PAYMENT_METHOD,
   })
   createError.value = ''
   createOpen.value = true
@@ -234,6 +270,10 @@ function nextStep() {
       return
     }
   }
+  if (wizard.step === 5 && !wizard.paymentMethod) {
+    createError.value = '请选择支付方式。'
+    return
+  }
   const previousStep = wizard.step
   wizard.step++
   // 进入【选择商品】时按已选商家拉第一页卡片（换商家时已在 onMerchantPicked 重置）。
@@ -247,6 +287,7 @@ const footSummary = computed(() => {
   if (wizard.buyer) parts.push(wizard.buyer.account || wizard.buyer.name)
   if (wizard.merchant) parts.push(wizard.merchant.name)
   if (wizard.product) parts.push(`${wizard.product.title} × ${wizard.quantity}`)
+  if (wizard.step > 4) parts.push(paymentMethodLabel(wizard.paymentMethod))
   if (wizard.triggerAt) parts.push(`触发 ${wizard.triggerAt.replace('T', ' ')}`)
   return parts.length ? `已选：${parts.join(' · ')}` : '未选择买家'
 })
@@ -260,6 +301,7 @@ const wizardSummary = computed(() => {
     spec: offer ? specText(offer) : '—',
     price: offer?.price || '—',
     quantity: wizard.quantity,
+    paymentMethod: paymentMethodLabel(wizard.paymentMethod),
     triggerAt: wizard.triggerAt.replace('T', ' ') || '—',
   }
 })
@@ -285,6 +327,7 @@ async function submitCreate() {
       offer_id: wizard.offerId,
       quantity: Number(wizard.quantity),
       trigger_at: triggerIso,
+      payment_method: wizard.paymentMethod,
     })
     createOpen.value = false
     state.notice = '任务已创建，到触发时间将自动下单。'
@@ -389,6 +432,7 @@ onMounted(load)
               <th>商家 / 商品</th>
               <th>规格</th>
               <th>数量</th>
+              <th>支付方式</th>
               <th>触发时间</th>
               <th>状态</th>
               <th>操作</th>
@@ -412,6 +456,7 @@ onMounted(load)
               </td>
               <td>{{ specText({ specification: row.specification }) }}</td>
               <td class="num">{{ row.quantity }}</td>
+              <td>{{ paymentMethodLabel(row.payment_method) }}</td>
               <td>{{ formatTime(row.trigger_at) }}</td>
               <td>
                 <StatusTag :value="row.status" :labels="TASK_STATUS_LABELS" />
@@ -431,7 +476,7 @@ onMounted(load)
               </td>
             </tr>
             <tr v-if="!state.items.length">
-              <td colspan="7" class="data-table__empty">还没有任务，点右上角「新建任务」创建。</td>
+              <td colspan="8" class="data-table__empty">还没有任务，点右上角「新建任务」创建。</td>
             </tr>
           </tbody>
         </table>
@@ -644,7 +689,49 @@ onMounted(load)
             </div>
           </template>
 
-          <!-- 步骤 5：确认创建 -->
+          <!-- 步骤 5：支付方式（余额 / Google Pay / PayPal / Klarna + 银行卡 8 品牌，共 12 项） -->
+          <template v-else-if="wizard.step === 5">
+            <div class="wizard-field">
+              <span class="wizard-field__label">支付方式</span>
+              <p class="field__hint">
+                与购物端支付页支持的支付方式一致；到点自动下单时以该方式记录订单，默认余额支付。
+              </p>
+            </div>
+            <div class="pay-group">
+              <p class="pay-group__title">余额 / 电子钱包 / 先买后付</p>
+              <div class="pay-grid">
+                <button
+                  v-for="option in WALLET_PAYMENT_OPTIONS"
+                  :key="option.value"
+                  type="button"
+                  class="pay-card"
+                  :class="{ 'is-sel': wizard.paymentMethod === option.value }"
+                  @click="wizard.paymentMethod = option.value"
+                >
+                  <span class="pay-name">{{ option.label }}</span>
+                  <span class="pick-check" aria-hidden="true">✓</span>
+                </button>
+              </div>
+            </div>
+            <div class="pay-group">
+              <p class="pay-group__title">银行卡</p>
+              <div class="pay-grid">
+                <button
+                  v-for="option in CARD_PAYMENT_OPTIONS"
+                  :key="option.value"
+                  type="button"
+                  class="pay-card"
+                  :class="{ 'is-sel': wizard.paymentMethod === option.value }"
+                  @click="wizard.paymentMethod = option.value"
+                >
+                  <span class="pay-name">{{ option.label }}</span>
+                  <span class="pick-check" aria-hidden="true">✓</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 步骤 6：确认创建 -->
           <template v-else>
             <dl class="detail-grid">
               <div>
@@ -668,6 +755,10 @@ onMounted(load)
                 <dd>¥ {{ wizardSummary.price }} × {{ wizardSummary.quantity }}</dd>
               </div>
               <div>
+                <dt>支付方式</dt>
+                <dd>{{ wizardSummary.paymentMethod }}</dd>
+              </div>
+              <div>
                 <dt>触发时间</dt>
                 <dd>{{ wizardSummary.triggerAt }}</dd>
               </div>
@@ -687,7 +778,12 @@ onMounted(load)
             <button type="button" class="btn" :disabled="wizard.step === 1" @click="prevStep">
               ← 上一步
             </button>
-            <button v-if="wizard.step < 5" type="button" class="btn btn--primary" @click="nextStep">
+            <button
+              v-if="wizard.step < STEP_LABELS.length"
+              type="button"
+              class="btn btn--primary"
+              @click="nextStep"
+            >
               下一步 →
             </button>
             <button
@@ -723,6 +819,10 @@ onMounted(load)
           <div>
             <dt>数量 / 单价</dt>
             <dd>{{ detail.value.quantity }} × ¥ {{ detail.value.unit_price || '—' }}</dd>
+          </div>
+          <div>
+            <dt>支付方式</dt>
+            <dd>{{ paymentMethodLabel(detail.value.payment_method) }}</dd>
           </div>
           <div>
             <dt>触发时间</dt>
@@ -1103,6 +1203,63 @@ onMounted(load)
 .spec-row em.muted {
   color: var(--muted, #78869a);
   font-weight: 400;
+}
+
+/* ===== 支付方式选择（步骤 5） ===== */
+.pay-group {
+  margin-bottom: 16px;
+}
+
+.pay-group__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #78869a);
+}
+
+.pay-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.pay-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink, #18263b);
+}
+
+.pay-card:hover {
+  border-color: var(--primary, #2563eb);
+}
+
+.pay-card.is-sel {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eaf1fd);
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+}
+
+.pay-card .pay-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pay-card .pick-check {
+  margin-left: auto;
+  padding-left: 6px;
+}
+
+.pay-card.is-sel .pick-check {
+  opacity: 1;
 }
 
 /* ===== 底部已选摘要栏 + 上一步/下一步 ===== */

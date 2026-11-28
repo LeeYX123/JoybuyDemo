@@ -8348,3 +8348,64 @@ HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径�
 **dev 数据临时变更（已全部还原）**：为走通 E2E，临时给买家 `123456789@joybuy.com` / `123456@joybuy.com` 设过已知密码、并把 `123456@joybuy.com` 的申请从 `REJECTED` 临时改成 `APPROVED + merchant 800`；结束后密码与申请状态（`REJECTED`/merchant=NULL/reject_reason）均已按备份还原，备份在 `backend/var/l10n_20261129/`（含密码哈希，**不要提交/外传**）。截图证据同目录：`desktop_en_dashboard.png`、`desktop_en_orders.png`、`desktop_en_catalog.png`、`mobile_en_orders.png`。
 
 **遗留**：①活动/通知/售后进度等后台录入中文未翻译（数据侧，需另建翻译表）；②手机文档入口仍靠 `mobile.html`/`m.` 主机，购物端 handoff 固定跳根路径（桌面文档），手机端只能直开 `mobile.html?lang=`；③非中英 locale 的商品名回退策略未逐语言验收。**未碰**：admin-web、`backend/catalog/models.py`、migrations 0023/0024/0025、`backend/cart`、`backend/orders/order_services.py`；未部署产线。
+
+## 0d1g. 一键下单新增【支付方式】（2026-11-29，✅ 完成，未部署）
+
+**需求**：管理端「一键下单」新建任务向导新增支付方式选择，不再固定余额支付，可选购物端支付页支持的
+12 项（余额支付 + 8 个卡品牌 Visa/Mastercard/Maestro/Amex/Diners/Discover/JCB/银联 + Google Pay + PayPal + Klarna）。
+
+**方案**
+- **模型**：`orders/models.py::AutoOrderTask` 新增 `payment_method = CharField(max_length=32, blank=True, default="BALANCE")`。
+- **服务**：`orders/auto_order_services.py` 新增 `DEFAULT_PAYMENT_METHOD="BALANCE"` 与
+  `normalize_payment_method()`（空值→BALANCE、`strip().upper()`）；`create_auto_order_task(..., payment_method="BALANCE")`
+  按 `Order.PAYMENT_METHODS` 校验，非法值抛 `AutoOrderError("PAYMENT_METHOD_INVALID","不支持的支付方式。")`；
+  `_execute_one` 用 `normalize_payment_method(task.payment_method)` 传给 `place_order`，订单/商家子单记录该值。
+  **余额口径不变**：BALANCE 仍只记录、不校验不扣款。
+- **迁移**：`orders/migrations/0009_autoordertask_payment_method.py`——`AddField`（默认 BALANCE，历史 4 行自动回填）
+  + `RunPython` 幂等把空串回填 BALANCE（reverse noop）。**dev 已应用**（`Applying orders.0009... OK`），
+  `AutoOrderTask` 4 行现状全为 BALANCE。**产线未应用**。
+- **接口契约（`merchant_ops/views_auto_orders.py`）**：
+  * `POST /api/v1/admin/auto-orders` 新增可选 `payment_method`（缺省=BALANCE；大小写归一化；非法值 400
+    `PAYMENT_METHOD_INVALID`「不支持的支付方式。」）。
+  * 列表/创建/取消返回的 `task` payload 新增三字段：`payment_method`（枚举值）、`payment_method_label`（中文）、
+    `payment_method_label_en`（英文），映射表 `PAYMENT_METHOD_LABELS` 覆盖 `Order.PAYMENT_METHODS` 全部 17 个值
+    （中文口径与 `MerchantOrdersView.vue` 的 `PAYMENT_METHOD_LABELS` 一致）。
+  * 审计 `AUTO_ORDER_TASK_CREATED.after_state` 增加 `payment_method`。
+  * `buyer.balance` 仍保留在 payload（其它消费方），前端不展示。
+- **前端**（`admin-web/src/views/AutoOrdersView.vue`）：向导由 5 步变 **6 步**（… 规格数量时间 → **支付方式** → 确认创建）。
+  * 步骤 5 两组卡片：`余额/电子钱包/先买后付`（余额支付、Google Pay、PayPal、Klarna）+ `银行卡`（8 品牌），
+    共 12 个 `.pay-card`，选中态 `is-sel`（蓝框+浅蓝底+✓），默认 `BALANCE`；共用 `wizard.paymentMethod`。
+  * 提交体新增 `payment_method`；确认页新增一行「支付方式：PayPal」；底部摘要（step>4）追加支付方式；
+    `下一步` 按钮条件改为 `wizard.step < STEP_LABELS.length`；step 5 有必选校验。
+  * 列表新增「支付方式」列（数量 → 支付方式 → 触发时间，共 8 列，空态 colspan=8），详情抽屉新增「支付方式」行；
+    统一 `paymentMethodLabel()`（未知值回退原值）。
+  * **未加图标**：用文字卡片（prod/dev 都不依赖 storefront 静态资源）；**未改动买家余额展示**（向导仍无余额字样）。
+
+**验证（按验证纪律仅做针对性验证）**
+- 后端：`DJANGO_DATABASE_ENGINE=sqlite DJANGO_CACHE_BACKEND=locmem manage.py test merchant_ops.tests.test_doc02_round3`
+  → **21/21 OK**（新增 `AutoOrderPaymentMethodTests` 6 例：缺省=BALANCE 且旧调用不炸、PAYPAL 落库+payload 中英标签、
+  BITCOIN→400 `PAYMENT_METHOD_INVALID` 且零写入、小写 unionpay 归一化为 UNIONPAY+标签「银联」、列表 payload 带 Klarna、
+  到点执行覆盖 **BALANCE/VISA/PAYPAL/KLARNA** 四值订单+商家子单支付方式一致且余额不变）；
+  `manage.py check` **0 issue**；`makemigrations --check --dry-run` **No changes detected**（全 app，含 orders）；
+  ruff 5 个后端文件 **All checks passed**（修了 `views_auto_orders.py` 一处 I001 空行）。
+- 前端：`npx vite build` **exit 0**（AutoOrdersView chunk 18.76 kB）；`eslint` + `prettier --check` 该文件全过。
+- 浏览器（IAB，1440×900，超管 lshm2026admin@qq.com）：向导 6 步步骤栏正确；步骤 5 **12 个卡片两组**、
+  默认「余额支付」`is-sel`；点 Visa→选中态切换、底栏摘要出现 Visa（截图已确认版式）；
+  切 PayPal→Klarna 均生效；确认页分别显示 `支付方式 PayPal / Klarna`；**真实创建 1 条 PAYPAL 任务**
+  （买家 doc02-e2e / 商家 DESKIVO / 商品 A4 打印纸 / 数量 2 / 触发 2026-11-30 10:00）→ 列表新行显示「PayPal」，
+  详情抽屉显示「支付方式 PayPal」，通知「任务已创建」；全程 `window.onerror/unhandledrejection/console.error` 捕获 **0 条**。
+  前三步回归正常（买家下拉、商家下拉、商品卡片区 45 件/6 页分页）；步骤 4/5/6 无买家余额文案。
+- **测试数据清理（重要）**：该 PAYPAL 测试任务已删除（`AutoOrderTask` 回到 4 条、PENDING=0、未生成任何 Order），
+  对应 `AUDIT_LOG` 的 `AUTO_ORDER_TASK_CREATED` 1 条也已删除；**dev 零残留**。
+- 后端进程：8000 原为 `--noreload` 旧进程（模型/视图未热加载，列表一度显示「—」），已按 HANDOFF 惯例手动重启
+  （`runserver 0.0.0.0:8000 --noreload`，工作目录 backend），health 200、`/admin/auto-orders` 未鉴权 401 = 路由正常。
+
+**快照**：`var/auto_order_paymethod_20261129/`（README + `backup/` 6 个文件原样拷贝，含迁移）。
+
+**遗留 / 注意**
+1. **产线未应用迁移 0009**，部署时需 `migrate orders`（只加列，1 条 AddField + 1 条空回填）。
+2. 支付方式**只是记录**：不接任何真实网关，下单仍按演示口径直接置 PAID（与购物端一致）。
+3. 历史任务 `payment_method` 由迁移回填为 BALANCE；若有更早的、手工插入的非法值，仅在执行时由 `place_order`
+   兜底拒绝（任务标记失败）。
+4. 前端文案是中文硬编码（与全站管理端口径一致），未接 i18n。
+5. 一行已知小瑕疵：多条任务并发（同一秒）时列表按 `trigger_at` 排序，新任务可能不在首行——原行为，未改。

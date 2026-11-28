@@ -84,24 +84,35 @@ class AutoOrderBase(TestCase):
             listed_at=timezone.now(),
         )
 
-    def _create(self, *, quantity=1, trigger_minutes=1, account=None, offer=None, balance=None):
+    def _create(
+        self,
+        *,
+        quantity=1,
+        trigger_minutes=1,
+        account=None,
+        offer=None,
+        balance=None,
+        payment_method=None,
+    ):
         account = account or self.buyer
         offer = offer or self.offer
         if balance is not None:
             BuyerAccount.objects.filter(pk=account.pk).update(balance=Decimal(str(balance)))
             account.refresh_from_db()
         trigger = timezone.now() + timedelta(minutes=trigger_minutes)
+        payload = {
+            "account_id": str(account.public_id),
+            "merchant_id": str(self.shop.public_id),
+            "offer_id": str(offer.public_id),
+            "quantity": quantity,
+            "trigger_at": trigger.isoformat(),
+        }
+        # 2026-11-29：支付方式可选；None = 不传（走服务层默认余额支付）。
+        if payment_method is not None:
+            payload["payment_method"] = payment_method
         return self.client.post(
             "/api/v1/admin/auto-orders",
-            data=json.dumps(
-                {
-                    "account_id": str(account.public_id),
-                    "merchant_id": str(self.shop.public_id),
-                    "offer_id": str(offer.public_id),
-                    "quantity": quantity,
-                    "trigger_at": trigger.isoformat(),
-                }
-            ),
+            data=json.dumps(payload),
             content_type="application/json",
         )
 
@@ -194,6 +205,82 @@ class AutoOrderCreateTests(AutoOrderBase):
         ).json()
         self.assertEqual(len(by_uuid["items"]), 1)
         self.assertEqual(by_uuid["items"][0]["id"], str(self.spu.public_id))
+
+
+class AutoOrderPaymentMethodTests(AutoOrderBase):
+    """2026-11-29：一键下单新增支付方式（默认余额，可选购物端支持的支付方式）。"""
+
+    def test_create_defaults_to_balance_when_omitted(self):
+        # 旧调用方不传 payment_method 时不炸，落库为 BALANCE（与改造前行为一致）。
+        response = self._create()
+        self.assertEqual(response.status_code, 201, response.content)
+        task = AutoOrderTask.objects.get()
+        self.assertEqual(task.payment_method, "BALANCE")
+        self.assertEqual(response.json()["task"]["payment_method"], "BALANCE")
+        self.assertEqual(response.json()["task"]["payment_method_label"], "余额支付")
+
+    def test_create_persists_selected_payment_method(self):
+        response = self._create(payment_method="PAYPAL")
+        self.assertEqual(response.status_code, 201, response.content)
+        task = AutoOrderTask.objects.get()
+        self.assertEqual(task.payment_method, "PAYPAL")
+        body = response.json()["task"]
+        self.assertEqual(body["payment_method"], "PAYPAL")
+        self.assertEqual(body["payment_method_label"], "PayPal")
+        self.assertEqual(body["payment_method_label_en"], "PayPal")
+
+    def test_create_rejects_invalid_payment_method(self):
+        response = self._create(payment_method="BITCOIN")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"]["code"], "PAYMENT_METHOD_INVALID")
+        self.assertIn("支付方式", response.json()["error"]["message"])
+        self.assertFalse(AutoOrderTask.objects.exists())
+
+    def test_create_accepts_card_brand(self):
+        response = self._create(payment_method="unionpay")
+        self.assertEqual(response.status_code, 201, response.content)
+        task = AutoOrderTask.objects.get()
+        # 小写也归一化为枚举大写值。
+        self.assertEqual(task.payment_method, "UNIONPAY")
+        self.assertEqual(response.json()["task"]["payment_method_label"], "银联")
+
+    def test_list_and_detail_payload_carry_payment_method(self):
+        self._create(payment_method="KLARNA")
+        listing = self.client.get("/api/v1/admin/auto-orders?status=ALL").json()
+        row = listing["items"][0]
+        self.assertEqual(row["payment_method"], "KLARNA")
+        self.assertEqual(row["payment_method_label"], "Klarna")
+        self.assertEqual(row["payment_method_label_en"], "Klarna")
+
+    def test_executed_order_uses_task_payment_method(self):
+        # 覆盖 BALANCE / VISA / PAYPAL / KLARNA 四个代表值：
+        # 到点执行生成的订单与商家子单都记录任务所选支付方式。
+        from orders.auto_order_services import execute_due_auto_orders
+
+        for method in ("BALANCE", "VISA", "PAYPAL", "KLARNA"):
+            AutoOrderTask.objects.all().delete()
+            task = AutoOrderTask.objects.create(
+                account=self.buyer,
+                merchant=self.shop,
+                offer=self.offer,
+                product_title="R3 定时商品",
+                specification={"颜色": "黑"},
+                quantity=1,
+                unit_price=Decimal("20.00"),
+                payment_method=method,
+                trigger_at=timezone.now() - timedelta(minutes=1),
+            )
+            result = execute_due_auto_orders()
+            self.assertEqual(result["executed"], 1, method)
+            task.refresh_from_db()
+            self.assertEqual(task.status, AutoOrderTask.Status.EXECUTED, method)
+            order = Order.objects.get(auto_order_tasks=task)
+            self.assertEqual(order.payment_method, method)
+            sub = MerchantOrder.objects.get(order=order)
+            self.assertEqual(sub.payment_method, method)
+            # 余额支付仍不校验/不扣款（2026-11-28 口径不变）。
+            self.buyer.refresh_from_db()
+            self.assertEqual(self.buyer.balance, Decimal("500.00"))
 
 
 class AutoOrderExecuteTests(AutoOrderBase):
