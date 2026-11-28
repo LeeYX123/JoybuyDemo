@@ -7724,3 +7724,13 @@ payment-maestro.svg 新建替代 about/pay-maestro.png）。
 - 新 SVG：payment-revolut.svg/payment-newpay.svg（真站风格手绘）。
 验证：56/56 + 162/162；Playwright 截图 8 品牌+行列表与真站一致。
 教训：品牌图标辨识要用高倍局部截图逐个核对，别凭小图猜。
+
+## 银行卡图标换官方 logo（2026-11-28 22:20，✅ 完成，commit d8581d0）
+
+用户明确要求：停止手绘 SVG，从网上找官方品牌图标下载替换。
+从 Wikimedia Commons 下载 8 个品牌官方 logo SVG（Visa 2021/Mastercard/
+Maestro 2016/AmEx 2018/Diners Club/Discover Card/JCB/UnionPay），覆盖
+payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
+（第 8 位，此前一轮曾误判为 CB 已纠正）。页脚/PDP/购物车一并升级。
+注意：Commons API 有限流（429），批量下载需间隔重试。
+验证：eslint + tests/ 162/162；Playwright 截图官方 logo 清晰、顺序正确。
