@@ -589,6 +589,16 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d1f. 余额支付口径确认：只记录支付方式，不校验不扣款（2026-11-29，✅ 已提交 bb6abc2 并推送）
+
+- 用户口径：「余额不用修，购物车的余额不扣除了。只是当做记录支付方式而已。」
+- **代码本来就是对的**：`order_services.py` 早已 `balance_payment = False`；后端下单（直购 / 购物车 / 一键下单共用 `place_order`）**无买家余额读取、校验或扣减**，`payment_method='BALANCE'` 只写 `Order`/`MerchantOrder` 与 `Payment` 记录。写买家余额的函数（`record_buyer_wallet_entry` / `adjust_buyer_balance` / `recharge_buyer`）唯一调用方是管理端充值/调整。
+- 全链路排查「余额不足」拦截：backend `NOT_ENOUGH_BALANCE` 零命中；`INSUFFICIENT_BUYER_BALANCE` 只在后台调余额变负时抛；`merchant_ops` 的「余额不足」是**商家钱包**（发货成本/提现）；merchant-web 的命中全在静态 folio 设计稿；storefront 仅帮助中心 FAQ 泛指付款被拒 → **无任何买家余额支付拦截**，UI 无需改。
+- 修正 4 处说反了的注释：`storefront/pages/checkout/index.vue:165`、`orders/order_services.py` docstring、`checkout/checkout_views.py`、`accounts_buyers/views.py`。
+- 测试按新口径：新增 `test_balance_payment_with_zero_balance_does_not_deduct`（余额 0.00 直购+购物车各下一单，均 PAID、余额不变、无流水）；改写 `doc02_round2.BuyerBalanceTests` 旧扣款断言。目标集 **87 tests OK**。
+- 前端验证：结账支付步余额选项可选、显示 `Balance: $500.00`、页面无「余额不足」、Pay now 可点、console 0 error（截图 `var/checkout_balance_verify_20261129/`）。
+- 遗留 lint（未动，既有）：`checkout_views.py:17` F401 未用 import、`order_services.py:98` F841 `balance_payment` 未使用（死变量，可后续清理）。
+
 ## 0d1e. 加购价对齐卡价 / 商家页去【+】/ 清 9 条种子单 / 封店口径（2026-11-29，✅ 已提交 f928154 并推送）
 
 ### 1. 卡片【+】加购价 == 卡片显示价
