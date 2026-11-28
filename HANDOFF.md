@@ -1631,6 +1631,13 @@
 ### 坑
 **别在别的会话改 `vite.config.js` 时重启前端**：配置变更会触发 vite 自身 server restart，此时若配置处于半改状态（引用还不存在的文件）就会 `server restart failed` 然后进程退出，表现为 5174 突然空。先看日志确认是配置错误还是进程被杀，再决定是修配置还是单纯重启。
 
+### 追加（19:55）：管理端/商家端也纳入脱管看护（本次最终状态）
+- **新建** `var/run_admin_keepalive.sh`（5173）、`var/run_merchant_keepalive.sh`（5174）：storefront 同款「端口守护 + 5s 自动重启」，日志同样写 `logger=keepalive` 标记；
+- **`var/start_keepalives_detached.sh` 扩成四个服务**：`backend:8000 / storefront:3000 / admin:5173 / merchant:5174`，一条命令全部脱管拉起（**以后启动服务就用这一条**）；
+- **实测自愈**：taskkill 掉 5174 的 node → 约 12s 自动拉起、页面 200；
+- **去重**：多次启动叠加出 **18 条看护 bash**（backend×5 / storefront×5 等），已按精确正则全部清掉后重启一套 —— 现在每服务恰好 2 条 bash（wrapper + script = 一条循环）。清理要点：正则必须锚定**命令结尾** `var/run_(backend|storefront|admin|merchant)_keepalive\.sh\s*$`，否则会把自己检查命令的临时 shell 一起杀掉；
+- 最终：四端口 `0.0.0.0` 监听（3000/5173/5174/8000），四端 200，health ok，容器 33060/63790/8025 均在；`127.0.0.1:5174` 旧实例已消失。
+
 ## 0d55. 重启后冷启动（2026-11-28 01:06，✅ 完成 / 仓库零改动）
 
 ### 我们在做什么
@@ -7561,3 +7568,25 @@ commit `2065975`。
 - 验证：后端 checkout 测试 5/5；前端 378/378；Playwright 真实 UI 路径
   （注册→白名单→PDP加购→填表保存→自动跳支付页→支付卡地址 line1 组合正确→
   返回地址页下拉含新地址）全通过。
+
+## /checkout 地址表单真站校准 + 支付页改版（2026-11-28 晚，✅ 完成）
+
+**地址表单校准（commit 257d3a6 / d65dbf1）**：scripts/measure_checkout_real.py 在真站
+页面 getBoundingClientRect 实测：输入框固定 390px、左右列距 255px、卡片通栏、Save 412px
+左对齐。注意：截图目测尺寸会错（缩放），必须 JS 实测。
+
+**支付页改版（commit e8e3af1）**：用户需求——汇总去优惠明细/配送费行、订单合计去
+（含增值税）×7 语言；银行卡分组去卡号输入，改 VISA/Mastercard/AmEx/银联 4 品牌 icon
+直选，选中即记录支付方式（Order.payment_method + Payment.method），管理端
+MerchantOrdersView 加 PAYMENT_METHOD_LABELS 显示映射（银联/微信支付等中文文案）；
+Google Pay 等保留；余额支付保留真扣款；白名单用户任选支付点立即支付即成功
+（既有 paid_now 逻辑，无真实付款）。后端 Order.PAYMENT_METHODS 扩展
+VISA/MASTERCARD/AMEX/UNIONPAY。顺手买一件/优惠码/礼品卡模块本来就不存在于
+桌面 checkout（真站有、我们未实现），无需删。
+
+**验证**：checkout+orders 56/56 --keepdb；tests/ 162/162（AppHeader 3 个失败为
+并行任务）；E2E 选银联→支付→跳 /account/orders，订单 PAID + payment_method=
+UNIONPAY + Payment 记录一致。
+
+**坑**：后端 --noreload 改 PAYMENT_METHODS 后必须重启 Django（端口 8000 杀进程重启），
+否则 PAYMENT_METHOD_INVALID。dev 重启命令见 memory：taskkill /PID + runserver 后台。
