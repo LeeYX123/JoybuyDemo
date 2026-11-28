@@ -110,7 +110,6 @@ function onFile(kind, event) {
               required
               aria-required="true"
               :value="form.userName"
-              :placeholder="t('shopApply.userNamePlaceholder')"
               @input="onInput('userName', $event)"
             />
             <p v-if="fieldErrors.userName" class="m-apply__error" role="alert">
@@ -131,7 +130,6 @@ function onFile(kind, event) {
               required
               aria-required="true"
               :value="form.shopName"
-              :placeholder="t('shopApply.shopNamePlaceholder')"
               @input="onInput('shopName', $event)"
             />
             <p v-if="fieldErrors.shopName" class="m-apply__error" role="alert">
@@ -152,7 +150,6 @@ function onFile(kind, event) {
               required
               aria-required="true"
               :value="form.phone"
-              :placeholder="t('shopApply.phonePlaceholder')"
               @input="onInput('phone', $event)"
             />
             <p v-if="fieldErrors.phone" class="m-apply__error" role="alert">
@@ -171,7 +168,6 @@ function onFile(kind, event) {
               type="text"
               maxlength="32"
               :value="form.referrerCode"
-              :placeholder="t('shopApply.referrerCodePlaceholder')"
               aria-describedby="m-apply-referrer-hint"
               @input="onInput('referrerCode', $event)"
             />
@@ -261,7 +257,6 @@ function onFile(kind, event) {
               required
               aria-required="true"
               :value="form.residentialAddress"
-              :placeholder="t('shopApply.residentialAddressPlaceholder')"
               @input="onInput('residentialAddress', $event)"
             ></textarea>
             <p v-if="fieldErrors.residentialAddress" class="m-apply__error" role="alert">

@@ -418,7 +418,6 @@ useHead({ title: t('shopApply.title') })
                 maxlength="60"
                 required
                 aria-required="true"
-                :placeholder="t('shopApply.userNamePlaceholder')"
               />
               <p v-if="fieldErrors.userName" class="shop-apply__error" role="alert">
                 {{ fieldErrors.userName }}
@@ -438,7 +437,6 @@ useHead({ title: t('shopApply.title') })
                 maxlength="60"
                 required
                 aria-required="true"
-                :placeholder="t('shopApply.shopNamePlaceholder')"
               />
               <p v-if="fieldErrors.shopName" class="shop-apply__error" role="alert">
                 {{ fieldErrors.shopName }}
@@ -458,7 +456,6 @@ useHead({ title: t('shopApply.title') })
                 maxlength="32"
                 required
                 aria-required="true"
-                :placeholder="t('shopApply.phonePlaceholder')"
               />
               <p v-if="fieldErrors.phone" class="shop-apply__error" role="alert">
                 {{ fieldErrors.phone }}
@@ -476,7 +473,6 @@ useHead({ title: t('shopApply.title') })
                 class="shop-apply__input shop-apply__input--narrow"
                 type="text"
                 maxlength="32"
-                :placeholder="t('shopApply.referrerCodePlaceholder')"
                 aria-describedby="shop-apply-referrer-hint"
               />
               <small id="shop-apply-referrer-hint" class="shop-apply__hint">
@@ -569,7 +565,6 @@ useHead({ title: t('shopApply.title') })
                 maxlength="255"
                 required
                 aria-required="true"
-                :placeholder="t('shopApply.residentialAddressPlaceholder')"
               ></textarea>
               <p v-if="fieldErrors.residentialAddress" class="shop-apply__error" role="alert">
                 {{ fieldErrors.residentialAddress }}
