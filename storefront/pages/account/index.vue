@@ -143,9 +143,20 @@ useHead(() => ({ title: t('account.myAccount') }))
               </svg>
             </span>
             <div class="profile-me__body">
-              <h1 id="profile-title" class="profile-me__name" data-testid="account-profile-name">
-                {{ displayName }}
-              </h1>
+              <!-- 需求 B（2026-11-28）：用户名右侧显示注册邮箱（EMAIL 账号=注册
+                   邮箱，OAuth 账号=绑定邮箱；FACEBOOK 无邮箱时不显示）。 -->
+              <div class="profile-me__name-row">
+                <h1 id="profile-title" class="profile-me__name" data-testid="account-profile-name">
+                  {{ displayName }}
+                </h1>
+                <span
+                  v-if="account?.email"
+                  class="profile-me__email"
+                  data-testid="account-profile-email"
+                >
+                  {{ t('account.emailLabel') }}: {{ account.email }}
+                </span>
+              </div>
               <div class="profile-me__links">
                 <NuxtLink
                   class="profile-me__link"
@@ -388,7 +399,7 @@ useHead(() => ({ title: t('account.myAccount') }))
 .profile-me__name {
   overflow: visible;
   max-width: 750px;
-  margin: 0 0 0 12px;
+  margin: 0;
   color: #1a1a1a;
   font-size: 28px;
   font-weight: 700;
@@ -396,6 +407,21 @@ useHead(() => ({ title: t('account.myAccount') }))
 
   white-space: normal;
   word-break: break-word;
+}
+
+/* 需求 B：用户名一行放不下时邮箱换行；灰字小号低调呈现。 */
+.profile-me__name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-left: 12px;
+}
+
+.profile-me__email {
+  color: var(--colour-muted, #7a7d85);
+  font-size: 13px;
+  word-break: break-all;
 }
 
 .profile-me__links {

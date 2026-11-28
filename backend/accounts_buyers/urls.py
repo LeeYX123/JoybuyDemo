@@ -16,6 +16,12 @@ urlpatterns = [
     ),
     path("api/v1/auth/buyer/login", views.BuyerLoginView.as_view(), name="buyer-login"),
     path("api/v1/auth/buyer/logout", views.BuyerLogoutView.as_view(), name="buyer-logout"),
+    # 修改密码（2026-11-28）：已登录 EMAIL 买家；撤销全部会话后重签当前会话。
+    path(
+        "api/v1/account/change-password",
+        views.BuyerChangePasswordView.as_view(),
+        name="buyer-change-password",
+    ),
     path(
         "api/v1/auth/buyer/merchant-handoff",
         views.BuyerMerchantHandoffView.as_view(),

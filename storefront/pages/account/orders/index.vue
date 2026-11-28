@@ -44,20 +44,14 @@ const TAB_KEYS = ['all', 'pending_payment', 'to_receive', 'completed', 'canceled
 const initialTab = String(route.query?.tab || '')
 const activeTab = ref(TAB_KEYS.includes(initialTab) ? initialTab : 'all')
 
-function countState(state) {
-  return orders.value.filter((order) => order.state === state).length
-}
-
+// 2026-11-28：状态 tab 只留状态名，去掉数量角标（数量此前由前端统计，
+// 真站 tab 无计数；接口未动）。
 const tabs = computed(() => [
-  { key: 'all', label: t('orders.tabAll'), count: orders.value.length },
-  {
-    key: 'pending_payment',
-    label: t('orders.tabPendingPayment'),
-    count: countState('PENDING_PAYMENT'),
-  },
-  { key: 'to_receive', label: t('orders.tabToReceive'), count: countState('SHIPPED') },
-  { key: 'completed', label: t('orders.tabCompleted'), count: countState('COMPLETED') },
-  { key: 'canceled', label: t('orders.tabCanceled'), count: countState('CANCELED') },
+  { key: 'all', label: t('orders.tabAll') },
+  { key: 'pending_payment', label: t('orders.tabPendingPayment') },
+  { key: 'to_receive', label: t('orders.tabToReceive') },
+  { key: 'completed', label: t('orders.tabCompleted') },
+  { key: 'canceled', label: t('orders.tabCanceled') },
 ])
 
 const filteredOrders = computed(() => {

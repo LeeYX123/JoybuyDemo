@@ -38,7 +38,6 @@ function select(key) {
     >
       <span class="account-tabs__label">
         {{ tab.label }}
-        <span v-if="tab.count != null" class="account-tabs__count">{{ tab.count }}</span>
       </span>
     </button>
   </div>
@@ -98,10 +97,5 @@ function select(key) {
 
 .account-tabs__tab--active .account-tabs__label::after {
   background: #19191b;
-}
-
-.account-tabs__count {
-  color: inherit;
-  font-size: var(--font-size-sm);
 }
 </style>

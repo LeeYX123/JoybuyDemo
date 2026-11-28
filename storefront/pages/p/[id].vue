@@ -114,8 +114,14 @@ function onBuyNow() {
     showGatePopup.value = true
     return
   }
-  // Direct to the checkout address step (requirement 6-7: no confirm popup).
-  navigateTo('/checkout')
+  if (!offer.value?.public_id) return
+  // 立即购买（2026-11-28 修复：此前不带商品直接跳 /checkout，空购物车被
+  // quote 判 CART_INVALID）：独立直购上下文，不写购物车——带当前 offer 与
+  // 数量进结账页（?offer=<offer_public_id>&qty=<n>），结账页两步都透传。
+  const query = new URLSearchParams()
+  query.set('offer', offer.value.public_id)
+  query.set('qty', String(Math.max(1, Number(quantity.value) || 1)))
+  navigateTo(`/checkout?${query.toString()}`)
 }
 
 async function onAddToCart() {

@@ -140,19 +140,32 @@ def order_list_create(request):
         return _error(request, "AUTH_REQUIRED", "Sign in required.", 401)
 
     if request.method == "POST":
-        context = resolve_cart_context(request)
-        cart = get_or_create_cart(context)
         try:
             body = json.loads(request.body or b"{}")
         except json.JSONDecodeError:
             return _error(request, "BAD_REQUEST", "Invalid JSON.")
+        # 立即购买（2026-11-28）：body 带 offer_public_id 时走独立直购上下文——
+        # 不读购物车、不写 cart 行；不带时保持原购物车快照路径。
+        offer_public_id = str(body.get("offer_public_id") or "").strip()
         try:
-            order = place_order(
-                account=account,
-                cart_snapshot=serialize_cart(cart),
-                address_snapshot=body.get("address") or {},
-                payment_method=str(body.get("payment_method") or ""),
-            )
+            if offer_public_id:
+                order = place_order(
+                    account=account,
+                    cart_snapshot=None,
+                    address_snapshot=body.get("address") or {},
+                    payment_method=str(body.get("payment_method") or ""),
+                    offer_public_id=offer_public_id,
+                    quantity=body.get("quantity", 1),
+                )
+            else:
+                context = resolve_cart_context(request)
+                cart = get_or_create_cart(context)
+                order = place_order(
+                    account=account,
+                    cart_snapshot=serialize_cart(cart),
+                    address_snapshot=body.get("address") or {},
+                    payment_method=str(body.get("payment_method") or ""),
+                )
         except OrderError as exc:
             status = 404 if exc.code == "ADDRESS_UNSUPPORTED" else 400
             return _error(request, exc, message=None, status=status)

@@ -343,6 +343,80 @@ class BuyerLogoutView(BuyerCsrfAPIView):
         return response
 
 
+class BuyerChangePasswordView(BuyerCsrfAPIView):
+    """POST /api/v1/account/change-password：已登录的 EMAIL 买家修改密码。
+
+    校验旧密码（check_password）→ set_password → 撤销该账号全部未撤销会话
+    （0d0u 口径：UPDATE buyer_session SET revoked_at=now() WHERE account_id=?
+    AND revoked_at IS NULL）→ 立即为当前请求重新签发一个会话并写回 cookie：
+    其他设备/标签页被安全登出，当前浏览器保持登录态不被踢出。
+    OAuth（GOOGLE/FACEBOOK）账号没有平台密码，前端隐藏入口，这里兜底拒绝。
+    """
+
+    def post(self, request):
+        account = getattr(request, "buyer_account", None)
+        if account is None:
+            raise BuyerApiError(
+                business_code="AUTH_REQUIRED", message="Sign in required.", status_code=401
+            )
+        if (account.auth_provider or BuyerAccount.AuthProvider.EMAIL) != (
+            BuyerAccount.AuthProvider.EMAIL
+        ):
+            raise BuyerApiError(
+                business_code="OAUTH_ACCOUNT",
+                message="第三方登录账号不支持修改密码。",
+                status_code=400,
+            )
+
+        payload = request.data or {}
+        old_password = str(payload.get("old_password") or "")
+        new_password = str(payload.get("new_password") or "")
+        confirm_password = str(payload.get("confirm_password") or "")
+        if not old_password or not new_password:
+            raise BuyerApiError(
+                business_code="PASSWORD_REQUIRED",
+                message="请输入旧密码和新密码。",
+                status_code=400,
+            )
+        if len(new_password) < 8:
+            raise BuyerApiError(
+                business_code="PASSWORD_TOO_SHORT",
+                message="密码至少 8 位。",
+                status_code=400,
+            )
+        if new_password != confirm_password:
+            raise BuyerApiError(
+                business_code="PASSWORD_MISMATCH",
+                message="两次输入的新密码不一致。",
+                status_code=400,
+            )
+        if not account.check_password(old_password):
+            raise BuyerApiError(
+                business_code="INVALID_CREDENTIALS",
+                message="旧密码不正确。",
+                status_code=400,
+            )
+
+        with transaction.atomic():
+            account.set_password(new_password)
+            account.save(update_fields=["password", "updated_at"])
+            # 撤销该账号全部有效会话（含当前请求这条）；随后重新签发当前会话。
+            revoked_count = account.sessions.filter(revoked_at__isnull=True).update(
+                revoked_at=timezone.now()
+            )
+
+        token, _session = create_buyer_session(
+            account=account,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        response = Response(
+            {"account": _account_payload(account), "password_changed": True, "revoked_sessions": revoked_count}
+        )
+        set_buyer_session_cookie(response, token)
+        return response
+
+
 class BuyerSessionView(BuyerCsrfAPIView):
     def get(self, request):
         account = getattr(request, "buyer_account", None)

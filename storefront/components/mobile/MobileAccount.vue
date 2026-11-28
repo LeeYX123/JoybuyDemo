@@ -1,9 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
 import { useMarketLocale } from '../../composables/useMarketLocale'
+import ChangePasswordModal from '../account/ChangePasswordModal.vue'
 
 // Mobile account hub (docs/19 §3, user-provided real-site screenshots
 // 2026-11-24): user card, order stat tiles, favourites cards, activities &
@@ -22,6 +23,11 @@ const displayName = computed(
     account.value?.phone_number ||
     '',
 )
+
+// 需求 C（2026-11-28）：【修改密码】入口——仅 EMAIL 登录渠道账号显示；
+// GOOGLE/FACEBOOK 账号没有平台密码，隐藏。
+const showChangePassword = computed(() => (account.value?.auth_provider || 'EMAIL') === 'EMAIL')
+const showPwdModal = ref(false)
 
 const orderTiles = computed(() => [
   {
@@ -107,7 +113,14 @@ function iconFor(name) {
             <path d="M8.5 14.5c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8" stroke-linecap="round" />
           </svg>
         </span>
-        <span class="m-acct__username">{{ displayName }}</span>
+        <!-- 需求 B（2026-11-28）：用户名右侧显示注册邮箱（窄屏自动换行；
+             FACEBOOK 无邮箱的账号不显示该行）。 -->
+        <div class="m-acct__user-text">
+          <span class="m-acct__username">{{ displayName }}</span>
+          <span v-if="account?.email" class="m-acct__useremail" data-testid="m-account-email">
+            {{ t('account.emailLabel') }}: {{ account.email }}
+          </span>
+        </div>
       </section>
 
       <!-- Orders -->
@@ -302,6 +315,30 @@ function iconFor(name) {
               <path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </NuxtLink>
+          <!-- 需求 C：EMAIL 账号在设置&隐私下方提供【修改密码】入口。 -->
+          <button
+            v-if="showChangePassword"
+            class="m-acct__row"
+            type="button"
+            data-testid="m-account-change-password"
+            @click="showPwdModal = true"
+          >
+            <svg
+              class="m-acct__row-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <path
+                d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1Zm2 0h6V8a3 3 0 0 0-6 0v2Z"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            {{ t('accountMenu.changePassword') }}
+          </button>
         </div>
       </section>
 
@@ -412,6 +449,9 @@ function iconFor(name) {
         </NuxtLink>
       </div>
     </section>
+
+    <!-- 需求 C：修改密码弹窗（Teleport 到 body；EMAIL 账号才可打开）。 -->
+    <ChangePasswordModal :open="showPwdModal" @close="showPwdModal = false" />
   </div>
 </template>
 
@@ -442,10 +482,25 @@ function iconFor(name) {
   color: #55565b;
 }
 
+.m-acct__user-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
 .m-acct__username {
   color: #1a1a1a;
   font-size: 18px;
   font-weight: var(--font-weight-bold);
+  word-break: break-word;
+}
+
+.m-acct__useremail {
+  color: #7a7d85;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .m-acct__signin {

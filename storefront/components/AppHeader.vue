@@ -10,6 +10,7 @@ import { useMerchantEntry } from '../composables/useMerchantEntry'
 import { categoryHref } from '../utils/categoryLinks'
 
 import AppCategoryPanel from './AppCategoryPanel.vue'
+import ChangePasswordModal from './account/ChangePasswordModal.vue'
 
 const props = defineProps({
   cartCount: {
@@ -244,6 +245,19 @@ async function signOut() {
   await navigateTo('/auth/login')
 }
 
+// 需求 C（2026-11-28）：【修改密码】——仅 EMAIL 登录渠道账号显示；GOOGLE/
+// FACEBOOK 账号没有平台密码，隐藏该入口（session payload 带 auth_provider，
+// 缺省按 EMAIL 处理，老 payload 不回退显示）。
+const showChangePassword = computed(
+  () => (account.value?.auth_provider || 'EMAIL') === 'EMAIL',
+)
+const showPwdModal = ref(false)
+
+function openChangePassword() {
+  accountMenuOpen.value = false
+  showPwdModal.value = true
+}
+
 // 需求 13.5-6：展示名优先用后端生成/用户设置的 display_name（user+数字+字母），
 // 未登录或老 payload 缺字段时退回邮箱/手机号。
 const accountLabel = computed(
@@ -251,13 +265,20 @@ const accountLabel = computed(
 )
 
 // 头像下拉行（真站：左文字 + 右侧线性 icon；会员中心一项已按需求 1-6 移除）。
-const accountMenuRows = [
-  { key: 'orders', to: '/account/orders', icon: 'orders' },
-  { key: 'reviews', to: '/account', icon: 'reviews' },
-  { key: 'wishlist', to: '/account/favourites', icon: 'wishlist' },
-  { key: 'addresses', to: '/account/addresses', icon: 'addresses' },
-  { key: 'signOut', action: true, icon: 'signOut' },
-]
+// 需求 C：EMAIL 账号在【退出登录】上方插入【修改密码】。
+const accountMenuRows = computed(() => {
+  const rows = [
+    { key: 'orders', to: '/account/orders', icon: 'orders' },
+    { key: 'reviews', to: '/account', icon: 'reviews' },
+    { key: 'wishlist', to: '/account/favourites', icon: 'wishlist' },
+    { key: 'addresses', to: '/account/addresses', icon: 'addresses' },
+  ]
+  if (showChangePassword.value) {
+    rows.push({ key: 'changePassword', action: true, icon: 'lock' })
+  }
+  rows.push({ key: 'signOut', action: true, icon: 'signOut' })
+  return rows
+})
 
 // 行尾线性 icon 的 path 集合（文本字形对齐真站 20px 线性风格）。
 const menuIcons = {
@@ -267,6 +288,7 @@ const menuIcons = {
     'M12 20.3C8.4 17.7 3 13.9 3 9.5A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 9 2.5c0 4.4-5.4 8.2-9 10.8Z',
   addresses:
     'M12 21s-6.5-5.6-6.5-10.4a6.5 6.5 0 1 1 13 0C18.5 15.4 12 21 12 21Zm0-8.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z',
+  lock: 'M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1Zm2 0h6V8a3 3 0 0 0-6 0v2Z',
   signOut: 'M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 8l-4 4 4 4M6 12h9',
 }
 
@@ -572,14 +594,18 @@ const brandLogoUrl = '/images/logo.png'
                     <path :d="menuIcons[row.icon]" />
                   </svg>
                 </NuxtLink>
-                <!-- 需求 17.2-5：退出登录灰化（真站 signOut = --sys-Text-Tertiary）。 -->
+                <!-- 需求 17.2-5：退出登录灰化（真站 signOut = --sys-Text-Tertiary）。
+                     需求 C：action 行两用——changePassword 打开弹窗（EMAIL 账号），
+                     signOut 退出登录。 -->
                 <button
                   v-else
-                  class="account-menu__item account-menu__item--sign-out"
+                  class="account-menu__item"
+                  :class="{ 'account-menu__item--sign-out': row.key === 'signOut' }"
                   type="button"
-                  @click="signOut"
+                  :data-testid="`account-menu-${row.key}`"
+                  @click="row.key === 'signOut' ? signOut() : openChangePassword()"
                 >
-                  <span class="account-menu__label">{{ t('accountMenu.signOut') }}</span>
+                  <span class="account-menu__label">{{ t(`accountMenu.${row.key}`) }}</span>
                   <svg
                     class="account-menu__icon"
                     viewBox="0 0 24 24"
@@ -643,6 +669,8 @@ const brandLogoUrl = '/images/logo.png'
       </nav>
     </div>
   </header>
+  <!-- 需求 C：修改密码弹窗（桌面与移动共用组件，Teleport 到 body）。 -->
+  <ChangePasswordModal :open="showPwdModal" @close="showPwdModal = false" />
 </template>
 
 <style scoped>

@@ -29,9 +29,11 @@ class OrderError(Exception):
 def place_order(
     *,
     account,
-    cart_snapshot: dict,
+    cart_snapshot: dict | None = None,
     address_snapshot: dict,
     payment_method: str = "",
+    offer_public_id: str = "",
+    quantity: int = 1,
 ) -> Order:
     """Create a PAID order from a validated cart snapshot and split it into
     per-merchant fulfilment sub-orders.
@@ -41,12 +43,18 @@ def place_order(
     置 PAID 并记录支付方式；同时按 offer.merchant 拆出 MerchantOrder
     （成本快照取 offer.cost_price）。
 
+    立即购买（2026-11-28）：带 ``offer_public_id`` 时走独立直购上下文——
+    不读购物车、不写 cart 行，把单个 offer 构造成与购物车同形的快照后走
+    同一条校验/下单管线（白名单、支付权限、余额、库存闸门全部生效）；
+    事务内仍对该 offer 做 select_for_update 库存复核。不带时行为与从前
+    完全一致（购物车快照路径）。
+
     Raises OrderError (CART_INVALID / INSUFFICIENT_STOCK / NOT_WHITELISTED /
     PAYMENT_DISABLED / PAYMENT_METHOD_INVALID) without touching any state when
     validation fails.
     """
 
-    from cart.models import Cart
+    from cart.models import MAX_QTY_PER_ITEM, Cart
     from checkout.models import Address
 
     # 白名单后端打通（文档拍板 7）：后端标识驱动，未拿到标识按不可购买处理。
@@ -63,6 +71,26 @@ def place_order(
 
         if payment_method not in OrderModel.PAYMENT_METHODS:
             raise OrderError("PAYMENT_METHOD_INVALID", "不支持的支付方式。")
+
+    direct_mode = bool(offer_public_id)
+    if direct_mode:
+        # 立即购买：数量必须为正整数且不超单件上限；offer 缺失按不可购买处理。
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+            raise OrderError("CART_INVALID", "Quantity must be a positive integer.")
+        if quantity > MAX_QTY_PER_ITEM:
+            raise OrderError("QUANTITY_LIMIT", "Quantity cannot exceed 99 per item.")
+        direct_offer = (
+            Offer.objects.select_related("currency", "sku__spu", "merchant")
+            .filter(public_id=offer_public_id)
+            .first()
+        )
+        if direct_offer is None:
+            raise OrderError("SKU_NOT_AVAILABLE", "This item is no longer available.")
+        from checkout.checkout_views import serialize_direct_purchase
+
+        cart_snapshot = serialize_direct_purchase(direct_offer, quantity)
+    elif cart_snapshot is None:
+        raise OrderError("CART_INVALID", "Your cart needs attention before checkout.")
 
     # 迭代02 拍板：余额支付真扣 BuyerAccount.balance。先读快照做前置校验，
     # 实际扣款在下单事务内（同事务回滚，不会出现扣了钱没下单）。
@@ -215,14 +243,16 @@ def place_order(
                     stat_date=timezone.localdate(),
                 )
         # The buyer's OPEN cart becomes CHECKED_OUT; a fresh one opens lazily.
-        from django.db.models import Q
+        # 立即购买（直购）不涉及购物车：不标记 CHECKED_OUT，购物车原样保留。
+        if not direct_mode:
+            from django.db.models import Q
 
-        Cart.objects.filter(
-            Q(account=account) | Q(anonymous_token=""),
-            status=Cart.Status.OPEN,
-        ).filter(items__offer__public_id__in=[spec[1].public_id for spec in item_specs]).update(
-            status=Cart.Status.CHECKED_OUT
-        )
+            Cart.objects.filter(
+                Q(account=account) | Q(anonymous_token=""),
+                status=Cart.Status.OPEN,
+            ).filter(
+                items__offer__public_id__in=[spec[1].public_id for spec in item_specs]
+            ).update(status=Cart.Status.CHECKED_OUT)
         return order
 
 

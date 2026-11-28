@@ -30,22 +30,34 @@ export async function useCheckout() {
     }).finally(() => refresh())
   }
 
-  async function getQuote(addressPublicId) {
+  async function getQuote(addressPublicId, directPurchase) {
     const session = await $fetch(api('/auth/buyer/session'), { credentials: 'include' })
+    const body = { address_public_id: addressPublicId }
+    // 立即购买（2026-11-28）：带 offer_public_id/quantity 走后端直购上下文，
+    // 不读购物车；不带时保持原购物车快照路径。
+    if (directPurchase?.offerPublicId) {
+      body.offer_public_id = directPurchase.offerPublicId
+      body.quantity = directPurchase.quantity || 1
+    }
     return $fetch(api('/checkout/quote'), {
       method: 'POST',
-      body: { address_public_id: addressPublicId },
+      body,
       headers: { 'X-CSRFToken': session?.csrf_token || '' },
       credentials: 'include',
       ignoreResponseError: true,
     })
   }
 
-  async function placeOrder(addressPublicId, paymentMethod = '') {
+  async function placeOrder(addressPublicId, paymentMethod = '', directPurchase) {
     const session = await $fetch(api('/auth/buyer/session'), { credentials: 'include' })
+    const body = { address: { public_id: addressPublicId }, payment_method: paymentMethod }
+    if (directPurchase?.offerPublicId) {
+      body.offer_public_id = directPurchase.offerPublicId
+      body.quantity = directPurchase.quantity || 1
+    }
     return $fetch(api('/orders'), {
       method: 'POST',
-      body: { address: { public_id: addressPublicId }, payment_method: paymentMethod },
+      body,
       headers: { 'X-CSRFToken': session?.csrf_token || '' },
       credentials: 'include',
       ignoreResponseError: true,

@@ -43,7 +43,6 @@ const { t } = useLocale()
           @click="emit('tab', tab.key)"
         >
           {{ tab.label }}
-          <span v-if="tab.count > 0" class="m-orders__tab-count">{{ tab.count }}</span>
         </button>
       </nav>
 
@@ -146,12 +145,6 @@ const { t } = useLocale()
 .m-orders__tab--active {
   font-weight: var(--font-weight-bold);
   border-bottom-color: #1a1a1a;
-}
-
-.m-orders__tab-count {
-  color: #7a7d85;
-  font-size: 13px;
-  font-weight: var(--font-weight-regular);
 }
 
 /* Cards */

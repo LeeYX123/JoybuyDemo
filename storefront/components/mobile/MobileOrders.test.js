@@ -9,9 +9,9 @@ import MobilePageHeader from './MobilePageHeader.vue'
 // resolved rows; tests assert against the English dictionary (the locale
 // stub defaults en).
 const tabs = [
-  { key: 'all', label: 'All', count: 2 },
-  { key: 'pending_payment', label: 'Pending payment', count: 1 },
-  { key: 'to_receive', label: 'To receive', count: 0 },
+  { key: 'all', label: 'All' },
+  { key: 'pending_payment', label: 'Pending payment' },
+  { key: 'to_receive', label: 'To receive' },
 ]
 
 const orders = [
@@ -63,12 +63,13 @@ describe('MobileOrders', () => {
     // Header: "My orders" via MobilePageHeader.
     expect(wrapper.find('.m-page-head__title').text()).toBe('My orders')
 
-    // Tab row: labels + counts, selected tab gets the active underline class.
+    // Tab row: labels only (2026-11-28 状态 tab 去数量), selected tab gets
+    // the active underline class.
     const tabButtons = wrapper.findAll('.m-orders__tab')
     expect(tabButtons).toHaveLength(3)
     expect(tabButtons[0].classes()).toContain('m-orders__tab--active')
     expect(tabButtons[1].text()).toContain('Pending payment')
-    expect(tabButtons[1].find('.m-orders__tab-count').text()).toBe('1')
+    expect(wrapper.find('.m-orders__tab-count').exists()).toBe(false)
 
     // Cards: badge + number + image + total + detail link.
     const cards = wrapper.findAll('.m-orders__card')
