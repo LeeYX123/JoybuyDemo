@@ -2,6 +2,48 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0mf. 商家端桌面版整站重构：渲染层换 folio 静态稿引擎，替代 Vue 桌面版（2026-11-28，✅ 完成，浏览器 21/21 PASS，未 commit）
+
+- **任务**：merchant-web 桌面版（index.html）按静态稿《商家端及平台管理端文档/海外电商商家端.html》原码引擎重构，照抄手机版 folio 模式（渲染=静态稿原码 base-1..3 + 数据层 api.js 置换真实 API），去掉手机壳（base-4 / merchant-mobile.js / 手机 CSS），换桌面壳与真实路由。铁律沿用手机版：渲染代码=静态稿原码，数据层独立。
+- **改动清单**：
+  1. **改写 `merchant-web/index.html`**（生成脚本 `var/desktop_folio_20261128/build_index.py` 留档可重跑）：静态稿原生 head（4 个 style 块行 1-50 **逐字**，含 `.web-storefront-switch`/`.topright-shop-name`/断点 1600/1250/1100/1000/800 CSS）+ 静态稿 body 骨架逐字（aside/nav/header.topright/main#app/#overlay）+ 两段 JOYBUY-DEV 增量（引擎适配 CSS = mobile.html style 块 2 尾部逐字〔od-page 紧凑订单详情/ops-block/proof-list/shop-profile-bar p button/toolbar date/modal:has〕；桌面壳最小样式 = boot token shim〔仅 `html[data-folio-boot=pending]/[data-folio-guest]` 期生效的 studio tokens，供 boot.css〕+ topright 下拉/语言/多店 select 样式）。**剥离**手机壳 CSS（`data-design` 手机布局块）、folio 三个手机 stylesheet 链接、phone-preview 脚本；入口 `<script type="module" src="/src/folio/boot-desktop.js">`。title/meta=静态稿原样（寰球优选 · 商家工作台）。
+  2. **新增 `src/folio/boot-desktop.js`**（module）：`window.__FOLIO_DESKTOP__=true` → 登录门（session 检查→folio 登录屏，最小复制自 boot.js 56-97 行并注明来源，boot.js 一字未动）→ 无绑定店铺空态屏 → 选店（localStorage `joybuy.merchant.shop`）→ 路径规范化（未知路径→/dashboard）→ `bootEngine({route,orderId})`（pathname 直读，映射表=boot.js 33-51：/dashboard→0 /store→1 /catalog→2 /orders→3 /orders/:id→4 /wallet→5 /deposit→6 /after-sales→7 /activities→8 /messages→9 /notifications→10）。**不做** <760/>780 换文档协议（任务拍板，mobile 侧职责）。
+  3. **新增 `src/folio/merchant-desktop.js`**（classic，文件级 `/* eslint-disable no-undef */` 与 merchant-mobile.js 同口径）：①topright 每次 render 后重绘为静态稿**最终覆盖态**（平台通知 go(10)/联系客服/│/头像+店名 span〔`.topright-shop-name` 直接子级才有原码省略号〕/语言/`.web-storefront-switch` 切换回商城）并接线：切换回商城→`__JOYPLAY_ACTIONS__.switchToMall`（POST /merchant/switch-to-mall→redirect_url，照抄 merchant-mobile.js 实现）；账号下拉（商家编号全号/编辑店铺资料〔保留 base-3 editShopProfile〕/退出登录→`logout`→POST /admin/auth/logout→/login）；中文/EN 只写 localStorage `joybuy.merchant.language`（不接 i18n 孤儿模块）；多店 shops>1 时出 select→switchShop（包一层 normalizeUrl）。②路由同步：`go` 包装→pushState 真实路径（route4=/orders/<orders[selected][0]>）；popstate→按路径回跳，/orders/:id 走 `__JOYPLAY_ACTIONS__.openOrder`（当前页找不到→服务端定位→并入；找不到→go(3)）；`__FOLIO_DESKTOP_SYNC__` 供 boot-desktop 落位后对齐地址条；未知路径→/dashboard。
+  4. **`src/folio/api.js`（数据层共用，改动全部 `__FOLIO_DESKTOP__` 守卫）**：①`DESKTOP_ENGINE_SCRIPTS`=base-1..3；bootEngine 桌面分支注入 base-1..3+merchant-desktop.js（**不注入** base-4/merchant-mobile.js，不设 `__JOYPLAY_MOBILE__/__JOYPLAY_CONCEPT__`）；手机分支注入序列与原来完全一致。②`__JOYPLAY_ACTIONS__.logout` 桌面回 `/login`（手机仍回 /mobile.html）。③桌面专属 `openOrder`（openOrderById：详情深链/前进后退共用）。④**唯一一处语义面改动（已守卫）**：maybeLoadThread 的门槛 `shell.dataset.view==='thread'` 补 `|| window.__FOLIO_DESKTOP__===true`——桌面没有手机壳不会设 dataset.view，不补则桌面消息页永远不加载会话线程（打开即已读的后端语义随 GET 触发，属既有设计）。手机路径判定一字未变。
+  5. **`vite.config.js`**：双入口保持 {main,mobile}；新增 `copyFolioEngineScripts()`（build-only closeBundle 钩子）把 6 个 classic 引擎脚本拷进 `dist/src/folio/`。**修复既有产线缺口**：api.js 运行时按 `/src/folio/*.js` 字符串注入引擎，rollup 不打包字符串路径，此前 dist 不含这些文件（0d11 部署的产线 mobile.html 注入引擎会 404，除非 nginx 恰好兜住）——现在桌面/手机构建产物自包含。dev server 5174 在跑（vite 检测到 config 变化自动重启）；8000 后端 `--noreload` 未动未重启（本任务零后端改动）。
+  6. **删除被替代的 Vue 桌面代码**（先 grep 确认 folio 体系 index.html/mobile.html/src/folio/src/lib/vite.config 零引用后 `git rm`）：`src/main.js`、`src/App.vue`、`src/router/`、`src/views/`(12 个)、`src/layouts/`、`src/components/`(4 个)、`src/composables/`、`src/styles/`(2 个)。保留 `src/folio/`、`src/lib/`(api.js+uuid.js，folio 依赖)。package.json scripts 无引用被删文件，未改；vue/vue-router 依赖未摘除（vite.config 仍 import plugin-vue，零风险，留给以后清理）。
+- **与任务书的偏差（如实记录）**：①静态稿实际是 **4 个** style 块（行 1-50，行 51=`</style></head><body>`），不是摸底说的 5 个；②仓库 base-1..3 是 2026-11-21 快照引擎：当前静态稿文本已演进（web-order-\*/activity-hero-photo/topright-shop-name CSS 在稿内，但引擎渲染的是 od-page/ops-block/proof-list——这些 CSS 只在 mobile.html 内联块里），因此桌面 index.html=静态稿原生 head+引擎适配 CSS（逐字取自 mobile.html block2 尾部），这是「同一引擎」能跑的唯一组合；③静态稿最终态 topright 的 web-storefront-switch 在仓库 base-3 里没有（base-3 是旧版 topright：账号名点开编辑弹窗）——按「最终覆盖态为准」由 merchant-desktop.js 以 render 包装重绘 topright 到稿内最终标记（平台通知/联系客服/│/头像/店名 span/切换回商城）再接线，不改 base-3（手机零影响，手机 topright 本就 display:none）；④桌面**不加**窄屏→mobile 弹跳（任务 C 明确），boot.js 的 >780→桌面方向保留（mobile.html/base-4/merchant-mobile.js 零 diff）。
+- **验证（按验证纪律仅针对性验证；2026-11-28 dev，5174+8000）**：
+  * 构建：`npm run build` exit 0 → dist/index.html(36.8kB)+dist/mobile.html+assets+`dist/src/folio/`6 个引擎脚本；bundle 内含 `__FOLIO_DESKTOP__`/base-1/merchant-desktop 分支。
+  * eslint（根仓配置）：boot-desktop.js/merchant-desktop.js/vite.config.js **0 error 0 warning**；api.js **0 error**（306 warning 全是「unused eslint-disable directive」既有类，改前基线 300 个同类，新 6 个在同文件同风格行上）。
+  * 浏览器（Playwright 1.64.1 装在 %TEMP%/pw_scratch_20261128，`NODE_PATH` 引入；1440×900；账号 chiq@joybuy.test/Chiq!2026＝CHiQ JYMTMOKSYA0FR）：**21/21 PASS**（脚本+截图+verify_results.json 在 `var/desktop_folio_20261128/`）：登录门（任意路径未登录）→真实登录→11 页逐页真实数据渲染（店铺 JYM 全号、上架中心共 17894 件/分页 2237 页、订单 JYO2026112798MCHK 全号、钱包余额/提现/明细 8 行、保证金/售后/活动含推荐返佣卡/消息客服置顶/通知）；订单详情点入 `/orders/:id`+直接深链刷新落位+popstate 后退链（详情→列表→上架中心）全恢复；未知路径→/dashboard 归一；切换回商城 route 层拦截验证 POST 已发+200+redirect_url 被消费；账号下拉退出登录→/login→登回；语言切换只写 localStorage；桌面全程 **console error=0/pageerror=0**。
+  * 手机回归：390×844 新上下文访问 /mobile.html→登录门→登录→看板 merchant-home 渲染、业务模块 10 个、**console error=0**——手机链路零回归（mobile.html/base-\*/merchant-mobile.\* git diff 为空）。
+  * 全程只读：未点发货/提现/资料保存/join/发消息/通知已读；切换回商城在 route 层拦截（未真调后端、未真跳）。
+- **坑（不得再踩）**：①base-3 compactCopy 会删 welcome-strip/bottomnote/banner/support-context——桌面断言与排查别依赖 welcome-strip（本轮 02/15 两例假 FAIL 都源于此）；②未知路径冷启动断言要等 `.stats .stat` 这类settled 元素，boot 期 #app 里有 base-2 自渲染的瞬态 DOM（含 welcome-strip，visibility:hidden），waitForSelector 会撞上瞬态节点后永远等不到 visible；③切换回商城的 route 拦截 redirect_url **必须指回本站**，给 localhost:3000 会让引擎真的导航走、后续检查全挂；④folio classic 脚本（merchant-desktop/merchant-mobile）共享 base 全局词法，eslint 用文件级 `/* eslint-disable no-undef */`，行内 disable 会变 unused-directive 噪声；⑤Playwright/Node 装仓库外 %TEMP%（本轮复用 /tmp/pw_scratch_20261128）。
+- **遗留/下一步**：①**产线未部署**：merchant.joyfumi.com 仍是 Vue 桌面版，需重建 merchant-web 并发布 dist（nginx 需保证 `/src/folio/*.js` 可达——dist 已自带，或沿用服务器旧拷贝方式）；产线静态资源若有 CDN 缓存需刷新。②`<760` 桌面→手机自动切换本次按拍板未做：同域窄窗口访问 `/` 会得到桌面 folio 紧凑断点（800px 断点可用），m.\* 主机与直连 /mobile.html 不受影响；若用户要回该协议再开任务（改 boot-desktop.js 一处）。③popstate 用 baseGo：后退到列表页筛选/页码回默认（与点侧栏一致），未做深度视图栈恢复（手机版有，桌面可选优化）。④popstate 深链依赖 nginx/vite 的 SPA fallback（dev/preview 默认支持；产线 nginx 对 merchant 域名的 history fallback 需在部署时确认）。⑤i18n.js/locale-en.js 仍是孤儿模块（用户已叫停接入），未删。
+
+## 0sg. 产线同步活动页 48 页 + 首页 16 卡 + 2 张 minihome banner（2026-11-28，✅ 完成并三层验证，未 commit HANDOFF）
+
+- **任务**：把另一 agent 准备的物料（git 5586087/74f5caa、活动页包、2 banner 图）同步到 DO 产线并验证。全程按「先干跑再 apply」。
+- **执行链（全部完成）**：
+  1. 服务器 `git checkout -- storefront/pages/marketing/index.vue`（清掉遗留 M）后 `git pull --ff-only` → HEAD **74f5caa**，git 干净；
+  2. scp `var/deploy/activity_pages_20261128.json`（458,534 B，**$ 版**，全包 £=0）+ `var/deploy/deploy_media_20261128/`（beauty 173,740 B webp / oppo 538,727 B png）→ `/srv/joybuy/var/deploy/`；
+  3. `import_activity_pages` 干跑：pages=48，resolved spu=**1642/1934**、sku=147/176、**missing_spu=292**；`--apply`：**IMPORTED items=2166 skipped=383，home cards updated=16 created=0**（库从 14 页/52 楼层 → **48 页/119 楼层**）；
+  4. **banner 处理（与提交脚本不同，如实记录）**：`scripts/sync_minihome_banners_prod.py` 用 Django `default_storage.save`＝FileSystemStorage＝**写本地盘**，而项目没有 STORAGES 覆盖、nginx `/media/` 是**纯 Spaces 反代（无本地 fallback）**，照跑会 404。改用等价脚本 `var/deploy_20261128/sync_banners_spaces.py`：`media.storage.store_file_bytes`（走 MEDIA_BACKEND=s3 → Spaces，ACL=public-read）上传 `cms/original/banner_{beauty_month.webp,electronics_oppo.png}`，再按提交脚本同款逻辑更新 ChannelBanner（UK-Mini-HP-Beauty #0 pk=4、UK-Mini-HP-Electronics #0 pk=6，image_url=/media/cms/original/<name>，update_fields 同）。上传后 head_object ok=True，两对象在 `fra1.digitaloceanspaces.com/joybuy-media/media/cms/original/` 下；
+  5. 重启 joybuy-storefront + joybuy-api 均 active。
+- **额外修复（任务单没料到的坑）**：**hero.webp 更新不会因 restart 生效**——storefront systemd 跑 `.output/server/index.mjs`，`/images/**` 从**构建期拷贝的 `.output/public/`** 读（旧 260,352 B）；已把新 hero.webp（176,956 B）单文件 cp 进 `.output/public/images/activity/pages/jnSkLxDvRZwLtD4x8aTEy5cCAwF/` 并重启，外网 curl 200 且 176,956 B。git 源文件本来就对，下次正常 build 会自然带上。
+- **验证矩阵（按验证纪律针对性验证；curl 服务器侧+外网+Playwright 三层全过）**：
+  - `/active/2dawKz7FDU6oYukbjAiHPmssXb1Q` 200；API `activity-pages/active/<id>` 返回 **8/28 商品**（见已知缺口）；UI 按设计先显 5 件 +【View more】，展开后 DOM li=8（`show_more=True`+`FIRST_BATCH=5` 是组件既定行为，不是丢数据）；
+  - `/minihome/UK-Mini-HP-Beauty` 200，`img[src*=banner_beauty_month.webp]` 1 张可见；`/minihome/UK-Mini-HP-Electronics` 200，OPPO png 1 张可见；
+  - 首页第 4 卡：title「Tech & home mega deals」+ subtitle「Save $1,000+ – and discover more!」+ href=/active/jnSkLxDvRZwLtD4x8aTEy5cCAwF，SSR 与 DOM 双确认；
+  - £→$：`/active/4VQ7S5wXyuCEHevKrebXCnt6KmHY` 三个楼层标题「Festive finds $5 & under / $5 to $9.99 / $10 to $14.99」全部渲染，页面文本 £=0；导入前扫全库（旧 11-25/26 数据）£=0，导入后再扫 **48 页/119 楼层 £=0**；
+  - jnSk hero.webp 外网 200=176,956 B；`/media/` 反代抽样（旧 beauty key）200；
+  - Playwright（chromium 1440×900）5 页 console error=**0**、pageerror=0，**6/6 PASS**；脚本+截图 `var/deploy_20261128/`（verify_prod_20261128.cjs、verify_matrix.json、shot_home_www / shot_active_2dawKz7 / shot_minihome_beauty / shot_minihome_electronics / shot_active_festive .png）。
+- **⚠️ 已知缺口（用户/协调者拍板「先上线后回填」）**：prod `SpuSourceIdentity(joybuy_uk)`=22,811 缺包内 **292 个 SPU**（任何 source_system 下都不存在），383 个槽位被跳过，27 个新页少于 dev 导出数；重灾：2dawKz7 8/28、41xQpuB 43/100、254vgVW 40/88、49nyGg4 44/92、uFx9zbR 58/104、4VQ7S5wX 44/75。**恢复路径：商品数据 dev→prod 增量同步完成后，重跑同一条 `import_activity_pages --bundle /srv/joybuy/var/deploy/activity_pages_20261128.json --apply` 即整页替换回填**（命令幂等）。
+- **坑（不得再踩）**：①**本项目没有 Django STORAGES/DEFAULT_FILE_STORAGE 覆盖**，`default_storage` 永远是本地盘；任何要落到 Spaces 的媒体必须走 `media.storage.store_file_bytes/store_bytes`（nginx `/media/` 只反代 Spaces，不读本地盘）；②Nuxt 静态资源以 `.output/public/` 为准，改 `storefront/public/**` 后 restart 无效，必须 rebuild 或单文件同步 `.output/public/`；③产线 shell PATH 可能退化，每条 ssh 远端命令先 `export PATH="/usr/bin:$PATH"`；④本机 npm 在仓库子目录装包会撞 workspace 报 `Cannot read properties of null (reading 'matches')`，Playwright 脚本要装在仓库外（如 %TEMP%），用 `NODE_PATH` 引入；⑤活动页【View more】按钮要在 Vue hydration 完成后点（goto 后约 1.5s），否则点击无效、展开计数不涨。
+- **遗留**：商品 dev→prod 增量同步（独立任务，含上述 292 SPU 与 ~4000 SPU 库存差）；同步后重跑 import 回填；`/tmp/scan_pound.py`、`/tmp/count_current.py`、`/tmp/check_missing.py`、`/tmp/sync_banners_spaces.py` 留在服务器 /tmp（重启即清，脚本本体都在本地 `var/deploy_20261128/`）。
+
+
 ## 0sf. 管理端编辑页底部操作栏吸底（2026-11-28，✅ 完成，未 commit）
 
 - **用户要求**：管理后台所有编辑页的【保存】/【关闭·取消】固定在底部，滚动页面时按钮不跟着滚走。
@@ -48,6 +90,16 @@
   * 首行商品图文块原本只有 paragraph、没有 heading；Playwright 必须先点「+ 子标题」才会出现 heading input。
   * 已 grep `admin-web/src`、`merchant-web/src`、`storefront/components` 的 `5000/最多200`：其余命中均为轮询间隔 5000ms（CrawlersView/SupportView/MessagesView、storefront 聊天轮询等）或无关业务，**无第二处「图文详情块」长度限制**；merchant-web 无同类编辑器。
 - **未做**：未 commit / 未 push；未改商家端（无该编辑器）。
+
+## 0d13. 频道卡外站链接修复（2026-11-27 深夜，✅ dev+prod 已修，未 commit HANDOFF）
+
+- **用户报障**：`/minihome/UK-Mini-HP-Home-Appliances` 的 3 张活动卡（`channel-cards`）跳转错误。
+- **根因**：`ChannelPageCard.link_url` 存的是**真站原始快照**（`https://www.joybuy.co.uk/...`）——不是服务器代码旧，而是**两端数据本身就没改写过**（本地 dev 同样如此，「本地看到对」实为看的是其他模块）。影响面：**9 个频道、28 张卡**全部带 joybuy.co.uk 外链。
+- **关键发现**：prod 这 28 张卡的 `activity_page` FK **全部为空**（昨晚 import 数据包只灌了 activity 三表 + home cards，没绑频道卡 FK）——但每张卡的 external_id 都能从 link_url 解析，且 prod `activity_page` 表已有全部 48 页。
+- **修复**：`var/channel_cards_20261128/{fix_links.py(dev), fix_links_prod.py(prod)}`——按 URL 推断 kind（/store/→STORE、/campaign/active/→ACTIVITY）→ 按 (kind, external_id) 绑 FK → link_url 改写为 `/active/<id>` / `/store/<id>`。DRY_RUN→APPLY 两端各修 **28 张，残留 0**。
+- **验证**：dev `/minihome/UK-Mini-HP-Home-Appliances` 外链=0 且首 5 href 全站内；prod SSR HTML 活动卡轨道 hrefs=`/store/100004093`、`/active/2wPM8…`、`/active/2924o…`、`/c/…`、`/p/…`，**全页 joybuy.co.uk=0**。
+- **坑**：①prod 卡片 FK 全空与 dev 不同——数据包只重建 activity 三表不绑频道卡，未来重跑 import 后也要重绑 FK（本脚本可重放）；②ssh 内嵌 python -c 引号地狱：**复杂代码一律写文件 scp 再 exec(open(...))**；③grep ugrep 对 `{36}` 量词语法不兼容，换 sed/python 提取。
+- **未 commit**：本任务零代码改动（纯数据修复），脚本存 var/。
 
 ## 0d12. 备份/回滚台账独立成文（2026-11-27，✅ 完成，已 commit）
 
@@ -845,6 +897,13 @@
 6. **改动别用全局 bulk_update 兜验证**：爬虫在写库时全局 `--apply` 无法保证「只改 N 行」；按同口径 ORM 精确写 + 命令预览证明等价更安全。
 7. **验收「PDP 应 404」不能看页面状态码**（永远 200），要用后端 API 状态码或页面内容判定。
 8. Git Bash 里 `curl` 不在 `/usr/bin`，用 `/c/Windows/System32/curl.exe`；`docker` 用 `/d/Docker/resources/bin/docker`；Python 用 `E:/code/AgentProject/Joybuy/.venv/Scripts/python.exe`。
+
+## 补记：11-15 夜批晨报已于 2026-11-28 补汇报（原条目已不在）
+
+- 2026-11-15 凌晨夜批（`var/night_crawl_20261115/`，实际 02:03~06:03 本地跑完）：实际任务数 30 / 成功 30 / 失败 0 / skipped 0，导入商品 3840（发现 3843；仅 3 个单品导入失败——job 82 美术材料 / 116 餐具清洁 / 134 浴室用品 各 1 件，run 仍 SUCCEEDED）；熔断未触发，30 个 run 全部无 trip_signals；04 组因 0 VALID 会话整组排除。明细见 `var/night_crawl_20261115/MORNING_REPORT.md` 与 `final_summary.json`。
+- 失败任务清单为空、无需重跑（后续批次如遇 FAILED 且非「上游无货」类：`crawler_control.services.start_run(job)` + `manage.py run_crawl_run --run <id>` 复跑）。
+- 续跑建议（**按 11-15 语境的建议，~163 READY 等数字以当前库为准，11-28 已大变**）：剩余 READY 按夜批同模式分批继续——每组一线程同组串行、全局限并发，复用 `var/night_crawl_20261115/night_queue.py` 换 task_list.json 即可；数据抓取04 组先走「绑定 Gmail 完成 Google 帐户验证」解封后再排批，解封前不把任务借入 04 组。
+- 原始条目「夜间抓取已自动完成（2026-11-15 凌晨…）」由看护脚本插在「## 1. 我们在做什么」锚点下，现已在 HANDOFF 后续压缩中不在；该晚看护未做 DB 实查，「近 12h 风控账号数」无记录（该口径 11-17 起才有）。2026-11-28 补记时 DB 抽查佐证（只读，未写库）：按 public_id 查 30 个 run 全部 SUCCEEDED、succeeded_count 合计 3840 / failed_count 合计 3，与数据文件一致。
 
 ## 0cz. 白天批（执行方）：Sports 3 页判定 + 店铺页深挖（2026-11-27，✅ 完成 / 未 commit）
 
@@ -7098,6 +7157,13 @@ DRAFT SPU 的 Offer 11,457（DRAFT 6,169 / ACTIVE 4,724 / INACTIVE 564）。排�
   - **坑（不得再踩）**：①`messages.js` 只能精确 Read→Edit 字符串替换，另一 Agent 同时在改，整文件 Write 会覆盖对方改动；②`request.newContext({ baseURL: '.../api/v1' })` 再用 `/auth/...` 前导斜杠会丢掉 `/api/v1` 前缀、请求落到 SPA 返回 HTML（本轮踩过，改为 baseURL 不带路径 + 全路径）；③临时买家的 `MerchantApplication` 由 `buyer` OneToOne CASCADE，删买家即删申请，无需单独清理；④状态请求必须 catch 降级，否则后端 403/网络失败会让整个下拉菜单渲染卡住。
   - **未做/下一步**：①APPROVED 态只在单测覆盖，浏览器未实测（需管理端审核通过，属另一 Agent 的端到端范围）；②中文买家账号名过长时仍按原 ellipsis 处理；③**git 未提交**。
 
+- **上一任务（2026-11-28，站点文案日语化（先于商品翻译），✅ 完成，商品日语翻译已暂停待命，未 commit）**：用户「先优先把网站所有文本翻成日语：类目名称、按钮、标题、联系我们、政策、帮助中心等，再去翻商品」。
+  - **现状核查（避免重复劳动）**：`storefront/locales/messages.js` 里 **ja/ko 两个块已存在且完整**（各 663 键、0 缺失，另一会话产出）→ 按钮/标题等 UI 文案无需再做；`locale` 表 ja-JP(id14)/ko-KR(id15) 已登记，`market_locale` 挂在 GB。
+  - **本轮新增**：①**帮助中心/政策 12 个页面**（privacy/terms-conditions/cookie/terms-of-use/accessibility + payment-and-invoice/returns-and-refunds + 16 篇客服文章）：本地 Hy-MT2 翻译 **644 条片段**（`var/help_ja_cache.json`），生成 `storefront/content/help/*.ja.js`（7 个页面模块 + `csArticles.ja.js`），页面模块内加 `jaTitle`/`jaBlocks`/`jaCustomerService` 属性；`HelpCenter.vue`/`CustomerServicePage.vue`/`CsArticlePage.vue` 改为 locale=ja 时优先用 ja 数据；`helpPages.js` 左栏 tab 带 `ja` 标题。②**207 个本地类目名称**：新增 `LocalCategory.name_ja`（迁移 **0023**）+ `search_views.serialize_category` ja 分支 + `pickName()` ja/ko 分支；Hy-MT2 翻译 207 条（家電/ホーム＆リビング/キッチン・ダイニング…）。③**4 个静态页**（about-us/contact-us/joybuy-news/joyplus）：新增 `storefront/utils/overlayStrings.js`，**以 en 为骨架只替换字符串**（第一次直接生成 JSON 版 ja 把 `payAfter()` 函数丢了 → joyplus 500，已改回 overlay 方案），日语字典 187 条。
+  - **验证（针对性）**：`nuxt build` 通过；`vitest run` **378/378 passed**；eslint/prettier 改动文件全过；SSR 实测（cookie `joybuy-locale=ja-JP`）：`/help/privacy-policy` 左栏 5 个日文 tab + 正文日文、`/categories` 四个类目日文、`/pages/about-us` h1「Joybuyへようこそ！」、`/pages/joyplus` 无 500（h1 日文）。后端已重启加载 name_ja。
+  - **坑**：①静态页 `en` 对象含**函数**（joyplus `payAfter`），JSON 化会丢 → 必须 overlay 不能整对象替换；②政策正文是**片段拼接**结构（bold/italic/href 混排），逐片段翻译会偶发补全整句（已用「只翻片段、保持首尾标点」的严格 prompt 重译 20 条）；③`node -e import()` 无法解析 Nuxt 的无扩展名 import，验证靠 SSR curl 而非 node；
+  - **待办**：①**商品日语翻译已暂停**（ja 试跑 40 个商品 11 项 verify 全 PASS 后按用户要求停下；`var/ja_translate_20261128/loop_ja.sh` 可续跑，候选 17,769）；②ko 站文案：messages.js 的 ko 块已存在，但政策/帮助/类目/静态页**尚无 ko**（结构同样处理即可）；③zh 商品翻译剩 ~1,283。
+
 - **上一任务（2026-11-27，zh 第三轮 batch36..60 共 25 批 5000 商品，✅ 完成（数据留在库里），**发现第二台翻译机并存**，未 commit）**：「继续启动英文翻译中文的任务。先跑 25 批」。
   - **总账**：本轮 5,000 商品 / 8,872 units done / **0 failed**（墙钟 01:25–11:42 ≈10.3h，run 净 ~9h，单批 12–44 分钟）。**全局 zh-CN 行 12,779**（round3 起点 7,053）、zh units done 25,461、zh 术语 done 17,958、detail 行 12,694、sku spec 12,500、spec_write_log 14,868。**剩余候选 4,521**（两机合计清完约 8–9h）。
   - **重大发现：第二台翻译机并存**——窗口内 `192.168.1.130` 跑同一 zh 流水线（同 DB、同 Ollama）。claim 原子 + enqueue 幂等 → **无重复写入**，副作用只有：本侧 enqueue 常被对方抢先（插入少）、本侧 run 替对方清 pending、单批变慢、候选消耗翻倍；仅 4 行重复 unit（对方自行 recover，b41 起 status flow PASS）。**这验证了多机并行的安全设计（claimed_by 条件认领），将来扩容可直接加机器**。
@@ -7400,3 +7466,20 @@ commit `2065975`。
 注意：浏览器可能缓存旧 hero（URL 未变），需强刷。
 
 **验证纪律**：以上均按针对性验证执行（受影响测试 + SSR/截图/API 核对），未跑全量后端套件。
+
+## /checkout 收货地址表单改版（2026-11-28 晚，✅ 完成）
+
+按用户截图改版桌面端 /checkout 地址步骤（storefront/pages/checkout/index.vue）：
+1. 原【国家/地区】位改为【选择已有地址】下拉——选中已有地址即回填表单并直接进入支付页；
+2. 删除【地址】【县】【城镇/城市】三栏；line1 由【门牌号 + 地址行 2】组合生成
+   （后端 checkout_views._clean_address_body 的 line1 已改为可选，city 由前端兜底 London）；
+3. 电话号码去掉 GB(+44) 前缀下拉，纯输入框；
+4. 所有输入框不做格式校验，仅必填非空（姓名/电话/邮编）；新增「选择默认地址」勾选框。
+- messages.js 8 个新 key × 7 语言（pickExisting/noticeRequired/errorRequiredFields 等）。
+- 移动端 MobileCheckout 仍是 3 字段表单，共用 newAddress 模型，兼容保持；
+  邮编必填只在桌面端生效（移动端走 SW1A 1AA 兜底）。
+- 邮编仍受后端 UK 格式限制（is_supported_postcode，配送范围业务规则）——非表单校验，
+  输入非英式邮编时后端会拒绝并显示错误条；如需完全放开要单独拍板。
+- 验证：后端 checkout 测试 5/5；前端 378/378；Playwright 真实 UI 路径
+  （注册→白名单→PDP加购→填表保存→自动跳支付页→支付卡地址 line1 组合正确→
+  返回地址页下拉含新地址）全通过。

@@ -12,8 +12,10 @@ from django.conf import settings
 from django.db import transaction
 from django.http import JsonResponse
 
+from cart.models import MAX_QTY_PER_ITEM
 from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from checkout.models import Address, is_supported_postcode
+from offers.models import Offer
 
 FREE_SHIPPING_THRESHOLD = getattr(settings, "CHECKOUT_FREE_SHIPPING_THRESHOLD", None) or Decimal(
     "20.00"
@@ -27,6 +29,79 @@ def compute_shipping(subtotal, currency: str) -> tuple[str, str]:
     if subtotal >= FREE_SHIPPING_THRESHOLD:
         return "0.0000", "FREE"
     return str(STANDARD_SHIPPING), "STANDARD"
+
+
+def _parse_direct_quantity(value) -> int | None:
+    """直购数量解析：缺省 1；非法（非正整数/超单件上限）返回 None。"""
+
+    if value in (None, ""):
+        return 1
+    if isinstance(value, bool):
+        return None
+    try:
+        quantity = int(value)
+    except (TypeError, ValueError):
+        return None
+    if quantity < 1 or quantity > MAX_QTY_PER_ITEM:
+        return None
+    return quantity
+
+
+def serialize_direct_purchase(offer: Offer, quantity: int) -> dict:
+    """立即购买（Buy now）的独立直购快照（2026-11-28）。
+
+    与 ``serialize_cart`` 同形（items/subtotal/currency/needs_attention），
+    但不读写购物车：快照行只有一个 offer，行级 ``is_valid`` / ``issue`` /
+    ``needs_attention`` 判定与购物车行完全同口径（offer 非 ACTIVE / 无库存 /
+    UNAVAILABLE → SKU_NOT_AVAILABLE；quantity 超 local_inventory →
+    INSUFFICIENT_STOCK 并钳到库存）。额外带 ``total``（小计 + 运费）供
+    place_order 直购路径做余额校验/扣款；购物车快照路径维持现状不动。
+    """
+
+    from cart.services import merchant_entry
+
+    translation = offer.sku.spu.translations.order_by("pk").first()
+    entry = {
+        "public_id": "",
+        "offer_public_id": str(offer.public_id),
+        "spu_public_id": str(offer.sku.spu.public_id),
+        "title": translation.title if translation else "",
+        "quantity": quantity,
+        "price": str(offer.current_price),
+        "currency": offer.currency.code,
+        "inventory_display": offer.display_inventory,
+        "merchant": merchant_entry(offer),
+        "is_valid": (
+            offer.status == Offer.Status.ACTIVE
+            and offer.local_inventory > 0
+            and offer.source_availability != Offer.SourceAvailability.UNAVAILABLE
+        ),
+        "issue": None,
+    }
+    changed = False
+    if not entry["is_valid"]:
+        entry["issue"] = "SKU_NOT_AVAILABLE"
+        changed = True
+    elif entry["quantity"] > offer.local_inventory:
+        entry["issue"] = "INSUFFICIENT_STOCK"
+        entry["quantity"] = offer.local_inventory
+        changed = True
+
+    if entry["is_valid"]:
+        subtotal = offer.current_price * entry["quantity"]
+        shipping_cost, _method = compute_shipping(subtotal, entry["currency"])
+        total = subtotal + Decimal(shipping_cost)
+    else:
+        subtotal = None
+        total = None
+    return {
+        "public_id": "",
+        "items": [entry],
+        "subtotal": str(subtotal) if subtotal is not None else None,
+        "currency": entry["currency"] if entry["is_valid"] else "",
+        "needs_attention": changed,
+        "total": str(total) if total is not None else None,
+    }
 
 
 def _error(request, code, message, status=400):
@@ -56,7 +131,9 @@ def _clean_address_body(body):
     same required-field rules as POST.
     """
 
-    required = ("full_name", "phone", "line1", "city", "postcode")
+    # 2026-11-28（结算地址表单改版）：前端删除【地址】栏，line1 由门牌号 +
+    # 地址行 2 组合，两者都可为空 → line1 改为可选；城市由前端兜底 London。
+    required = ("full_name", "phone", "city", "postcode")
     missing = [field for field in required if not str(body.get(field) or "").strip()]
     if missing:
         return None, ("ADDRESS_INCOMPLETE", f"Missing: {', '.join(missing)}.")
@@ -70,7 +147,7 @@ def _clean_address_body(body):
         {
             "full_name": str(body["full_name"]).strip()[:160],
             "phone": str(body["phone"]).strip()[:32],
-            "line1": str(body["line1"]).strip()[:200],
+            "line1": str(body.get("line1") or "").strip()[:200],
             "line2": str(body.get("line2") or "").strip()[:200],
             "city": str(body["city"]).strip()[:100],
             "county": str(body.get("county") or "").strip()[:100],
@@ -227,9 +304,26 @@ def checkout_quote(request):
             "We do not deliver to this address yet.",
         )
 
-    context = resolve_cart_context(request)
-    cart = get_or_create_cart(context)
-    snapshot = serialize_cart(cart)
+    # 立即购买（2026-11-28）：请求带 offer_public_id 时走「独立直购上下文」——
+    # 不读写购物车，快照只有一个 offer（与购物车行同口径的 issue/needs_attention
+    # 判定）；不带时保持原购物车快照路径，行为不变。
+    offer_public_id = str(body.get("offer_public_id") or "").strip()
+    if offer_public_id:
+        quantity = _parse_direct_quantity(body.get("quantity"))
+        if quantity is None:
+            return _error(request, "BAD_REQUEST", "Quantity must be a positive integer.")
+        direct_offer = (
+            Offer.objects.select_related("currency", "sku__spu", "merchant")
+            .filter(public_id=offer_public_id)
+            .first()
+        )
+        if direct_offer is None:
+            return _error(request, "SKU_NOT_AVAILABLE", "This item is no longer available.", 404)
+        snapshot = serialize_direct_purchase(direct_offer, quantity)
+    else:
+        context = resolve_cart_context(request)
+        cart = get_or_create_cart(context)
+        snapshot = serialize_cart(cart)
     if snapshot["needs_attention"] or not snapshot["items"]:
         return _error(
             request,
