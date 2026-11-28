@@ -252,10 +252,6 @@ useHead({ title: 'Checkout' })
     <section class="checkout" aria-labelledby="checkout-title">
       <h1 id="checkout-title" class="visually-hidden">{{ t('checkout.title') }}</h1>
 
-      <div v-if="directPurchase" class="checkout__direct-note" role="status">
-        {{ t('checkout.buyingSolo') }}
-      </div>
-
       <div v-if="error" class="checkout__error" role="alert">{{ error }}</div>
 
       <!-- Step 1: delivery address（2026-11-28 二次改版：字段口径不变——
@@ -441,17 +437,6 @@ useHead({ title: 'Checkout' })
   border-radius: var(--radius-md);
   background: var(--colour-error-soft);
   color: var(--colour-error);
-  font-size: var(--font-size-sm);
-}
-
-/* 立即购买（直购上下文）：浅蓝提示条——告知这是单独购买、购物车不受影响。 */
-.checkout__direct-note {
-  margin-bottom: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
-  box-shadow: rgb(0 0 0 / 4%) 0 2px 12px 0;
-  color: var(--colour-text-secondary);
   font-size: var(--font-size-sm);
 }
 
