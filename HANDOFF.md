@@ -31,6 +31,27 @@
 - **坑（不得再踩）**：①str(qs.query) 生成的 SQL 参数不带引号（LIKE %coffee% 语法错）——捕获真实 SQL 必须用 CaptureQueriesContext 执行查询捕获；②prod spu_detail 无独立 id 列（OneToOne 主键即 spu_id），手写对比 SQL 别选 spu_detail.id；③并行会话推进了本地 HEAD（53f8272→c18c5af，支付页 icon 链），但与本次 3 文件无交集（`git diff 53f8272..HEAD -- <3路径>` 为空），staged 仍干净；④i18n 链将来入库必须把其 0025 改名（如 0027 且 dep 0024），避免与已入库的 0022-dep 版同名冲突；⑤`git apply --cached` 会整文件原子失败不落半截，先 `--check` 再 apply。
 - **产物**：`var/perf_prod_20261128/`（README=执行清单、diagnosis_report=前后对照表+排除项、build_staged_patch.py、staged/*.patch + 0025(0022-dep) + 0001 全量导出、prod_evidence/=prod 只读原证）。恢复：index 被并行会话清掉时 `git apply --cached var/perf_prod_20261128/staged/0001-perf-spu-admin-list.patch` 一键重放。
 
+### 执行记录（2026-11-28 14:24-14:35 UTC，用户批准「先把查询优化的提交吧，这个比较着急」后）
+
+- **提交事故（如实）**：执行时暂存区已被并行会话清空——perf 3 文件被并行会话的 commit **e14225a**（其自身改动=storefront middleware /account 302）一并 commit（4 文件=它的 1 个 + 我的 3 个），且 origin/main 已推进到 **df3c986**（含 e14225a，已被并行会话 push）。自证：`git diff e14225a~1 e14225a -- <3 路径>` 的 hunk 与 `var/perf_prod_20261128/staged/0001-perf-spu-admin-list.patch` **260 行逐字节一致**；0025 迁移 blob SHA `a52c8074…` 与 staged 文件一致；committed models 零 name_ja、views 零「可搜索下拉框」、dep=0022 → **内容即批准内容**。因 e14225a 之上并行会话已叠 3 个提交，不做历史改写（会炸并行会话）；代价=commit message 未描述 perf（`git show e14225a` 可见内容）。原计划的独立 commit + push 因此未执行（无需执行）。
+- **服务器链**：`git pull --ff-only` 5f59057→**df3c986**（代码核验：旧 `select_related("local_category","detail")` 0 命中、models 含 spu_created_id_idx、0025 dep=0022）→ mysqldump `--single-transaction --routines --triggers` = `/srv/backups/joybuy_pre_0025_20261128_142445.sql`（**1,223,684,828 字节 / 39.9s**；SHA256 `f248f26e2ce5f2f66df0ca372f3377474a02aae893a76eae69a5b202bc268d1d`；GTID 提示为提示性，回放时注意 --set-gtid-purged）→ `migrate catalog`：**Applying catalog.0025_spu_admin_list_indexes... OK，total 4.3s**（W036 警告为既有现象）→ `SHOW INDEX FROM spu` 确认 `spu_created_id_idx / spu_status_created_idx / spu_activity_created_idx` 在场 → `systemctl restart joybuy-api`（14:26:13 UTC active；joybuy-storefront 未动仍 active）。
+- **前后对照表（前=修复前 EXPLAIN ANALYZE DB 侧真值，修复前真实接口未测——当时未 mint 管理端会话；后=DB 侧 + 真实接口双口径）**：
+
+| 场景 | 前（DB 侧，修复前 SQL） | 后 list SQL（DB 侧） | 后 API in-process（11 SQL） | 后 e2e nginx curl |
+|---|---|---|---|---|
+| 池默认页 | **4,507-6,180ms**（冷 11.5s，temporary+filesort） | 0.18ms（best 2.5ms） | 90.3ms | **81.7ms** |
+| 第 2 页 | 4,562ms | 0.23ms | 90.3ms | 98.7ms |
+| 深页 OFFSET 2000（第 101 页） | 4,070ms | 55.4ms（OFFSET 走索引代价） | 166.8ms | 167.0ms |
+| page_size=100 | 4,251ms | 0.48ms | 220.3ms | 191.3ms |
+| q=coffee | 138-282ms（list SQL）+ COUNT 144ms | 61.5-70.8ms（LIKE 全扫主导，与前基本持平=遗留） | 267.4ms | 278.4ms |
+| status=ACTIVE | 4,604ms | 0.16ms | 92.4ms | 97.2ms |
+| 活动商品 tab（p10） | 61-106ms | 0.09ms | 64.1ms | 61.7ms |
+| 每页 COUNT：默认/q/ACTIVE/活动 | 146 / 144 / 486 / 247ms | 6.1 / 67.1 / 14.4 / 0.13ms | — | — |
+
+- **计时手段（如实注明）**：修复后真实接口=临时 mint `admin@joybuy.test` staff session（`create_staff_session(totp_verified=True)`，一次 INSERT，4 次 mint 会话全部用后即删，`staff_session` 遗留 COUNT=0）→ django test client（in-process，CaptureQueriesContext 记 SQL 数）+ `curl https://www.joyfumi.com`（nginx e2e，连接复用，全部 200）。修复后数字与脚本原证已归档 `var/perf_prod_20261128/prod_evidence/prod_after_out.txt / prod_api_after_out.txt / prod_e2e_out.txt`。
+- **回归（全 200）**：www `/`、`/api/v1/health`、`/pages/about-us`、`/search?q=coffee`、`/p/<32hex>` 与 `/p/<带横线>`（**PDP 实际路由是 /p/<id>**）、`/active/2wPM8`、m.joyfumi.com、merchant.joyfumi.com。nginx error 自重启零新增（现存 error 全为重启前 hero.webp upstream 旧记录，属并行会话前端资产问题）；joybuy-api journal 自 14:26 无 error 级日志；请求直方图 134×200 + 1×404（=我的 /products/<32hex> 路径试探）。
+- **坑（新增，不得再踩）**：⑥**并行会话会整只 commit 暂存区**（e14225a 实锤）——重要 staged 内容要么尽快自己 commit，要么留 hunk 级可比对的 patch + blob SHA 以自证内容未被污染（本次靠 0001 patch 自证内容完好）；⑦curl 多 URL 时 `-o/--output` 只作用于**下一个** URL，多 URL 计时必须逐 URL 配对 `-o /dev/null`，否则响应体混进 -w 输出；⑧`StaffAccount` 无 `is_active` 字段（用 `status`）；⑨e2e 计时前必须先带 cookie 自证 status=200（401 的耗时无意义）；⑩重启后复查 `journalctl -u joybuy-api -p err --since`。
+
 
 ## 0ap2. 活动商品管理列表列对齐商品池（2026-11-28，✅ 完成，未 commit）
 
@@ -7754,3 +7775,8 @@ payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
   + v-if/v-else 结构 + 相关样式），checkout 使用与其他页面相同的全量页脚
   （三栏栏目 + We support 官方 icon 行 + © 行 + 法规段落）。
 验证：eslint 通过、tests/ 162/162、Playwright 截图 checkout 页脚三栏齐全。
+
+## 页脚底栏链接移除（2026-11-28 22:45，✅ 完成，commit 8655c81）
+
+用户拍板：页脚 © 行移除 Personalised settings / Manage cookies 两个
+占位链接，只保留版权文字。验证：eslint + tests/ 162/162 + 截图确认。
