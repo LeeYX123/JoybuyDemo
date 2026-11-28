@@ -1,11 +1,13 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 
+import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
 import AppPicker from '@/components/AppPicker.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { adminWrite } from '@/composables/useAdminApi'
+import { refreshWithdrawalBadge } from '@/composables/useWithdrawalBadge'
 import { apiRequest } from '@/lib/api'
 
 const TABS = [
@@ -110,16 +112,35 @@ function openAction(row, kind) {
   actionForm.reason = ''
 }
 
+// 两步流转（2026-11-28）：审核通过 → 转账中；转账中 → 转账成功 / 转账失败（必填原因）。
 const ACTION_TITLES = {
-  approve: '审核通过',
+  approve: '审核通过（进入转账中）',
   reject: '打回提现',
   start_transfer: '开始转账',
-  mark_paid: '确认到账',
-  mark_failed: '标记转账失败',
+  mark_paid: '确认转账成功',
+  mark_failed: '确认转账失败',
+}
+
+// 详情抽屉（列表/详情都能看到失败或打回原因）。
+const detail = ref(null)
+
+function openDetail(row) {
+  detail.value = row
+}
+
+async function refreshAfterAction() {
+  // 列表 + 顶部统计 + 侧边导航徽标一起刷新（审核后徽标应立刻 -1）。
+  await Promise.all([load(), loadSummary(), refreshWithdrawalBadge()])
 }
 
 async function submitAction() {
   if (!actionTarget.value) return
+  const needsReason = ['reject', 'mark_failed'].includes(actionKind.value)
+  if (needsReason && !actionForm.reason.trim()) {
+    actionError.value =
+      actionKind.value === 'mark_failed' ? '请填写转账失败原因。' : '请填写打回原因。'
+    return
+  }
   actionBusy.value = true
   actionError.value = ''
   try {
@@ -130,13 +151,10 @@ async function submitAction() {
         actionKind.value === 'start_transfer' || actionKind.value === 'mark_paid'
           ? actionForm.reference || undefined
           : undefined,
-      reason:
-        actionKind.value === 'reject' || actionKind.value === 'mark_failed'
-          ? actionForm.reason
-          : undefined,
+      reason: needsReason ? actionForm.reason.trim() : undefined,
     })
     actionTarget.value = null
-    await Promise.all([load(), loadSummary()])
+    await refreshAfterAction()
   } catch (error) {
     actionError.value = error.message
   } finally {
@@ -194,6 +212,8 @@ function resetFilters() {
 onMounted(() => {
   loadSummary()
   load()
+  // 进入本页即对齐一次导航徽标（商家新申请时点进来就能看到最新数字）。
+  refreshWithdrawalBadge()
 })
 </script>
 
@@ -313,7 +333,10 @@ onMounted(() => {
               </td>
               <td>{{ formatTime(row.created_at) }}</td>
               <td>
+                <!-- 两步流转：待审核 →【审核】【打回】；转账中 →【转账成功】【转账失败】；
+                     已完成态只读，仅保留【详情】。 -->
                 <div class="row-actions">
+                  <button type="button" class="btn btn--sm" @click="openDetail(row)">详情</button>
                   <button
                     v-if="row.state === 'PENDING'"
                     type="button"
@@ -341,10 +364,10 @@ onMounted(() => {
                   <button
                     v-if="row.state === 'TRANSFERRING'"
                     type="button"
-                    class="btn btn--sm"
+                    class="btn btn--sm btn--primary"
                     @click="openAction(row, 'mark_paid')"
                   >
-                    确认到账
+                    转账成功
                   </button>
                   <button
                     v-if="row.state === 'TRANSFERRING'"
@@ -439,18 +462,83 @@ onMounted(() => {
           >
         </div>
         <div v-if="actionKind === 'mark_paid'" class="field">
-          <label for="paid-reference">凭证（选填）</label>
+          <label for="paid-reference">转账凭证 / 流水号（选填）</label>
           <input id="paid-reference" v-model="actionForm.reference" type="text" maxlength="160" />
+          <span class="field__hint">确认后状态变为【转账成功】，商家端同步显示该状态。</span>
         </div>
         <div v-if="actionKind === 'reject' || actionKind === 'mark_failed'" class="field">
-          <label for="wd-reason">{{ actionKind === 'reject' ? '打回原因' : '失败原因' }}</label>
-          <input id="wd-reason" v-model="actionForm.reason" type="text" maxlength="255" />
-          <span class="field__hint"
-            >{{ actionKind === 'reject' ? '打回' : '转账失败' }}会立即把金额退回商家钱包余额。</span
-          >
+          <label for="wd-reason">
+            {{ actionKind === 'reject' ? '打回原因' : '转账失败原因' }}（必填）
+          </label>
+          <input
+            id="wd-reason"
+            v-model="actionForm.reason"
+            type="text"
+            maxlength="255"
+            required
+            placeholder="例如：收款账户状态异常，请核对后重新提交"
+          />
+          <span class="field__hint">
+            {{ actionKind === 'reject' ? '打回' : '转账失败' }}会立即把 ¥
+            {{ actionTarget.amount }} 退回商家钱包余额，原因会同时记入审计日志与商家端资金明细。
+          </span>
         </div>
       </div>
     </AppModal>
+
+    <!-- 提现申请详情（列表与详情都能看到失败/打回原因） -->
+    <AppDrawer v-if="detail" title="提现申请详情" wide @close="detail = null">
+      <dl class="detail-grid">
+        <div>
+          <dt>申请号</dt>
+          <dd class="mono">{{ detail.id }}</dd>
+        </div>
+        <div>
+          <dt>商家</dt>
+          <dd>
+            {{ detail.merchant.name }}
+            <span class="cell-sub mono">{{ detail.merchant.id }}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>状态</dt>
+          <dd><StatusTag :value="detail.state" /></dd>
+        </div>
+        <div>
+          <dt>申请金额</dt>
+          <dd>¥ {{ detail.amount }}</dd>
+        </div>
+        <div>
+          <dt>手续费 / 到账</dt>
+          <dd>¥ {{ detail.fee }} / ¥ {{ detail.net_amount }}</dd>
+        </div>
+        <div>
+          <dt>收款方式</dt>
+          <dd>
+            <template v-if="detail.method === 'BANK'">
+              {{ detail.bank.name }} · {{ detail.bank.account }} · {{ detail.bank.holder }}
+            </template>
+            <template v-else>
+              {{ detail.chain.coin }} · {{ detail.chain.network }} · {{ detail.chain.address }}
+            </template>
+          </dd>
+        </div>
+        <div v-if="detail.reference">
+          <dt>转账凭证 / 流水号</dt>
+          <dd class="mono">{{ detail.reference }}</dd>
+        </div>
+        <div>
+          <dt>申请时间</dt>
+          <dd>{{ formatTime(detail.created_at) }}</dd>
+        </div>
+      </dl>
+      <template v-if="detail.reason">
+        <h3 class="section-title">
+          {{ detail.state === 'FAILED' ? '转账失败原因' : '打回原因' }}
+        </h3>
+        <p class="notice notice--error" style="white-space: pre-wrap">{{ detail.reason }}</p>
+      </template>
+    </AppDrawer>
 
     <AppModal
       v-if="rechargeOpen"

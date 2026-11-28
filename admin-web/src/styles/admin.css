@@ -118,6 +118,26 @@
   color: var(--side-icon-active);
 }
 
+/* 导航徽标（2026-11-28）：待审计数，0 时不渲染。右对齐、不挤压 label。 */
+.admin-nav__badge {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #e5484d;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-nav a.router-link-active .admin-nav__badge {
+  background: #ffffff;
+  color: #c62a2f;
+}
+
 .admin-side__foot {
   padding: 13px 21px;
   border-top: 1px solid var(--side-foot-border);

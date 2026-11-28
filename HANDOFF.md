@@ -2,6 +2,37 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0pm. 资金审核待审徽标 + 提现两步流转（2026-11-28，✅ 完成，未 commit）
+
+- **需求 1：侧边【资金审核】实时待审计数**
+  * 位置：侧边导航「资金与风控 → 资金审核」（`layouts/AdminLayout.vue`），不是页面内按钮。
+  * 计数口径：待审核（PENDING）的提现申请**条数**（商家一申请 +1、审核后 -1）。新端点 `GET /api/v1/admin/finance/withdrawals/counts` → `{pending, transferring}`，只两条 COUNT，不取明细。
+  * 刷新时机：应用启动、每次路由切换、审核/打回/转账动作成功后、进入资金审核页；另有 **45s 低频轮询**，`document.hidden` 时跳过、页面重新可见立刻补一次（`composables/useWithdrawalBadge.js`，模块级单例，导航与页面共用同一份状态）。
+  * 展示：pending>0 才渲染红色徽标（>99 显示 `99+`），选中态白底红字；0 时**不渲染**。
+
+- **需求 2：提现两步流转（审核 → 转账中 → 转账成功 / 转账失败）**
+  * **后端状态机原本已符合目标**（`TRANSITIONS`：PENDING→{approve,reject}、TRANSFERRING→{mark_paid,mark_failed}；`approve` 直接置 TRANSFERRING 并写手续费/净额）。本次只补两处：① `mark_failed` **强制要求原因**（空/纯空白 → 400 `REASON_REQUIRED`，状态与余额不变）；② 新增 counts 端点。`_withdrawal_payload` 早已返回 `reason`。
+  * **冻结/退回口径沿用现有实现、未改**：`reject`（打回）与 `mark_failed`（转账失败）都调用 `return_withdrawal()`，把申请时冻结的金额一次性退回商家钱包（`returned` 幂等标记，杜绝重复加钱）；`mark_paid` 不产生钱包流水（冻结额转为支出）。
+  * **前端**（`views/FinanceView.vue`）：操作列按状态出按钮——待审核→【审核】【打回】；转账中→【转账成功】【转账失败】；其余只读。文案「确认到账」→【转账成功】。转账失败/打回弹框：原因**必填**（前端校验 + 后端双保险）、`maxlength=255`、提示将退回的金额；转账成功弹框：凭证选填。新增【详情】抽屉，列表状态列已显示原因，抽屉再以「转账失败原因 / 打回原因」标题整段展示。
+  * 管理员动作后 `refreshAfterAction()` 同时刷列表 + 顶部统计 + 导航徽标。
+
+- **商家端映射只读核对结论（未改 merchant-web）**
+  * `merchant-web/src/folio/api.js` 的 `WD_STATE`：`TRANSFERRING:'转账中'` ✓（用户口语写作【转帐中】，仅字形差异）、`FAILED:'转账失败'` ✓、**`PAID:'已到账'` ✗** —— 用户要求商家端显示【转账成功】，现状是「已到账」，需 merchant-web 侧改文案（该目录由另一代理负责）。
+  * 原因可见性：`api.js` 已把 `reason` 透传到提现对象；商家「提现处理明细」弹层（`base-3.js` `payoutDetail`）会渲染 `reason` ✓；但「资金明细」**列表表格只显示状态、不显示原因**（进详情才可见）——「资金明细里显示原因」这一条**未完全满足**，同属 merchant-web 范围。
+  * 另注：`base-3.js` 的 `processPayout` 是**演示用平台面板**的本地点单流程（PENDING→「审核通过」→显示为已到账），与真实管理端链路无关，勿据此判断。
+
+- **验证（按验证纪律仅针对性验证）**
+  * 后端：`test_admin_commerce.FinanceApiTests + MerchantAdminApiTests` **15/15 OK**（新增：失败原因必填两种空值 → 400 且 `state` 仍 TRANSFERRING、`returned=False`、余额仍为冻结后值；counts 三态 1/0→0/1→0/0；`mark_failed` 用例补 `reason` 回传断言）。ruff 通过。
+    ⚠️ 整个 `test_admin_commerce` 在 sqlite 隔离环境有 3 个 error，全部是 `ProductPool*` 的 `no such function: JSON_LENGTH`（sqlite 无该函数，MySQL-only），**非本次改动**；MySQL 的 `test_joybuy` 当前被并行会话迁移占用（`Table 'merchant_permission' already exists`），无法复跑，故以 finance/merchant 子集 15/15 为准。
+  * 前端：`npx vite build` exit 0；`FinanceView.vue` / `AdminLayout.vue` / `useWithdrawalBadge.js` / `admin.css` eslint + prettier 全过。
+  * 浏览器（5173 超管，1440×900），用**两条临时 E2E 提现单**（HOMCOM，¥1.00，holder=E2E-PAID/E2E-FAIL）跑全链，跑完已清理：
+    - 徽标随流转：3 → 审核一张后 2 → 再审核一张后 1；临时把唯一真实 PENDING 置终态后徽标**整个消失**（0 不渲染），随后立即还原为 PENDING。
+    - FAILED 链：审核（弹窗标题「审核通过（进入转账中）」）→ 列表变「转账中」且按钮换成【转账成功】【转账失败】→ 点【转账失败】→ 空原因点确认被拦（弹窗不关、红字「请填写转账失败原因。」）→ 填原因确认 → 状态「转账失败」，列表状态列直接显示原因，详情抽屉显示「转账失败原因 + 全文」。
+    - PAID 链：审核 → 转账中 → 【转账成功】（弹窗「确认转账成功」，凭证选填、无原因输入）→ 状态「已到账」、按钮只剩【详情】。
+    - console error：`/finance`、`/merchants`、`/products`、`/auto-orders` 全 0。
+  * **测试数据清理（重要）**：两条 E2E 单及其钱包流水/审计记录已删除；PAID 测试单留下的 1.00 冻结额用一笔 `ADJUSTMENT +1.00`（note「E2E 测试数据清理：转账成功测试单冻结金额冲回」）冲回，HOMCOM 钱包余额已复位 **60266.56**（造单前 60266.56 → 冻结后 60264.56 → 清理后 60266.56）。该冲回流水保留（正常审计痕迹）。dev 提现表仅剩 1 条真实 PENDING（20.00）。
+  * 后端进程：`manage.py` 改动需重启 8000（`--noreload`），本次已重启并核验 `/finance/withdrawals/counts`（401 未鉴权 = 路由已生效）。
+
 ## 0ph. 全站 SQL/索引体检 + 商家端商品搜索性能修复（2026-11-28，✅ 已上产线，commit `2d6a58a`）
 
 - **用户抱怨**：商家端【商家商品管理】（店铺管理/商品上架中心）搜索也很慢；要求全站体检、慢 SQL 就地优化、缺索引补索引。

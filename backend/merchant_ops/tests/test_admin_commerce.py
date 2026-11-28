@@ -1117,8 +1117,42 @@ class FinanceApiTests(CommerceTestBase):
         response = self.post_json(url, {"action": "mark_failed", "reason": "卡号输入错误"})
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["withdrawal"]["state"], "FAILED")
+        # 失败原因随 payload 返回（商家端资金明细/处理明细展示用）。
+        self.assertEqual(response.json()["withdrawal"]["reason"], "卡号输入错误")
         self.merchant.refresh_from_db()
         self.assertEqual(self.merchant.wallet_balance, Decimal("100.00"))
+
+    def test_mark_failed_requires_reason(self):
+        """2026-11-28：转账失败必须填写原因，空原因 400 且状态不变。"""
+        withdrawal = self._make_withdrawal()
+        url = f"/api/v1/admin/finance/withdrawals/{withdrawal.public_id}/actions"
+        self.post_json(url, {"action": "approve", "fee": "0"})
+        for payload in ({"action": "mark_failed"}, {"action": "mark_failed", "reason": "   "}):
+            response = self.post_json(url, payload)
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertEqual(response.json()["error"]["code"], "REASON_REQUIRED")
+        withdrawal.refresh_from_db()
+        self.assertEqual(withdrawal.state, "TRANSFERRING")
+        self.assertFalse(withdrawal.returned)
+        self.merchant.refresh_from_db()
+        # 未退回：余额仍是冻结后的 50
+        self.assertEqual(self.merchant.wallet_balance, Decimal("50.00"))
+
+    def test_withdrawal_counts_endpoint(self):
+        """侧边导航徽标：轻量计数只返回 pending / transferring 两条数量。"""
+        withdrawal = self._make_withdrawal()
+        response = self.client.get("/api/v1/admin/finance/withdrawals/counts")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), {"pending": 1, "transferring": 0})
+
+        url = f"/api/v1/admin/finance/withdrawals/{withdrawal.public_id}/actions"
+        self.post_json(url, {"action": "approve", "fee": "0"})
+        payload = self.client.get("/api/v1/admin/finance/withdrawals/counts").json()
+        self.assertEqual(payload, {"pending": 0, "transferring": 1})
+
+        self.post_json(url, {"action": "mark_paid"})
+        payload = self.client.get("/api/v1/admin/finance/withdrawals/counts").json()
+        self.assertEqual(payload, {"pending": 0, "transferring": 0})
 
     def test_recharge_creates_ledger_entry(self):
         response = self.post_json(

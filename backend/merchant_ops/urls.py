@@ -211,6 +211,11 @@ urlpatterns = [
         name="admin-withdrawals",
     ),
     path(
+        "api/v1/admin/finance/withdrawals/counts",
+        views_finance.AdminWithdrawalCountsView.as_view(),
+        name="admin-withdrawal-counts",
+    ),
+    path(
         "api/v1/admin/finance/withdrawals/<uuid:public_id>/actions",
         views_finance.AdminWithdrawalActionsView.as_view(),
         name="admin-withdrawal-actions",

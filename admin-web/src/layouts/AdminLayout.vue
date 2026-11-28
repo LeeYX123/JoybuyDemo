@@ -1,12 +1,28 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useStaffAuth } from '@/composables/useStaffAuth'
+import {
+  refreshWithdrawalBadge,
+  useWithdrawalBadge,
+  useWithdrawalBadgePolling,
+} from '@/composables/useWithdrawalBadge'
 
 const { staff, logout, canView } = useStaffAuth()
 const route = useRoute()
 const router = useRouter()
+
+// 【资金审核】徽标 = 待审（PENDING）提现申请条数；启动 + 每次路由切换都刷新，
+// 另有 45s 低频轮询兜底（页面不可见时不轮询）。
+const { badge: withdrawalBadge } = useWithdrawalBadge()
+useWithdrawalBadgePolling()
+watch(
+  () => route.fullPath,
+  () => {
+    refreshWithdrawalBadge()
+  },
+)
 
 // 图标取自原型 shapes（同一套路径，保证视觉一致）。
 const ICONS = {
@@ -113,6 +129,14 @@ async function signOut() {
               <path :d="ICONS[item.icon]" />
             </svg>
             {{ item.label }}
+            <span
+              v-if="item.to === '/finance' && withdrawalBadge.pending > 0"
+              class="admin-nav__badge"
+              :title="`待审核提现 ${withdrawalBadge.pending} 笔`"
+              :aria-label="`待审核提现 ${withdrawalBadge.pending} 笔`"
+            >
+              {{ withdrawalBadge.pending > 99 ? '99+' : withdrawalBadge.pending }}
+            </span>
           </RouterLink>
         </template>
       </nav>

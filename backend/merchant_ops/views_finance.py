@@ -127,6 +127,27 @@ class AdminFinanceSummaryView(OpsAPIView):
         )
 
 
+class AdminWithdrawalCountsView(OpsAPIView):
+    """侧边导航【资金审核】徽标的轻量计数（2026-11-28）。
+
+    只做两条 COUNT（PENDING 待审核 / TRANSFERRING 转账中），不取明细、不做聚合，
+    供前端 30–60s 低频轮询，避免为个位数徽标去拉整页列表。
+    """
+
+    permission_classes = [StaffRbacPermission]
+    required_permissions = ["finance.manage"]
+    view_permissions = ["finance.view"]
+
+    def get(self, request):
+        pending = MerchantWithdrawal.objects.filter(
+            state=MerchantWithdrawal.State.PENDING
+        ).count()
+        transferring = MerchantWithdrawal.objects.filter(
+            state=MerchantWithdrawal.State.TRANSFERRING
+        ).count()
+        return Response({"pending": pending, "transferring": transferring})
+
+
 class AdminWithdrawalsView(OpsAPIView):
     permission_classes = [StaffRbacPermission]
     required_permissions = ["finance.manage"]
@@ -225,7 +246,15 @@ class AdminWithdrawalActionsView(OpsAPIView):
             withdrawal.save(update_fields=["state", "paid_at", "reference", "updated_at"])
         elif action == "mark_failed":
             withdrawal.state = MerchantWithdrawal.State.FAILED
-            withdrawal.reason = (payload.get("reason") or "").strip()
+            # 2026-11-28 用户要求：转账失败必须填写原因（商家端资金明细/处理明细要看得到）。
+            failure_reason = (payload.get("reason") or "").strip()
+            if not failure_reason:
+                raise StaffApiError(
+                    business_code="REASON_REQUIRED",
+                    message="请填写转账失败原因。",
+                    status_code=400,
+                )
+            withdrawal.reason = failure_reason[:255]
             withdrawal.save(update_fields=["state", "reason", "updated_at"])
             return_withdrawal(withdrawal, actor=request.staff_account, reason=withdrawal.reason)
 
