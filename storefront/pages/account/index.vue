@@ -1,11 +1,10 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { NuxtLink } from '#components'
 import { useFetch, useHead, useRequestHeaders, useRuntimeConfig } from '#imports'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
-import { useMerchantEntry } from '../../composables/useMerchantEntry'
 import { useMobileView } from '../../composables/useMobileView'
 
 // 需求 22.3-2（2026-11-22 真站 /profile 实测）：用户中心是**纵向堆叠**结构
@@ -18,14 +17,6 @@ const { isAuthenticated, account, logout } = useBuyerAuth()
 const { t } = useLocale()
 const { isMobileHost } = useMobileView()
 const config = useRuntimeConfig()
-const {
-  label: merchantLabel,
-  description: merchantDesc,
-  linkTarget,
-  switching,
-  loadStatus,
-  openMerchantConsole,
-} = useMerchantEntry()
 
 const ordersUrl = computed(() =>
   import.meta.server ? `${config.apiBaseInternal}/orders` : '/api/v1/orders',
@@ -60,6 +51,7 @@ const orderStats = computed(() => [
 // 真站权益 tile（22/700 标题 + 24px 图标 + 16px 右箭头 + 18px 灰描述）。
 // 2026-11-25 与真站 /profile 重新对齐：磁贴 = 优惠券 / 心愿单(我的收藏) / 积分
 // （真站口径）；原「售后/评价/最近浏览」磁贴移除，最近浏览页仍可直链访问。
+// 2026-11-28（用户要求）：账号首页也不再有商家磁贴，进入商家端只走右上角 pill。
 const modules = computed(() => [
   {
     key: 'coupons',
@@ -82,19 +74,7 @@ const modules = computed(() => [
     description: t('account.pointsEmpty'),
     icon: 'points',
   },
-  {
-    key: 'merchant',
-    to: linkTarget.value,
-    title: merchantLabel.value,
-    description: merchantDesc.value,
-    icon: 'shop',
-  },
 ])
-
-onMounted(() => {
-  // 2026-11-27：同 AccountNav——节流再校验由 useBuyerAuth 在路由完成时统一负责。
-  if (isAuthenticated.value) loadStatus()
-})
 
 // 真站 /profile 昵称优先用账号 display_name（与右上角下拉一致），旧 payload
 // 缺字段时退回 display_identifier / 邮箱 / 手机号。
@@ -237,17 +217,12 @@ useHead(() => ({ title: t('account.myAccount') }))
         <!-- 真站 UserBenefitsSection：3 列 tile（104px 高 / #f5f6fa / 8px 圆角 /
              24px 24px 16px 内边距；标题 22/700、描述 18/400 #888b94）。 -->
         <nav class="profile-modules" :aria-label="t('account.modules')">
-          <component
-            :is="module.to ? NuxtLink : 'button'"
+          <NuxtLink
             v-for="module in modules"
             :key="module.key"
             class="profile-module"
-            :class="{ 'profile-module--action': !module.to }"
-            :to="module.to || undefined"
-            :type="module.to ? undefined : 'button'"
-            :disabled="!module.to && switching"
+            :to="module.to"
             :data-testid="`account-module-${module.key}`"
-            @click="!module.to && openMerchantConsole()"
           >
             <span class="profile-module__title">
               <span class="profile-module__title-text">
@@ -278,27 +253,13 @@ useHead(() => ({ title: t('account.myAccount') }))
                     stroke-linejoin="round"
                   />
                 </svg>
-                <svg
-                  v-else-if="module.icon === 'points'"
-                  viewBox="0 0 24 24"
-                  width="24"
-                  height="24"
-                  aria-hidden="true"
-                >
+                <svg v-else viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
                   <path
                     d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 5v3.2l3 1.7-1 1.7-3-1.7-3 1.7-1-1.7 3-1.7V7h2Z"
                     fill="currentColor"
                   />
                 </svg>
-                <svg v-else viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-                  <path
-                    d="M4 4h16v3H4V4Zm0 5h16v10a1 1 0 0 1-1 1h-5v-5H10v5H5a1 1 0 0 1-1-1V9Zm2 2v2h2v-2H6Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Z"
-                    fill="currentColor"
-                  />
-                </svg>
-                <span>{{
-                  switching && !module.to ? t('merchantEntry.opening') : module.title
-                }}</span>
+                <span>{{ module.title }}</span>
               </span>
               <svg
                 class="profile-module__arrow"
@@ -318,7 +279,7 @@ useHead(() => ({ title: t('account.myAccount') }))
               </svg>
             </span>
             <span class="profile-module__desc">{{ module.description }}</span>
-          </component>
+          </NuxtLink>
         </nav>
       </section>
 
@@ -561,11 +522,6 @@ useHead(() => ({ title: t('account.myAccount') }))
 
 .profile-module:hover {
   background: #f0f1f4;
-}
-
-.profile-module--action:disabled {
-  cursor: progress;
-  opacity: 0.75;
 }
 
 .profile-module__title {

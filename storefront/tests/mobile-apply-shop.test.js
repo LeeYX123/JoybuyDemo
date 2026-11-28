@@ -41,7 +41,6 @@ function mountApply(extraProps = {}) {
       idDocumentTypes,
       documentTypeLabel: 'ID card',
       statusLabel: '',
-      merchantSwitching: false,
       merchantPendingDeposit: false,
       ...extraProps,
     },
@@ -170,9 +169,11 @@ describe('MobileApplyShop pending state', () => {
       merchantPendingDeposit: true,
     })
     expect(wrapper.text()).toContain('security deposit')
-    expect(wrapper.emitted('open-merchant')).toBeUndefined()
-    const button = wrapper.find('.m-apply__submit')
-    expect(button.text()).toBe('Go to Merchant Center')
+    // 2026-11-28：通过态不再有「进入商家中心」主 CTA，只保留通过说明 +
+    // 指向页头右上角【切换商家端】的提示。
+    expect(wrapper.find('.m-apply__submit').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Merchant Center')
+    expect(wrapper.text()).toContain('Switch to Seller console')
   })
 
   it('offers re-apply after a rejection', async () => {

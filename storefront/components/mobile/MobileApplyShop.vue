@@ -25,11 +25,10 @@ defineProps({
   idDocumentTypes: { type: Array, default: () => [] },
   documentTypeLabel: { type: String, default: '—' },
   statusLabel: { type: String, default: '' },
-  merchantSwitching: { type: Boolean, default: false },
   merchantPendingDeposit: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['field', 'logo-file', 'doc-file', 'submit', 'reapply', 'open-merchant'])
+const emit = defineEmits(['field', 'logo-file', 'doc-file', 'submit', 'reapply'])
 
 const { t } = useLocale()
 
@@ -325,6 +324,7 @@ function onFile(kind, event) {
             <div>
               <strong>{{ t('shopApply.approvedTitle') }}</strong>
               <p>{{ t('shopApply.approvedNote') }}</p>
+              <p>{{ t('shopApply.approvedSwitchHint') }}</p>
               <p v-if="merchantPendingDeposit">{{ t('shopApply.pendingDepositNote') }}</p>
             </div>
           </div>
@@ -337,17 +337,6 @@ function onFile(kind, event) {
             show-status
             show-reviewed-at
           />
-
-          <div class="m-apply__actions">
-            <button
-              class="m-apply__submit"
-              type="button"
-              :disabled="merchantSwitching"
-              @click="emit('open-merchant')"
-            >
-              {{ merchantSwitching ? t('merchantEntry.opening') : t('shopApply.goMerchantCenter') }}
-            </button>
-          </div>
         </template>
 
         <template v-else-if="status === 'REJECTED'">

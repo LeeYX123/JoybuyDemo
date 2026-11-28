@@ -1,30 +1,18 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { NuxtLink } from '#components'
 import { useRoute } from '#imports'
 
-import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
-import { useMerchantEntry } from '../../composables/useMerchantEntry'
 
 // Joybuy account sidebar rebuilt from the 2026-11-25 resurvey
 // (var/profile_resurvey_20261125/): the real rail is 我的 / 我的订单 / 售后单 /
 // 评价与问答 / 心愿单 / Joybuy 余额 / 积分 / 优惠券 / 地址. We keep our own
-// naming for the wishlist entry (我的收藏, see CONTEXT.md) and keep the seller
-// entry at the bottom (real site has none, user decision 2026-11-25). The
-// seller label follows GET /api/v1/account/merchant-application: apply / under
-// review / enter the merchant portal; only the approved state is an action
-// (switch session), the other two are links to /account/apply-shop.
+// naming for the wishlist entry (我的收藏, see CONTEXT.md).
+// 2026-11-28（用户要求）：账号区不再有商家入口（含「进入商家中心」）；
+// 进入商家端只保留页头右上角的【切换商家端】pill。
 const route = useRoute()
 const { t } = useLocale()
-const { isAuthenticated } = useBuyerAuth()
-const {
-  label: merchantLabel,
-  linkTarget,
-  switching,
-  loadStatus,
-  openMerchantConsole,
-} = useMerchantEntry()
 
 const items = computed(() => [
   { key: 'home', to: '/account', label: t('accountMenu.home') },
@@ -36,12 +24,6 @@ const items = computed(() => [
   { key: 'points', to: '/account/points', label: t('accountMenu.points') },
   { key: 'coupons', to: '/account/coupons', label: t('accountMenu.coupons') },
   { key: 'addresses', to: '/account/addresses', label: t('accountMenu.addresses') },
-  {
-    key: 'merchant',
-    to: linkTarget.value,
-    label: switching.value ? t('merchantEntry.opening') : merchantLabel.value,
-    icon: 'shop',
-  },
 ])
 
 function isActive(item) {
@@ -65,35 +47,24 @@ const ICONS = {
     'M3 5h18a1 1 0 0 1 1 1v4a2 2 0 0 0 0 4v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-4a2 2 0 0 0 0-4V6a1 1 0 0 1 1-1Zm3 4v2h6V9H6Zm0 4v2h10v-2H6Z',
   addresses:
     'M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7Zm0 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
-  shop: 'M4 4h16v3H4V4Zm0 5h16v10a1 1 0 0 1-1 1h-5v-5H10v5H5a1 1 0 0 1-1-1V9Zm2 2v2h2v-2H6Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Z',
 }
-
-onMounted(() => {
-  // 2026-11-27：不再强制刷新——useBuyerAuth 在客户端路由完成时做一次节流再校验
-  // （TTL 20s），进账号区不会固定多打一条 session 请求。
-  if (isAuthenticated.value) loadStatus()
-})
 </script>
 
 <template>
   <nav class="account-nav" :aria-label="t('account.navigation')">
     <ul class="account-nav__list">
       <li v-for="item in items" :key="item.key">
-        <component
-          :is="item.to ? NuxtLink : 'button'"
+        <NuxtLink
           class="account-nav__item"
           :class="{ 'account-nav__item--active': isActive(item) }"
-          :to="item.to || undefined"
-          :type="item.to ? undefined : 'button'"
+          :to="item.to"
           :aria-current="isActive(item) ? 'page' : undefined"
-          :disabled="!item.to && switching"
-          @click="!item.to && openMerchantConsole()"
         >
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <path :d="ICONS[item.key] || ICONS.shop" fill="currentColor" />
+            <path :d="ICONS[item.key]" fill="currentColor" />
           </svg>
           <span>{{ item.label }}</span>
-        </component>
+        </NuxtLink>
       </li>
     </ul>
   </nav>
@@ -141,11 +112,6 @@ onMounted(() => {
 .account-nav__item--active {
   background: var(--colour-hover);
   font-weight: var(--font-weight-semibold);
-}
-
-.account-nav__item:disabled {
-  cursor: progress;
-  opacity: 0.75;
 }
 
 @media (max-width: 47.999rem) {

@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { navigateTo, useFetch, useHead, useRequestHeaders, useRuntimeConfig } from '#imports'
 import { useLocale } from '../../composables/useLocale'
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
-import { useMerchantEntry } from '../../composables/useMerchantEntry'
 import { useMobileView } from '../../composables/useMobileView'
 import { noAutofill } from '../../utils/noAutofill'
 
@@ -20,7 +19,8 @@ import ShopApplicationDetails from '../../components/account/ShopApplicationDeta
 const { t } = useLocale()
 
 const { isAuthenticated, refresh: refreshSession } = useBuyerAuth()
-const { switching: merchantSwitching, openMerchantConsole } = useMerchantEntry()
+// 2026-11-28（用户要求）：通过态不再给「进入/切换商家端」主 CTA，只保留通过说明
+// 并提示走页头右上角的【切换商家端】pill（useMerchantEntry 只被 pill 消费）。
 // ADR 0001: m. host 渲染手机版（组件只做展示，状态仍在本页）。
 const { isMobileHost } = useMobileView()
 
@@ -340,14 +340,12 @@ useHead({ title: t('shopApply.title') })
     :id-document-types="idDocumentTypes"
     :document-type-label="documentTypeLabel"
     :status-label="statusLabel"
-    :merchant-switching="merchantSwitching"
     :merchant-pending-deposit="merchantPendingDeposit"
     @field="onMobileField"
     @logo-file="startLogoUpload"
     @doc-file="startDocUpload"
     @submit="submitApplication"
     @reapply="startReApply"
-    @open-merchant="openMerchantConsole"
   />
 
   <section v-else class="shop-apply" aria-labelledby="shop-apply-title">
@@ -633,6 +631,7 @@ useHead({ title: t('shopApply.title') })
               <div>
                 <strong>{{ t('shopApply.approvedTitle') }}</strong>
                 <p>{{ t('shopApply.approvedNote') }}</p>
+                <p>{{ t('shopApply.approvedSwitchHint') }}</p>
                 <p v-if="merchantPendingDeposit">{{ t('shopApply.pendingDepositNote') }}</p>
               </div>
             </div>
@@ -644,19 +643,6 @@ useHead({ title: t('shopApply.title') })
               show-status
               show-reviewed-at
             />
-
-            <div class="shop-apply__actions shop-apply__actions--standalone">
-              <button
-                class="shop-apply__submit"
-                type="button"
-                :disabled="merchantSwitching"
-                @click="openMerchantConsole"
-              >
-                {{
-                  merchantSwitching ? t('merchantEntry.opening') : t('shopApply.goMerchantCenter')
-                }}
-              </button>
-            </div>
           </template>
 
           <template v-else-if="status === 'REJECTED'">

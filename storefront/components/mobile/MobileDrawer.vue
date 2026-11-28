@@ -23,11 +23,7 @@ const emit = defineEmits(['close'])
 
 const { t } = useLocale()
 const { isAuthenticated, account, logout } = useBuyerAuth()
-const {
-  isConsoleEntry: sellerApproved,
-  switching: sellerSwitching,
-  openMerchantConsole,
-} = useMerchantEntry()
+const { isConsoleEntry: sellerApproved } = useMerchantEntry()
 
 const accountName = computed(() => account.value?.display_name || account.value?.email || '')
 const applyShopHref = computed(() => ({
@@ -277,7 +273,10 @@ function closeOnEscape(event) {
             </svg>
           </NuxtLink>
 
-          <!-- 申请店铺 (decided 2026-11-24): three states like the header pill. -->
+          <!-- 申请店铺 (decided 2026-11-24): three states like the header pill.
+               2026-11-28（用户要求）：抽屉里不再有「进入商家中心 / 切换商家端」
+               条目——换商家端只走头部右上角 pill；已通过审核的账号抽屉里不显示
+               店铺行，未申请/审核中的账号保留申请入口。 -->
           <NuxtLink
             v-if="!isAuthenticated"
             class="m-drawer__row"
@@ -311,41 +310,12 @@ function closeOnEscape(event) {
               <path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </NuxtLink>
-          <button
-            v-else-if="sellerApproved"
+          <NuxtLink
+            v-else-if="!sellerApproved"
             class="m-drawer__row"
-            type="button"
-            :disabled="sellerSwitching"
-            @click="openMerchantConsole"
+            to="/account/apply-shop"
+            @click="emit('close')"
           >
-            <svg
-              class="m-drawer__icon"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-            >
-              <path
-                d="M4 9.5 5.5 4h13L20 9.5M4 9.5V20h16V9.5M4 9.5h16M9.5 20v-6h5v6"
-                stroke-linejoin="round"
-              />
-            </svg>
-            {{ sellerSwitching ? t('merchantEntry.opening') : t('mobile.drawer.switchSeller') }}
-            <svg
-              class="m-drawer__chevron"
-              viewBox="0 0 24 24"
-              width="18"
-              height="18"
-              aria-hidden="true"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-            >
-              <path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-          <NuxtLink v-else class="m-drawer__row" to="/account/apply-shop" @click="emit('close')">
             <svg
               class="m-drawer__icon"
               viewBox="0 0 24 24"
