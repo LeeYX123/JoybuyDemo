@@ -19,9 +19,24 @@ import {
   logoutRequest,
   storefrontUrl,
 } from './api.js'
+import {
+  applyLocaleFromUrl,
+  installDebugI18n,
+  localize,
+  startAutoLocalize,
+  stripLocaleParam,
+} from './i18n.js'
 
 // api.js 的 bootEngine 在注入引擎前读取该标记，必须最先就位。
 window.__FOLIO_DESKTOP__ = true
+
+// 语言（渲染后 DOM 本地化层）：先落地购物端 handoff 带进来的 ?lang=，
+// 再清地址栏参数，最后开 MutationObserver——静态稿每次 innerHTML re-render
+// 都会被 30ms 防抖的自动本地化覆盖。
+installDebugI18n()
+applyLocaleFromUrl()
+stripLocaleParam()
+startAutoLocalize()
 
 // 路径 → 静态稿 route id（映射集合与 boot.js routeFromPath 33-51 行一致）。
 function routeFromPath(path) {
@@ -126,6 +141,8 @@ async function main() {
   // 引擎落位可能与入口路径不同（如 /orders/:id 深链的单子不存在 → 回订单列表），
   // merchant-desktop.js 注入完成后会挂 __FOLIO_DESKTOP_SYNC__，这里做最终对齐。
   if (typeof window.__FOLIO_DESKTOP_SYNC__ === 'function') window.__FOLIO_DESKTOP_SYNC__()
+  // 首屏同步本地化一次（MutationObserver 有 30ms 防抖，显式调用避免中文闪一下）。
+  localize()
   delete document.documentElement.dataset.folioBoot
 }
 

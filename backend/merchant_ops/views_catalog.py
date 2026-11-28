@@ -37,6 +37,7 @@ from merchant_ops.api_utils import (
     parse_amount,
     require,
 )
+from merchant_ops.localization import pick_title
 from offers.models import Offer
 
 MAX_IMAGES = 5
@@ -73,15 +74,20 @@ def _primary_images(spu_ids) -> dict:
     return result
 
 
-def _title_for(spu: Spu) -> str:
+def _title_for(spu: Spu, locale: str | None = None) -> str:
     # 列表视图用 Prefetch(to_attr="list_translations") 只取标题列，避免把
     # spu_translation.description 长文本也拉回来；详情视图仍用 translations.all()。
     translations = getattr(spu, "list_translations", None)
     if translations is None:
         translations = list(spu.translations.all())
-    for locale in ("zh-CN", "zh", "en-GB", "en"):
+    # 商家端按请求语言取标题（缺失回退原文语言）；管理端不传 locale，走原口径。
+    if locale:
+        title = pick_title(translations, locale)
+        if title:
+            return title
+    for code in ("zh-CN", "zh", "en-GB", "en"):
         for translation in translations:
-            if translation.locale == locale and translation.title:
+            if translation.locale == code and translation.title:
                 return translation.title
     return translations[0].title if translations else f"SPU {str(spu.public_id)[:8]}"
 
@@ -168,12 +174,12 @@ def _detail_summary_from_row(row, *, video_count=0) -> dict:
     }
 
 
-def _spu_payload(spu: Spu, *, images=None, stores=0, detail_summary=None) -> dict:
+def _spu_payload(spu: Spu, *, images=None, stores=0, detail_summary=None, locale=None) -> dict:
     images = images or []
     summary = detail_summary or _detail_summary(None)
     return {
         "id": str(spu.public_id),
-        "name": _title_for(spu),
+        "name": _title_for(spu, locale),
         "category": _category_payload(spu.local_category),
         "cost": money_str(spu.cost_price) if spu.cost_price is not None else None,
         "price": money_str(spu.retail_price) if spu.retail_price is not None else None,

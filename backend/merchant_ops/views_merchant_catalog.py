@@ -21,6 +21,7 @@ from audit.services import record_audit
 from catalog.detail_views import _spec_options_payload
 from catalog.models import Spu, SpuTranslation
 from merchant_ops.api_utils import money_str, paginate, require
+from merchant_ops.localization import pick_title, request_locale
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import compute_listing_cost
 from merchant_ops.views_catalog import (
@@ -72,12 +73,12 @@ def _listed_spu_ids(merchant) -> set:
     )
 
 
-def _listing_payload(offer: Offer, *, image: str = "") -> dict:
+def _listing_payload(offer: Offer, *, image: str = "", locale: str | None = None) -> dict:
     spu = offer.sku.spu
     return {
         "offer_id": str(offer.public_id),
         "product_id": str(spu.public_id),
-        "name": _spu_title(spu),
+        "name": _spu_title(spu, locale),
         "category": _category_payload(spu.local_category),
         "merchant_category": spu.merchant_category,
         "merchant_category_label": Spu.merchant_category_label(spu.merchant_category),
@@ -93,11 +94,15 @@ def _listing_payload(offer: Offer, *, image: str = "") -> dict:
     }
 
 
-def _spu_title(spu: Spu) -> str:
+def _spu_title(spu: Spu, locale: str | None = None) -> str:
     translations = list(spu.translations.all())
-    for locale in ("zh-CN", "zh", "en-GB", "en"):
+    if locale:
+        title = pick_title(translations, locale)
+        if title:
+            return title
+    for code in ("zh-CN", "zh", "en-GB", "en"):
         for translation in translations:
-            if translation.locale == locale and translation.title:
+            if translation.locale == code and translation.title:
                 return translation.title
     return translations[0].title if translations else f"SPU {str(spu.public_id)[:8]}"
 
@@ -186,11 +191,14 @@ class MerchantCatalogProductsView(MerchantAPIView):
 
         rows, meta = paginate(queryset.order_by("-created_at", "-pk"), request, default_size=8)
         images = _primary_images([spu.pk for spu in rows])
+        locale = request_locale(request)
         items = []
         for spu in rows:
             skus = list(spu.skus.all())
             primary_image = images.get(spu.pk)
-            payload = _spu_payload(spu, images=[primary_image] if primary_image else [])
+            payload = _spu_payload(
+                spu, images=[primary_image] if primary_image else [], locale=locale
+            )
             # 商品卡片的成本价按当前商家折扣折算（文档 M03 §2），与上架快照一致。
             discount_cost = compute_listing_cost(merchant, spu)
             payload["cost"] = money_str(discount_cost) if discount_cost is not None else None
@@ -240,6 +248,7 @@ class MerchantCatalogProductDetailView(MerchantAPIView):
             spu,
             images=[images[spu.pk]] if spu.pk in images else [],
             detail_summary=_detail_summary(detail),
+            locale=request_locale(request),
         )
         # 成本价与列表口径一致：按本店当前折扣折算（上架时快照同一公式）。
         discount_cost = compute_listing_cost(request.merchant, spu)
@@ -315,10 +324,11 @@ class MerchantListingsView(MerchantAPIView):
         rows, meta = paginate(queryset.order_by("-listed_at", "-pk"), request)
         # 批量取主图，避免逐行查 MediaUsage（列表 20 行就是 20 次查询）。
         images = _primary_images([offer.sku.spu_id for offer in rows])
+        locale = request_locale(request)
         return Response(
             {
                 "items": [
-                    _listing_payload(offer, image=images.get(offer.sku.spu_id, ""))
+                    _listing_payload(offer, image=images.get(offer.sku.spu_id, ""), locale=locale)
                     for offer in rows
                 ],
                 **meta,

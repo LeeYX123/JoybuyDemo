@@ -13,6 +13,7 @@ from accounts_staff.api_exceptions import StaffApiError
 from merchant_ops.api_utils import iso, money_str, paginate
 from merchant_ops.crisp_inbound import pull_conversation
 from merchant_ops.crisp_mirror import queue_support_message_mirror
+from merchant_ops.localization import request_locale, title_map_by_public_id
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import SupportConversation, SupportMessage
 from merchant_ops.views_support import _spu_title
@@ -30,7 +31,9 @@ def _merchant_unread(conversation: SupportConversation) -> int:
     return queryset.count()
 
 
-def _conversation_payload(conversation: SupportConversation, *, detail=False) -> dict:
+def _conversation_payload(
+    conversation: SupportConversation, *, detail=False, locale=None
+) -> dict:
     last = conversation.messages.last()
     payload = {
         "id": str(conversation.public_id),
@@ -44,7 +47,7 @@ def _conversation_payload(conversation: SupportConversation, *, detail=False) ->
         "unread": _merchant_unread(conversation),
         "last_message": last.text if last else "",
         "last_message_at": iso(conversation.last_message_at or conversation.created_at),
-        "product": _product_payload(conversation),
+        "product": _product_payload(conversation, locale),
     }
     if detail:
         payload["messages"] = [
@@ -61,7 +64,7 @@ def _conversation_payload(conversation: SupportConversation, *, detail=False) ->
     return payload
 
 
-def _product_payload(conversation: SupportConversation) -> dict | None:
+def _product_payload(conversation: SupportConversation, locale=None) -> dict | None:
     """买家从哪个商品发起咨询——商家必须知道，否则没法回答。"""
 
     if not conversation.spu_id:
@@ -73,7 +76,7 @@ def _product_payload(conversation: SupportConversation) -> dict | None:
     image = (spu.image_urls or [""])[0] or _primary_images([spu.pk]).get(spu.pk, "")
     return {
         "id": str(spu.public_id),
-        "name": _spu_title(spu),
+        "name": _spu_title(spu, locale),
         "category": (
             spu.local_category.name_zh or spu.local_category.name if spu.local_category_id else ""
         ),
@@ -98,13 +101,15 @@ class MerchantConversationsView(MerchantAPIView):
         support = _ensure_support_conversation(request.merchant)
         queryset = (
             SupportConversation.objects.select_related("spu__local_category", "buyer")
+            .prefetch_related("spu__translations")
             .filter(merchant=request.merchant)
             .exclude(kind=SupportConversation.Kind.PLATFORM_SUPPORT)
             .order_by("-last_message_at", "-pk")
         )
         rows, meta = paginate(queryset, request, default_size=30)
-        items = [_conversation_payload(support)]
-        items.extend(_conversation_payload(row) for row in rows)
+        locale = request_locale(request)
+        items = [_conversation_payload(support, locale=locale)]
+        items.extend(_conversation_payload(row, locale=locale) for row in rows)
         return Response(
             {
                 "items": items,
@@ -125,7 +130,11 @@ class MerchantConversationDetailView(MerchantAPIView):
         # 打开会话即标记已读，未读数归零。
         conversation.merchant_last_read_at = timezone.now()
         conversation.save(update_fields=["merchant_last_read_at", "updated_at"])
-        return Response({"conversation": _conversation_payload(conversation, detail=True)})
+        return Response(
+            {"conversation": _conversation_payload(
+                conversation, detail=True, locale=request_locale(request)
+            )}
+        )
 
 
 class MerchantConversationReplyView(MerchantAPIView):
@@ -188,7 +197,16 @@ def _resolve_conversation(request, public_id) -> SupportConversation:
 # --------------------------------------------------------------------------
 
 
-def _notification_payload(record: MerchantNotification, *, detail=False) -> dict:
+def _notification_payload(
+    record: MerchantNotification, *, detail=False, product_names=None
+) -> dict:
+    product = record.product_snapshot or None
+    if product and product_names:
+        # 好评通知的商品快照是下单时的中文快照；按请求语言覆盖 name（id 命中才覆盖）。
+        product = {
+            **product,
+            "name": product_names.get(str(product.get("id") or "")) or product.get("name"),
+        }
     payload = {
         "id": str(record.public_id),
         "kind": record.kind,
@@ -196,7 +214,7 @@ def _notification_payload(record: MerchantNotification, *, detail=False) -> dict
         "content": record.content,
         "rating": record.rating,
         "images": list(record.images or []),
-        "product": record.product_snapshot or None,
+        "product": product,
         # 迭代02：好评通知展示关联订单。
         "order": (
             {
@@ -253,8 +271,24 @@ class MerchantNotificationsView(MerchantAPIView):
             "UNREAD": base.filter(read_at__isnull=True).count(),
             "READ": base.filter(read_at__isnull=False).count(),
         }
+        # 好评通知的商品快照名按请求语言本地化：一次批量查询，逐行只读映射。
+        product_names = title_map_by_public_id(
+            [
+                (record.product_snapshot or {}).get("id")
+                for record in rows
+                if record.product_snapshot
+            ],
+            request_locale(request),
+        )
         return Response(
-            {"items": [_notification_payload(record) for record in rows], "counts": counts, **meta}
+            {
+                "items": [
+                    _notification_payload(record, product_names=product_names)
+                    for record in rows
+                ],
+                "counts": counts,
+                **meta,
+            }
         )
 
 
@@ -266,7 +300,18 @@ class MerchantNotificationDetailView(MerchantAPIView):
         if record.read_at is None:
             record.read_at = timezone.now()
             record.save(update_fields=["read_at", "updated_at"])
-        return Response({"notification": _notification_payload(record, detail=True)})
+        snapshot = record.product_snapshot or {}
+        product_names = title_map_by_public_id(
+            [snapshot.get("id")] if snapshot.get("id") else [],
+            request_locale(request),
+        )
+        return Response(
+            {
+                "notification": _notification_payload(
+                    record, detail=True, product_names=product_names
+                )
+            }
+        )
 
 
 class MerchantNotificationReplyView(MerchantAPIView):

@@ -17,6 +17,20 @@ import {
   logoutRequest,
   storefrontUrl,
 } from './api.js'
+import {
+  applyLocaleFromUrl,
+  installDebugI18n,
+  localize,
+  startAutoLocalize,
+  stripLocaleParam,
+} from './i18n.js'
+
+// 语言：先落地购物端 handoff 带进来的 ?lang=（同一 host 的 localStorage，
+// 桌面↔手机文档互跳时语言不丢），清掉地址栏参数，再开自动本地化。
+installDebugI18n()
+applyLocaleFromUrl()
+stripLocaleParam()
+startAutoLocalize()
 
 const MOBILE_HOST = typeof location !== 'undefined' && location.hostname.startsWith('m.')
 
@@ -123,6 +137,7 @@ async function main() {
   setCurrentShop(initialShop)
 
   await bootEngine(routeFromPath(entryPath))
+  localize()
   delete document.documentElement.dataset.folioBoot
 }
 

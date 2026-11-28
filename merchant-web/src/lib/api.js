@@ -34,6 +34,19 @@ export function getCurrentShop() {
   return currentShopId
 }
 
+// 商家端当前商品数据 locale（en-GB / zh-CN / de-DE …），由 folio/i18n.js 写入
+// localStorage：购物端【切换商家端】带进来的 ?lang= 或商家端手动切语言。
+// 请求统一带 Accept-Language，后端据此返回本地化商品名（缺失回退原文）。
+export const MERCHANT_LOCALE_KEY = 'joybuy.merchant.locale'
+
+export function getApiLocale() {
+  try {
+    return (window.localStorage.getItem(MERCHANT_LOCALE_KEY) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
 export async function apiRequest(path, options = {}) {
   const requestId = uuidv4()
   const headers = {
@@ -44,6 +57,10 @@ export async function apiRequest(path, options = {}) {
     ...options.headers,
   }
   if (currentShopId) headers['X-Merchant-Id'] = currentShopId
+  if (!headers['Accept-Language']) {
+    const locale = getApiLocale()
+    if (locale) headers['Accept-Language'] = locale
+  }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,

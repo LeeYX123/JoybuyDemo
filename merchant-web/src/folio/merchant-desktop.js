@@ -33,8 +33,16 @@
   function setLanguage(option) {
     selectedLanguage = option
     try { window.localStorage.setItem(LANGUAGE_KEY, option) } catch { /* ignore */ }
+    // 真正切换界面语言（渲染后 DOM 本地化层，i18n.js 由 boot-desktop.js 注入）。
+    const i18n = window.__MERCHANT_I18N__
+    if (i18n && typeof i18n.setLang === 'function') i18n.setLang(option)
     paintTopright()
-    toast(option === 'English' ? '已选择 English（界面文案暂未翻译）' : '已切换为简体中文')
+    toast(option === 'English' ? '已切换为 English' : '已切换为简体中文')
+    // 商品名等数据由后端按 locale 返回，切语言后重新拉一遍数据并重渲染。
+    const actions = window.__JOYPLAY_ACTIONS__
+    if (actions && typeof actions.reloadData === 'function') {
+      Promise.resolve(actions.reloadData()).catch(() => { /* 由页面兜底 */ })
+    }
   }
 
   // --- 切换回商城（POST /merchant/switch-to-mall → redirect_url），照抄手机版 ---

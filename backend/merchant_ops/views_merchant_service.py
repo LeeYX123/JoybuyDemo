@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from accounts_staff.api_exceptions import StaffApiError
 from audit.services import record_audit
 from merchant_ops.api_utils import date_str, iso, money_str, paginate
+from merchant_ops.localization import request_locale, title_map_by_public_id
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import (
     AfterSale,
@@ -24,7 +25,9 @@ from orders.commerce_payloads import refund_payloads
 AFTER_SALE_KINDS = (AfterSale.Kind.COMPLAINT, AfterSale.Kind.RETURN)
 
 
-def _after_sale_payload(record: AfterSale, *, detail: bool = False) -> dict:
+def _after_sale_payload(
+    record: AfterSale, *, detail: bool = False, locale: str | None = None
+) -> dict:
     payload = {
         "id": str(record.public_id),
         "order_id": str(record.order.public_id),
@@ -58,9 +61,16 @@ def _after_sale_payload(record: AfterSale, *, detail: bool = False) -> dict:
             "paid": bool(getattr(record.order, "paid_at", None)),
         }
         item = record.merchant_order.items.first() if record.merchant_order_id else None
+        title = item.title if item else ""
+        if item and locale:
+            # 售后详情只展示一件商品：一次 IN 查询，逐单调用也不构成 N+1。
+            title = (
+                title_map_by_public_id([item.spu_public_id], locale).get(str(item.spu_public_id))
+                or title
+            )
         payload["product"] = (
             {
-                "title": item.title,
+                "title": title,
                 "quantity": item.quantity,
                 "unit_price": money_str(item.unit_price),
             }
@@ -115,7 +125,9 @@ class MerchantAfterSaleDetailView(MerchantAPIView):
 
     def get(self, request, public_id):
         record = _resolve_after_sale(request, public_id)
-        return Response({"after_sale": _after_sale_payload(record, detail=True)})
+        return Response(
+            {"after_sale": _after_sale_payload(record, detail=True, locale=request_locale(request))}
+        )
 
 
 def _resolve_after_sale(request, public_id) -> AfterSale:
@@ -261,7 +273,9 @@ class MerchantAfterSaleActionsView(MerchantAPIView):
             tenant_id=str(request.merchant.public_id),
         )
         record.refresh_from_db()
-        return Response({"after_sale": _after_sale_payload(record, detail=True)})
+        return Response(
+            {"after_sale": _after_sale_payload(record, detail=True, locale=request_locale(request))}
+        )
 
 
 # --------------------------------------------------------------------------

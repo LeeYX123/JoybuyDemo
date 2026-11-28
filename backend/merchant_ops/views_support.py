@@ -67,8 +67,15 @@ def _conversation_payload(conversation: SupportConversation) -> dict:
     }
 
 
-def _spu_title(spu) -> str:
-    for translation in spu.translations.all():
+def _spu_title(spu, locale: str | None = None) -> str:
+    from merchant_ops.localization import pick_title
+
+    translations = list(spu.translations.all())
+    if locale:
+        title = pick_title(translations, locale)
+        if title:
+            return title
+    for translation in translations:
         if translation.title:
             return translation.title
     return f"SPU {str(spu.public_id)[:8]}"

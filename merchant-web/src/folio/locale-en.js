@@ -30,6 +30,7 @@ export const CATEGORIES = {
   小家电: 'Small Appliances',
   家用电器: 'Home Appliances',
   其他: 'Other',
+  未分类: 'Uncategorized',
   食品饮料: 'Food & Beverage',
   美妆: 'Beauty',
   女装: 'Women’s Clothing',
@@ -90,6 +91,10 @@ export const PHRASES = {
   选择语言: 'Language',
   简体中文: 'Simplified Chinese',
   English: 'English',
+  // 语言切换按钮上的当前值标签（英文界面显示 EN，而不是残留「中文」）。
+  中文: 'EN',
+  '已切换为简体中文': 'Switched to Chinese (Simplified)',
+  '已切换为 English': 'Switched to English',
 
   // ---- 首页 / 经营面板 ----
   经营面板: 'Operations',
@@ -444,6 +449,7 @@ export const PHRASES = {
   处理记录: 'History',
   更新进度: 'Update progress',
   申请平台介入: 'Escalate to platform',
+  提交售后: 'After-sale submitted',
   完成处理: 'Complete',
   填写处理依据或最终结果: 'Enter findings or final result',
   填写处理进度或反馈: 'Enter progress or feedback',
@@ -697,7 +703,7 @@ export const PHRASES = {
   '切换失败，请稍后重试': 'Switch failed. Please try again.',  '发货成功，订单进入待出库阶段':
     'Shipped. Order is now awaiting dispatch.',
   发货成功: 'Shipped',
-  '发货成功，成本已从钱包扣除': 'Shipped. Cost deducted from wallet.',  提现申请已提交后台审核: 'Withdrawal submitted for review',
+  '发货成功，成本已从钱包扣除': 'Shipped. Cost deducted from wallet.',
   '回复已提交，可在评价详情中查看':
     'Reply submitted. You can view it in the review details.',
   回复已发送: 'Reply sent',
@@ -775,6 +781,42 @@ export const PHRASES = {
   'ETH 请选择 ERC-20 链': 'ETH — select the ERC-20 network',
   '（示例结算快照）': '(example settlement snapshot)',
   示例结算快照: 'Example settlement snapshot',
+
+  // ---- 英文覆盖率补齐（2026-11-29 逐页实测未命中项） ----
+  '寰球优选 · 商家工作台': 'Joybuy Global · Merchant Workspace',
+  '寰球优选 · 商家工作空间': 'Joybuy Global · Merchant Workspace',
+  账号: 'Account',
+  切换回商城: 'Go to Store',
+  平台经营通知: 'Platform operations notice',
+  '好商品，值得被世界看见': 'Great products deserve to be seen',
+  '精选活动资源 · 持续提升曝光 · 助力全球经营':
+    'Curated campaign resources · Continuous exposure · Global growth',
+  我的活动参与记录: 'My campaign participations',
+  不可修改: 'Cannot change',
+  店铺总收益: 'Total shop revenue',
+  记录时间: 'Recorded at',
+  明细类型: 'Entry type',
+  待补缴: 'Top-up required',
+  订单状态: 'Order status',
+  未提供: 'Not provided',
+  收货人: 'Recipient',
+  订单收益: 'Order profit',
+  商品好评详情: 'Review details',
+  首次缴纳: 'Initial payment',
+  保证金退还: 'Deposit refund',
+  回复记录: 'Reply history',
+  平台回复: 'Platform reply',
+  继续回复: 'Reply again',
+  '✓ 已记录参与意向，可在下方记录中查看': '✓ Interest recorded. See the records below.',
+  耳机: 'Headphones',
+  余额: 'Balance',
+  单号: 'No.',
+  暂无提现申请记录: 'No withdrawal requests',
+  暂无参与记录: 'No participations',
+  '暂无符合条件的商品，请调整筛选或前往上架中心选品。':
+    'No matching products. Adjust the filters or browse the Listing Center.',
+  '补缴提醒示例：保证金余额不足时，请联系客服完成补缴；补缴入账后再按要求申请恢复营业。':
+    'Top-up reminder: when the deposit balance is insufficient, contact support to top up; business resumes after the top-up is credited.',
 }
 
 // 由字典自动生成「英文 → 中文」反向表（只用于少数需要在 JS 侧把英文还原为
@@ -830,13 +872,15 @@ export const PATTERNS = [
   [/^([\d,]+) 次$/, (m) => plural(m[1], 'view', 'views')],
   [/^(\d{1,2}\/\d{1,2})，([\d,]+) 笔$/, (m) => `${m[1]}, ${plural(m[2], 'order', 'orders')}`],
   [/^(\d{1,2}\/\d{1,2})，([\d,]+) 次$/, (m) => `${m[1]}, ${plural(m[2], 'view', 'views')}`],
+  [/^(\d{1,2}\/\d{1,2}) · ([\d,]+) 笔$/, (m) => `${m[1]} · ${plural(m[2], 'order', 'orders')}`],
+  [/^(\d{1,2}\/\d{1,2}) · ([\d,]+) 次$/, (m) => `${m[1]} · ${plural(m[2], 'view', 'views')}`],
   [/^(?:[^，]+?\d+%[，])+[^，]+?\d+%$/, (m) => shortCat(m[0])],
   [/^(\d+) 笔待发货$/, (m) => `${plural(m[1], 'order', 'orders')} to ship`],
 
-  // 组合文案：品类 · SKU / 数量 / 标准款
-  [/^(.+?) · SKU (\d+)$/, (m) => `${cat(m[1])} · SKU ${m[2]}`],
-  [/^(.+?) · 数量 × (\d+)$/, (m) => `${cat(m[1])} · Qty × ${m[2]}`],
-  [/^(.+?) · 标准款$/, (m) => `${cat(m[1])} · Standard`],
+  // 组合文案：品类 · SKU / 数量 / 标准款（\s 兼容全角空格 U+3000）
+  [/^(.+?)\s*·\s*SKU (\d+)$/, (m) => `${cat(m[1])} · SKU ${m[2]}`],
+  [/^(.+?)\s*·\s*数量 × (\d+)$/, (m) => `${cat(m[1])} · Qty × ${m[2]}`],
+  [/^(.+?)\s*·\s*标准款$/, (m) => `${cat(m[1])} · Standard`],
   [/^(.+?) · (\d+) 个会话$/, (m) => `${m[1]} · ${plural(m[2], 'conversation', 'conversations')}`],
   [/^(.+?)，平台精选(.+?)商品，标准款。$/, (m) => `${m[1]}, a platform-selected ${cat(m[2].trim())} item, standard edition.`],
 
@@ -845,8 +889,9 @@ export const PATTERNS = [
   [/^订单编号[:：]?\s*(.+)$/, (m) => `Order No. ${m[1]}`],
   [/^下单时间[:：]?\s*(.+)$/, (m) => `Order time ${m[1]}`],
   [/^商家编号[:：]?\s*(.*)$/, (m) => `Merchant ID ${m[1]}`.trim()],
-  [/^商品ID[:：]\s*(.+)$/, (m) => `Product ID: ${m[1]}`],
+  [/^商品ID[:：]\s*([\w-]+)(?:\s*·\s*(.+))?$/, (m) => `Product ID: ${m[1]}${m[2] ? ` · ${cat(m[2])}` : ''}`],
   [/^商品数量[:：]\s*(\d+)$/, (m) => `Quantity: ${m[1]}`],
+  [/^商品数量 × (\d+)$/, (m) => `Quantity × ${m[1]}`],
   [/^数量 × (\d+)$/, (m) => `Qty × ${m[1]}`],
   [/^本次发货扣款[:：]\s*(.*)$/, (m) => `Shipping deduction: ${m[1]}`.trim()],
   [/^扣款后钱包余额[:：]\s*(.*)$/, (m) => `Balance after deduction: ${m[1]}`.trim()],
@@ -864,6 +909,13 @@ export const PATTERNS = [
   [/^(\d+) 件$/, (m) => `${m[1]} items`],
   [/^(\d+) 星评价$/, (m) => `${m[1]}-star review`],
   [/^(\d+)\/500$/, (m) => `${m[1]}/500`],
+  [/^(●\s*)(接单中|已封店|店铺受限|待补缴)$/, (m) => `${m[1]}${cat(m[2])}`],
+  [/^◉\s*全球站 · 中国商家$/, () => '◉ Global · China Merchants'],
+  [/^商家中心\s*\/$/, () => 'Merchant Center /'],
+  [/^商家服务中心\s*↗$/, () => 'Merchant Service Center ↗'],
+  [/^每页 (\d+) 条$/, (m) => `${m[1]} per page`],
+  [/^(●\s*)已封店$/, (m) => `${m[1]}Suspended`],
+  [/^店铺 ID[:：]\s*(\S*)$/, (m) => `Shop ID: ${m[1]}`.trim()],
 
   // 通知 / 会话 aria
   [/^未读通知[:：]\s*(.+)$/, (m) => `Unread notification: ${m[1]}`],
@@ -886,6 +938,11 @@ export const PATTERNS = [
   [
     /^(\d{4})年(\d{1,2})月(\d{1,2})日\s*(星期[日一二三四五六])$/,
     (m) => `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')} ${({ 星期日: 'Sunday', 星期一: 'Monday', 星期二: 'Tuesday', 星期三: 'Wednesday', 星期四: 'Thursday', 星期五: 'Friday', 星期六: 'Saturday' })[m[4]] || m[4]}`,
+  ],
+  // 带前缀图标的日期（如「◷ 2026年11月29日 星期日」，含全角空格），前缀原样保留。
+  [
+    /^(.*?)(\d{4})年(\d{1,2})月(\d{1,2})日\s*(星期[日一二三四五六])$/,
+    (m) => `${m[1]}${m[2]}-${String(m[3]).padStart(2, '0')}-${String(m[4]).padStart(2, '0')} ${({ 星期日: 'Sunday', 星期一: 'Monday', 星期二: 'Tuesday', 星期三: 'Wednesday', 星期四: 'Thursday', 星期五: 'Friday', 星期六: 'Saturday' })[m[5]] || m[5]}`,
   ],
   [/^昨天 (.*)$/, (m) => `Yesterday ${m[1]}`],
   [/^刚刚$/, () => 'Just now'],

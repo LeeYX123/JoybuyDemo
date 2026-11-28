@@ -1762,6 +1762,16 @@ export async function bootEngine(entryRoute) {
     },
     searchCatalog: (filters) => refreshCatalog(filters),
     searchListings: (filters) => refreshListings(filters),
+    // 商家端手动切语言后重拉数据：商品名/售后商品等由后端按 locale 返回，
+    // 只重绘 DOM 不够。列表会回到第 1 页（与整页刷新同口径）。
+    reloadData: async () => {
+      await fetchAll()
+      state.convLoaded = {}
+      state.reviewDetailLoaded = {}
+      populateGlobals()
+      rebuildProducts()
+      render() // eslint-disable-line no-undef
+    },
     switchShop: (id) => switchShop(id),
     // 登出：清 staff 会话后回商城（商家端没有登录页；再进商家端请从
     // 购物端【切换商家端】进入）。桌面/手机统一行为。

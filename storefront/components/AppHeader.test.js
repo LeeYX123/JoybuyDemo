@@ -323,7 +323,7 @@ describe('AppHeader', () => {
 
     await entry.trigger('click')
     await settle()
-    expect(assign).toHaveBeenCalledWith('http://localhost:5174/')
+    expect(assign).toHaveBeenCalledWith('http://localhost:5174/?lang=en-GB')
   })
 
   it('drops the seller entry from the avatar dropdown (requirement 12.2)', async () => {

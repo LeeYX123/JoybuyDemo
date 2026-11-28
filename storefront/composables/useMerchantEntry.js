@@ -24,7 +24,7 @@ const ERROR_KEYS = {
 
 export function useMerchantEntry() {
   const { isAuthenticated, merchantApplicationStatus, refresh: refreshSession } = useBuyerAuth()
-  const { t } = useLocale()
+  const { t, localeCode } = useLocale()
   const { show } = useUiToast()
   const switching = ref(false)
 
@@ -79,7 +79,18 @@ export function useMerchantEntry() {
         show(t(key), { type: 'error' })
         return false
       }
-      window.location.assign(response.url)
+      // 语言随 handoff 单向传给商家端（跨 host 共享不了 joybuy-locale cookie）：
+      // 在商家端 URL 上追加 ?lang=<localeCode>，商家端 boot 读取后落 localStorage
+      // 并清掉该参数。用 URL 对象拼接，保留后端已有 query/hash 结构不变。
+      let target = response.url
+      try {
+        const url = new URL(response.url, window.location.origin)
+        url.searchParams.set('lang', localeCode.value)
+        target = url.toString()
+      } catch {
+        // URL 解析失败（异常响应）时退回后端原值，不阻断进入商家端。
+      }
+      window.location.assign(target)
       return true
     } catch {
       show(t('merchantEntry.errorGeneric'), { type: 'error' })

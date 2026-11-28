@@ -288,8 +288,16 @@
       openOptionSheet(language, '选择语言', ['简体中文', 'English'], selectedLanguage, option => {
         selectedLanguage = option;
         try { window.localStorage.setItem(LANGUAGE_KEY, option); } catch { /* ignore */ }
+        // 真正切换界面语言（i18n.js 由 boot.js 注入并挂在 window 上）。
+        const i18n = window.__MERCHANT_I18N__;
+        if (i18n && typeof i18n.setLang === 'function') i18n.setLang(option);
         syncLanguage();
-        toast(option === 'English' ? '已选择 English（界面文案暂未翻译）' : '已切换为简体中文');
+        toast(option === 'English' ? '已切换为 English' : '已切换为简体中文');
+        // 商品名等数据由后端按 locale 返回：切语言后重拉数据并重渲染。
+        const actions = window.__JOYPLAY_ACTIONS__;
+        if (actions && typeof actions.reloadData === 'function') {
+          Promise.resolve(actions.reloadData()).catch(() => { /* 由页面兜底 */ });
+        }
       });
     });
     syncLanguage();

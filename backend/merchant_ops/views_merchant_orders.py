@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from accounts_staff.api_exceptions import StaffApiError
 from audit.services import record_audit
 from merchant_ops.api_utils import csv_response, iso, money_str, paginate
+from merchant_ops.localization import request_locale, title_map_by_public_id
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import MerchantOpsError, ship_merchant_order
 from orders.commerce_payloads import payment_payloads, refund_payloads, shipment_payloads
@@ -36,7 +37,29 @@ def _visible_orders(queryset):
     return queryset.exclude(order__status=Order.Status.CANCELED)
 
 
-def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
+def _item_title_lookup(items, locale):
+    """订单行 → 本地化商品名映射（一次批量查询，不按行查）。"""
+
+    return title_map_by_public_id(
+        [getattr(item, "spu_public_id", "") for item in items], locale
+    )
+
+
+def _order_payload(
+    order: MerchantOrder,
+    *,
+    detail: bool = False,
+    locale: str | None = None,
+    title_map: dict | None = None,
+    first_item=None,
+) -> dict:
+    def item_title(item) -> str:
+        if item is None:
+            return ""
+        if title_map:
+            return title_map.get(str(getattr(item, "spu_public_id", "") or "")) or item.title
+        return item.title
+
     payload = {
         "id": str(order.public_id),
         "order_id": str(order.order.public_id),
@@ -59,9 +82,11 @@ def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
     }
     if detail:
         items = list(order.items.select_related("offer")[:20])
+        if title_map is None and locale:
+            title_map = _item_title_lookup(items, locale)
         payload["items"] = [
             {
-                "title": item.title,
+                "title": item_title(item),
                 "quantity": item.quantity,
                 "unit_price": money_str(item.unit_price),
                 "unit_cost": money_str(item.unit_cost) if item.unit_cost is not None else None,
@@ -70,7 +95,7 @@ def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
             }
             for item in items
         ]
-        payload["title"] = items[0].title if items else ""
+        payload["title"] = item_title(items[0]) if items else ""
         # 阶段 2：支付/退款挂在父订单，物流挂当前商家子单。
         payload["payments"] = payment_payloads(
             order.order.payments.all().order_by("created_at", "pk"), iso_fn=iso
@@ -85,8 +110,8 @@ def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
             order.shipments.all().order_by("created_at", "pk"), iso_fn=iso
         )
     else:
-        first = order.items.first()
-        payload["title"] = first.title if first else ""
+        first = first_item if first_item is not None else order.items.first()
+        payload["title"] = item_title(first)
         payload["quantity"] = first.quantity if first else 0
     return payload
 
@@ -143,8 +168,21 @@ class MerchantOrdersView(MerchantAPIView):
         scoped = _visible_orders(MerchantOrder.objects.filter(merchant=request.merchant))
         counts = {key: scoped.filter(status=key).count() for key in STATUS_TABS}
         counts["ALL"] = scoped.count()
+        # 商品名按请求语言本地化：先批量取每行首个订单行，再一次性查译文映射，
+        # 避免在循环里逐单查 SpuTranslation（列表性能纪律）。
+        first_items = [(order, order.items.first()) for order in rows]
+        title_map = _item_title_lookup(
+            [item for _, item in first_items if item is not None], request_locale(request)
+        )
         return Response(
-            {"items": [_order_payload(order) for order in rows], "counts": counts, **meta}
+            {
+                "items": [
+                    _order_payload(order, title_map=title_map, first_item=item)
+                    for order, item in first_items
+                ],
+                "counts": counts,
+                **meta,
+            }
         )
 
 
@@ -153,7 +191,9 @@ class MerchantOrderDetailView(MerchantAPIView):
 
     def get(self, request, public_id):
         order = _resolve_order(request, public_id)
-        return Response({"order": _order_payload(order, detail=True)})
+        return Response(
+            {"order": _order_payload(order, detail=True, locale=request_locale(request))}
+        )
 
 
 class MerchantOrderShipView(MerchantAPIView):
@@ -185,7 +225,9 @@ class MerchantOrderShipView(MerchantAPIView):
             tenant_type="MERCHANT",
             tenant_id=str(request.merchant.public_id),
         )
-        return Response({"order": _order_payload(order, detail=True)})
+        return Response(
+            {"order": _order_payload(order, detail=True, locale=request_locale(request))}
+        )
 
 
 class MerchantOrdersExportView(MerchantAPIView):
