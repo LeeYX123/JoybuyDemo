@@ -28,14 +28,18 @@ const { data } = await useFetch(ordersUrl, {
   },
 })
 
-const orders = computed(() => (Array.isArray(data.value?.orders) ? data.value.orders : []))
+// 2026-11-29 用户口径：购物端没有「已取消」概念，买家侧不展示 CANCELED。
+const orders = computed(() =>
+  (Array.isArray(data.value?.orders) ? data.value.orders : []).filter(
+    (order) => order.state !== 'CANCELED',
+  ),
+)
 
 const STATUS_CLASSES = {
   PENDING_PAYMENT: 'pending',
   TO_SHIP: 'pending',
   SHIPPED: 'shipped',
   COMPLETED: 'completed',
-  CANCELED: 'canceled',
 }
 
 const STATUS_KEYS = {
@@ -43,7 +47,6 @@ const STATUS_KEYS = {
   TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
-  CANCELED: 'orders.statusCanceled',
 }
 
 // Most recent orders first, capped to keep the feed short.

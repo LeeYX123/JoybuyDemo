@@ -31,15 +31,15 @@ const showPwdModal = ref(false)
 
 const orderTiles = computed(() => [
   {
-    key: 'pending',
-    label: t('orders.tabPendingPayment'),
-    to: '/account/orders?tab=pending_payment',
+    key: 'to_ship',
+    label: t('orders.tabToShip'),
+    to: '/account/orders?tab=to_ship',
     icon: 'clock',
   },
   {
-    key: 'ongoing',
-    label: t('orders.tabToReceive'),
-    to: '/account/orders?tab=to_receive',
+    key: 'shipped',
+    label: t('orders.tabShipped'),
+    to: '/account/orders?tab=shipped',
     icon: 'truck',
   },
   {

@@ -87,14 +87,15 @@ async function confirmReceipt() {
 }
 
 // 2026-11-28 三态口径：详情与列表同源，优先用后端 `state`
-// （TO_SHIP/SHIPPED/COMPLETED）；取消 / 未付款仍按原状态展示。
+// （TO_SHIP/SHIPPED/COMPLETED）；未付款仍按原状态展示。
+// 2026-11-29 用户口径：购物端没有「已取消」概念，CANCELED 不映射文案，
+// 直接落到三态兜底（买家从不展示「已取消」）。
 const STATUS_KEYS = {
   TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
   PAID: 'orders.statusPaid',
   PENDING_PAYMENT: 'orders.statusPendingPayment',
-  CANCELED: 'orders.statusCanceled',
 }
 
 function statusLabel(order) {

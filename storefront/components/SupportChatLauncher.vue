@@ -32,12 +32,12 @@ const INPUT_ID = 'support-chat-input'
 const BASE = '/api/v1/account/support-chat'
 const ORDERS_URL = '/api/v1/orders'
 
+// 2026-11-29 用户口径：购物端没有「已取消」概念，买家侧不展示 CANCELED。
 const ORDER_STATUS_KEYS = {
   PENDING_PAYMENT: 'orders.statusPendingPayment',
   TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
-  CANCELED: 'orders.statusCanceled',
 }
 
 const { t, localeCode } = useLocale()
@@ -543,7 +543,7 @@ async function loadOrders() {
       ordersError.value = true
       return
     }
-    orders.value = payload.orders.slice(0, MAX_ORDERS)
+    orders.value = payload.orders.filter((order) => order.state !== 'CANCELED').slice(0, MAX_ORDERS)
   } catch {
     ordersError.value = true
   } finally {

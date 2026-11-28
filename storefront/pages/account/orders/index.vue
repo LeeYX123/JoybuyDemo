@@ -14,7 +14,8 @@ import AccountTabs from '../../../components/account/AccountTabs.vue'
 
 // 2026-11-28 统一三态口径：全部 / 待发货 / 已发货 / 已完成。
 // 状态由后端 `state` 按物流节点阈值给出（progress<1=待发货、1–6=已发货、
-// >=7=已完成）；取消单 / 未付款单只在【全部】里出现，卡片仍带状态徽标。
+// >=7=已完成）。2026-11-29 用户口径：购物端没有取消按钮，买家侧不展示
+// CANCELED（demo 遗留单在数据里仍在，但列表与计数都排除）。
 const { t } = useLocale()
 const { isAuthenticated } = useBuyerAuth()
 const route = useRoute()
@@ -37,7 +38,11 @@ const { data, status } = await useFetch(ordersUrl, {
   },
 })
 
-const orders = computed(() => (Array.isArray(data.value?.orders) ? data.value.orders : []))
+const orders = computed(() =>
+  (Array.isArray(data.value?.orders) ? data.value.orders : []).filter(
+    (order) => order.state !== 'CANCELED',
+  ),
+)
 
 const TAB_KEYS = ['all', 'to_ship', 'shipped', 'completed']
 const initialTab = String(route.query?.tab || '')
@@ -87,7 +92,6 @@ const STATUS_KEYS = {
   TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
-  CANCELED: 'orders.statusCanceled',
 }
 
 function stateLabel(order) {
@@ -96,7 +100,6 @@ function stateLabel(order) {
 
 function stateClass(order) {
   if (order.state === 'COMPLETED') return 'completed'
-  if (order.state === 'CANCELED') return 'canceled'
   if (order.state === 'SHIPPED') return 'shipped'
   return 'pending'
 }
@@ -315,10 +318,6 @@ useHead(() => ({ title: t('accountMenu.orders') }))
 
 .order-card__state--completed {
   color: var(--colour-success);
-}
-
-.order-card__state--canceled {
-  color: var(--colour-muted);
 }
 
 .order-card__items {

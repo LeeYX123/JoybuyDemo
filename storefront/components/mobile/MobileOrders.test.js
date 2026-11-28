@@ -20,7 +20,7 @@ const orders = [
     publicId: 'abc12345-6789',
     number: 'ABC12345',
     date: '2026-11-25 10:00',
-    statusLabel: 'Pending payment',
+    statusLabel: 'To ship',
     statusClass: 'pending',
     total: '£25.80',
     image: '/images/mug.jpg',
@@ -30,7 +30,7 @@ const orders = [
     publicId: 'def87654-3210',
     number: 'DEF87654',
     date: '2026-11-24 09:00',
-    statusLabel: 'To receive',
+    statusLabel: 'Shipped',
     statusClass: 'shipped',
     total: '£8.50',
     image: '',
@@ -75,7 +75,7 @@ describe('MobileOrders', () => {
     // Cards: badge + number + image + total + detail link.
     const cards = wrapper.findAll('.m-orders__card')
     expect(cards).toHaveLength(2)
-    expect(cards[0].find('.m-orders__badge').text()).toBe('Pending payment')
+    expect(cards[0].find('.m-orders__badge').text()).toBe('To ship')
     expect(cards[0].find('.m-orders__number').text()).toBe('#ABC12345')
     expect(cards[0].find('.m-orders__img').attributes('src')).toBe('/images/mug.jpg')
     expect(cards[0].find('.m-orders__total').text()).toContain('£25.80')

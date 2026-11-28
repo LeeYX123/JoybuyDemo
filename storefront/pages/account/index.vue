@@ -31,20 +31,18 @@ const orders = computed(() =>
   Array.isArray(ordersData.value?.orders) ? ordersData.value.orders : [],
 )
 
+// 2026-11-29：订单条与 /account/orders 的三态 tab 对齐
+// （全部 / 待发货 / 已发货 / 已完成），不再统计 PENDING_PAYMENT。
 const counts = computed(() => ({
-  pendingPayment: orders.value.filter((order) => order.state === 'PENDING_PAYMENT').length,
+  toShip: orders.value.filter((order) => order.state === 'TO_SHIP').length,
   shipped: orders.value.filter((order) => order.state === 'SHIPPED').length,
   completed: orders.value.filter((order) => order.state === 'COMPLETED').length,
 }))
 
 // 真站订单条：首格【我的订单】+ 状态格（数字 24/700、标签 18/400）。
 const orderStats = computed(() => [
-  {
-    key: 'pending_payment',
-    label: t('orders.tabPendingPayment'),
-    count: counts.value.pendingPayment,
-  },
-  { key: 'shipped', label: t('orders.tabToReceive'), count: counts.value.shipped },
+  { key: 'to_ship', label: t('orders.tabToShip'), count: counts.value.toShip },
+  { key: 'shipped', label: t('orders.tabShipped'), count: counts.value.shipped },
   { key: 'completed', label: t('orders.tabCompleted'), count: counts.value.completed },
 ])
 

@@ -215,11 +215,6 @@ const { t } = useLocale()
   color: #16a34a;
 }
 
-.m-orders__badge--canceled {
-  background: #f0f1f2;
-  color: #7a7d85;
-}
-
 .m-orders__number {
   color: #55565b;
   font-size: 13px;
