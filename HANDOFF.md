@@ -7943,3 +7943,8 @@ var(--space-1)（4px）选择器优先级（0,1,1）高于 .quote-totals__total
 
 商品行硬编码 'Qty:' 改为复用 detail.quantity key（数量/Quantity/…×7），
 渲染「数量: 1」。验证：eslint + Playwright 流程正常。
+
+## 页脚支付 icon 统一尺寸（2026-11-28 23:48，✅ 完成，commit d9b60e8）
+
+用户反馈 icon 太大且大小不一：统一 38x24 白卡（圆角 4px 边框 +
+object-fit contain），icon 间隔 12px。验证：eslint + 截图 11 icon 一致。
