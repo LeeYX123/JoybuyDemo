@@ -1133,10 +1133,13 @@ function overrideActions() {
   }
 
   // 5) 钱包密码 → POST /merchant/wallet/password（弹层结构沿用原码）
+  // 0mf-d：若本次设置是由「申请提现」在未设密码时引导出来的（__wpinThenWithdraw
+  // 意图标记），设置成功后自动接回申请提现弹层；轻量重拉 wallet 保证 balance /
+  // wallet_password_configured 最新。意图在 closeModal 里兜底清除（取消即作废）。
   saveWalletPassword = async function () { // eslint-disable-line no-undef
     if (passwordBusy) return // eslint-disable-line no-undef
-    const pass = document.getElementById('newWalletPassword').value
-    const confirm = document.getElementById('confirmWalletPassword').value
+    const pass = document.getElementById('newWpin').value
+    const confirm = document.getElementById('confirmWpin').value
     const error = document.getElementById('passwordError')
     if (!/^\d{6}$/.test(pass)) { error.textContent = '钱包密码必须为6位数字'; return }
     if (pass !== confirm) { error.textContent = '两次输入的密码不一致'; return }
@@ -1145,12 +1148,18 @@ function overrideActions() {
     button.disabled = true
     try {
       const body = { new_password: pass, confirm_password: confirm }
-      if (walletSecurity) body.old_password = document.getElementById('oldWalletPassword').value // eslint-disable-line no-undef
+      if (walletSecurity) body.old_password = document.getElementById('oldWpin').value // eslint-disable-line no-undef
       await merchantWrite('/merchant/wallet/password', body)
       walletSecurity = { remote: true } // eslint-disable-line no-undef
+      const thenWithdraw = window.__wpinThenWithdraw === true // eslint-disable-line no-undef
+      window.__wpinThenWithdraw = false // eslint-disable-line no-undef
       closeModal() // eslint-disable-line no-undef
       render() // eslint-disable-line no-undef
       toast('钱包密码已设置') // eslint-disable-line no-undef
+      if (thenWithdraw) {
+        await refreshWallet()
+        withdrawModal() // eslint-disable-line no-undef
+      }
     } catch (err) {
       error.textContent = err.message || '密码保存失败，请重试'
     } finally {
@@ -1168,14 +1177,16 @@ function overrideActions() {
       `<p class="small">本次申请提现</p><h2 class="red" style="margin:15px 0">${money(w.amount)}</h2>` + // eslint-disable-line no-undef
       `<p class="small">收款方式：${w.method}　${esc(maskAccount(w))}</p>` + // eslint-disable-line no-undef
       (w.coin ? `<p class="small">币种：${esc(w.coin)}　链类型：${esc(w.network)}</p>` : '') +
-      `<form id="withdrawPasswordForm" onsubmit="event.preventDefault();confirmWithdrawal()"><label class="field-label" for="withdrawPassword">钱包密码</label><input id="withdrawPassword" type="password" minlength="6" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="current-password" placeholder="请输入钱包密码" required style="width:100%"><p id="withdrawPasswordError" class="small red" role="alert"></p></form>`,
+      // 0mf-d：钱包密码输入防浏览器自动填充/保存（同 base-3 setWalletPassword 组合）。
+      `<form id="withdrawPasswordForm" onsubmit="event.preventDefault();confirmWithdrawal()"><label class="field-label" for="withdrawWpin">钱包密码</label><input id="withdrawWpin" data-wpin="1" type="text" minlength="6" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" spellcheck="false" placeholder="请输入钱包密码" required style="width:100%;-webkit-text-security:disc"><p id="withdrawPasswordError" class="small red" role="alert"></p></form>`,
       '<button class="primary" id="withdrawConfirmButton" type="submit" form="withdrawPasswordForm">确认提现</button>',
     )
+    wpinGuard() // eslint-disable-line no-undef
   }
   confirmWithdrawal = async function () { // eslint-disable-line no-undef
     if (passwordBusy || !pendingWithdrawal) return // eslint-disable-line no-undef
     const error = document.getElementById('withdrawPasswordError')
-    const pass = document.getElementById('withdrawPassword').value
+    const pass = document.getElementById('withdrawWpin').value
     const button = document.getElementById('withdrawConfirmButton')
     if (!/^\d{6}$/.test(pass)) { error.textContent = '钱包密码必须为6位数字'; return }
     passwordBusy = true // eslint-disable-line no-undef
