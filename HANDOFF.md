@@ -7734,3 +7734,14 @@ payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
 （第 8 位，此前一轮曾误判为 CB 已纠正）。页脚/PDP/购物车一并升级。
 注意：Commons API 有限流（429），批量下载需间隔重试。
 验证：eslint + tests/ 162/162；Playwright 截图官方 logo 清晰、顺序正确。
+
+## 支付行精简 + 页脚官方 icon 行（2026-11-28 22:30，✅ 完成，commit cd44b5a）
+
+1. 支付方式行最终口径（用户拍板）：只保留 余额支付/Google Pay/PayPal/
+   Klarna；微信支付/Revolut Pay/NewPay 移除。GPay/PayPal/Klarna icon
+   换官方 logo（Commons：Google Pay Logo / PayPal Logo2014 / Klarna Logo black）。
+2. 全站页脚底部 We support 行（zh=支付方式）保留，文字胶囊改为官方
+   icon 展示：11 个 = 银行卡 8 品牌 + Google Pay/PayPal/Klarna，
+   白色小卡底（.site-footer__support--icons）。
+验证：eslint + tests/ 162/162；Playwright 截图页脚 11 icon 正常、
+支付行 4 项正确。后端枚举保留 WECHAT_PAY 等旧值（历史订单数据兼容，UI 已不展示）。
