@@ -572,6 +572,32 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d1c. 订单三态对齐 + 账号区商家入口收敛 + ja/ko 选项提交（2026-11-28，✅ 已提交 30492a4 / ba4a4dc / f1bfee4 并推送）
+
+### 1. 订单三态（买家 / 商家 / 管理端同源）
+| 对外状态 | 判定（`MerchantOrder.progress`，8 节点 0 待出库…7 用户确认收货） |
+|---|---|
+| **待发货** `TO_SHIP` | 已付款且 `progress < 1`（**含 progress=0 待出库**） |
+| **已发货** `SHIPPED` | `progress` 1–6（已出库→已签收） |
+| **已完成** `COMPLETED` | `progress >= 7` 或子单 `status=COMPLETED` |
+- 多子单：全部 ≥7/COMPLETED → 已完成；否则任一 ≥1 → 已发货；否则待发货。取消/未付款不参与三态（只在【全部】里，保留徽标）。
+- 后端：`orders/order_views.py::_order_state` 改三态码（删 `PROCESSING`，**删掉 `status=="SHIPPED"` 短路**，否则 progress=0 会被误判已发货）；订单详情补 `state`；`merchant_ops/views_orders.py::_three_state` 让商家列表 `status` 筛选按 progress 阈值。
+- 买家：tab 改 **全部/待发货/已发货/已完成**；详情优先用 `state`；7 locale 文案（`orders.tabToShip/tabShipped/statusToShip`）。
+- 商家端 folio：`base-3.js status()` 改 `>=7 / >=1 / 待发货`；**`base-2.js unshipped` 改按 `progress<0`**（progress=0 对外仍是待发货，按文案判断会让详情页重现【发货】按钮 → 重复发货）；看板/筛选同步。
+- 管理端：`MerchantOrdersView.vue` 加 `threeState()` 三态标签（保留 8 节点明细），注释写阈值。
+- 验证（真实造单）：progress −1/0 → 待发货、3 → 已发货、7 → 已完成，四处一致；`0+3` 子单 → 已发货，`7+7` → 已完成；后端 30 tests OK、前端 20 tests OK；造数已清理。截图 `var/order_status_20261128/`。
+- **遗留**：账号首页与 `MobileAccount` 的订单入口仍链 `?tab=pending_payment` / `?tab=to_receive`（这两个 key 已不是 tab，会落到【全部】）；商家端不建模「取消」，已取消买家单的商家子单仍显示已发货（既有范围）。
+
+### 2. 账号区商家入口收敛
+- 删除：`/account` 商家磁贴、`AccountNav` 侧栏商家项、手机抽屉的切换商家端行、`/account/apply-shop` 通过态主 CTA（改成提示 `shopApply.approvedSwitchHint`，7 locale）。
+- **唯一入口 = AppHeader 桌面 pill + MobileHeader 手机 pill**（未改）。验证：pill 点击仍 200 → 落到商家端；`AccountNav/apply-shop/MobileDrawer` 里 `merchantEntry.console`/`openMerchantConsole` 引用 0。
+
+### 3. 提交补记
+- ja/ko 语言选项（`useLocale`/`useMarketLocale` 的 `ja-JP/ko-KR`）此前未提交，随 `f1bfee4` 入库。
+- 期间还提交过：`3e52f06`（政策页删 Cookie 概览段 + 交货句 + terms-of-use 链接站内化 + AppHeader 测试 5→6 行）。
+- **并行风险**：`merchant-web/src/folio` 与另一批次共写，本任务 hunk 曾被整体回滚过一次并重做；提交前已复核 `base-3`（`progress>=1?'已发货'` ×3）与 `base-2`（`progress<0` ×1）仍在。
+- 踩坑：Git Bash 里 `grep 'href="/xxx"'` 会被 MSYS 路径转换吃掉 → 假 0 命中，计数用 `MSYS_NO_PATHCONV=1` 或 node。
+
 ## 0d1b. 卡片【+】加购 + 购物车/结账页标题本地化 + 政策页删条款（2026-11-28，✅ 已提交 9f6020a 并推送）
 
 ### 1. 列表卡片【+】改为加入购物车
@@ -7948,3 +7974,108 @@ var(--space-1)（4px）选择器优先级（0,1,1）高于 .quote-totals__total
 
 用户反馈 icon 太大且大小不一：统一 38x24 白卡（圆角 4px 边框 +
 object-fit contain），icon 间隔 12px。验证：eslint + 截图 11 icon 一致。
+
+## 全站输入框禁用浏览器自动填充/保存（2026-11-28 23:5x，✅ 完成，commit 8206761）
+
+**任务**：用户口径「整个商家端和商城端，各种输入框都不需要做缓存（商城端登录页除外）」。
+范围 = merchant-web 全站 + storefront 全站，**AuthForm 登录/注册页保持浏览器正常行为**；
+不动 admin-web / backend / 业务校验 / placeholder。
+
+### 改动清单（生效模板，已用真 Chrome DOM 逐页核对）
+
+商家端（`merchant-web/src/folio/`，classic 脚本）：
+
+| 文件 | 输入框 | 原值 | 新值 |
+| --- | --- | --- | --- |
+| base-2.js | 店铺管理搜索 `#query`（经 base-3 分页包装） | 无 | off + spellcheck/autocapitalize/autocorrect |
+| base-3.js | 上架中心搜索 `#query` | 无 | off |
+| base-3.js | 订单查询 `#opsOrderSearch`/`#orderFrom`/`#orderTo` | 无 | off |
+| base-3.js | 客服聊天 `#chatInput`（textarea） | 无 | off |
+| base-3.js | 店铺资料 `#shopName` / `#shopId` | 无 | new-password / off |
+| base-3.js | 提现 `withdrawField` 生成的全部字段（银行名/卡号/姓名/支行/支行号/金额/链地址） | 无 | new-password |
+| base-3.js | 钱包密码 `#oldWpin/#newWpin/#confirmWpin` | off + text-security | 保持 off/disc，补 autocapitalize/autocorrect |
+| base-3.js | 旧流程 `#withdrawPassword`（死代码但防回退） | type=password/current-password | text + text-security + off + data-wpin |
+| base-3.js | 找回钱包密码 `#resetPass/#resetPassAgain` | type=password | text + text-security + off + data-wpin + wpinGuard |
+| base-3.js | 售后处理说明 `#afterReply` | 无 | off |
+| base-3.js | 商品评价回复 `#pushedReviewReply` | 无 | off |
+| base-3.js | 平台运营新增关注 `#followerIncrement`、推荐码只读框 | 无 | off |
+| base-1.js | `closeModal()` | 只清 `[data-wpin]` | 清空 overlay 内全部 input/textarea（file 除外） |
+| api.js | 提现验证 `#withdrawWpin` | off + disc | 保持，补 autocapitalize/autocorrect |
+
+新增共享工具 `function inputGuard(auto='off')`（base-2，base-3/api 复用），输出
+`autocomplete=... spellcheck=false autocapitalize=off autocorrect=off`。
+
+商城端（storefront）：
+
+| 页面/组件 | 输入框 | 原值 | 新值 |
+| --- | --- | --- | --- |
+| utils/noAutofill.js | 新增 `noAutofill`（new-password）/`noAutofillSearch`（off） | — | — |
+| AppHeader | 站点搜索 | off | noAutofillSearch |
+| AppFooter | 订阅邮箱 | email | noAutofill（new-password）※此文件改动被并行提交 d9b60e8 一并带走 |
+| ProductListing / promo/best-seller | 价格区间 min/max | 无 | noAutofillSearch |
+| CustomerServicePage | 帮助中心搜索 | off | noAutofillSearch |
+| merchants/index | 搜商家 | 无 | noAutofillSearch |
+| AddressDrawer | 邮编查找 | off | noAutofill |
+| account/addresses + mobile/MobileAddresses | 姓名/电话/地址1/地址2/城市/县/邮编（各 6 项） | name/tel/address-* | noAutofill |
+| checkout/index + mobile/MobileCheckout | 姓名/电话/邮编/line1/line2 | 无 | noAutofill |
+| account/apply-shop + mobile/MobileApplyShop | 用户名/店铺名/手机/邀请码/居住地址(textarea) | 无 | noAutofill |
+| account/ChangePasswordModal | 旧/新/确认密码 | current-password/new-password | noAutofill（全部 new-password） |
+| MerchantChatPanel / SupportChatLauncher | 聊天 textarea | 无 | noAutofill |
+| cart/index | 数量 number | 无 | noAutofillSearch |
+| AuthForm（登录/注册） | 全部 | username/current-password/email/new-password | **未改** |
+
+### 技术取舍（off vs new-password vs 随机 token）
+
+- 个人资料/地址/联系方式/密码类统一 `autocomplete="new-password"`：Chrome 明确尊重该令牌，
+  对非密码字段同样抑制 autofill 建议；`off` 会被 Chrome 地址/姓名启发式忽略。
+- 搜索/日期/数量用 `off`：不保留历史，语义也正确。
+- 随机 token（如 `nope-xyz`）规范未定义，浏览器按默认（开启）处理，**不采用**。
+- 未改 id/name：模板/取值大量 `document.getElementById`，改名风险高于收益；id 均不含
+  password/card 等完整敏感词，钱包密码沿用既定 0mf-d 方案（text-security，绝不 type=password）。
+- 关闭弹层统一清值放在 `closeModal`（所有弹层出口：关闭按钮/遮罩/Escape 都走它）。
+
+### 验证（按验证纪律仅做针对性验证）
+
+- 商家端真 Chrome（Playwright `channel: chrome`，注入 staff 会话只读访问 5174）：
+  `node var/no_autofill_20261128/verify_merchant.mjs` → 10 页面 + 6 弹层共 15 组 DOM 快照，
+  **非 file/hidden 输入 100% 为 off 或 new-password 且 spellcheck=false**；钱包密码仍 disc；
+  `closeModal` 关闭后 overlay 为空、重开提现表单 account/name/amount 全空。
+  提现表单通过页面内存置 `walletSecurity={remote:true}` 打开（未写后端/本地存储）。
+- 商城端真 Chrome：`verify_storefront.mjs` → 登录 identifier=username、密码=current-password、
+  注册 email=email/new-password（**未被误伤**）；首页搜索、搜商家、帮助搜索、地址簿 6 项、
+  申请店铺 5 项、结账 5 项、改密 3 项全部 new-password/off + spellcheck=false，console error 0。
+  `verify_storefront_extra.mjs` → 客服聊天 textarea、移动端 390px 地址簿/申请店铺/结账同样通过。
+- `npx eslint`（18 个改动的 storefront 文件）exit 0；`prettier --check` 13 个文件通过，
+  AppHeader/AppFooter/ChangePasswordModal/checkout/cart 5 个文件在 HEAD 基线本身就不符合
+  prettier（对比 `git show HEAD:<f> | prettier --stdin-filepath` 同样 FAIL），未引入新问题。
+- `npx vitest run --config storefront/vitest.config.js`：**377/379**；2 个失败与本改动无关
+  （AppFooter icon 数量 11≠7 来自并行 commit d9b60e8；SupportChatLauncher 状态键 TO_SHIP
+  来自并行任务）。
+- 构建：`cd storefront && npm run build` exit 0（pnpm 在本机损坏，用 npm）；`cd merchant-web &&
+  npm run build` exit 0。
+- 备份：`var/no_autofill_20261128/backup/`（22 个基线文件 + README + ours.diff + 验证脚本/截图）。
+
+**局限**：本机 Playwright 驱动的 Chrome（含 persistent profile）下，对照组（无 autocomplete 的
+普通 input）聚焦后也不会弹出地址/表单历史下拉，无法在自动化里用「下拉是否出现」做行为断言；
+本次以真 Chrome 属性断言 + 关闭清值 + 登录页对照为准。建议验收时用真实用户 Chrome（有已存
+地址/密码）人工点一遍提现卡号、链地址、结账地址。购物车数量框因该买家购物车为空，只做了源码/
+构建级确认。**未部署**。
+
+### 坑（不可再踩）
+
+1. **只改生效代**：base-1 的 `productPage/orderPage`、base-2 的 `orderPage/withdrawModal` 都是
+   死代码；店铺管理搜索真正走 base-2 `catalogue` 被 base-3 `paginatedShopProducts` 包装，
+   钱包页真正走 base-3 `merchantWalletPageView`。判断依据必须是真浏览器 DOM dump，不是 grep。
+2. **不要对 merchant-web/src/folio/*.js 跑 prettier --write**：这些是压缩模板，一次格式化会产出
+   3000+ 行噪音 diff；基线本身也不符合 prettier。
+3. **共享 index 会被并行会话抢**：本轮 AppFooter.vue 的改动被并行 commit d9b60e8 一并提交；
+   CustomerServicePage/SupportChatLauncher/MobileApplyShop/apply-shop 四个文件同时含别的任务
+   未提交改动，提交时用独立 `GIT_INDEX_FILE` + 从 HEAD 重建「只含本任务 hunk」的 blob
+   （`var/no_autofill_20261128/stage_commit.py`），不要 `git add` 整文件。
+4. base-3 的 `paginatedShopProducts` 用字符串 `replace('id="query" placeholder=... value=""')`
+   改搜索框值；新增属性必须放在 `value` 之后，否则替换失配。
+5. 商家端钱包密码输入维持 `type=text + -webkit-text-security:disc + autocomplete=off`；
+   只有非 WebKit 内核才由 `wpinGuard()` 回退 `type=password + new-password`。
+
+**下一步**：如需更强保证，可在有真实已存地址/密码的 Chrome profile 上人工复验一遍；
+HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径限定未随代码提交。
