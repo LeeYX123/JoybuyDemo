@@ -589,6 +589,23 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d1d. 订单收尾：入口三态 / 去「已取消」/ 清理待付款单 / 商家侧父单过滤（2026-11-29，✅ 已提交 609f4a3 / 128ed82 并推送）
+
+### 1. 买家订单入口与「已取消」口径
+- `/account` 三格与手机三格统一为 **待发货 `to_ship` / 已发货 `shipped` / 已完成 `completed`**（计数按订单 `state`）；全站 `tab=pending_payment` / `tab=to_receive` 残留 **0**。
+- 买家侧四个面（订单列表、订单详情、消息页、客服「发送订单」弹层）**全部排除 CANCELED**；7 locale 删除 `orders.statusCanceled`（`returns.tabCanceled` 保留 7 条，售后模块仍用）。历史取消单直链落到三态兜底（显示待发货），不报错。
+
+### 2. 历史 `PENDING_PAYMENT` 订单清理（数据，非代码）
+- 41 条**都不是干净孤儿**：2 条无痕、30 条只有占位子单、**9 条是 `demo@joybuy.test` 的三态种子单（含 Shipment 与结算，禁止动）**。
+- 经拍板把 **32 条**（id 1-30、149、152）改为 `CANCELED`（`cancel_reason=demo_pending_cleanup_20261129`）；`PENDING_PAYMENT 41→9`、`CANCELED 2→34`、`PAID 24` 不变，行数不变，OrderItem/支付/物流/钱包 0 变化。回滚实测双向可逆。
+- 产物 `var/pending_orders_cleanup_20261129/`（`fix.py` / `rollback.py` / `backup_before.json`）。
+- **注意**：后台有过期任务会把长期未付款订单自动转 CANCELED（验证期间确实发生），剩余 9 条 seed 单迟早也会被转。
+
+### 3. 商家/平台侧：父单已取消的子单不再计入待处理
+- `MerchantOrder` 没有 CANCELED 态，只能改查询层：`views_merchant_orders._visible_orders`、`views_orders._exclude_canceled_parent`（平台端 `/admin/merchant-orders`）、`views_merchant_app` 看板 `pending_shipment_count`、`views_merchants._pending_aggregate` 统一 `exclude(order__status=CANCELED)`；详情/发货入口对取消父单 **404 `MERCHANT_ORDER_NOT_FOUND`**（防旧链接继续发货）。
+- 实测：admin `?status=PENDING` 50→**20**、merchant 1 `?status=PENDING` 37→**7**，其他商家 before==after；SHIPPED/COMPLETED 计数不变。新增单测 `test_canceled_parent_order_is_hidden`。
+- **残留**：`views_merchants._overdue_pending_info` 与 `merchants.services.auto_suspend_overdue_merchants`（封店口径）仍按子单 PENDING 判断，父单取消的子单仍可能计入「超时未处理」——不在「待处理展示」范围，未动。
+
 ## 0d1c. 订单三态对齐 + 账号区商家入口收敛 + ja/ko 选项提交（2026-11-28，✅ 已提交 30492a4 / ba4a4dc / f1bfee4 并推送）
 
 ### 1. 订单三态（买家 / 商家 / 管理端同源）
