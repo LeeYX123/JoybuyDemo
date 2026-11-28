@@ -196,8 +196,6 @@ const WD_STATE = {
 
 // 提现「占用余额」的原始枚举（不再拿中文状态做条件判断，避免文案调整后错位）。
 const WD_OPEN_STATES = ['PENDING', 'APPROVED', 'TRANSFERRING']
-// 提现已完结（转账成功）的原始枚举：详情里据此展示「实际到账金额」。
-const WD_PAID_STATES = ['PAID']
 
 const AFTER_STATE = {
   PENDING: '待处理',

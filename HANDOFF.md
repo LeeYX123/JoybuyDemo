@@ -257,6 +257,23 @@
 > - **dev 数据变更（注明）**：merchant 1042（电子星星）`wallet_password_hash` 空 → 已设（测试值 123456）；failures/locked_until 未动。如需重测未设路径：UPDATE 清空 hash 即可（0mf-c 曾用 ORM 快照/恢复同一手法）。
 > - **遗留**：无阻塞项。本任务**未 commit**（等用户指示）；快照在 var/desktop_folio_20261128/backup/wallet_20261128/。
 
+## 0mf-e. 商家端提现状态文案对齐管理端（转账成功）+ 资金明细直接显示失败/打回原因（2026-11-28，✅ dev 9/9 PASS）
+
+> **背景**：管理端资金审核已入库 `dc2e72b`（待审→审核→转账中→转账成功/转账失败必填原因；失败走 `return_withdrawal` 退回）。商家端需对齐：PAID 显示「转账成功」、失败/打回原因在【资金明细】直接可见。
+> - **改动点（3 文件）**：
+>   1. `api.js` `WD_STATE.PAID`：`已到账` → **`转账成功`**（`TRANSFERRING:'转账中'` 保留，口语「转帐中」是字形差异不改）。
+>   2. `api.js` 新增 `WD_OPEN_STATES=['PENDING','APPROVED','TRANSFERRING']`；`draftWithdrawal().frozen` 改为**按原始枚举**判断（原为中文 `['待审核','审核通过','转账中'].includes(...)`，文案一改就会静默失效）。
+>   3. `api.js` `allFundRows()`：提现类行新增 `reason` —— 优先取提现单 `withdrawal.reason`；提现单不在当前缓存页时用流水 `note` 兜底（后端退回流水写法「提现退回 XXXXXXXX：原因」）。无原因保持空串。
+>   4. `base-3.js` `payoutDetail`（活定义，第 246 行那版）：「实际到账金额」判断由 `w.state==='已到账'` 改为 `转账成功 || 已到账`（兼容 demo 数据；不改则出现「状态显示转账成功但详情实际到账金额为 0」的错位——用户特别点名的风险）。
+>   5. `base-3.js` `merchantWalletPageView`（`pages[5]` 活视图，**手机同源**）：状态列在 `opsTag(state)` 下方追加 `<div class="small red">原因</div>`（整段、`white-space:normal` + `overflow-wrap:anywhere` 不截断；`reason` 为空则不渲染、不占位）；`exportFunds` CSV 同步加「原因」列。
+>   6. `locale-en.js`：新增 `转账成功: 'Transfer succeeded'`（保留 `已到账: Credited` 供推荐返佣）。
+> - **中文状态依赖审计（全量 grep「已到账」）**：`api.js` 的 `REF_STATE` 属**推荐返佣**另一套状态，保留；`base-3.js` 140/172/173/198/200 为**已被覆盖的演示死代码**（`payoutExamples=[]`、`opsPayouts`/`payoutDetail` 均被 api.js 或后置定义覆盖），按「不改死代码」原则未动；`#platform-admin` 演示面板仍用自有演示状态词，属本地演示模式、真实审核走 admin-web，未纳入本次范围。admin-web `StatusTag`/`FinanceView` 的 PAID 标签仍是「已到账」（属管理端代理范围，未触碰，建议其对齐）。
+> - **后端：零改动**。`_ledger_payload` 已回传 `note`、`_withdrawal_payload` 已回传 `reason`；失败退回流水 note 本身就带原因（`return_withdrawal` 写 `提现退回 {id}：{reason}`）。故**未新增字段、无迁移、无新增单测**（仅只读核对 `views_merchant_wallet.py`）。
+> - **验证（dev Playwright，经切换链 merchant 1042；fixture 由 `var/wallet_states_20261128/setup_fixture.py` 建 4 条提现+流水，验后 `cleanup_fixture.py` 全删）：9/9 PASS**——S1 PAID 列表「转账成功」且全表无「已到账」；S2 TRANSFERRING「转账中」；S3 FAILED「转账失败」+ 原因整段显示在列表行内；S4 REJECTED「已打回」+ 原因；S5 PAID 处理明细「实际到账金额 ¥198.00」（净额，非 0）；S6 FAILED 详情含原因、无「实际到账金额」；S7 桌面 console/pageerror/HTTP 失败 0；S8 手机 390 同文案 + 原因可见、console 0。`npm run build` exit 0。截图 `var/wallet_states_20261128/shots/`。清理核对：merchant 1042 提现 0 条、fixture 前缀残留 0。
+> - **事故记录（务必注意）**：本次改动进行中，**并行会话提交 `30492a4`（订单状态收敛）把我未提交的 api.js / base-3.js 改动一并扫进去了**（其 add 范围过宽）。因此本任务的 api.js/base-3.js 主体代码已在 `30492a4` 里，我自己的提交只剩「未使用常量清理 + locale-en 词条 + 本节台账」。教训：共享工作区里同文件多代理并行时，改完应立刻用独立 `GIT_INDEX_FILE` 精确提交，不要留在工作区等验证跑完。
+> - **遗留**：`已退回金额` 行只在演示版 payoutDetail 里存在，活定义（246 行）无此行——本次未加（超出需求）；`#platform-admin` 演示面板与 admin-web 标签未对齐（见上）。未部署。
+
+
 ## 0sg. 产线同步活动页 48 页 + 首页 16 卡 + 2 张 minihome banner（2026-11-28，✅ 完成并三层验证，未 commit HANDOFF）
 
 - **任务**：把另一 agent 准备的物料（git 5586087/74f5caa、活动页包、2 banner 图）同步到 DO 产线并验证。全程按「先干跑再 apply」。

@@ -330,6 +330,7 @@ export const PHRASES = {
   已打回: 'Rejected',
   审核通过: 'Approved',
   转账中: 'Transferring',
+  转账成功: 'Transfer succeeded',
   已到账: 'Credited',
   转账失败: 'Transfer failed',
   申请金额: 'Requested amount',
