@@ -97,6 +97,7 @@ class CheckoutQuoteTests(CheckoutOrderTestBase):
         self.assertEqual(data["total"], "13.9900")
 
     def test_unserviceable_and_unknown_addresses_are_rejected(self):
+        # 2026-11-28 配送范围放开：任意地址（含海外/任意邮编）都可报价。
         self.add_to_cart()
         overseas = Address.objects.create(
             account=self.account,
@@ -112,8 +113,7 @@ class CheckoutQuoteTests(CheckoutOrderTestBase):
             data=json.dumps({"address_public_id": str(overseas.public_id)}),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["code"], "ADDRESS_UNSUPPORTED")
+        self.assertEqual(response.status_code, 200)
 
         missing = self.client.post(
             reverse("checkout-quote"),

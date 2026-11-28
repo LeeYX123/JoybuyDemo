@@ -137,12 +137,9 @@ def _clean_address_body(body):
     missing = [field for field in required if not str(body.get(field) or "").strip()]
     if missing:
         return None, ("ADDRESS_INCOMPLETE", f"Missing: {', '.join(missing)}.")
+    # 2026-11-28 用户拍板：邮编格式校验放开（任意内容，仅非空）；
+    # 大写规范化保留，长度按模型上限截断。
     postcode = str(body.get("postcode") or "").strip().upper()[:10]
-    if not is_supported_postcode(postcode):
-        return None, (
-            "ADDRESS_UNSUPPORTED",
-            "Only UK addresses are supported in this region.",
-        )
     return (
         {
             "full_name": str(body["full_name"]).strip()[:160],

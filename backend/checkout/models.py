@@ -35,7 +35,9 @@ class Address(models.Model):
 
     @property
     def is_serviceable(self) -> bool:
-        return self.country_code == "GB" and is_supported_postcode(self.postcode)
+        # 2026-11-28 用户拍板：配送范围完全放开——任意地址/邮编内容都可结算
+        # 下单（此前仅 GB + 英国邮编格式）。property 保留以兼容调用方。
+        return True
 
     def as_snapshot(self) -> dict:
         return {

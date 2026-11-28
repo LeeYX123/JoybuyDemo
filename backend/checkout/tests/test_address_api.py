@@ -102,9 +102,10 @@ class AddressApiTests(TestCase):
         self.assertTrue(remaining.is_default)
 
     def test_validation_and_not_found(self):
+        # 2026-11-28 邮编格式校验放开：任意内容（非空）都被接受。
         bad_postcode = self.create(postcode="12345")
-        self.assertEqual(bad_postcode.status_code, 400)
-        self.assertEqual(bad_postcode.json()["error"]["code"], "ADDRESS_UNSUPPORTED")
+        self.assertEqual(bad_postcode.status_code, 201)
+        self.assertEqual(bad_postcode.json()["postcode"], "12345")
 
         missing = self.client.post(
             self.url,
