@@ -216,7 +216,7 @@
 >   * 坑：①checkout/quote 对无购物车返回 400 CART_INVALID——PDP 加购点击对**非白名单买家静默无效**（gateBlocked/NOT_WHITELISTED 拦截，无 toast）；验证时把测试买家 `purchase_whitelisted` 0→1（单字段数据修改，演示口径内，见遗留）。②register/login 页对已登录用户会重定向走，脚本等待 #auth-identifier 会超时——先 networkidle 再判断。
 > - **遗留**：①prod 缺 APPROVED 申请数据（正向链/管理端申请审核链路待真实数据）；②测试数据残留：2 个 `deploy0mf-*@joybuy.test` 买家（其一为误注册未用）、1 条地址（Deploy Test/SW1A 1AA）、白名单标志=1（仅限该测试买家），如需清理走 admin 或手工 DELETE；③admin-web 支付方式映射展示（MerchantOrdersView）无登录冒烟（无 admin 凭据）。
 
-## 0mf-d. 钱包密码防浏览器自动填充/保存 + 未设密码时申请提现先弹设置框（2026-11-28，✅ dev 10/10 PASS，**未 commit 待用户指示**，只动 merchant-web）
+## 0mf-d. 钱包密码防浏览器自动填充/保存 + 未设密码时申请提现先弹设置框（2026-11-28，✅ dev 10/10 PASS，commit `914976b` 已推 origin/main，只动 merchant-web；未部署）
 
 > **需求 1 改动（防自动填充组合，全部活代码输入点 4 个）**：钱包密码是 6 位数字 PIN，输入框统一改为 `type="text"` + 内联 `-webkit-text-security:disc`（视觉圆点不变）+ `autocomplete="off"` + `spellcheck="false"` + id 改为不含 password 字样（oldWpin/newWpin/confirmWpin/withdrawWpin）+ `data-wpin="1"`。涉及：`base-3.js setWalletPassword`（3 输入）+ `api.js verifyWithdrawalModal`（1 输入）。**保留 <form>**（保 Enter 提交 UX；type=text 下 Chrome 不做密码管理，「密码填入下拉」与「保存密码气泡」都不会出现）。**Firefox 兜底**：`wpinGuard()`（base-3 定义，两处弹层打开时调用）对非 WebKit 内核回退 type="password"+autocomplete="new-password"。**清值**：`base-1.js closeModal` 关闭前清空 #overlay 内所有 [data-wpin] 值（覆盖 X/遮罩/Esc/关闭按钮全部关闭路径）；提交成功路径 DOM 随弹层销毁。**不落盘**：明文永不进 localStorage——真实路径（api.js 覆盖）不写本地；`walletSecurityV1` 是演示 digest 残留且在 wipeDemoStorage 清单（api.js:48），base-3 死代码里的 setItem 被覆盖不可达。
 > - **活代码盘点坑（勿再踩）**：base-3.js 存在**多代定义**——`withdrawModal` 有两处（31 行旧定义已被 85 行覆盖，31 行是死代码），`verifyWithdrawalModal/confirmWithdrawal/saveWalletPassword` 各有两代 + ops 包装，最终生效者 = **api.js overrideActions 的覆盖**（boot 末尾执行）；首次把「未设密码门」加在 31 行死代码上导致验证失败，已改到 85 行活定义。`resetPasswordForm/completeWalletReset`（166/167 行）为不可达死代码（requestWalletReset 被 api.js 覆盖为联系客服引导）。
@@ -540,6 +540,31 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d1b. 卡片【+】加购 + 购物车/结账页标题本地化 + 政策页删条款（2026-11-28，✅ 已提交 9f6020a 并推送）
+
+### 1. 列表卡片【+】改为加入购物车
+- 根因：`ProductCard.vue` 里是 `<NuxtLink :to="href">`（点 = 跳详情），且搜索接口 item **不带 offer id**。
+- 后端：`POST /api/v1/cart/items` 支持 `spu_public_id`（与 `offer_public_id` 二选一），`cart/services.py::_offer_for_spu` 沿市场链取「ACTIVE + 有库存 + 非 UNAVAILABLE」的**最低价** Offer，再走同一条 add 逻辑（白名单/匿名车/库存/重复行合并/上限全沿用）。
+- 前端：`<button @click.stop.prevent>` + 状态机 idle→adding（「加入中…」）→ added（绿 ✓ 1.5s 回落）；失败 toast（非白名单用 `gate.messageWhitelist`，其它 `product.addToCartFailed`）。新增 `useCartActions()`（只写 + `refreshNuxtData('cart')`）——**不要在卡片里调 `useCart()`**，否则 SSR 会为每张卡各建匿名购物车（实测 3106→3112）。
+- 验证：点【+】URL 不变、角标 +1、同卡两次 → 购物车 1 行 qty=2；非白名单 toast、匿名可加；手机端卡片本来就没有【+】。
+
+### 2. 购物车/直购结账页商品标题跟随语言
+- 根因：`serialize_cart` 与 `serialize_direct_purchase` 都写死 `spu.translations.order_by("pk").first()`（永远 en-GB）。
+- 改动：新增 `cart/services.py::resolve_item_title(spu, market, locale)` 走 `catalog.localization_services.resolve_product_content`（同 PDP 口径，显式回退 en-GB）；`serialize_cart(cart, market=, locale=)`、`serialize_direct_purchase(..., market=, locale=)`；cart API 与 `checkout_quote` 传请求上下文；**订单快照等未传上下文的调用方保持旧口径逐字节不变**。
+- 验证：zh `C&S卫生纸，4-Ply…`；en sha 与改前一致；ja 有译文出日文、无译文回退英文；**fr-FR 响应 sha == en-GB**（不会串法语）。
+- 查询数：+4 固定（2 条 prefetch + 2 条 market/locale），但省掉原来每行 1 条 → ≥4 行时净减少，不是 N+1。
+
+### 3. 政策页删指定条款（cookie / privacy / terms）
+- 渲染来源（重要）：en/zh 用主文件 `blocks.en|zh`；**ja 用 `*.ja.js` 的 `jaBlocks`**；de/fr/nl/ko **回退英文**。`*.i18n.js` 全仓库 **0 import（死文件）**，本次未改 —— 哪天接线 de/fr/nl/ja/ko 时**必须同步删这些条款**，否则会「复活」。
+- 删除：Cookie **4.2**；隐私 **5.1 c**（Trustpilot 段，d/e 上提为 c/d）、**6.2**、**8.1 的 ICO 句**（保留邮箱与「隐私查询」）、**8.1 i 投诉权**；销售条款 **5.6 / 16.1**。
+- **terms 的 en/ja 与 zh 不是同一份文档**（en 93 块 = 真站散文 + 礼品卡条款；zh 28 块 = 编号到 16 条），5.6/16.1 只在 zh 存在。
+- 验证：7 locale × 3 页 = 21 个 200；76 项断言 0 失败（被删特征串 0 命中、5.1 字母 a→d 连续、6.1→6.3、8.1 子条 a–h 齐全）；无新增重复空行；`help-pages.test.js` 29/29（唯一断言改动：`European Commission` → `European Economic Area`，因该词只在被删段落里）。
+- 遗留待拍板：**terms 第 16 条现在是空标题**（16.1 是唯一子条）；`privacy-policy.ja.js` 8.2 有 MT 模板泄漏（`{"0": "8.2 The exercise…"}`，原有瑕疵未修）。
+
+### 待拍板
+- 同款族卡片显示 `family_max_price`（$17.99）但【+】加入的是 `price_min`（$16.99），要不要统一。
+- `pages/merchants/[slug].vue` 的 `shop-product-card__add` 仍是无 handler 的装饰（点它跟整卡跳详情）。
 
 ## 0d1a. 未登录访问 /account/* 直接 302 回登录页（2026-11-28，✅ 已提交 e14225a 并推送）
 
