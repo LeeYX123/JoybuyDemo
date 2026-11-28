@@ -385,6 +385,13 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d0z. 立即购买结账页去掉「单独购买」提示条（2026-11-28，✅ 已提交 d2a3adc 并推送）
+
+- 用户要求：PDP 立即购买跳到地址页后，顶部「您正在单独购买该商品，购物车不受影响。」不要显示。
+- 改动（`storefront/pages/checkout/index.vue`，−15 行）：删 `v-if="directPurchase"` 的 `.checkout__direct-note` 提示条节点与对应 CSS。**直购逻辑本身不动**：`directPurchase` computed、quote/place 的 `offer_public_id/quantity` 透传、隔离语义全部保留；`checkout.buyingSolo` 文案 key 仍留在 messages.js（7 语言 parity 守卫要求一致，删节点不删 key 不影响）。
+- 验证：`buyingSolo|direct-note` 在页面源码 0 命中；`/checkout?offer=…&qty=1` 仍 200 正常渲染；prettier 通过。
+- 已提交 `d2a3adc` 并推送。
+
 ## 0d0y. 申请开店页去掉全部输入框 placeholder（2026-11-28，✅ 已提交 bcdb0e2 并推送）
 
 - 用户要求：申请商家页面所有输入框的 placeholder 全部去掉。
