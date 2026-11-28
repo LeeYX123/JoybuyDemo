@@ -7634,3 +7634,22 @@ UNIONPAY + Payment 记录一致。
   commit 4c1e318。教训：删字段的指令要对照真站字段表逐个确认，"地址"在
   真站是两个不同字段（Address 查找框 vs Address Line 1）。
 - 验证：56/56 + 162/162；E2E 空 line1 拦截、填写后正常跳支付。
+
+## 支付页二次改版（2026-11-28 21:50，✅ 完成，commit 2cfc12e）
+
+用户 6 点需求全部落地：
+1. 商品行图片 96px、行价格 16px 加粗黑；
+2. 结算单→汇总、小计加黑加粗、订单总额→订单合计（更大更粗，×7 语言）；
+3. 条款文案带可点击链接：使用条款→/pages/terms-conditions、
+   隐私与Cookie政策→/pages/privacy-policy（termsPrefix/Terms/Middle/Privacy/Suffix
+   5 key ×7 语言，替换旧 termsNotice）；
+4. 银行卡分组提到支付方式最前，品牌扩到 8 个（+Maestro/JCB/Discover/Diners，
+   后 3 个 icon 从 simpleicons CDN 下载本地托管），后端 PAYMENT_METHODS 同步；
+5. 去掉微信支付；Google Pay/Apple Pay 行左侧带 icon；
+6. **余额支付政策变更（推翻迭代02 真扣款）**：不校验余额、不扣款、不写钱包
+   流水，仅记录 payment_method（白名单演示口径，订单后台统计另行结算）。
+   order_services 里 balance_payment 恒 False，扣款/流水块整体删除。
+
+验证：56/56 + 162/162；E2E 余额订单 PAID 后余额 500 不变、无流水；
+银联订单记录 UNIONPAY。真站 8 品牌来源：真站支付区因购物车空不渲染，
+按 Joybuy 常见口径配置（probe 脚本留档 scripts/probe_checkout_brands.py）。
