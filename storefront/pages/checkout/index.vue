@@ -938,7 +938,6 @@ useHead({ title: 'Checkout' })
 .quote-totals > div {
   display: flex;
   justify-content: space-between;
-  padding-block: var(--space-1);
 }
 
 .quote-totals__total {
