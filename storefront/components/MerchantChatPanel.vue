@@ -15,6 +15,9 @@ import { noAutofill } from '../utils/noAutofill'
 const props = defineProps({
   open: { type: Boolean, default: false },
   merchant: { type: Object, default: null },
+  // 需求 3：买家当前正在看的商品（SPU public_id）。打开面板和每次发消息都带上，
+  // 服务端覆盖式更新会话的商品上下文，商家端据此切换「当前沟通的是哪件商品」。
+  product: { type: String, default: '' },
 })
 
 const emit = defineEmits(['close', 'blocked'])
@@ -142,6 +145,8 @@ function serverMessage(raw, clientId = '') {
     // 批次 AA：平台客服在 Crisp 的人工回复回传为 sender_kind=support，单独标记。
     support: raw.sender_kind === 'support',
     body: raw.body || '',
+    // 需求 2：商家端可以发图片，买家侧同步展示（图片消息可能没有文字）。
+    image_url: raw.image_url || '',
     created_at: raw.created_at || '',
     pending: false,
     failed: false,
@@ -220,7 +225,7 @@ async function init() {
   }
   try {
     // 幂等 get-or-create：同一买家对同一商家永远拿到同一个会话。
-    const created = await postJson('/threads', { merchant: slug })
+    const created = await postJson('/threads', { merchant: slug, product: props.product || '' })
     if (created?.error) {
       if (!handleAccessError(created)) loadError.value = true
       return
@@ -257,6 +262,7 @@ async function deliver(message) {
   try {
     const payload = await postJson(`/threads/${threadId.value}/messages`, {
       body: message.body,
+      product: props.product || '',
     })
     if (payload?.error) {
       handleAccessError(payload)
@@ -571,7 +577,14 @@ onBeforeUnmount(() => {
                 <p v-if="message.support" class="merchant-chat__tag">
                   {{ t('chat.supportLabel') }}
                 </p>
-                <p class="merchant-chat__text">{{ message.body }}</p>
+                <img
+                  v-if="message.image_url"
+                  class="merchant-chat__image"
+                  :src="message.image_url"
+                  alt=""
+                  loading="lazy"
+                />
+                <p v-if="message.body" class="merchant-chat__text">{{ message.body }}</p>
                 <p class="merchant-chat__meta">
                   <span>{{ formatTime(message.created_at) }}</span>
                   <button
@@ -829,6 +842,18 @@ onBeforeUnmount(() => {
 .merchant-chat__bubble--failed {
   background: var(--colour-error-soft);
   color: var(--colour-text);
+}
+
+.merchant-chat__image {
+  display: block;
+  max-width: min(220px, 100%);
+  max-height: 200px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.merchant-chat__image + .merchant-chat__text {
+  margin-top: 6px;
 }
 
 .merchant-chat__text {

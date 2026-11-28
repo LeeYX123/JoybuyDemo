@@ -599,6 +599,12 @@ class MerchantChatThread(models.Model):
     # 批次 AA 验收修正：每线程每分钟请求上限的计数窗口（5s 节流之外的兜底）。
     inbound_window_start = models.DateTimeField(null=True, blank=True)
     inbound_window_count = models.PositiveIntegerField(default=0)
+    # 需求 3（2026-11-29）：买家当前正在咨询的商品。同一买家同一商家只有一个
+    # thread，所以这里是**覆盖式**快照——买家从 A 商品发消息就写 A，再换 B 商品
+    # 发消息就覆盖成 B。``context_snapshot`` 存标题/主图/价格/品类，商品下架后
+    # 商家端仍能展示（不依赖实时查商品）。public_id 为空串 = 没有商品上下文。
+    context_spu_public_id = models.CharField(max_length=64, blank=True, default="")
+    context_snapshot = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -640,6 +646,9 @@ class MerchantChatMessage(models.Model):
     )
     sender_kind = models.CharField(max_length=8, choices=SenderKind.choices)
     body = models.CharField(max_length=2000)
+    # 需求 2（2026-11-29）：图片消息。``body`` 可为空串（纯图片），但文字与图片
+    # 至少有一个（接口层校验）。只存站内 /media/ 或 http(s) URL，不接受 data:。
+    image_url = models.CharField(max_length=500, blank=True, default="")
     # 批次 AA：入站（Crisp 回传）来源与指纹；``bm:`` 线程目前只出站，字段留着备用。
     crisp_fingerprint = models.BigIntegerField(null=True, blank=True, db_index=True)
     source = models.CharField(max_length=8, default="local")

@@ -152,6 +152,14 @@ html[data-merchant] { overflow-wrap: anywhere; }
 .merchant-chat .chat-shell[data-view="thread"] .conversation-pane { display: none; }
 .merchant-chat .conversation { min-height: 52px; }
 .merchant-chat .chat-history { max-height: min(360px,45dvh); }
+/* 需求 2：聊天图片（mobile.html 的内联样式没有桌面 index.html 的那三条规则）。 */
+.merchant-chat .chat-attachment { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.merchant-chat .chat-attachment[hidden] { display: none; }
+.merchant-chat .chat-attachment img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; }
+.merchant-chat .chat-attachment button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.merchant-chat .chat-attachment-controls { display: flex; align-items: center; gap: 8px; }
+.merchant-chat .chat-image { display: block; max-width: min(220px,100%); max-height: 200px; object-fit: contain; border-radius: 6px; }
+.merchant-chat .chat-image + p { margin: 6px 0 0; }
 [data-merchant] :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [data-merchant] .bottomnote { text-align: center; padding: 14px 0; }
 [data-merchant] #app .business-overview h1 { font-size: 20px; }

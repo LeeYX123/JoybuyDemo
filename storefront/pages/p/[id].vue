@@ -1325,6 +1325,7 @@ useHead(() => ({ title: displayTitle.value || 'Product' }))
       <MerchantChatPanel
         :open="chatOpen"
         :merchant="chatMerchant"
+        :product="publicId"
         @close="chatOpen = false"
         @blocked="onChatBlocked"
       />

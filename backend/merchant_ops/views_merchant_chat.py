@@ -13,6 +13,7 @@
 
 from datetime import UTC, datetime
 
+from django.core.exceptions import ValidationError
 from django.db.models import F
 from django.utils import timezone
 from rest_framework.response import Response
@@ -21,14 +22,17 @@ from accounts_buyers.api_exceptions import BuyerApiError
 from accounts_buyers.models import BuyerAccount
 from accounts_buyers.views import BuyerCsrfAPIView
 from accounts_staff.api_exceptions import StaffApiError
-from merchant_ops.api_utils import iso
+from merchant_ops.api_utils import iso, money_str
 from merchant_ops.crisp_inbound import pull_merchant_chat
 from merchant_ops.crisp_mirror import merchant_chat_buyer_name, queue_merchant_chat_mirror
+from merchant_ops.localization import pick_title, request_locale, title_map_by_public_id
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.models import MerchantChatMessage, MerchantChatThread
 from merchants.models import Merchant
 
 MAX_MESSAGE_LENGTH = 2000
+# 需求 2：图片消息只接受站内 /media/ 路径或 http(s) 绝对地址（拒绝 data:/javascript:）。
+MAX_IMAGE_URL_LENGTH = 500
 
 
 # --------------------------------------------------------------------------
@@ -70,6 +74,123 @@ def _validated_body(payload, error_cls) -> str:
     return body
 
 
+def _validated_image_url(raw, error_cls) -> str:
+    """图片地址白名单：空串 / 站内 ``/media/...`` / ``http(s)://``。
+
+    前端先走 ``/merchant/media`` 上传拿 URL 再发消息，所以这里只做落库前校验，
+    不接受 ``data:``（会把大段 base64 塞进 DB）或任何其它 scheme。
+    """
+
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if len(value) > MAX_IMAGE_URL_LENGTH:
+        raise error_cls(
+            business_code="IMAGE_URL_TOO_LONG",
+            message=f"图片地址不能超过 {MAX_IMAGE_URL_LENGTH} 字符。",
+            status_code=400,
+        )
+    if value.startswith("/media/") or value.startswith(("http://", "https://")):
+        return value
+    raise error_cls(
+        business_code="IMAGE_URL_INVALID",
+        message="图片地址不正确，只接受站内上传或 http(s) 地址。",
+        status_code=400,
+    )
+
+
+def _validated_message(payload, error_cls) -> tuple[str, str]:
+    """文字 + 图片消息：文字可为空，但两者至少有一个。"""
+
+    payload = payload or {}
+    body = str(payload.get("body") or "").strip()
+    if len(body) > MAX_MESSAGE_LENGTH:
+        raise error_cls(
+            business_code="MESSAGE_TOO_LONG",
+            message=f"消息不能超过 {MAX_MESSAGE_LENGTH} 字。",
+            status_code=400,
+        )
+    image_url = _validated_image_url(payload.get("image_url"), error_cls)
+    if not body and not image_url:
+        raise error_cls(
+            business_code="MESSAGE_EMPTY",
+            message="消息内容不能为空。",
+            status_code=400,
+        )
+    return body, image_url
+
+
+def _product_context(spu_public_id, locale: str):
+    """需求 3：把买家正在咨询的商品落成覆盖式快照（标题/主图/价格/品类）。
+
+    返回 ``(public_id, snapshot)``；商品不存在或 public_id 非法时返回 ``None``，
+    调用方不更新上下文（保留上一次的商品）。快照是为了商品下架后仍能展示。
+    """
+
+    value = str(spu_public_id or "").strip()
+    if not value:
+        return None
+    # 延迟导入：catalog 与 merchant_ops 互相引用，放模块顶层会成环。
+    from catalog.models import Spu
+    from merchant_ops.views_catalog import _primary_images
+
+    try:
+        spu = (
+            Spu.objects.select_related("local_category")
+            .prefetch_related("translations")
+            .filter(public_id=value)
+            .first()
+        )
+    except (ValidationError, ValueError):
+        return None
+    if spu is None:
+        return None
+    title = pick_title(list(spu.translations.all()), locale) or ""
+    image = (spu.image_urls or [""])[0] or _primary_images([spu.pk]).get(spu.pk, "")
+    category = ""
+    if spu.local_category_id:
+        category = spu.local_category.name_zh or spu.local_category.name or ""
+    return value, {
+        "id": value,
+        "name": title or f"SPU {value[:8]}",
+        "image": image or "",
+        "price": money_str(spu.retail_price) if spu.retail_price is not None else "",
+        "category": category,
+    }
+
+
+def _apply_product_context(thread: MerchantChatThread, spu_public_id, locale: str) -> None:
+    """买家发消息/建会话时带商品：覆盖 thread 的当前商品上下文。"""
+
+    context = _product_context(spu_public_id, locale)
+    if context is None:
+        return
+    public_id, snapshot = context
+    MerchantChatThread.objects.filter(pk=thread.pk).update(
+        context_spu_public_id=public_id,
+        context_snapshot=snapshot,
+        updated_at=timezone.now(),
+    )
+    thread.context_spu_public_id = public_id
+    thread.context_snapshot = snapshot
+
+
+def _context_product_payload(thread: MerchantChatThread, name: str = "") -> dict | None:
+    """商家端商品上下文条的数据（快照优先，标题可按请求语言覆盖）。"""
+
+    snapshot = thread.context_snapshot or {}
+    if not thread.context_spu_public_id and not snapshot:
+        return None
+    return {
+        "id": thread.context_spu_public_id or str(snapshot.get("id") or ""),
+        "name": name or str(snapshot.get("name") or ""),
+        "image": str(snapshot.get("image") or ""),
+        "price": str(snapshot.get("price") or ""),
+        "category": str(snapshot.get("category") or ""),
+    }
+
+
+
 def _parse_after(raw, error_cls) -> datetime | None:
     """``?after=<iso>``：只取严格晚于该时间的消息。空值返回 None。"""
 
@@ -95,6 +216,8 @@ def _message_payload(message: MerchantChatMessage) -> dict:
         "id": message.pk,
         "sender_kind": message.sender_kind,
         "body": message.body,
+        # 需求 2：空串 = 纯文字消息；非空 = 图片消息（可能同时带文字）。
+        "image_url": message.image_url or "",
         "created_at": iso(message.created_at),
         "read_at": iso(message.read_at),
     }
@@ -112,11 +235,13 @@ def _buyer_thread_payload(thread: MerchantChatThread) -> dict:
         "status": thread.status,
         "last_message_at": iso(thread.last_message_at),
         "unread": thread.buyer_unread,
+        # 需求 3：买家侧回显当前咨询的商品（快照标题，购物端不参与商家端本地化）。
+        "context_product": _context_product_payload(thread),
         "created_at": iso(thread.created_at),
     }
 
 
-def _merchant_thread_payload(thread: MerchantChatThread) -> dict:
+def _merchant_thread_payload(thread: MerchantChatThread, *, name: str = "") -> dict:
     last = thread.messages.last()
     buyer = thread.buyer
     return {
@@ -131,7 +256,10 @@ def _merchant_thread_payload(thread: MerchantChatThread) -> dict:
         "unread": thread.merchant_unread,
         "last_message": last.body if last else "",
         "last_message_kind": last.sender_kind if last else "",
+        "last_message_image": (last.image_url if last else "") or "",
         "last_message_at": iso(thread.last_message_at or thread.created_at),
+        # 需求 3：商品上下文随买家最近一次发消息的商品切换（覆盖式）。
+        "context_product": _context_product_payload(thread, name),
         "created_at": iso(thread.created_at),
     }
 
@@ -232,6 +360,8 @@ class BuyerMerchantChatThreadsView(BuyerCsrfAPIView):
                 status_code=404,
             )
         thread, created = MerchantChatThread.objects.get_or_create(buyer=buyer, merchant=merchant)
+        # 需求 3：打开面板即带当前商品；同一买家同一商家只有一个 thread，覆盖式更新。
+        _apply_product_context(thread, (request.data or {}).get("product"), request_locale(request))
         return Response(
             {"thread": _buyer_thread_payload(thread)},
             status=201 if created else 200,
@@ -263,11 +393,14 @@ class BuyerMerchantChatMessagesView(BuyerCsrfAPIView):
     def post(self, request, public_id):
         _require_chat_buyer(request)
         thread = _buyer_thread(request, public_id)
-        body = _validated_body(request.data, BuyerApiError)
+        body, image_url = _validated_message(request.data, BuyerApiError)
+        # 需求 3：发消息时也带最新商品，买家换商品后这里覆盖上下文。
+        _apply_product_context(thread, (request.data or {}).get("product"), request_locale(request))
         message = MerchantChatMessage.objects.create(
             thread=thread,
             sender_kind=MerchantChatMessage.SenderKind.BUYER,
             body=body,
+            image_url=image_url,
         )
         _touch_after_send(thread, message, side="buyer")
         # 批次 V2：落库后镜像到 Crisp（事务提交后才发，失败不影响本接口）。
@@ -290,10 +423,20 @@ class MerchantChatThreadsView(MerchantAPIView):
     permission_any = ("merchant.messages.use",)
 
     def get(self, request):
-        threads = MerchantChatThread.objects.select_related("buyer").filter(
-            merchant=request.merchant
+        threads = list(
+            MerchantChatThread.objects.select_related("buyer").filter(merchant=request.merchant)
         )
-        items = [_merchant_thread_payload(thread) for thread in threads]
+        # 商品上下文标题按请求语言本地化：一次 IN 查询批量取，不逐线程查译文。
+        locale = request_locale(request)
+        names = title_map_by_public_id(
+            [thread.context_spu_public_id for thread in threads], locale
+        )
+        items = [
+            _merchant_thread_payload(
+                thread, name=names.get(thread.context_spu_public_id, "")
+            )
+            for thread in threads
+        ]
         return Response({"items": items, "total": len(items)})
 
 
@@ -306,20 +449,25 @@ class MerchantChatMessagesView(MerchantAPIView):
         pull_merchant_chat(thread)
         messages = list(thread.messages.all())
         _mark_read(thread, side="merchant")
+        locale = request_locale(request)
+        names = title_map_by_public_id([thread.context_spu_public_id], locale)
         return Response(
             {
-                "thread": _merchant_thread_payload(thread),
+                "thread": _merchant_thread_payload(
+                    thread, name=names.get(thread.context_spu_public_id, "")
+                ),
                 "messages": [_message_payload(message) for message in messages],
             }
         )
 
     def post(self, request, public_id):
         thread = _merchant_thread(request, public_id)
-        body = _validated_body(request.data, StaffApiError)
+        body, image_url = _validated_message(request.data, StaffApiError)
         message = MerchantChatMessage.objects.create(
             thread=thread,
             sender_kind=MerchantChatMessage.SenderKind.MERCHANT,
             body=body,
+            image_url=image_url,
         )
         _touch_after_send(thread, message, side="merchant")
         queue_merchant_chat_mirror(message)

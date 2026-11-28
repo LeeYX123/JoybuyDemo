@@ -706,15 +706,12 @@
     }
     const product = shell.querySelector('.chat-product-context');
     if (activeConversation !== -1) {
-      const orderId = String(conversations[activeConversation].order ?? '').trim();
-      const order = orderId && orders.find(item => item[0] === orderId);
-      if (!orderId) {
-        shell.querySelector('.chat-title > .small')?.remove();
-      }
-      if (!order) {
+      // 需求 1：右上角「关联订单」已从 base-3 删除，这里不再处理 chat-title。
+      // 需求 3：商品上下文条来自会话的 context_product（买家当前商品）；没有就整条不显示。
+      const conv = conversations[activeConversation];
+      if (!conv?.contextProduct) {
         product?.remove();
       } else {
-        product?.querySelector('button[onclick^="productDetail("]')?.remove();
         product?.querySelector('div:nth-child(2) > span.small')?.remove();
       }
     }
@@ -722,13 +719,14 @@
     const composer = shell.querySelector('.chat-composer');
     const input = composer.querySelector('#chatInput');
     const send = composer.querySelector('button[onclick="sendChat()"]');
-    const oldActions = send.parentElement;
+    // 需求 2：「添加图片」按钮 + 隐藏 file input 都在 controls 里，整体移到 composer
+    // 末尾（不能像以前那样 remove()，否则手机端没有发图入口）。
+    const controls = send.parentElement;
     input.rows = 1;
     input.placeholder = '输入消息';
     input.setAttribute('aria-label', '输入消息');
     send.textContent = '发送';
-    composer.append(send);
-    oldActions.remove();
+    composer.append(controls);
   }
 
   function improveNotices() {

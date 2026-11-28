@@ -36,6 +36,9 @@ ALLOWED_FORMATS = {
 PURPOSES = {
     "product": (MediaAsset.Kind.PRODUCT, PRODUCT_MAX_BYTES),
     "review": (MediaAsset.Kind.REVIEW, REVIEW_MAX_BYTES),
+    # 需求 2（2026-11-29）：商家端消息中心聊天图片。与评价图同口径（1MB，
+    # REVIEW 桶）——聊天图只出现在会话气泡里，不需要商品图的高清上限。
+    "chat": (MediaAsset.Kind.REVIEW, REVIEW_MAX_BYTES),
     "banner": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
     "channel_banner": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),
     "channel_page_card": (MediaAsset.Kind.CMS, CMS_MAX_BYTES),

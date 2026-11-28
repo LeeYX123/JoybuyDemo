@@ -871,11 +871,14 @@ def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
         return
 
     thread_key = thread_key_for_merchant_chat(thread)
+    # 需求 2：Crisp 镜像只发文字。纯图片消息给一个「[图片]」占位，图片本身
+    # 不上传 Crisp（不引入文件上传链路）；有文字时只镜像文字。
+    mirror_body = message.body or ("[图片]" if message.image_url else "")
     payload = {
         "thread_key": thread_key,
         "sender_kind": sender_kind,
         "sender_name": sender_name,
-        "body": message.body,
+        "body": mirror_body,
         "occurred_at": message.created_at,
         "message_id": str(message.pk),
         # Inbox 会话标题：买家昵称-->店名（客服端只认这个，不认消息 user.nickname）；

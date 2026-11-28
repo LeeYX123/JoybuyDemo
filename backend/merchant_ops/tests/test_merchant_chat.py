@@ -23,6 +23,7 @@ from accounts_buyers.models import BuyerAccount
 from accounts_buyers.services import create_buyer_session
 from accounts_staff.models import StaffAccount
 from accounts_staff.services import create_staff_session
+from catalog.models import Spu
 from merchant_ops import crisp_mirror
 from merchant_ops.models import MerchantChatMessage, MerchantChatThread
 from merchants.models import Merchant, MerchantMembership, MerchantRole
@@ -359,6 +360,135 @@ class MerchantChatSideTests(MerchantChatTestBase):
         )
         self.assertEqual(too_long.status_code, 400)
         self.assertEqual(too_long.json()["error"]["code"], "MESSAGE_TOO_LONG")
+
+
+class ChatImageMessageTests(MerchantChatTestBase):
+    """需求 2：消息带图片（文字/图片至少一个，图片地址白名单）。"""
+
+    IMAGE = "/media/reviews/original/aa/bb/chat.png"
+
+    def test_merchant_can_send_image_only_message(self):
+        thread = self._create_thread()
+        self._login_staff()
+        response = self._post_json(
+            merchant_messages_url(thread), {"image_url": self.IMAGE}, merchant=self.shop
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        message = MerchantChatMessage.objects.get()
+        self.assertEqual(message.body, "")
+        self.assertEqual(message.image_url, self.IMAGE)
+        self.assertEqual(response.json()["message"]["image_url"], self.IMAGE)
+
+    def test_buyer_text_with_image_is_visible_to_merchant(self):
+        thread = self._create_thread()
+        response = self._post_json(
+            messages_url(thread),
+            {"body": "图里这个颜色还有吗", "image_url": "https://cdn.example.com/a.png"},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+        self._login_staff()
+        detail = self._get(merchant_messages_url(thread), merchant=self.shop)
+        self.assertEqual(detail.status_code, 200, detail.content)
+        row = detail.json()["messages"][0]
+        self.assertEqual(row["body"], "图里这个颜色还有吗")
+        self.assertEqual(row["image_url"], "https://cdn.example.com/a.png")
+
+    def test_text_and_image_both_empty_rejected(self):
+        thread = self._create_thread()
+        response = self._send_buyer_message(thread, "")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "MESSAGE_EMPTY")
+        self.assertEqual(MerchantChatMessage.objects.count(), 0)
+
+    def test_image_url_scheme_is_whitelisted(self):
+        thread = self._create_thread()
+        for bad in ("data:image/png;base64,AAAA", "javascript:alert(1)", "/etc/passwd"):
+            with_image = self._post_json(messages_url(thread), {"image_url": bad})
+            self.assertEqual(with_image.status_code, 400, bad)
+            self.assertEqual(with_image.json()["error"]["code"], "IMAGE_URL_INVALID")
+        self.assertEqual(MerchantChatMessage.objects.count(), 0)
+
+    def test_image_url_too_long_rejected(self):
+        thread = self._create_thread()
+        response = self._post_json(
+            messages_url(thread), {"image_url": "/media/" + "a" * 600}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "IMAGE_URL_TOO_LONG")
+
+
+class ChatProductContextTests(MerchantChatTestBase):
+    """需求 3：买家当前咨询的商品上下文（覆盖式），商家端刷新即切换。"""
+
+    def _spu(self, price="19.99"):
+        return Spu.objects.create(retail_price=price)
+
+    def test_buyer_product_is_saved_and_returned_to_merchant(self):
+        spu = self._spu()
+        self._login_buyer()
+        response = self._post_json(
+            THREADS_URL, {"merchant": self.shop.slug, "product": str(spu.public_id)}
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(
+            response.json()["thread"]["context_product"]["id"], str(spu.public_id)
+        )
+        thread = MerchantChatThread.objects.get()
+        self.assertEqual(thread.context_spu_public_id, str(spu.public_id))
+        self.assertTrue(thread.context_snapshot.get("name", "").startswith("SPU "))
+
+        self._login_staff()
+        listed = self._get(MERCHANT_CHATS_URL, merchant=self.shop)
+        self.assertEqual(listed.status_code, 200, listed.content)
+        self.assertEqual(
+            listed.json()["items"][0]["context_product"]["id"], str(spu.public_id)
+        )
+
+    def test_context_switches_when_buyer_changes_product(self):
+        spu_a = self._spu("19.99")
+        spu_b = self._spu("29.99")
+        thread = self._create_thread()
+        self._post_json(messages_url(thread), {"body": "问 A", "product": str(spu_a.public_id)})
+        thread.refresh_from_db()
+        self.assertEqual(thread.context_spu_public_id, str(spu_a.public_id))
+
+        self._post_json(messages_url(thread), {"body": "换成 B", "product": str(spu_b.public_id)})
+        thread.refresh_from_db()
+        self.assertEqual(thread.context_spu_public_id, str(spu_b.public_id))
+        self.assertEqual(thread.context_snapshot.get("price"), "29.99")
+
+        self._login_staff()
+        listed = self._get(MERCHANT_CHATS_URL, merchant=self.shop).json()["items"][0]
+        self.assertEqual(listed["context_product"]["id"], str(spu_b.public_id))
+        self.assertEqual(listed["context_product"]["price"], "29.99")
+
+    def test_context_snapshot_survives_product_deletion(self):
+        spu = self._spu()
+        thread = self._create_thread()
+        self._post_json(messages_url(thread), {"body": "问完就下架", "product": str(spu.public_id)})
+        thread.refresh_from_db()
+        snapshot_name = thread.context_snapshot["name"]
+        spu.delete()
+
+        self._login_staff()
+        listed = self._get(MERCHANT_CHATS_URL, merchant=self.shop)
+        self.assertEqual(listed.status_code, 200, listed.content)
+        context = listed.json()["items"][0]["context_product"]
+        self.assertEqual(context["id"], thread.context_spu_public_id)
+        self.assertEqual(context["name"], snapshot_name)
+
+    def test_unknown_product_keeps_previous_context(self):
+        spu = self._spu()
+        thread = self._create_thread()
+        self._post_json(messages_url(thread), {"body": "先问 A", "product": str(spu.public_id)})
+        response = self._post_json(
+            messages_url(thread),
+            {"body": "带个不存在的商品", "product": "00000000-0000-0000-0000-000000000000"},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        thread.refresh_from_db()
+        self.assertEqual(thread.context_spu_public_id, str(spu.public_id))
 
 
 class BuyerSessionWhitelistTests(MerchantChatTestBase):

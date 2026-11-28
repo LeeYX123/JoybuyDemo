@@ -103,12 +103,17 @@ const state = {
   activities: [],
   notifications: [],
   conversations: [],
+  // 需求 3（2026-11-29）：买家↔商家会话（/merchant/chats）与平台客服会话
+  // （/merchant/conversations）分开拉；商家端消息中心两者合并成一个列表。
+  chatThreads: [],
   supportConvId: '',
   referral: null,
   referralRecords: [],
   reviews: [],
   productIds: [],
   convLoaded: {},
+  // 需求 3：买家↔商家会话当前已加载的会话 id（切换会话即重拉，刷新商品上下文）。
+  threadLoadedFor: '',
   reviewDetailLoaded: {},
   categories: [],
 }
@@ -208,6 +213,29 @@ const AFTER_STATE = {
   REJECTED: '已驳回',
 }
 
+// 支付方式代码 → 展示文案（与 admin-web MerchantOrdersView 同一套口径）。
+// 需求 4：订单详情【支付方式】展示真实值；后端 /merchant/orders 回传
+// orders.Order.PAYMENT_METHODS 里的代码（BALANCE/VISA/PAYPAL…）。
+const PAYMENT_METHOD_LABELS = {
+  BALANCE: '余额支付',
+  CARD: '银行卡',
+  VISA: 'Visa',
+  MASTERCARD: 'Mastercard',
+  AMEX: 'American Express',
+  UNIONPAY: '银联',
+  GOOGLE_PAY: 'Google Pay',
+  APPLE_PAY: 'Apple Pay',
+  WECHAT_PAY: '微信支付',
+  PAYPAL: 'PayPal',
+  REVOLUT_PAY: 'Revolut Pay',
+  NEW_PAY: 'NewPay',
+  KLARNA: 'Klarna',
+  MAESTRO: 'Maestro',
+  JCB: 'JCB',
+  DISCOVER: 'Discover',
+  DINERS: 'Diners Club',
+}
+
 // ---------------------------------------------------------------------------
 // FolioData — 渲染模板中的「数据槽位」读取口（base-2 的数据位改造指向这里）
 // ---------------------------------------------------------------------------
@@ -246,7 +274,8 @@ window.FolioData = {
     } catch {
       // 首帧 base 脚本还没执行，退回接口返回值
     }
-    const source = list.length ? list : state.conversations
+    // 首帧退回接口数据：平台客服会话 + 买家会话（需求 3 后买家会话在 chatThreads）。
+    const source = list.length ? list : [...state.conversations, ...state.chatThreads]
     return (source || []).reduce((sum, c) => sum + num(c.unread), 0)
   },
 
@@ -267,6 +296,20 @@ window.FolioData = {
       : state.notifications.filter((n) => n.kind !== 'REVIEW' && n.read).length
     const reviewUnread = (state.reviews || []).filter((r) => !r.merchantRead).length
     return Math.max(0, normalTotal - normalRead) + reviewUnread
+  },
+
+  // 需求 4：支付方式展示文案；未知代码原样返回，空值由调用方显示「未提供」。
+  paymentLabel(code) {
+    const value = String(code || '').trim()
+    return PAYMENT_METHOD_LABELS[value] || value
+  },
+
+  // 需求 2：聊天图片上传（走后端 /merchant/media，purpose=chat；返回站内 /media/ URL）。
+  async uploadChatImage(file) {
+    const up = await merchantUpload(file, 'chat')
+    const url = up.url || (up.media && up.media.url) || ''
+    if (!url) throw new Error('图片上传失败，请重试')
+    return url
   },
 
   bars(key, month) {
@@ -391,7 +434,7 @@ async function fetchAll() {
   const [
     overview, overviewMonth, wallet, entries, withdrawals, deposit,
     catalog, listings, orders, afterSales, activities, notifications,
-    conversations, referral,
+    conversations, chatThreads, referral,
   ] = await Promise.all([
     safe(fetchOverview('week'), null),
     safe(fetchOverview('month'), null),
@@ -406,6 +449,7 @@ async function fetchAll() {
     safe(apiRequest(`/merchant/activities?${pageQuery(50)}`), { items: [] }),
     safe(apiRequest(`/merchant/notifications?${pageQuery(50)}`), { items: [] }),
     safe(apiRequest(`/merchant/conversations?${pageQuery(30)}`), { items: [] }),
+    safe(apiRequest('/merchant/chats'), { items: [] }),
     safe(apiRequest('/merchant/referral'), null),
   ])
   if (!overview) throw new Error('商家数据加载失败，请刷新重试。')
@@ -421,6 +465,7 @@ async function fetchAll() {
   state.activities = activities.items || []
   state.notifications = notifications.items || []
   state.conversations = conversations.items || []
+  state.chatThreads = chatThreads.items || []
   state.referral = referral
 
   // 列表分页状态归零（切店/首次进入）：全部回到第 1 页、默认筛选。
@@ -881,28 +926,49 @@ function buildConversations() {
   const colors = ['#dfe8f4', '#ede3d9', '#e3e9de', '#efe1e6']
   const convs = []
   let supportMsgs = null
+  // 平台客服会话（SupportConversation）：置顶那一条，走 /merchant/conversations/*。
+  // 历史上买家商品咨询也落这张表（spu 外键），现在真实买家咨询走 /merchant/chats，
+  // 这里保留列表兼容旧数据（chatKind=CONVERSATION，纯文字）。
   for (const c of state.conversations) {
-    const conv = {
+    if (c.kind === 'PLATFORM_SUPPORT') {
+      supportMsgs = [['them', c.last_message || '您好，欢迎来到客服中心。', fmtHM(c.last_message_at)]]
+      continue
+    }
+    convs.push({
       id: c.id,
+      chatKind: 'CONVERSATION',
       name: c.peer_name || '买家',
       region: '',
       order: '',
       color: colors[convs.length % colors.length],
       initial: (c.peer_name || '客').slice(0, 1),
       unread: num(c.unread),
-      messages: [],
-    }
-    if (c.last_message) {
-      conv.messages.push(['them', c.last_message, fmtHM(c.last_message_at)])
-    } else {
-      // 会话按钮渲染取 messages 最后一条，空会话兜底避免渲染崩溃。
-      conv.messages.push(['them', '（暂无消息）', ''])
-    }
-    if (c.kind === 'PLATFORM_SUPPORT') {
-      supportMsgs = [[ 'them', c.last_message || '您好，欢迎来到客服中心。', fmtHM(c.last_message_at) ]]
-      continue
-    }
-    convs.push(conv)
+      // 旧数据也可能带商品快照（后端 c.product），照常渲染商品上下文条。
+      contextProduct: c.product || null,
+      messages: [
+        c.last_message
+          ? ['them', c.last_message, fmtHM(c.last_message_at)]
+          : ['them', '（暂无消息）', ''],
+      ],
+    })
+  }
+  // 买家↔商家会话（MerchantChatThread）：真实「联系商家」入口，走 /merchant/chats/*。
+  // 商品上下文随买家最近一次发消息切换（context_product，覆盖式快照）。
+  for (const t of state.chatThreads) {
+    const buyer = t.buyer || {}
+    const preview = t.last_message || (t.last_message_image ? '[图片]' : '（暂无消息）')
+    convs.push({
+      id: t.id,
+      chatKind: 'THREAD',
+      name: buyer.display_name || '买家',
+      region: '',
+      order: '',
+      color: colors[convs.length % colors.length],
+      initial: (buyer.display_name || '客').slice(0, 1),
+      unread: num(t.unread),
+      contextProduct: t.context_product || null,
+      messages: [['them', preview, fmtHM(t.last_message_at)]],
+    })
   }
   if (!supportMsgs) supportMsgs = [['them', '您好，欢迎来到客服中心。充值、保证金、店铺及订单问题，都可以在这里咨询。', '09:00']]
   return { convs, supportMsgs }
@@ -1314,17 +1380,36 @@ function overrideActions() {
   submitResetRequest = () => {} // eslint-disable-line no-undef
   completeWalletReset = () => {} // eslint-disable-line no-undef
 
-  // 8) 消息发送 → POST /merchant/conversations/{id}/messages
+  // 8) 消息发送
+  //    - 买家↔商家会话（chatKind=THREAD）→ POST /merchant/chats/{id}/messages，
+  //      需求 2：body + image_url 一起发（文字与图片至少一个）；
+  //    - 平台客服/旧买家咨询（SupportConversation）→ POST /merchant/conversations/{id}/messages，纯文字。
   sendChat = async function () { // eslint-disable-line no-undef
     const el = document.getElementById('chatInput')
     const v = el.value.trim()
-    if (!v) { toast('请输入消息内容'); return } // eslint-disable-line no-undef
+    let image = ''
+    try {
+      if (chatImageUploading) { toast('图片还在上传，请稍后再发送'); return } // eslint-disable-line no-undef
+      if (chatImageDraft && chatImageDraft.conversation === activeConversation) image = chatImageDraft.url // eslint-disable-line no-undef
+    } catch { /* base 脚本尚未加载（理论上不会走到） */ }
+    if (!v && !image) { toast('请输入消息内容或添加图片'); return } // eslint-disable-line no-undef
     const conv = activeConversation === -1 ? null : conversations[activeConversation] // eslint-disable-line no-undef
     const convId = conv ? conv.id : state.supportConvId
     if (!convId) { toast('会话尚未就绪，请稍后再试'); return } // eslint-disable-line no-undef
+    const isThread = Boolean(conv && conv.chatKind === 'THREAD')
     try {
-      const payload = await merchantWrite(`/merchant/conversations/${convId}/messages`, { text: v })
-      const msg = ['me', payload.message.text, fmtHM(payload.message.created_at)]
+      let msg
+      if (isThread) {
+        const payload = await merchantWrite(`/merchant/chats/${convId}/messages`, { body: v, image_url: image })
+        const sent = payload.message || {}
+        msg = ['me', sent.body || '', fmtHM(sent.created_at), sent.image_url || '']
+        chatImageDraft = null // eslint-disable-line no-undef
+        chatImageUploading = false // eslint-disable-line no-undef
+        if (conv && payload.thread && payload.thread.context_product) conv.contextProduct = payload.thread.context_product
+      } else {
+        const payload = await merchantWrite(`/merchant/conversations/${convId}/messages`, { text: v })
+        msg = ['me', payload.message.text, fmtHM(payload.message.created_at)]
+      }
       if (conv) conv.messages.push(msg)
       else supportMessages.push(msg) // eslint-disable-line no-undef
       render() // eslint-disable-line no-undef
@@ -1337,6 +1422,8 @@ function overrideActions() {
   }
 
   // 9) 会话详情懒加载（列表只带最后一条，进线程再取全量；打开即已读）。
+  //    需求 3：买家↔商家会话每次「切换到这个会话」都重拉一次详情，顺带刷新
+  //    context_product——买家换了商品，商家端切回会话即可看到 B 商品。
   const folioRender = render // eslint-disable-line no-undef
   let threadLoading = false
   render = function () { // eslint-disable-line no-undef
@@ -1353,21 +1440,33 @@ function overrideActions() {
     if (!wantsThread) return
     const conv = activeConversation === -1 ? null : conversations[activeConversation] // eslint-disable-line no-undef
     const convId = conv ? conv.id : state.supportConvId
-    if (!convId || state.convLoaded[convId]) return
+    if (!convId) return
+    const isThread = Boolean(conv && conv.chatKind === 'THREAD')
+    if (isThread) {
+      if (state.threadLoadedFor === convId) return
+    } else if (state.convLoaded[convId]) {
+      return
+    }
     threadLoading = true
-    apiRequest(`/merchant/conversations/${convId}`).then((payload) => {
-      const msgs = (payload.conversation.messages || []).map((m) => [
-        m.sender === 'MERCHANT' ? 'me' : 'them',
-        m.text,
+    // 买家会话没有单独的详情接口：/messages 同时返回 thread（含商品上下文）+ messages。
+    const path = isThread ? `/merchant/chats/${convId}/messages` : `/merchant/conversations/${convId}`
+    apiRequest(path).then((payload) => {
+      const rows = isThread ? (payload.messages || []) : ((payload.conversation || {}).messages || [])
+      const msgs = rows.map((m) => [
+        m.sender === 'MERCHANT' || m.sender_kind === 'merchant' ? 'me' : 'them',
+        isThread ? (m.body || '') : m.text,
         fmtHM(m.created_at),
+        isThread ? (m.image_url || '') : '',
       ])
       if (conv) {
         conv.messages = msgs.length ? msgs : conv.messages
         conv.unread = 0
+        if (isThread && payload.thread) conv.contextProduct = payload.thread.context_product || conv.contextProduct || null
       } else {
         supportMessages = msgs.length ? msgs : supportMessages // eslint-disable-line no-undef
       }
-      state.convLoaded[convId] = true
+      if (isThread) state.threadLoadedFor = convId
+      else state.convLoaded[convId] = true
       threadLoading = false
       render() // eslint-disable-line no-undef
     }).catch(() => { threadLoading = false })
@@ -1767,6 +1866,7 @@ export async function bootEngine(entryRoute) {
     reloadData: async () => {
       await fetchAll()
       state.convLoaded = {}
+      state.threadLoadedFor = ''
       state.reviewDetailLoaded = {}
       populateGlobals()
       rebuildProducts()
@@ -1871,6 +1971,7 @@ export async function switchShop(id) {
     const select = document.querySelector('.shell-tools select.shop-switch')
     if (select) select.value = id
     state.convLoaded = {}
+    state.threadLoadedFor = ''
     state.reviewDetailLoaded = {}
     populateGlobals()
     // 重置纯 UI 状态到首页，避免上一店的 selected/activeConversation 悬空。

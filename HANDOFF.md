@@ -8409,3 +8409,90 @@ HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径�
    兜底拒绝（任务标记失败）。
 4. 前端文案是中文硬编码（与全站管理端口径一致），未接 i18n。
 5. 一行已知小瑕疵：多条任务并发（同一秒）时列表按 `trigger_at` 排序，新任务可能不在首行——原行为，未改。
+
+
+## 商家端消息中心图片 + 商品上下文 + 订单支付方式（2026-11-29，✅ 完成）
+
+**任务（用户 4 条商家端需求；需求 5 一键下单/支付方式选择由另一代理做，本次未碰）**
+1. 消息中心去掉对话框右上角【关联订单】与商品上下文条里的【商品详情】；
+2. 消息中心支持发图片（选择文件 + **粘贴图片**），输入区先小预览（可移除），发送时「文字 + 图片」一起发出；
+3. 商品上下文跟随买家当前商品：买家从 A 商品进详情→联系商家→商家端显示 A；换 B 商品再发→商家端切换为 B；
+4. 订单详情【支付方式】，位置在【下单时间】之后。
+
+### 需求 4 核实结论（先说结论）
+- `merchant-web/src/folio/base-3.js` 活定义 `detailPage()`（约 348 行，原 330）**本来就有** `<dt>支付方式</dt>` 且紧跟【下单时间】；`merchantOrderPayment()` 有定义；后端 `views_merchant_orders.py:_order_payload` 一直回传 `payment_method`（`orders.MerchantOrder.payment_method`，取值来自 `Order.PAYMENT_METHODS`：BALANCE/VISA/APPLE_PAY/PAYPAL…）。**位置与字段无需新增**。
+- 但存在两个「不是真实值」的问题，本次修了：
+  1. 旧 `merchantOrderPayment()` 末段有 `merchantPaymentMethods[orders.indexOf(o)%…]` **轮转伪造兜底**（后端值为空时会显示一个假支付方式）——已删掉整段兜底，现在空值显示「未提供」；
+  2. 页面直接显示原始代码（`VISA`/`APPLE_PAY`），未按既有映射文案。新增 `merchantOrderPaymentLabel()` + `FolioData.paymentLabel()`（映射口径复制 `admin-web/src/views/MerchantOrdersView.vue` 的 `PAYMENT_METHOD_LABELS`），显示 Visa / Apple Pay / 余额支付 / 银联…。
+- dev 实测（商户 800）：待发货单 `JYO20261128704T25` → `VISA` 显示 **Visa**；已完成单 `JYO20261128C1A5NB` → `APPLE_PAY` 显示 **Apple Pay**，两行都紧跟【下单时间】。
+
+### 方案与改动
+**后端（迁移只加 `merchant_ops/0009`，catalog/cart/orders 一律未碰）**
+- `merchant_ops/models.py`：
+  - `MerchantChatThread` 新增 `context_spu_public_id`（CharField 64，空串=无上下文）+ `context_snapshot`（JSONField，存 id/name/image/price/category，商品下架后仍可展示）；同一买家同一商户只有一个 thread，因此是**覆盖式**快照。
+  - `MerchantChatMessage` 新增 `image_url`（CharField 500，空串=纯文字）。
+- 迁移 `backend/merchant_ops/migrations/0009_merchantchatmessage_image_url_and_more.py`（3×AddField）。
+- `merchant_ops/views_merchant_chat.py`：
+  - `_validated_message()`：`body` 可空但「文字与图片至少一个」；`_validated_image_url()` 只接受空串 / `/media/...` / `http(s)://`，长度 ≤500，拒绝 `data:`/`javascript:`（`IMAGE_URL_INVALID`/`IMAGE_URL_TOO_LONG`）。
+  - `_product_context()`/`_apply_product_context()`：买家 `POST /threads` 与 `POST .../messages` 均可带 `product=<spu public_id>`，服务端取标题（按请求语言）/主图/零售价/品类写快照；商品不存在或 uuid 非法时**保留上一次上下文**。
+  - `_message_payload` 增 `image_url`；`_merchant_thread_payload` 增 `context_product` + `last_message_image`；列表用 `title_map_by_public_id` **一次 IN 批量**本地化商品名（无 N+1）。
+  - `MerchantChatThreadsView.get` 改为先 `list()` 再批量取标题；详情 `GET /merchant/chats/<uuid>/messages` 也返回 `thread.context_product`（**没有单独的 GET /merchant/chats/<uuid> 路由**，前端要打 `/messages`）。
+- `merchant_ops/views_media.py`：商家上传 purpose 新增 `"chat"` → 权限 `merchant.messages.use`。
+- `media/uploads.py`：`PURPOSES["chat"] = (REVIEW, 1MB)`（与设计稿「不超过 1MB」一致，复用 reviews 桶，不新增 MediaAsset.Kind）。
+- `merchant_ops/crisp_mirror.py`：镜像仍只发文字；纯图片消息镜像 body 为 `[图片]` 占位，**不向 Crisp 上传文件**（如实说明：Crisp 端看不到图）。
+- 测试 `merchant_ops/tests/test_merchant_chat.py`：新增 `ChatImageMessageTests`（纯图片/图文/都空/非法 scheme/超长）与 `ChatProductContextTests`（写入+回传/换商品覆盖/商品删除后快照仍在/未知商品保留旧上下文）。
+
+**商家端（merchant-web，只改活定义；不对 folio 跑 prettier）**
+- `folio/base-3.js`：
+  - 活 `chatPage`（38 行）重写：**删** `关联订单 ${c.order}` 与【商品详情】按钮（客服会话「服务时间」保留）；商品上下文条改读 `c.contextProduct`（真实商品图 `<img>`/标题/商品ID+品类/零售价，无值整条不显示）；消息体改用 `chatMessageBody(m)`（`m[3]`=图片 URL，`.chat-image` 渲染 + 点击 `chatImageView` 大图 modal），会话列表预览改用 `chatMessagePreview`（纯图显示「[图片]」）。
+  - 输入区：`#chatImageInput`（隐藏 file，accept png/jpeg/webp）+「添加图片」按钮 + `#chatAttachment` 预览（52px 缩略图 + 「移除图片」）+ textarea `onpaste="handleChatPaste(event)"`。上传走 `window.FolioData.uploadChatImage`（→ `/merchant/media` purpose=chat），上传中显示「图片上传中…」并禁用按钮，失败 toast。**图片入口只给真实买家会话（chatKind!=CONVERSATION）**：平台客服会话与旧 SupportConversation 买家会话仍是纯文字（后端 SupportMessage 无图片字段）。
+  - 新增 render 包装：每次 re-render 后（`current===9`）重放 `updateChatAttachment()`，否则预览会被模板重建清空。
+  - 需求 4：`merchantOrderPayment()` 去掉伪造兜底；新增 `merchantOrderPaymentLabel()`；`detailPage` 支付方式行改用它。
+- `folio/api.js`：
+  - `state.chatThreads` + `fetchAll` 新增 `GET /merchant/chats`；`buildConversations` 现在 = 平台客服会话（SupportConversation PLATFORM_SUPPORT，置顶）+ 旧 SupportConversation 买家会话（`chatKind='CONVERSATION'`，保留兼容，纯文字，带 `c.product` 上下文）+ `MerchantChatThread`（`chatKind='THREAD'`，带 `contextProduct`）。
+  - `sendChat` 按 `chatKind` 分流：THREAD → `POST /merchant/chats/{id}/messages {body,image_url}`（成功后清空草稿图片/输入框，回写 context_product）；CONVERSATION/客服 → `POST /merchant/conversations/{id}/messages {text}`（纯文字）。
+  - `maybeLoadThread`：THREAD 走 `/merchant/chats/{id}/messages`，并且**每次切换会话都重拉**（`state.threadLoadedFor`，刷新 context_product = 需求 3「商家端刷新即切换」）；消息映射带 `m.image_url`。
+  - `FolioData` 新增 `paymentLabel(code)` 与 `uploadChatImage(file)`；`navUnreadCount` 首帧兜底合计 `state.conversations + state.chatThreads`。
+- `folio/merchant-mobile.js`：`improveChat` 去掉旧的 `c.order` 分支（改看 `contextProduct`），composer 不再 `remove()` 操作区（保留「添加图片」按钮/隐藏 input）。
+- `folio/merchant-mobile.css`：补 `.chat-attachment*` / `.chat-image` 三条规则（mobile.html 内联样式没有这几条）。
+- `folio/locale-en.js`：仅新增 key（添加图片/移除图片/待发送图片/会话图片/查看图片/上传中/失败提示/余额支付/微信支付/银联），未改旧键。
+
+**购物端（storefront）**
+- `components/MerchantChatPanel.vue`：新增 `product` prop（SPU public_id），`POST /threads` 与每条 `POST .../messages` 都带 `product`；消息模型/模板新增 `image_url` 渲染（商家发的图买家也看得到，图片消息可以没有文字），配套 scoped CSS。
+- `pages/p/[id].vue`：`<MerchantChatPanel :product="publicId">`（当前 SPU，需求 3 的「从哪个商品联系」）。
+- **未碰**：`storefront/content/*`、`locales/messages.js`、catalog/cart/orders、admin-web、node_modules。
+
+### 验证矩阵（按验证纪律只做针对性验证）
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | 商家端聊天：`关联订单` 不出现、`商品详情` 按钮 count=0、商品上下文条保留 | ✅ 真实浏览器（localhost:5174，商户 800 + 临时买家） |
+| 2 | 选图 → 预览（52px 缩略图 + 移除图片）→ 带文字发送 → 气泡 `<img class="chat-image">` + 文字 → **刷新后仍在**，图片 `/media/...` 200 | ✅ 上传落库 `reviews/original/...png`，`GET` 200（5174 与 8000 都验） |
+| 3 | **粘贴**图片（`ClipboardEvent` + `clipboardData.files`）→ 预览 → 无文字直接发送 → 纯图气泡；点图弹「查看图片」大图 | ✅ 两次上传 URL 不同；非法图片收到 toast「文件不是有效的图片。」（失败反馈） |
+| 4 | 买家 A 商品发消息 → 商家端商品条 = A（三星 Buds4 Pro / $219.00）；换 B（Anker R60i / $49.99）再发 → 商家端刷新/切回会话即 = B | ✅ DB 快照同步切换；后端单测另覆盖「商品删除快照仍在」「未知商品保留旧值」 |
+| 5 | 订单详情支付方式紧跟下单时间且为真实值 | ✅ VISA→Visa、APPLE_PAY→Apple Pay（见上「需求 4 核实结论」） |
+| 6 | 手机 390×844 聊天页 | ✅ `mobile.html?p=/messages` 列表/线程两态：商品条 B、`添加图片`+`发送` 按钮、图片气泡 2 张、无 `关联订单`/`商品详情`；页面错误 0 |
+| 7 | 回归：客服会话（服务时间保留、无商品条、无图片按钮）、旧 SupportConversation 买家会话（能开、商品条来自 c.product、纯文字） | ✅ |
+| 8 | 前端构建 | `merchant-web npm run build` exit 0；`storefront npm run build`（nuxt nitro）Build complete |
+| 9 | lint | `npx eslint merchant-web/src/folio/api.js merchant-mobile.js` 仅 HEAD 既有 `API_BASE_URL unused` 1 error；locale-en/base-3 无新增 error（base-3 既有的经典脚本 no-undef 不属本次引入） |
+| 10 | 后端 | `DJANGO_DATABASE_ENGINE=sqlite manage.py test merchant_ops.tests.test_merchant_chat` **31/31 OK**；`test_media_upload`+`test_merchant_modules` **53/53 OK**；`test_merchant_localization` **7/7 OK**；`makemigrations --check --dry-run` = No changes；`manage.py check` 0 issue；`ruff check merchant_ops media` 全过 |
+| 11 | console/pageerror | 桌面消息中心 + 订单详情 + 手机消息页 0（window error/unhandledrejection 钩子） |
+
+截图（IAB 会话产物，非仓库文件）：桌面 1440×900 聊天（含图片气泡/商品条 B/添加图片按钮）与手机 390×844 同一会话，均在 ZCode artifacts 目录；要复现直接按上面「验证矩阵」步骤操作。
+
+### dev 数据临时变更（已全部清理/还原）
+- 临时买家 `e2e-chat-1795890811@joybuy.test`（id 470，白名单）+ 临时 StaffAccount(148)/MerchantMembership(107)/MerchantApplication(51) 指向商户 800，用于走真实「购物端登录 → 切商家端」链路 → **已删除**（连带 Thread 28/消息、会话）。
+- 聊天上传的两张 `reviews/original/...png` MediaAsset：DB 行 + 本地文件**已删除**。
+- 浏览器里曾存在一个 **localhost 的 `joybuy_admin_session`（平台超管）**，它因 middleware「admin cookie 优先」把商家端会话遮蔽成平台管理员（`/merchant/shops` 返回空 → 商家端显示「该账号还没有绑定店铺」）。为完成验证调了 `POST /api/v1/admin/auth/logout`（204）清掉该 cookie；随后商家端正确解析为本次商家 staff。**仅吊销了 localhost 上那个 admin 会话令牌**（127.0.0.1:5173 的另一标签页未受影响）。
+- 本机 8000 曾又出现两个 `runserver --noreload` 实例（本次前后各一次）；已保留一个（另一会话于 02:32 启动的新实例），未再重复杀。**改后端后必须重启 8000**（noreload）。
+
+### 遗留 / 坑（不得再踩）
+1. **没有 `GET /api/v1/merchant/chats/<uuid>` 详情路由**，只有 `/messages`。前端会话详情必须打 `/messages`（否则 404 → 静默失败，列表只显示最后一条预览 —— 本次踩过）。
+2. `chatImageDraft/chatImageUploading` 是 base-3 的顶层 `let`（全局词法环境），api.js（module）可直接读写，但 **eslint 会报 no-undef**，需 `// eslint-disable-line no-undef`；不要把它们挪进 `state`，否则 base-3 模板/上传回调读不到。
+3. 每次 `render()` 都会重建 `#chatAttachment`，预览必须在 render 包装里 `updateChatAttachment()` 重放；只在上传完成时调用会「选完图一发送消息就消失」。
+4. `#chatImageInput` 的 `change` 在自动化里不能用 IAB 文件选择器（不支持）；用页面内 `DataTransfer` + `new File(...)` 赋值 `input.files` 再 `dispatchEvent(new Event('change'))`（粘贴则 `new ClipboardEvent('paste', {clipboardData})`）。**1×1 假 PNG 会被 Pillow 拒**（`文件不是有效的图片。`），测试图要用真实编码 PNG。
+5. 手机壳 `improveChat` 原本 `oldActions.remove()` 会连「添加图片」一起删掉；已改为 `composer.append(controls)`，以后再加 composer 按钮不要放回会被 remove 的节点。
+6. 平台客服会话（SupportConversation）与旧买家咨询会话**不支持图片**（模型无字段）；图片入口按 `chatKind` 只给 THREAD。若以后要客服发图，需另加 SupportMessage 字段 + 迁移（0010）并放开 `canImage`。
+7. Crisp 镜像只镜像文字，纯图消息在 Crisp 侧显示 `[图片]` 占位；不要为此引入 Crisp 文件上传。
+8. 商家端消息页现在**同时**列：平台客服会话 + 旧 SupportConversation 买家会话 + MerchantChatThread。真实买家咨询只走后者；如果将来清掉旧 SupportConversation BUYER 数据，`buildConversations` 那段可删。
+9. 支付方式映射键要与 `orders.Order.PAYMENT_METHODS` 保持同步；未知代码原样显示（不隐藏），空值显示「未提供」（不再伪造）。
+10. 本次未跑全量（后端全量/全部 e2e 未跑），符合验证纪律；`test_merchant_console_session` 的 9 个既有失败仍是历史欠债。

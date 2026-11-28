@@ -23,11 +23,13 @@ ADMIN_PURPOSE_PERMISSIONS = {
     "avatar": "merchants.manage",
 }
 
-# 商家端只开放这三类：商品图、店铺头像、售后凭证（凭证复用 review 桶）。
+# 商家端只开放这几类：商品图、店铺头像、售后凭证（凭证复用 review 桶）、
+# 消息中心聊天图片（需求 2，与「发消息」同一权限）。
 MERCHANT_PURPOSE_PERMISSIONS = {
     "product": "merchant.listings.manage",
     "avatar": "merchant.store.manage",
     "review": "merchant.aftersales.manage",
+    "chat": "merchant.messages.use",
 }
 
 
@@ -83,7 +85,7 @@ class AdminMediaUploadView(OpsAPIView):
 
 
 class MerchantMediaUploadView(MerchantAPIView):
-    """商家端上传入口（商品图 / 店铺头像 / 售后凭证）。"""
+    """商家端上传入口（商品图 / 店铺头像 / 售后凭证 / 聊天图片）。"""
 
     def post(self, request):
         purpose = str((request.data or {}).get("purpose") or "").strip().lower()
