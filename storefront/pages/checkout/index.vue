@@ -464,7 +464,6 @@ useHead({ title: 'Checkout' })
 }
 
 .checkout__card {
-  max-width: 808px;
   padding: 24px 32px 32px;
   border-radius: 8px;
   background: var(--colour-surface);
@@ -493,10 +492,13 @@ useHead({ title: 'Checkout' })
   color: #1a1a1a;
 }
 
+/* 真站实测（viewport 1424）：输入框固定 390px，左列 x=64 / 右列 x=709
+   → 列间距 255px；Save 412px 与左列同起点。卡片通栏（内容宽）。 */
 .address-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 24px;
+  grid-template-columns: 390px 390px;
+  column-gap: 255px;
+  row-gap: 20px;
 }
 
 .address-form__field--left {
@@ -550,10 +552,10 @@ useHead({ title: 'Checkout' })
   color: #1a1a1a;
 }
 
-/* Save 按钮宽度 = 左列输入框宽度（用户要求，2026-11-28）。 */
+/* Save 412px（真站实测），与左列同起点左对齐。 */
 .address-form__save {
   grid-column: 1;
-  width: 100%;
+  width: 412px;
   height: 40px;
   border: 0;
   border-radius: 4px;
