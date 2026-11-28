@@ -54,6 +54,9 @@ export const MARKET_OPTIONS = [
       { code: 'de-DE', name: 'Deutsch' },
       { code: 'fr-FR', name: 'Français' },
       { code: 'nl-NL', name: 'Nederlands' },
+      // 2026-11-28：按用户要求补齐日语/韩语（真站同序，置 nl 之后）。
+      { code: 'ja-JP', name: '日本語' },
+      { code: 'ko-KR', name: '한국어' },
     ],
   },
 ]

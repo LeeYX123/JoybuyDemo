@@ -10,6 +10,8 @@ const localeAliases = {
   fr: 'fr-FR',
   nl: 'nl-NL',
   lb: 'lb-LU',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
 }
 
 // Locale is persisted as a full BCP-47-like code. UI copy may fall back to
