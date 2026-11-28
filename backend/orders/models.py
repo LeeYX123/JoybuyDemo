@@ -37,6 +37,9 @@ class Order(models.Model):
         "GOOGLE_PAY",
         "APPLE_PAY",
         "WECHAT_PAY",
+        "PAYPAL",
+        "REVOLUT_PAY",
+        "NEW_PAY",
         "KLARNA",
     )
 

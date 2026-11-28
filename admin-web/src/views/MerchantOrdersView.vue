@@ -220,6 +220,13 @@ const PAYMENT_METHOD_LABELS = {
   APPLE_PAY: 'Apple Pay',
   WECHAT_PAY: '微信支付',
   KLARNA: 'Klarna',
+  PAYPAL: 'PayPal',
+  REVOLUT_PAY: 'Revolut Pay',
+  NEW_PAY: 'NewPay',
+  MAESTRO: 'Maestro',
+  JCB: 'JCB',
+  DISCOVER: 'Discover',
+  DINERS: 'Diners Club',
 }
 
 function formatPaymentMethod(value) {
