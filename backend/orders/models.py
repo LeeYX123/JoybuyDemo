@@ -21,7 +21,20 @@ class Order(models.Model):
 
     # 迭代02：支付渠道任意选、直接购买成功（演示性质），但渠道记录进订单，
     # 商家端订单管理可见"这笔是什么支付的"。
-    PAYMENT_METHODS = ("BALANCE", "CARD", "GOOGLE_PAY", "APPLE_PAY", "WECHAT_PAY", "KLARNA")
+    # 2026-11-28：银行卡下按品牌直记支付方式（VISA/MASTERCARD/AMEX/UNIONPAY），
+    # 管理端订单明细按此值展示（如银联）。白名单演示口径：任选即支付成功。
+    PAYMENT_METHODS = (
+        "BALANCE",
+        "CARD",
+        "VISA",
+        "MASTERCARD",
+        "AMEX",
+        "UNIONPAY",
+        "GOOGLE_PAY",
+        "APPLE_PAY",
+        "WECHAT_PAY",
+        "KLARNA",
+    )
 
     # 对外订单号：JYO + YYYYMMDD + 6 位随机（见 common.ids）；主键仍是 bigint。
     public_id = models.CharField(

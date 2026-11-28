@@ -211,12 +211,21 @@ const paymentMethods = computed(() => [
     label: t('checkout.balancePay'),
     note: balanceDisplay.value ? `Balance: ${balanceDisplay.value}` : '',
   },
-  { value: 'card', label: t('checkout.card'), note: '' },
   { value: 'google_pay', label: 'Google Pay', note: '' },
   { value: 'apple_pay', label: 'Apple Pay', note: '' },
   { value: 'wechat_pay', label: t('checkout.wechatPay'), note: '' },
   { value: 'klarna', label: t('checkout.klarna'), note: '' },
 ])
+
+// 2026-11-28 支付页改版：银行卡下按品牌直记支付方式（VISA/MASTERCARD/
+// AMEX/UNIONPAY），选中哪个品牌图标，订单就记哪个支付方式，管理端可见。
+// 白名单演示口径：任选即支付成功，不产生真实付款环节。
+const cardBrands = [
+  { value: 'VISA', icon: '/images/pdp-services/payment-visa.svg', label: 'Visa' },
+  { value: 'MASTERCARD', icon: '/images/pdp-services/payment-mastercard.svg', label: 'Mastercard' },
+  { value: 'AMEX', icon: '/images/pdp-services/payment-american-express.svg', label: 'American Express' },
+  { value: 'UNIONPAY', icon: '/images/pdp-services/payment-unionpay.svg', label: '银联' },
+]
 
 useHead({ title: 'Checkout' })
 </script>
@@ -381,25 +390,36 @@ useHead({ title: 'Checkout' })
                   </label>
                 </li>
               </ul>
+
+              <!-- 银行卡：品牌 icon 直选（VISA/Mastercard/AmEx/银联），
+                   选中即记录对应支付方式，无卡号输入框。 -->
+              <h3 class="pay-brands__title">{{ t('checkout.cardTitle') }}</h3>
+              <div class="pay-brands" role="radiogroup" :aria-label="t('checkout.cardTitle')">
+                <label
+                  v-for="brand in cardBrands"
+                  :key="brand.value"
+                  class="pay-brand"
+                  :class="{ 'pay-brand--active': paymentMethod === brand.value }"
+                >
+                  <input
+                    v-model="paymentMethod"
+                    type="radio"
+                    name="payment"
+                    :value="brand.value"
+                  />
+                  <img :src="brand.icon" :alt="brand.label" />
+                </label>
+              </div>
             </div>
           </div>
 
           <aside class="checkout__summary">
             <h3>{{ t('checkout.summary') }}</h3>
+            <!-- 2026-11-28：优惠明细/配送费行移除，仅保留 小计 + 订单合计。 -->
             <dl class="quote-totals">
               <div>
                 <dt>{{ t('checkout.subtotal') }}</dt>
                 <dd>{{ formatMoney(quote?.subtotal) }}</dd>
-              </div>
-              <div>
-                <dt>{{ t('checkout.deliveryFee') }}</dt>
-                <dd>
-                  {{
-                    quote?.shipping_method === 'FREE'
-                      ? t('checkout.free')
-                      : formatMoney(quote?.shipping_cost)
-                  }}
-                </dd>
               </div>
               <div class="quote-totals__total">
                 <dt>{{ t('checkout.orderTotal') }}</dt>
@@ -667,6 +687,51 @@ useHead({ title: 'Checkout' })
 .pay-methods__note {
   color: var(--colour-muted);
   font-size: var(--font-size-sm);
+}
+
+/* 银行卡品牌直选（2026-11-28 改版）：icon 行，选中态红框。 */
+.pay-brands__title {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: #1a1a1a;
+}
+
+.pay-brands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pay-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 40px;
+  padding: 4px 8px;
+  border: 1px solid #ccced2;
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--colour-surface);
+}
+
+.pay-brand img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.pay-brand input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pay-brand--active {
+  border-color: #cc0c1c;
+  box-shadow: 0 0 0 1px #cc0c1c;
 }
 
 .checkout__summary {

@@ -207,6 +207,26 @@ function closeDetail() {
 }
 
 onMounted(load)
+
+// 支付方式展示（2026-11-28）：卡品牌直记值 → 友好文案。
+const PAYMENT_METHOD_LABELS = {
+  BALANCE: '余额支付',
+  CARD: '银行卡',
+  VISA: 'Visa',
+  MASTERCARD: 'Mastercard',
+  AMEX: 'American Express',
+  UNIONPAY: '银联',
+  GOOGLE_PAY: 'Google Pay',
+  APPLE_PAY: 'Apple Pay',
+  WECHAT_PAY: '微信支付',
+  KLARNA: 'Klarna',
+}
+
+function formatPaymentMethod(value) {
+  if (!value) return '—'
+  return PAYMENT_METHOD_LABELS[value] || value
+}
+
 </script>
 
 <template>
@@ -355,7 +375,7 @@ onMounted(load)
           </div>
           <div>
             <dt>支付方式</dt>
-            <dd>{{ detail.payment_method || '—' }}</dd>
+            <dd>{{ formatPaymentMethod(detail.payment_method) }}</dd>
           </div>
           <div>
             <dt>收件地区</dt>
