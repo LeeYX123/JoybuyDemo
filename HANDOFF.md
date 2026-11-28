@@ -2,6 +2,22 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0dg. 产线部署 2d6a58a→bd8ae02（商家端设计稿复刻/徽标红点/钱包$/订单三态/余额口径 + 语言跟随购物端；2026-11-29 用户指令）
+
+> **部署范围**：`2d6a58a..bd8ae02` 共 20 个提交（含其他代理全部已推内容）。关键功能提交：`c5bf756` 商家端桌面按设计稿复刻（钱包/订单详情版式、订单列表列名与 foot 分页、金额统一 $）、`f928154` 卡片加购价=卡片价 + 商家页删装饰【+】+ 封店口径排除取消单、`2fa37ee` 导航徽标实时化（订单=未发货数、消息=未读合计、0 不显示）、`4808bc8` 顶部通知红点=未读条数、`bb6abc2` 余额支付只记录方式不扣款、`609f4a3`/`128ed82` 订单三态 + 父单取消子单不计待处理、`ba4a4dc` 账号区移除商家入口、`8c0bd68`/`15bd1c3` 管理端 AppPicker/一键下单向导/活动图/隐藏客服中心、`7237b34` 商家端语言跟随购物端（handoff ?lang= + i18n + 商品名本地化）。`dc2e72b` 起的管理端资金审核与 0mf-e 提现文案同批已在产线生效。
+> - **零迁移、零依赖变更**（服务器 `migrate --plan` = No planned migration operations；无 package.json/requirements 变更）。
+> - **DB 备份锚点**：`/srv/backups/joybuy_predeploy_20261129a.sql.gz`（230,114,987 B，gzip -t 通过，1276 个 INSERT），**SHA256 `0da3aa3fae46f3bafbd817e00ff4f8cd97753fbcffc5a6b4d8ac81d24f91488e`**。
+> - **服务器 HEAD = `70e4d9d`**（最终；`bd8ae02` 部署并验证完成后，origin/main 又前进 `59504fe` Crisp 会话标题加 emoji/改用商家 ID（仅 backend/merchant_ops/crisp_mirror.py + 3 个测试文件）与 `70e4d9d` HANDOFF，已一并 `pull --ff-only` + `migrate --plan` 零迁移 + `check` 0 issue + `restart joybuy-api`，自重启后 health/搜索/www/merchant/admin/m 全 200，`crisp_mirror` 导入自检 OK（🟢 ➡️ 常量就位）、无 traceback；这两个提交只动后端，前端无需重建）。pull 前 /srv/joybuy 干净。**产线已含语言跟随功能**。nginx 零改动。
+> - **过程偏差（如实记录）**：本代理先按 `235abda` 完成 pull+三端构建（未重启），随后 origin/main 前进 `7237b34`/`bd8ae02`，遂**重新 pull 到 bd8ae02 并重建三端**再重启；`manage.py check` 在两次 pull 后均 0 issue，`joybuy-api`/`joybuy-storefront` restart 后 active，`localization.py` 新模块无 import 异常（health/catalog/商品详情/类目接口均 200）。
+> - **dev 门禁（部署前，本地）**：`merchant_ops.tests.test_doc02_round2+test_doc02_round3` **24 OK**、`test_merchant_modules+test_admin_commerce` **97 OK**、`orders` **37 OK**、`merchants.tests.test_wp42_services+catalog.tests.test_search` **53 OK**、`test_doc02_round2.BuyerBalanceTests` **1 OK**（余额不扣款新口径已转绿）。注意：`--keepdb` 的旧测试库缺 `PlatformRole` 种子会导致 23 errors，**必须不加 --keepdb 重建测试库**。`ruff` 改动文件 12 项：I001 导入排序、`checkout_views` 未用 import `is_supported_postcode`、`order_services` 未用变量 `balance_payment`（均为无害遗留），以及 **F821 `common/admin_views.py:851 CrawlerAccount` 未导入——经 git log -S 确认来自更早的 `d706314`，非本批引入**（PAGE_SET 采集任务带 account_public_id 时会 NameError，属既有缺陷，未修）。
+> - **dev 浏览器矩阵（1440×900）**：商家端 **9/9**（看板、徽标与接口一致且 0 不显示、通知红点=未读数、钱包页 $ 且无 ¥、订单列表列名+foot、订单详情、console 0、零数据商家徽标/红点全隐藏、卡片【+】加购价与卡片价数值一致并已清空测试购物车）；商城 **5/5**（三态 tab 且无 Cancelled、账号区无商家入口+右上角切换商家端、首页/PDP/搜索/结账/账户 200+console 0、登录页 autofill 未被禁）；管理端 **8/8**（资金审核角标=counts.pending、商家管理/商品池 AppPicker 编号与名称均可搜并选中、活动卡片 10 图全加载、客服中心导航隐藏且 /support 重定向、一键下单向导走到选择商品步骤见分页区「首页/上一页/1 2/下一页/末页/跳转」、console 0）。**dev 买家口令已被并行会话改动**（123456789@joybuy.com 的 123456789 已失效，改用 mint 买家会话走切换链，用后已删）。
+> - **产线验证矩阵（外网 Playwright，**14/14 PASS**，截图 `var/check_235abda/prod_shots/`）**：
+>   * P1 无会话 merchant /wallet → 弹回 www 且**无登录表单**；P2 在 merchant 域 staff 登录成功 + 看板；P3 导航徽标：未发货=1→徽标 1、未读=1→徽标 1（与接口一致）；P4 通知红点=2=未读 2；P5 钱包页金额统一 $、无 ¥，列=时间/交易类型/关联订单 单号/金额变动/账户/状态；P6 订单列表列名 8 列 + foot 分页；P7 钱包密码输入 `type=text`+`-webkit-text-security:disc`+`autocomplete=off`+`data-wpin`（newWpin/confirmWpin）；P8 `?lang=en` → 导航英文、地址栏 lang 已清、页面商品名与接口英文名一致 7/8；P9 `?lang=zh` → 中文 UI + 中文名；P10 无 lang 默认中文 + 手切 EN/中文往返均生效；P11 商家端 console/pageerror/5xx=0；P12 手机 390×844 mobile.html 看板 + en 页英文 + console 0；P13 商城首页/PDP/搜索/结账/账户 200 + console 0 + 登录页 identifier `autocomplete=username`（未被禁）；P14 管理端登录页 200 + console 0。
+>   * **服务器 curl 全 200**：merchant `/`、`/mobile.html`、`/src/folio/merchant-desktop.js`、`/dashboard`；www `/`、`/api/v1/health`、`/api/v1/search`、`/api/v1/products/<id>`、`/api/v1/categories`、`/auth/login`、`/checkout`、`/pages/about-us`、`/admin18vm6u4b83sf/`；`m.joyfumi.com/`。`/account` 302（匿名跳登录，符合预期）。
+> - **发现（重要，供后续决策）**：**www 域的普通 staff 登录写的是 host-only cookie（`www.joyfumi.com`），商家子域收不到**；跨子域会话只有【切换商家端】链路（`BuyerMerchantConsoleSessionView` 写 `.joyfumi.com`）才有。因此产线验证商家端时必须**在 merchant 域上登录**（本次用 `ctx.request.post('https://merchant.joyfumi.com/api/v1/admin/auth/login')`），商家端自身又已无登录页——对真实用户而言入口仍是购物端切换链。
+> - **遗留/未验项**：①**产线无 APPROVED 商家申请**（`merchant_application` 空），无法在产线走购物端【切换商家端】正向链，`?lang=` 的 handoff 端到端未在产线实测（商家端 `?lang=` 解析已单独验证）；②产线提现单仅 PENDING×1/TRANSFERRING×2、资金明细 9 行均「已完成」，**「转账成功/转账失败+原因列」在产线无可观测数据**（dev 已 12/12 覆盖，含 0mf-e 9/9），未为验证造数；③管理端登录后项（资金审核徽标渲染、AppPicker、活动图、客服中心导航、一键下单分页）**缺 admin 凭据**未在产线登录验证（dev 8/8 已覆盖），仅验证登录页 200+console 0；④上线前 ruff 的 F821 既有缺陷未修；⑤F928154 的 `cart_offer_public_id` 依赖每页 +1 查询，产线未单独测耗时（dev/提交说明已记）。
+
+
 ## 0pm. 资金审核待审徽标 + 提现两步流转（2026-11-28，✅ 完成，未 commit）
 
 - **需求 1：侧边【资金审核】实时待审计数**
@@ -588,6 +604,20 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d1h. Crisp 会话元数据：双方 ID 进 meta.data + 场景 segments（2026-11-29，✅ 已提交 6e485e0 并推送）
+
+- 用户口径：标题不变（ID 不显示在标题），把**场景 + 双方 ID** 收进 `meta.data`，并用 `segments` 打场景标签。
+- **真实 Crisp 实测结论（关键）**：`data` 与 `segments` 都可以通过 `PATCH /conversation/{sid}/meta` 写入并读回，**不会被清洗/截断、segments 无需后台预建**（与 `email` 读回为空不同）。
+- `data` 字段（dev 实际样例）：
+  - `bp`：`{"thread":"bp","scenario":"买家咨询平台","buyer_id":"JYU0THYWD2A2S","merchant_id":""}`
+  - `bm`：`{"thread":"bm","scenario":"买家咨询商家","buyer_id":"JYUFGVTPM3U45","merchant_id":"JYMWMRIH9DQQJ"}`
+  - `merchant`：`{"thread":"merchant","scenario":"商家咨询平台","buyer_id":"","merchant_id":"JYM2XG3RN5AO0"}`
+- `segments`：`["买家咨询平台"]` / `["买家咨询商家"]` / `["商家咨询平台"]`。
+- 代码：`crisp_mirror.py` 新增 `build_meta_data` / `meta_segments` 与三场景 builder；`patch_conversation_meta` 支持 `data`/`segments`（只传有值键，空 segments 不发请求）；`_META_READY` 语义改为 **nickname+data+segments 全就绪**（每会话每进程最多 1 次 GET，之后零 meta HTTP）；`crisp_retitle` 支持一并回写。
+- 历史回写：`crisp_retitle --apply --fetch` = **7 改 / 1 已达标 / 0 失败**，只读回读 **8/8 PASS**；`bp:7c3b1676…` 等历史 UUID 键（买家已删）仍无法重算。
+- 单测：`test_crisp_mirror` 55 + `test_support_chat` 21 + `test_merchant_chat` 22 = **98 OK**（sqlite 隔离）。
+- 坑：meta **只能写不能删**（传空值等于不写）——要清空某会话的 data/segments 只能到 Crisp 后台手工清；meta 写入失败仍只记 warning、不阻塞消息镜像。
 
 ## 0d1g. Crisp 会话标题加 emoji + 商家侧改显示商家 ID（2026-11-29，✅ 已提交 59504fe 并推送）
 
