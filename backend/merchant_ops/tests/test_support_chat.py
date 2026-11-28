@@ -343,6 +343,17 @@ class SupportChatCrispMirrorTests(SupportChatTestBase):
         # 会话 meta 标题 = 🟢 买家昵称 ➡️ JoyBuy客服（客服端 Inbox 只认这个），带邮箱。
         self.assertEqual(kwargs["session_nickname"], "🟢 小明 ➡️ JoyBuy客服")
         self.assertEqual(kwargs["session_email"], "bp-buyer@joybuy.test")
+        # 结构化元数据：bp 线程只有买家，merchant_id 留空；场景打 Inbox 标签。
+        self.assertEqual(
+            kwargs["session_data"],
+            {
+                "thread": "bp",
+                "scenario": "买家咨询平台",
+                "buyer_id": self.buyer.public_id,
+                "merchant_id": "",
+            },
+        )
+        self.assertEqual(kwargs["session_segments"], ["买家咨询平台"])
         message = SupportChatMessage.objects.get()
         self.assertEqual(kwargs["message_id"], str(message.pk))
         message.refresh_from_db()

@@ -1,26 +1,31 @@
-"""一次性修历史 Crisp 会话标题（2026-11-27 标题口径变更）。
+"""一次性修历史 Crisp 会话标题 / 结构化 meta（2026-11-27 标题口径变更，
+2026-11-29 补 ``meta.data`` + ``meta.segments``）。
 
-背景：``patch_conversation_meta`` / ``_backfill_conversation_meta`` 只在 meta **为空**
-时写昵称，所以改动 ``merchant_chat_meta_nickname`` / ``support_chat_meta_nickname``
-只影响**新会话**；已有会话的标题仍是旧口径（``买家`` / ``买家 · 店名`` / ``店名``）。
+背景：``patch_conversation_meta`` / ``_backfill_conversation_meta`` 只在 meta 缺内容
+时写，所以改动 ``merchant_chat_meta_nickname`` / ``support_chat_meta_nickname``
+只影响**新会话**；已有会话的标题仍是旧口径（``买家`` / ``买家 · 店名`` / ``店名``），
+且历史会话没有 ``data``（场景 + 双方 public_id）与 ``segments``（Inbox 标签）。
+本命令按与线上新会话完全同口径的 helper 重算这三项。
 
 用法（**默认 DRY_RUN，零 PATCH**）：
 
-    python manage.py crisp_retitle                  # 只打印 session_id / 线程键 / 新标题
-    python manage.py crisp_retitle --fetch          # 额外 GET 一次旧昵称（只读，做前后对照）
+    python manage.py crisp_retitle                  # 只打印 session_id / 线程键 / 新标题+data
+    python manage.py crisp_retitle --fetch          # 额外 GET 一次旧 meta（只读，做前后对照）
     python manage.py crisp_retitle --limit 5        # 只看前 5 条
-    python manage.py crisp_retitle --apply          # 真的 PATCH meta（会改 Inbox 标题）
+    python manage.py crisp_retitle --apply          # 真的 PATCH meta（会改 Inbox 标题/标签）
 
-建议 ``--apply --fetch`` 一起用：有旧昵称才能跳过「已是目标标题」的会话；只加 ``--apply``
-时不读旧值，会对每条命中的会话无条件 PATCH 一次（幂等，但多一次写请求）。
+建议 ``--apply --fetch`` 一起用：有旧值才能跳过「标题与 data/segments 都已达标」的
+会话；只加 ``--apply`` 时不读旧值，会对每条命中的会话无条件 PATCH 一次（幂等，但多
+一次写请求）。
 
 线程来源：``CrispMirrorLog`` 的 distinct ``thread_key``（按前缀 ``bp:`` / ``bm:`` /
 ``merchant:`` 分组），``session_id`` 由 ``CrispMirrorSession`` 映射解析；没有映射的
 线程说明从未成功建会话，跳过并计数；线程/商家已从库里删除的旧键（如历史 UUID 版
-``bp:<uuid>``）无法重算标题，也计入「无法识别」并跳过。新标题一律用 ``crisp_mirror``
-里的现成 helper 重算（与线上新会话完全同口径）。失败写 ``CrispMirrorLog``
+``bp:<uuid>``）无法重算标题，也计入「无法识别」并跳过。失败写 ``CrispMirrorLog``
 （``sender_kind=retitle``，``status=failed``）并继续下一条。
 """
+
+import json
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -113,25 +118,50 @@ class Command(BaseCommand):
         run_stamp = timezone.now().strftime("%Y%m%dT%H%M%S")
         for index, row in enumerate(rows, start=1):
             old_nickname = "（未读取）"
+            old_data = None
+            old_segments = None
             if fetch_old:
                 meta = crisp_mirror.fetch_conversation_meta(row["session_id"])
                 if meta is None:
                     old_nickname = "（GET 失败）"
                 else:
                     old_nickname = (meta.get("nickname") or "").strip() or "（空）"
+                    old_data = meta.get("data") if isinstance(meta.get("data"), dict) else {}
+                    old_segments = meta.get("segments") or []
 
             self.stdout.write(f"[{index}] {row['session_id']}  {row['thread_key']}")
             self.stdout.write(f"    类型: {KIND_LABELS.get(row['kind'], row['kind'])}")
             self.stdout.write(f"    旧昵称: {old_nickname}")
             self.stdout.write(f"    新昵称: {row['title']}")
+            self.stdout.write(
+                "    新 data: "
+                + json.dumps(row["data"], ensure_ascii=False, sort_keys=True)
+            )
+            self.stdout.write(
+                "    新 segments: " + json.dumps(row["segments"], ensure_ascii=False)
+            )
 
             if not apply_changes:
                 continue
-            if old_nickname == row["title"]:
+            if fetch_old:
+                # 三个字段全达标才跳过；老会话通常 nickname 已对但 data/segments 为空。
+                up_to_date = (
+                    old_nickname == row["title"]
+                    and old_data == row["data"]
+                    and old_segments == row["segments"]
+                )
+            else:
+                up_to_date = False
+            if up_to_date:
                 unchanged += 1
-                self.stdout.write("    结果: 已是目标标题，跳过 PATCH")
+                self.stdout.write("    结果: 标题与 data/segments 已达标，跳过 PATCH")
                 continue
-            if crisp_mirror.patch_conversation_meta(row["session_id"], nickname=row["title"]):
+            if crisp_mirror.patch_conversation_meta(
+                row["session_id"],
+                nickname=row["title"],
+                data=row["data"],
+                segments=row["segments"],
+            ):
                 patched += 1
                 self.stdout.write(self.style.SUCCESS("    结果: PATCH 成功"))
             else:
@@ -143,7 +173,7 @@ class Command(BaseCommand):
         if apply_changes:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"完成：PATCH 成功 {patched} 条，已是目标标题 {unchanged} 条，失败 {failed} 条。"
+                    f"完成：PATCH 成功 {patched} 条，已达标 {unchanged} 条，失败 {failed} 条。"
                 )
             )
         else:
@@ -178,8 +208,8 @@ class Command(BaseCommand):
         unmapped = 0
         unknown = 0
         for thread_key in thread_keys:
-            title = self._resolve_title(thread_key)
-            if title is None:
+            target = self._resolve_target(thread_key)
+            if target is None:
                 unknown += 1
                 continue
             session_id = sessions.get(thread_key)
@@ -191,7 +221,9 @@ class Command(BaseCommand):
                     "thread_key": thread_key,
                     "kind": thread_key.split(":", 1)[0],
                     "session_id": session_id,
-                    "title": title,
+                    "title": target["title"],
+                    "data": target["data"],
+                    "segments": target["segments"],
                 }
             )
         order = {KIND_BUYER_MERCHANT: 0, KIND_BUYER_PLATFORM: 1, KIND_MERCHANT_PLATFORM: 2}
@@ -200,8 +232,8 @@ class Command(BaseCommand):
         self._all_rows = rows
         return rows, unmapped, unknown
 
-    def _resolve_title(self, thread_key: str) -> str | None:
-        """按线程前缀重算目标标题；线程/商家已不存在时返回 None（跳过）。"""
+    def _resolve_target(self, thread_key: str) -> dict | None:
+        """按线程前缀重算 ``title`` + ``data`` + ``segments``；线程/商家已不存在时返回 None。"""
 
         parts = thread_key.split(":")
         kind = parts[0] if parts else ""
@@ -212,23 +244,47 @@ class Command(BaseCommand):
                     .filter(buyer__public_id=parts[1])
                     .first()
                 )
-                return crisp_mirror.support_chat_meta_nickname(thread) if thread else None
+                if thread is None:
+                    return None
+                return self._target(
+                    crisp_mirror.support_chat_meta_nickname(thread),
+                    crisp_mirror.support_chat_meta_data(thread),
+                    crisp_mirror.SCENARIO_BUYER_PLATFORM,
+                )
             if kind == KIND_BUYER_MERCHANT and len(parts) >= 3:
                 thread = (
                     MerchantChatThread.objects.select_related("buyer", "merchant")
                     .filter(buyer__public_id=parts[1], merchant__public_id=parts[2])
                     .first()
                 )
-                return crisp_mirror.merchant_chat_meta_nickname(thread) if thread else None
+                if thread is None:
+                    return None
+                return self._target(
+                    crisp_mirror.merchant_chat_meta_nickname(thread),
+                    crisp_mirror.merchant_chat_meta_data(thread),
+                    crisp_mirror.SCENARIO_BUYER_MERCHANT,
+                )
             if kind == KIND_MERCHANT_PLATFORM and len(parts) >= 2:
                 # ``merchant:{public_id}``：同一商家只有一个会话（thread_key_for_conversation）。
                 merchant = Merchant.objects.filter(public_id=parts[1]).only("public_id").first()
                 if merchant is None:
                     return None
-                return crisp_mirror.merchant_platform_meta_nickname(merchant)
+                return self._target(
+                    crisp_mirror.merchant_platform_meta_nickname(merchant),
+                    crisp_mirror.merchant_platform_meta_data(merchant),
+                    crisp_mirror.SCENARIO_MERCHANT_PLATFORM,
+                )
         except Exception:  # noqa: BLE001 - 单条解析失败不能中断整批
             return None
         return None
+
+    @staticmethod
+    def _target(title: str, data: dict, scenario: str) -> dict:
+        return {
+            "title": title,
+            "data": data,
+            "segments": crisp_mirror.meta_segments(scenario),
+        }
 
     def _log_failure(self, row: dict, run_stamp: str) -> None:
         """失败落 CrispMirrorLog（沿用既有投递记录表的观测方式），不抛异常。"""

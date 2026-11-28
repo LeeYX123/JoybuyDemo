@@ -10,6 +10,10 @@
   ``user.nickname`` 仍传（chatbox 加分项）；
 - 会话 ``PATCH .../meta`` 补 ``nickname``/``email``，Inbox 列表不再显示 anonymous；
   历史会话 meta 为空时，下次发消息自动补写一次（进程内缓存，失败只 warning）；
+- 2026-11-29 起 meta 还带 **结构化数据**：``data`` = 场景 + 双方 public_id
+  （``thread`` / ``scenario`` / ``buyer_id`` / ``merchant_id``），``segments`` =
+  场景中文名（Inbox 标签筛选）。实测真实会话 PATCH 后 GET 回读，``data``/``segments``
+  均原样保存（无清洗、无需后台预建）；标题口径不变，ID 不再挤在标题里；
 - 新建会话后必须有一条 ``from=user`` 的消息才会进 Inbox；
 - 建会话无幂等键、无自定义 session_id → ``CrispMirrorSession`` 落库映射；
 - 每条消息带 ``fingerprint``（必须是 number：取 ``sha256(thread_key:message_id)`` 前 48 bit），
@@ -88,6 +92,15 @@ META_TITLE_MERCHANT_FALLBACK = "商家"
 META_TITLE_ROLE_BUYER = "buyer"
 META_TITLE_ROLE_MERCHANT = "merchant"
 META_TITLE_ROLE_PLATFORM = "platform"
+
+# 会话 meta.data 里的线程类型（与 ``thread_key`` 前缀一致）与中文场景名。
+# ``segments`` 用同一个场景名（Inbox 标签筛选）。三种场景固定，不新增。
+META_THREAD_BUYER_PLATFORM = "bp"
+META_THREAD_BUYER_MERCHANT = "bm"
+META_THREAD_MERCHANT_PLATFORM = "merchant"
+SCENARIO_BUYER_PLATFORM = "买家咨询平台"
+SCENARIO_BUYER_MERCHANT = "买家咨询商家"
+SCENARIO_MERCHANT_PLATFORM = "商家咨询平台"
 
 
 class CrispRequestError(RuntimeError):
@@ -255,10 +268,20 @@ def _extract_session_id(response: dict) -> str:
     return ""
 
 
-def patch_conversation_meta(session_id: str, nickname: str = "", email: str = "") -> bool:
-    """给 Crisp 会话补 ``nickname``/``email``，让 Inbox 列表不再显示 anonymous。
+def patch_conversation_meta(
+    session_id: str,
+    nickname: str = "",
+    email: str = "",
+    data: dict | None = None,
+    segments: list[str] | None = None,
+) -> bool:
+    """给 Crisp 会话补 ``nickname``/``email``/``data``/``segments``。
 
-    失败只记 warning、返回 False，绝不影响后续发消息（Inbox 仍能用，只是显示 anonymous）。
+    只把**有值**的键放进请求体（空字符串/空 dict/空列表一律不带，避免把 Crisp
+    已存的值清空）。``data`` 是结构化元数据（场景 + 双方 public_id），``segments``
+    是 Inbox 标签；实测两者都会被原样保存。
+
+    失败只记 warning、返回 False，绝不影响后续发消息（Inbox 仍能用，只是缺元数据）。
     """
 
     body: dict = {}
@@ -268,6 +291,12 @@ def patch_conversation_meta(session_id: str, nickname: str = "", email: str = ""
     email = (email or "").strip()
     if email:
         body["email"] = email
+    if isinstance(data, dict) and data:
+        body["data"] = dict(data)
+    if segments:
+        cleaned = [str(item).strip() for item in segments if str(item).strip()]
+        if cleaned:
+            body["segments"] = cleaned
     if not body:
         return False
 
@@ -299,26 +328,62 @@ def fetch_conversation_meta(session_id: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-# 本进程内已确认 meta 有昵称的会话（历史会话补写只需一次，避免每条消息都 GET）。
+# 本进程内 meta 已补全（nickname + data + segments）的会话：历史会话只补一次，
+# 避免每条消息都 GET。补写失败不进集合，下次发消息再试。
 _META_READY: set[str] = set()
 
 
-def _backfill_conversation_meta(session_id: str, nickname: str, email: str = "") -> bool:
-    """历史会话 meta 为空时补写昵称（幂等）：先 GET，确认空才 PATCH。
+def _meta_data_complete(meta: dict, data: dict, segments: list[str] | None) -> bool:
+    """meta 里的 ``data``（以及有场景时的 ``segments``）是否已经写过。"""
 
-    结果缓存到本进程的 ``_META_READY``：已有昵称或补写成功后不再重复读。GET/PATCH
-    失败都不抛出（只 warning），下次发消息时再试。
+    existing_data = meta.get("data")
+    if not isinstance(existing_data, dict) or not existing_data:
+        return False
+    if segments:
+        existing_segments = meta.get("segments")
+        if not existing_segments:
+            return False
+    return True
+
+
+def _backfill_conversation_meta(
+    session_id: str,
+    nickname: str,
+    email: str = "",
+    data: dict | None = None,
+    segments: list[str] | None = None,
+) -> bool:
+    """历史会话 meta 缺内容时补写（幂等）：先 GET，只补缺的部分再 PATCH。
+
+    2026-11-29 起不再只看 nickname：``nickname`` 已有但 ``data``/``segments`` 缺失
+    时也补一次（老会话都在这一批里）。结果缓存到本进程的 ``_META_READY``（语义 =
+    nickname + data + segments 都已就绪）：无缺项或补写成功后不再重复读。
+    GET/PATCH 失败都不抛出（只 warning），下次发消息时再试。
     """
 
-    if not (nickname or "").strip() or session_id in _META_READY:
+    if session_id in _META_READY:
+        return False
+    wants_nickname = bool((nickname or "").strip())
+    wants_data = bool(data)
+    if not wants_nickname and not wants_data:
         return False
     meta = fetch_conversation_meta(session_id)
     if meta is None:
         return False
-    if (meta.get("nickname") or "").strip():
+
+    body: dict = {}
+    if wants_nickname and not (meta.get("nickname") or "").strip():
+        body["nickname"] = nickname
+        if (email or "").strip():
+            body["email"] = email
+    if wants_data and not _meta_data_complete(meta, data, segments):
+        body["data"] = data
+        if segments:
+            body["segments"] = segments
+    if not body:
         _META_READY.add(session_id)
         return False
-    if patch_conversation_meta(session_id, nickname=nickname, email=email):
+    if patch_conversation_meta(session_id, **body):
         _META_READY.add(session_id)
         return True
     return False
@@ -329,20 +394,24 @@ def ensure_session(
     nickname: str = "",
     occurred_at: datetime | None = None,
     email: str = "",
+    data: dict | None = None,
+    segments: list[str] | None = None,
 ) -> str:
     """取（或首次创建）线程对应的 Crisp 会话 id。
 
-    首次创建顺序：``POST /conversation`` → 落库映射 → ``PATCH .../meta``（会话昵称/邮箱）
-    → 发一条 ``from=user`` 的「Conversation started」。先落库再发首消息，避免首消息失败后
-    重试又建一个会话。``occurred_at`` 用于把开场消息时间排在正式消息之前（Inbox 列表取最新
-    一条做预览）。
+    首次创建顺序：``POST /conversation`` → 落库映射 → ``PATCH .../meta``（会话昵称/
+    邮箱/结构化数据/标签）→ 发一条 ``from=user`` 的「Conversation started」。先落库
+    再发首消息，避免首消息失败后重试又建一个会话。``occurred_at`` 用于把开场消息时间
+    排在正式消息之前（Inbox 列表取最新一条做预览）。
 
-    会话已存在时只做一次「meta 为空则补写」检查（历史会话是 anonymous 的）。
+    会话已存在时只做一次「meta 缺什么补什么」检查（历史会话是 anonymous / 无 data 的）。
     """
 
     existing = CrispMirrorSession.objects.filter(thread_key=thread_key).first()
     if existing is not None:
-        _backfill_conversation_meta(existing.session_id, nickname, email)
+        _backfill_conversation_meta(
+            existing.session_id, nickname, email, data=data, segments=segments
+        )
         return existing.session_id
 
     response = _post_with_retry(f"/website/{crisp_config()['website_id']}/conversation", None)
@@ -357,8 +426,10 @@ def ensure_session(
         # 并发下别的线程先落库：复用它的会话，丢弃本次刚建的孤儿会话。
         return session.session_id
 
-    # 先补 meta 再发首消息：Inbox 里一出现会话就带昵称（失败仅记日志，不阻塞）。
-    if patch_conversation_meta(session_id, nickname=nickname, email=email):
+    # 先补 meta 再发首消息：Inbox 里一出现会话就带昵称/场景标签（失败仅记日志，不阻塞）。
+    if patch_conversation_meta(
+        session_id, nickname=nickname, email=email, data=data, segments=segments
+    ):
         _META_READY.add(session_id)
 
     when = occurred_at or timezone.now()
@@ -468,11 +539,14 @@ def mirror_message(
     message_id: str = "",
     session_nickname: str = "",
     session_email: str = "",
+    session_data: dict | None = None,
+    session_segments: list[str] | None = None,
 ) -> dict:
     """把一条聊天消息镜像到 Crisp（幂等、失败不抛异常）。
 
-    ``session_nickname``/``session_email`` 只在**首次建会话**时用于 ``PATCH .../meta``，
-    让 Inbox 列表显示对话方（商家或买家）而不是 anonymous。
+    ``session_nickname``/``session_email``/``session_data``/``session_segments`` 只用于
+    会话 meta：首次建会话时一次写入；已有会话仅在缺失时补写一次（见
+    ``_backfill_conversation_meta``）。``session_data`` 是场景 + 双方 public_id。
 
     返回 ``{"status": skipped|sent|failed|duplicate, "session_id": str, "error": str}``。
     """
@@ -498,6 +572,8 @@ def mirror_message(
             nickname=(session_nickname or _opening_nickname(sender_kind, sender_name)),
             occurred_at=occurred_at,
             email=session_email,
+            data=session_data,
+            segments=session_segments,
         )
         payload = build_message_payload(
             sender_kind, sender_name, body, occurred_at, thread_key, message_id
@@ -546,6 +622,75 @@ def merchant_platform_meta_nickname(merchant) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# 会话 meta 结构化数据（2026-11-29）
+#
+# 用户口径：**标题保持现状**（不把双方 ID 塞进标题），场景与双方 ID 收进
+# ``meta.data``，场景同时写入 ``meta.segments`` 供 Inbox 标签筛选：
+#
+#   data = {"thread": "bp|bm|merchant", "scenario": "<中文场景>",
+#           "buyer_id": "JYU…", "merchant_id": "JYM…"}
+#
+# 四个键**始终齐全**，不适用的一侧留空串（``merchant:`` 线程没有买家）。
+# 真实 Crisp 实测：PATCH 后 GET 回读 ``data``/``segments`` 原样保存。
+# ---------------------------------------------------------------------------
+def public_id_of(instance) -> str:
+    """取 ``public_id``（``JYU…`` / ``JYM…``）；对象缺失或字段为空时返回空串。"""
+
+    return str(getattr(instance, "public_id", "") or "").strip()
+
+
+def build_meta_data(
+    thread: str, scenario: str, buyer=None, merchant=None
+) -> dict:
+    """拼 ``meta.data``：场景 + 双方 public_id（不适用的一侧为空串）。"""
+
+    return {
+        "thread": thread,
+        "scenario": scenario,
+        "buyer_id": public_id_of(buyer),
+        "merchant_id": public_id_of(merchant),
+    }
+
+
+def meta_segments(scenario: str) -> list[str]:
+    """场景名同时作为 Inbox 标签（``meta.segments``）；空场景不打标签。"""
+
+    scenario = (scenario or "").strip()
+    return [scenario] if scenario else []
+
+
+def support_chat_meta_data(thread) -> dict:
+    """``bp:``（买家 ↔ 平台客服）：只有买家，``merchant_id`` 留空。"""
+
+    return build_meta_data(
+        META_THREAD_BUYER_PLATFORM,
+        SCENARIO_BUYER_PLATFORM,
+        buyer=getattr(thread, "buyer", None),
+    )
+
+
+def merchant_chat_meta_data(thread) -> dict:
+    """``bm:``（买家 ↔ 商家）：双方 public_id 都有。"""
+
+    return build_meta_data(
+        META_THREAD_BUYER_MERCHANT,
+        SCENARIO_BUYER_MERCHANT,
+        buyer=getattr(thread, "buyer", None),
+        merchant=getattr(thread, "merchant", None),
+    )
+
+
+def merchant_platform_meta_data(merchant) -> dict:
+    """``merchant:``（商家 ↔ 平台客服）：该线程没有买家，``buyer_id`` 留空。"""
+
+    return build_meta_data(
+        META_THREAD_MERCHANT_PLATFORM,
+        SCENARIO_MERCHANT_PLATFORM,
+        merchant=merchant,
+    )
+
+
 def queue_support_message_mirror(message: SupportMessage) -> None:
     """商家端/管理端聊天消息落库后调用：事务提交后再镜像，且绝不影响接口返回。
 
@@ -577,6 +722,9 @@ def queue_support_message_mirror(message: SupportMessage) -> None:
         # 这条线程的「访客」是商家：会话 meta 标题 = 「🟠 商家ID ➡️ JoyBuy客服」
         # （2026-11-29 口径：商家显示 public_id，不展示店名），Inbox 列表不再 anonymous。
         "session_nickname": merchant_platform_meta_nickname(conversation.merchant),
+        # 结构化元数据：该线程没有买家，buyer_id 留空；场景打 Inbox 标签。
+        "session_data": merchant_platform_meta_data(conversation.merchant),
+        "session_segments": meta_segments(SCENARIO_MERCHANT_PLATFORM),
     }
 
     def _run() -> None:
@@ -734,6 +882,9 @@ def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
         # 有邮箱一并带上（Crisp 可能不保存，失败不影响消息）。
         "session_nickname": merchant_chat_meta_nickname(thread),
         "session_email": (thread.buyer.email or "").strip(),
+        # 结构化元数据：bm 线程买家与商家都在，双方 public_id 都带上。
+        "session_data": merchant_chat_meta_data(thread),
+        "session_segments": meta_segments(SCENARIO_BUYER_MERCHANT),
     }
     message_pk = message.pk
 
@@ -810,6 +961,9 @@ def queue_support_chat_mirror(message: SupportChatMessage) -> None:
         # Inbox 会话标题：始终买家昵称（客服端只认这个）。
         "session_nickname": support_chat_meta_nickname(thread),
         "session_email": (thread.buyer.email or "").strip(),
+        # 结构化元数据：bp 线程只有买家，merchant_id 留空。
+        "session_data": support_chat_meta_data(thread),
+        "session_segments": meta_segments(SCENARIO_BUYER_PLATFORM),
     }
     message_pk = message.pk
 

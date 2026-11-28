@@ -773,6 +773,248 @@ class CrispMetaTitleTests(TestCase):
         self.assertIn(crisp_mirror.META_EMOJI_MERCHANT, meta_body["nickname"])
 
 
+class CrispMetaDataTests(TestCase):
+    """会话 meta 结构化数据（2026-11-29）：场景 + 双方 public_id + 场景标签。
+
+    真实 Crisp 实测（PATCH 后 GET 回读）``data``/``segments`` 原样保存，所以这里
+    只断言我们发出去的请求体与补写时机（HTTP 全部 mock）。
+    """
+
+    thread_key = "merchant:JYMSAHELWJBZT"
+    DATA = {
+        "thread": "merchant",
+        "scenario": "商家咨询平台",
+        "buyer_id": "",
+        "merchant_id": "JYMSAHELWJBZT",
+    }
+    SEGMENTS = ["商家咨询平台"]
+
+    def setUp(self):
+        patcher = mock.patch.object(crisp_mirror, "RETRY_DELAY_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patch = mock.patch.object(crisp_mirror, "_http_patch", return_value={})
+        self.patch_http = patch.start()
+        self.addCleanup(patch.stop)
+        get = mock.patch.object(
+            crisp_mirror, "_http_get", return_value={"data": {"nickname": "已有昵称"}}
+        )
+        self.get_http = get.start()
+        self.addCleanup(get.stop)
+        crisp_mirror._META_READY.clear()
+        self.addCleanup(crisp_mirror._META_READY.clear)
+
+    # ------------------------------------------------------------------
+    # data / segments 组装
+    # ------------------------------------------------------------------
+    def test_support_chat_data_has_buyer_only(self):
+        thread = SimpleNamespace(buyer=SimpleNamespace(public_id="JYUBUYER001"))
+
+        data = crisp_mirror.support_chat_meta_data(thread)
+
+        self.assertEqual(
+            data,
+            {
+                "thread": "bp",
+                "scenario": "买家咨询平台",
+                "buyer_id": "JYUBUYER001",
+                "merchant_id": "",
+            },
+        )
+        self.assertEqual(crisp_mirror.meta_segments(data["scenario"]), ["买家咨询平台"])
+
+    def test_merchant_chat_data_has_both_ids(self):
+        thread = SimpleNamespace(
+            buyer=SimpleNamespace(public_id="JYUBUYER001"),
+            merchant=SimpleNamespace(public_id="JYMSHOP0001"),
+        )
+
+        data = crisp_mirror.merchant_chat_meta_data(thread)
+
+        self.assertEqual(
+            data,
+            {
+                "thread": "bm",
+                "scenario": "买家咨询商家",
+                "buyer_id": "JYUBUYER001",
+                "merchant_id": "JYMSHOP0001",
+            },
+        )
+        self.assertEqual(crisp_mirror.meta_segments(data["scenario"]), ["买家咨询商家"])
+
+    def test_merchant_platform_data_has_no_buyer(self):
+        data = crisp_mirror.merchant_platform_meta_data(
+            SimpleNamespace(public_id="JYMSHOP0001")
+        )
+
+        # merchant: 线程的访客就是商家，没有买家 → buyer_id 留空串（键仍存在）。
+        self.assertEqual(data["buyer_id"], "")
+        self.assertEqual(data["merchant_id"], "JYMSHOP0001")
+        self.assertEqual(data["thread"], "merchant")
+        self.assertEqual(data["scenario"], "商家咨询平台")
+
+    # ------------------------------------------------------------------
+    # patch_conversation_meta：只带有值的键
+    # ------------------------------------------------------------------
+    def test_patch_meta_omits_empty_keys(self):
+        self.assertFalse(crisp_mirror.patch_conversation_meta("session-x"))
+        self.patch_http.assert_not_called()
+
+        crisp_mirror.patch_conversation_meta("session-x", nickname="标题")
+        self.assertEqual(self.patch_http.call_args.args[1], {"nickname": "标题"})
+
+        crisp_mirror.patch_conversation_meta(
+            "session-x", data=self.DATA, segments=[]
+        )
+        self.assertEqual(self.patch_http.call_args.args[1], {"data": self.DATA})
+
+        # 只有空白的标签等于没传：不发请求、返回 False。
+        self.assertFalse(
+            crisp_mirror.patch_conversation_meta("session-x", segments=["  ", ""])
+        )
+        self.assertEqual(self.patch_http.call_count, 2)
+
+    def test_patch_meta_carries_all_fields_when_given(self):
+        self.assertTrue(
+            crisp_mirror.patch_conversation_meta(
+                "session-x",
+                nickname="标题",
+                email="a@b.test",
+                data=self.DATA,
+                segments=self.SEGMENTS,
+            )
+        )
+        self.assertEqual(
+            self.patch_http.call_args.args[1],
+            {
+                "nickname": "标题",
+                "email": "a@b.test",
+                "data": self.DATA,
+                "segments": self.SEGMENTS,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # 首次建会话 / 历史会话补写
+    # ------------------------------------------------------------------
+    @override_settings(**CONFIGURED)
+    def test_first_session_patches_data_and_segments(self):
+        responses = [{"data": {"session_id": "session-abc"}}, {}, {}]
+        with mock.patch.object(crisp_mirror, "_http_post", side_effect=responses):
+            mirror_message(
+                self.thread_key,
+                "merchant_visitor",
+                "演示店铺",
+                "首条消息",
+                None,
+                "701",
+                session_nickname="🟠 JYMSAHELWJBZT ➡️ JoyBuy客服",
+                session_data=self.DATA,
+                session_segments=self.SEGMENTS,
+            )
+
+        self.patch_http.assert_called_once()
+        self.assertEqual(
+            self.patch_http.call_args.args[1],
+            {
+                "nickname": "🟠 JYMSAHELWJBZT ➡️ JoyBuy客服",
+                "data": self.DATA,
+                "segments": self.SEGMENTS,
+            },
+        )
+        self.assertIn("session-abc", crisp_mirror._META_READY)
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_data_when_nickname_already_present(self):
+        """老会话：nickname 已对但没有 data → 只补 data/segments，不动标题。"""
+
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": "🟠 JYMSAHELWJBZT ➡️ JoyBuy客服"}}
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}) as http:
+            result = mirror_message(
+                self.thread_key,
+                "merchant_visitor",
+                "演示店铺",
+                "历史会话补 data",
+                None,
+                "702",
+                session_nickname="🟠 JYMSAHELWJBZT ➡️ JoyBuy客服",
+                session_data=self.DATA,
+                session_segments=self.SEGMENTS,
+            )
+
+        self.assertEqual(result["status"], STATUS_SENT)
+        self.assertEqual(http.call_count, 1)
+        self.patch_http.assert_called_once()
+        # 只补缺失的 data/segments：不重复带 nickname（避免无谓改写标题）。
+        self.assertEqual(
+            self.patch_http.call_args.args[1], {"data": self.DATA, "segments": self.SEGMENTS}
+        )
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_data_happens_once_then_cached(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {"data": {"nickname": "已有标题"}}
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}):
+            mirror_message(
+                self.thread_key, "merchant", "演示店铺", "第一条", None, "703",
+                session_data=self.DATA, session_segments=self.SEGMENTS,
+            )
+            mirror_message(
+                self.thread_key, "merchant", "演示店铺", "第二条", None, "704",
+                session_data=self.DATA, session_segments=self.SEGMENTS,
+            )
+
+        # 补写一次 + 进程内缓存命中 → 只 GET/PATCH 各一次。
+        self.assertEqual(self.get_http.call_count, 1)
+        self.patch_http.assert_called_once()
+        self.assertIn("session-old", crisp_mirror._META_READY)
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_skipped_when_data_and_segments_present(self):
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {
+            "data": {
+                "nickname": "已有标题",
+                "data": self.DATA,
+                "segments": self.SEGMENTS,
+            }
+        }
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}):
+            mirror_message(
+                self.thread_key, "merchant", "演示店铺", "第一条", None, "705",
+                session_data=self.DATA, session_segments=self.SEGMENTS,
+            )
+            mirror_message(
+                self.thread_key, "merchant", "演示店铺", "第二条", None, "706",
+                session_data=self.DATA, session_segments=self.SEGMENTS,
+            )
+
+        # 已齐全：零 PATCH；缓存后第二条消息不再 GET。
+        self.patch_http.assert_not_called()
+        self.assertEqual(self.get_http.call_count, 1)
+        self.assertIn("session-old", crisp_mirror._META_READY)
+
+    @override_settings(**CONFIGURED)
+    def test_backfill_data_without_segments_kept_is_patched(self):
+        """data 已写但 segments 空（或反之）也算缺 → 补一次。"""
+
+        CrispMirrorSession.objects.create(thread_key=self.thread_key, session_id="session-old")
+        self.get_http.return_value = {
+            "data": {"nickname": "已有标题", "data": self.DATA, "segments": []}
+        }
+        with mock.patch.object(crisp_mirror, "_http_post", return_value={}):
+            mirror_message(
+                self.thread_key, "merchant", "演示店铺", "补标签", None, "707",
+                session_data=self.DATA, session_segments=self.SEGMENTS,
+            )
+
+        self.patch_http.assert_called_once()
+        self.assertEqual(
+            self.patch_http.call_args.args[1], {"data": self.DATA, "segments": self.SEGMENTS}
+        )
+
+
 class CrispMirrorEndpointTests(TestCase):
     """真实接口接线：商家端 / 管理端发消息 → on_commit 后镜像。"""
 
@@ -875,10 +1117,23 @@ class CrispMirrorEndpointTests(TestCase):
         # 批次 AA（Q8）：merchant: 线程里商家是访客身份（from=user），不再是 operator。
         self.assertEqual(final_body["from"], "user")
         self.assertEqual(final_body["user"], {"type": "website", "nickname": "接口镜像店"})
-        # 线程的访客是商家 → 会话 meta 标题 = 「🟠 商家ID ➡️ JoyBuy客服」（2026-11-29 口径）。
+        # 线程的访客是商家 → 会话 meta 标题 = 「🟠 商家ID ➡️ JoyBuy客服」（2026-11-29 口径）；
+        # 结构化元数据同时写入（merchant: 线程没有买家 → buyer_id 留空）+ 场景标签。
         self.patch_http.assert_called_once()
         _meta_path, meta_body = self.patch_http.call_args.args
-        self.assertEqual(meta_body, {"nickname": f"🟠 {self.merchant.public_id} ➡️ JoyBuy客服"})
+        self.assertEqual(
+            meta_body,
+            {
+                "nickname": f"🟠 {self.merchant.public_id} ➡️ JoyBuy客服",
+                "data": {
+                    "thread": "merchant",
+                    "scenario": "商家咨询平台",
+                    "buyer_id": "",
+                    "merchant_id": self.merchant.public_id,
+                },
+                "segments": ["商家咨询平台"],
+            },
+        )
         self.assertEqual(CrispMirrorLog.objects.get().status, CrispMirrorLog.Status.SENT)
 
     @override_settings(**CONFIGURED)

@@ -397,6 +397,17 @@ class CrispMirrorWiringTests(MerchantChatTestBase):
         # 会话 meta 标题 = 🟢 买家昵称 ➡️ 🟠 商家ID（客服端 Inbox 只认这个）+ 邮箱。
         self.assertEqual(kwargs["session_nickname"], f"🟢 小明 ➡️ 🟠 {self.shop.public_id}")
         self.assertEqual(kwargs["session_email"], "chat-buyer@joybuy.test")
+        # 结构化元数据：bm 线程买家 + 商家都在，双方 public_id 都带上；场景打标签。
+        self.assertEqual(
+            kwargs["session_data"],
+            {
+                "thread": "bm",
+                "scenario": "买家咨询商家",
+                "buyer_id": self.buyer.public_id,
+                "merchant_id": self.shop.public_id,
+            },
+        )
+        self.assertEqual(kwargs["session_segments"], ["买家咨询商家"])
         message = MerchantChatMessage.objects.get()
         self.assertEqual(kwargs["message_id"], str(message.pk))
         message.refresh_from_db()
