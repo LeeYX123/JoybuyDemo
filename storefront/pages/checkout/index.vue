@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { navigateTo, useHead, useRoute } from '#imports'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
@@ -184,9 +184,65 @@ const mobileQuoteItems = computed(() =>
     title: item.title,
     quantity: item.quantity,
     line: formatMoney(Number(item.price) * item.quantity) ?? '—',
-    image: '',
+    image: metaFor(item)?.image || '',
   })),
 )
+
+// 展示层增强（2026-11-28）：支付页商品行带缩略图 + 规格——复用购物车同款
+// 模式：只读 GET /api/v1/products/:id，以 offer_public_id 对上行取规格。
+const productMeta = ref({}) // spu_public_id -> { image, specByOffer: { offerId: spec } }
+
+watch(
+  () => quote.value?.items,
+  async (items) => {
+    if (!Array.isArray(items) || !items.length) return
+    const spuIds = [...new Set(items.map((item) => item.spu_public_id).filter(Boolean))]
+    await Promise.all(
+      spuIds.map(async (spuId) => {
+        if (productMeta.value[spuId]) return
+        try {
+          const detail = await $fetch(`/api/v1/products/${spuId}`)
+          if (!detail) return
+          const specByOffer = {}
+          for (const sku of Array.isArray(detail.skus) ? detail.skus : []) {
+            if (sku?.offer?.public_id) specByOffer[sku.offer.public_id] = sku.specification || ''
+          }
+          productMeta.value = {
+            ...productMeta.value,
+            [spuId]: { image: detail.gallery?.[0]?.url || '', specByOffer },
+          }
+        } catch {
+          // 展示层增强失败不阻塞结算主流程
+        }
+      }),
+    )
+  },
+  { immediate: true },
+)
+
+function metaFor(item) {
+  return productMeta.value[item.spu_public_id] || null
+}
+
+function specFor(item) {
+  const raw = metaFor(item)?.specByOffer?.[item.offer_public_id]
+  if (!raw) return ''
+  let parsed = raw
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return parsed
+    }
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return Object.values(parsed)
+      .map((value) => String(value).trim())
+      .filter(Boolean)
+      .join(' / ')
+  }
+  return String(parsed)
+}
 const mobileSubtotalText = computed(() => formatMoney(quote.value?.subtotal) ?? '—')
 const mobileShippingText = computed(() =>
   quote.value?.shipping_method === 'FREE'
@@ -367,9 +423,36 @@ useHead({ title: 'Checkout' })
             <div class="pay-card">
               <h3>{{ t('checkout.items') }}</h3>
               <ul class="quote-items">
-                <li v-for="item in quote?.items || []" :key="item.offer_public_id">
-                  <span>{{ item.title }} × {{ item.quantity }}</span>
-                  <span>{{ formatMoney(Number(item.price) * item.quantity) }}</span>
+                <li
+                  v-for="item in quote?.items || []"
+                  :key="item.offer_public_id"
+                  class="quote-item"
+                >
+                  <NuxtLink class="quote-item__img-link" :to="`/p/${item.spu_public_id}`">
+                    <img
+                      v-if="metaFor(item)?.image"
+                      class="quote-item__img"
+                      :src="metaFor(item).image"
+                      :alt="item.title"
+                      width="72"
+                      height="72"
+                    />
+                    <span
+                      v-else
+                      class="quote-item__img quote-item__img--placeholder"
+                      aria-hidden="true"
+                    ></span>
+                  </NuxtLink>
+                  <div class="quote-item__body">
+                    <NuxtLink class="quote-item__name" :to="`/p/${item.spu_public_id}`">
+                      {{ item.title }}
+                    </NuxtLink>
+                    <p v-if="specFor(item)" class="quote-item__spec">{{ specFor(item) }}</p>
+                    <p class="quote-item__qty">Qty: {{ item.quantity }}</p>
+                  </div>
+                  <span class="quote-item__line">
+                    {{ formatMoney(Number(item.price) * item.quantity) }}
+                  </span>
                 </li>
               </ul>
             </div>
@@ -652,16 +735,83 @@ useHead({ title: 'Checkout' })
 .quote-items {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.quote-items li {
+/* 商品行（2026-11-28）：缩略图 + 标题/规格/数量 + 行小计，行间分隔线。 */
+.quote-item {
   display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.quote-item + .quote-item {
+  border-top: 1px solid #f0f1f3;
+}
+
+.quote-item__img-link {
+  flex: none;
+}
+
+.quote-item__img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border: 1px solid #eef0f2;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #f7f8fa;
+}
+
+.quote-item__img--placeholder {
+  display: block;
+}
+
+.quote-item__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.quote-item__name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #1a1a1a;
+  font-size: 14px;
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.quote-item__name:hover {
+  text-decoration: underline;
+}
+
+.quote-item__spec {
+  margin: 4px 0 0;
+  color: #999;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-item__qty {
+  margin: 6px 0 0;
+  color: #666;
+  font-size: 12px;
+}
+
+.quote-item__line {
+  flex: none;
+  align-self: center;
+  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  color: #1a1a1a;
 }
 
 .pay-methods {
