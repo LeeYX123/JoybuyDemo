@@ -155,12 +155,15 @@ function toggleWishlist() {
 }
 
 // 卡片【+】加购（2026-11-28 用户口径）：原来是跳详情页的 NuxtLink，现在直接
-// 加入购物车、**不跳转**。搜索接口的 item 不带 offer id，所以传 spu_public_id，
-// 由后端按当前市场解析最低价 ACTIVE Offer（与卡片 price_min 同口径）。
+// 加入购物车、**不跳转**。2026-11-29 修正：优先用后端算好的
+// ``cart_offer_public_id``（与卡片显示价 family_max_price 同口径），这样
+// 「卡上 $17.99、购物车 $16.99」的口径差消失；字段为空（后端没解析到可购
+// Offer）时才回退 ``spu_public_id``，由后端按当前市场最低价 ACTIVE Offer 处理。
 // 状态机：idle → adding（禁用、「加入中」）→ added（✓，1.5s 回落 idle）；
 // 失败回 idle 并 toast（白名单拦截用既有 gate 文案，其它用通用失败文案）。
 // 用 useCartActions（只写不读）——每张卡都调 useCart() 会各自发一次
 // key='cart' 的读请求，SSR 下每个子请求都会新建匿名购物车。
+const cartOfferPublicId = computed(() => String(props.product.cart_offer_public_id || ''))
 const { addItem } = useCartActions()
 const { show: showToast } = useUiToast()
 const addState = ref('idle')
@@ -171,7 +174,12 @@ async function addToCart() {
   addState.value = 'adding'
   let response
   try {
-    response = await addItem({ spu_public_id: spuPublicId.value }, 1)
+    response = await addItem(
+      cartOfferPublicId.value
+        ? { offer_public_id: cartOfferPublicId.value }
+        : { spu_public_id: spuPublicId.value },
+      1,
+    )
   } catch {
     response = null
   }

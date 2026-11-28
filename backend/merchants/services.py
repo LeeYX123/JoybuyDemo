@@ -461,12 +461,15 @@ def auto_suspend_overdue_merchants(*, now=None) -> list:
 
     判定口径：接单中（ACTIVE）商家存在【待处理】商家子单，且该子单
     下单时间距当前超过该店设置的【订单未处理自动封店天数】→ 自动封店。
+    父单已取消（``Order.Status.CANCELED``）的子单不算商家超时——买家侧已无
+    取消入口、历史未付款单统一转取消，若仍计入会误封商家（与商家端订单列表/
+    待处理/管理端封店预检同口径）。
     ``ban_after_days`` 为空的商家不参与自动封店。信誉分清零不触发本逻辑。
     """
 
     from datetime import timedelta
 
-    from orders.models import MerchantOrder
+    from orders.models import MerchantOrder, Order
 
     now = now or timezone.now()
     suspended = []
@@ -476,11 +479,16 @@ def auto_suspend_overdue_merchants(*, now=None) -> list:
     )
     for merchant in merchants:
         cutoff = now - timedelta(days=merchant.ban_after_days)
-        overdue = MerchantOrder.objects.filter(
-            merchant=merchant,
-            status=MerchantOrder.Status.PENDING,
-            created_at__lt=cutoff,
-        ).exists()
+        overdue = (
+            MerchantOrder.objects.filter(
+                merchant=merchant,
+                status=MerchantOrder.Status.PENDING,
+                created_at__lt=cutoff,
+            )
+            # 取消父单不算商家超时（2026-11-29）。
+            .exclude(order__status=Order.Status.CANCELED)
+            .exists()
+        )
         if not overdue:
             continue
         locked = Merchant.objects.select_for_update().get(pk=merchant.pk)

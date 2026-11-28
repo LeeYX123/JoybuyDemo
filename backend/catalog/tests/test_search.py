@@ -7,7 +7,7 @@ from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from catalog.models import ProductSearchDocument, Spu
+from catalog.models import ProductSearchDocument, Spu, VariantFamily, VariantFamilyMember
 from catalog.product_services import (
     get_or_create_sku_from_source,
     get_or_create_spu_from_source,
@@ -267,6 +267,116 @@ class SearchServiceTests(SearchFixtureBase):
             "/media/products/original/aa/aa/pictured.webp",
         )
         self.assertLessEqual(len(queries), 5)
+
+
+class CartOfferPriceTests(SearchFixtureBase):
+    """卡片【+】加购价必须与卡片显示价一致（2026-11-29）。
+
+    搜索卡显示 ``family_max_price``（族内最高价），但历史实现【+】只传
+    ``spu_public_id``，后端加的是本 SPU 最低价。新字段 ``cart_offer_public_id``
+    把「显示价对应的可购买 Offer」提前解析好（每页 1–2 条批量查询）。
+    """
+
+    def seed_family(self):
+        """代表 SPU 便宜（16.99），族内另一个成员贵（17.99）→ 卡片显示 17.99。"""
+        cheap = self.seed_product(
+            source_id="family-cheap",
+            title="Family Rep Cheap",
+            price="16.99",
+            category=self.phones,
+        )
+        pricier = self.seed_product(
+            source_id="family-pricier",
+            title="Family Member Pricier",
+            price="17.99",
+            category=self.phones,
+        )
+        family = VariantFamily.objects.create(
+            family_key="title:test-family",
+            kind=VariantFamily.Kind.TITLE,
+            representative_spu=cheap.spu,
+            confidence=VariantFamily.Confidence.HIGH,
+            member_count=2,
+        )
+        for spu, is_rep, sort_order in ((cheap.spu, True, 0), (pricier.spu, False, 1)):
+            VariantFamilyMember.objects.create(
+                family=family,
+                spu=spu,
+                sku=spu.skus.first(),
+                offer=Offer.objects.filter(sku__spu=spu).first(),
+                is_representative=is_rep,
+                sort_order=sort_order,
+            )
+        # 族建成后刷新两个文档的族字段（family_max_price / 代表标记）。
+        rebuild_search_document(cheap.spu, market=self.market)
+        rebuild_search_document(pricier.spu, market=self.market)
+        return cheap, pricier
+
+    def test_cart_offer_public_id_follows_family_max_price(self):
+        cheap, pricier = self.seed_family()
+
+        result = search_documents(market=self.market, category=self.phones)
+        items = {item["spu_public_id"]: item for item in result["items"]}
+        card = items[str(cheap.spu.public_id)]
+        self.assertEqual(card["price_min"], "16.9900")
+        self.assertEqual(card["family_max_price"], "17.9900")
+
+        # 加购 Offer 是显示价 17.99 那件（族内成员），不是本 SPU 最低价 16.99。
+        offer = Offer.objects.get(public_id=card["cart_offer_public_id"])
+        self.assertEqual(offer.current_price, Decimal("17.9900"))
+        self.assertEqual(offer.sku.spu_id, pricier.spu_id)
+
+    def test_non_family_item_cart_offer_is_lowest_price(self):
+        document = self.seed_product(
+            source_id="plain",
+            title="Plain Standalone",
+            price="9.50",
+            category=self.electronics,
+        )
+        result = search_documents(market=self.market, category=self.electronics)
+        item = next(
+            row for row in result["items"] if row["spu_public_id"] == str(document.spu.public_id)
+        )
+        self.assertIsNone(item["family_max_price"])
+        offer = Offer.objects.get(public_id=item["cart_offer_public_id"])
+        self.assertEqual(offer.current_price, Decimal("9.5000"))
+        self.assertEqual(offer.sku.spu_id, document.spu_id)
+
+    def test_inactive_family_max_offer_falls_back_to_lowest_price(self):
+        cheap, pricier = self.seed_family()
+        # 族内最高价那件下架（不重建文档：卡片仍显示 17.99，模拟索引快照）。
+        Offer.objects.filter(sku__spu=pricier.spu).update(status=Offer.Status.INACTIVE)
+
+        result = search_documents(market=self.market, category=self.phones)
+        item = next(
+            row for row in result["items"] if row["spu_public_id"] == str(cheap.spu.public_id)
+        )
+        self.assertEqual(item["family_max_price"], "17.9900")
+        # 回退本 SPU 最低价，仍能加购（不报错、不回空）。
+        self.assertNotEqual(item["cart_offer_public_id"], "")
+        offer = Offer.objects.get(public_id=item["cart_offer_public_id"])
+        self.assertEqual(offer.current_price, Decimal("16.9900"))
+        self.assertEqual(offer.sku.spu_id, cheap.spu_id)
+
+    def test_cart_offer_lookup_is_batched_per_page(self):
+        for index in range(25):
+            self.seed_product(
+                source_id=f"batch-{index}",
+                title=f"Batch Product {index:02d}",
+                price=f"{index + 1}.00",
+                category=self.electronics,
+            )
+        # 预热 ContentType 缓存等一次性查询，再比较 24 张卡与 1 张卡的查询数。
+        search_documents(market=self.market, sort="price_asc", page=1)
+        with CaptureQueriesContext(connection) as page_one:
+            result = search_documents(market=self.market, sort="price_asc", page=1)
+        with CaptureQueriesContext(connection) as page_two:
+            tail = search_documents(market=self.market, sort="price_asc", page=2)
+        self.assertEqual(len(result["items"]), 24)
+        self.assertEqual(len(tail["items"]), 1)
+        # 与页大小无关：24 张卡与 1 张卡查询数相同（固定 1 条 Offer 批量查询）。
+        self.assertEqual(len(page_one), len(page_two))
+        self.assertTrue(all(item["cart_offer_public_id"] for item in result["items"]))
 
 
 @unittest.skipUnless(connection.vendor == "mysql", "EXPLAIN plan shape is MySQL-specific")

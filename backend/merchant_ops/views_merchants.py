@@ -105,6 +105,8 @@ def _overdue_pending_info(merchant, days: int) -> dict:
             status=MerchantOrder.Status.PENDING,
             created_at__lt=cutoff,
         )
+        # 2026-11-29：父单已取消的子单不算商家超时（与商家端订单列表/待处理同口径）。
+        .exclude(order__status=Order.Status.CANCELED)
         .order_by("created_at")
         .values_list("created_at", flat=True)
         .first()

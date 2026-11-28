@@ -92,12 +92,6 @@ useHead(() => ({
             </span>
             <b class="shop-product-card__price-row">
               <span class="shop-product-card__price">{{ formatDisplayPrice(product.price) }}</span>
-              <!-- 商家页加购在价格右侧（真站商家店铺页口径，2026-11-27）；整卡仍可点进详情。 -->
-              <span class="shop-product-card__add" :aria-label="t('detail.addToCart')">
-                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                  <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
-                </svg>
-              </span>
             </b>
           </NuxtLink>
         </div>
@@ -281,18 +275,5 @@ useHead(() => ({
 .shop-product-card__price {
   color: #e1251b;
   font-size: 15px;
-}
-
-/* 商家页加购按钮：价格行右端（真站商家店铺页口径）。 */
-.shop-product-card__add {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: #f5f5f5;
-  color: #1a1a1a;
 }
 </style>

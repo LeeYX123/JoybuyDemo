@@ -315,6 +315,8 @@ def search_documents(
         localize_locale=localize_locale,
         localize_market=localize_market,
     )
+    # 卡片【+】要加购与卡片显示价一致的 Offer（每页固定 1–2 条查询，见函数注释）。
+    cart_offer_ids = _cart_offer_public_ids(rows, market=market)
     return {
         "market": market.code,
         "locale": locale_code,
@@ -330,6 +332,7 @@ def search_documents(
                 row,
                 image_path=image_paths.get(row.spu_id, ""),
                 title=localized_titles.get(row.spu_id),
+                cart_offer_public_id=cart_offer_ids.get(row.spu_id, ""),
             )
             for row in rows
         ],
@@ -363,6 +366,115 @@ def _first_gallery_images(rows: list[ProductSearchDocument]) -> dict[int, str]:
     return result
 
 
+def _cart_offer_public_ids(rows: list[ProductSearchDocument], *, market) -> dict[int, str]:
+    """本页每张卡【+】应加购的 Offer（与卡片显示价同一口径，2026-11-29）。
+
+    卡片显示价 = ``family_max_price``（同款族内最高价），缺失回退 ``price_min``；
+    历史实现里【+】只传 ``spu_public_id``，后端取本 SPU 最低价，于是「卡上
+    $17.99、购物车 $16.99」。这里为每个 item 预先解析出「显示价对应的可购买
+    Offer」：
+
+    * 本 SPU 有 ACTIVE + 有库存 + ``current_price == 显示价`` 的 Offer → 用它；
+    * 否则按 ``family_key`` 到族内成员里找同样价格条件的 Offer（优先本 SPU）；
+    * 仍找不到（族内最高价那件已下架/无库存）→ 回退本 SPU 最低价的可购买
+      Offer（与 ``cart.services._offer_for_spu`` 同序：价格升序、pk 升序）；
+    * 连可购买 Offer 都没有 → 空串（前端回退传 ``spu_public_id`` 由后端处理）。
+
+    性能：全页固定 1 条 Offer 查询；只有存在「显示价不在本 SPU」的族卡时
+    再加 1 条族内 Offer 查询（JOIN family_key，与页大小无关，绝无 per-item 查）。
+    """
+
+    if not rows or market is None:
+        return {}
+    from offers.models import Offer
+
+    spu_ids = {row.spu_id for row in rows}
+    own_offers: dict[int, list[dict]] = {}
+    for offer in Offer.objects.filter(
+        sku__spu_id__in=spu_ids, market=market, status=Offer.Status.ACTIVE
+    ).values(
+        "pk",
+        "public_id",
+        "current_price",
+        "local_inventory",
+        "source_availability",
+        "sku__spu_id",
+    ):
+        own_offers.setdefault(offer["sku__spu_id"], []).append(offer)
+
+    def purchasable(offer) -> bool:
+        return (
+            offer["local_inventory"] >= 1
+            and offer["source_availability"] != Offer.SourceAvailability.UNAVAILABLE
+        )
+
+    def best(offers: list[dict]) -> dict:
+        return min(offers, key=lambda offer: (offer["current_price"], offer["pk"]))
+
+    resolved: dict[int, str] = {}
+    # family_key -> 该族卡的显示价（族内最高价）与所属 SPU。
+    pending_families: dict[str, tuple] = {}
+    for row in rows:
+        display_price = row.family_max_price if row.family_max_price is not None else row.min_price
+        own = own_offers.get(row.spu_id, [])
+        matched = [
+            offer
+            for offer in own
+            if display_price is not None
+            and offer["current_price"] == display_price
+            and purchasable(offer)
+        ]
+        if matched:
+            resolved[row.spu_id] = str(min(matched, key=lambda offer: offer["pk"])["public_id"])
+        elif row.family_key:
+            pending_families[row.family_key] = (display_price, row.spu_id)
+
+    if pending_families:
+        family_offers: dict[tuple, list[dict]] = {}
+        offers = Offer.objects.filter(
+            sku__spu__variant_family_memberships__family__family_key__in=set(pending_families),
+            market=market,
+            status=Offer.Status.ACTIVE,
+            current_price__in={
+                price for price, _spu_id in pending_families.values() if price is not None
+            },
+        ).values(
+            "pk",
+            "public_id",
+            "current_price",
+            "local_inventory",
+            "source_availability",
+            "sku__spu_id",
+            "sku__spu__variant_family_memberships__family__family_key",
+        )
+        for offer in offers:
+            key = (
+                offer["sku__spu__variant_family_memberships__family__family_key"],
+                offer["current_price"],
+            )
+            family_offers.setdefault(key, []).append(offer)
+        for family_key, (display_price, spu_id) in pending_families.items():
+            candidates = [
+                offer
+                for offer in family_offers.get((family_key, display_price), [])
+                if purchasable(offer)
+            ]
+            if not candidates:
+                continue
+            own_candidates = [offer for offer in candidates if offer["sku__spu_id"] == spu_id]
+            chosen = min(own_candidates or candidates, key=lambda offer: offer["pk"])
+            resolved[spu_id] = str(chosen["public_id"])
+
+    for row in rows:
+        if row.spu_id in resolved:
+            continue
+        # 回退：本 SPU 最低价的可购买 Offer（price_min / cart._offer_for_spu 同口径）。
+        fallback = [offer for offer in own_offers.get(row.spu_id, []) if purchasable(offer)]
+        if fallback:
+            resolved[row.spu_id] = str(best(fallback)["public_id"])
+    return resolved
+
+
 def retail_price_text(spu) -> str | None:
     """后台零售价（``Spu.retail_price``）的字符串口径：与 ``price_min`` 一致。
 
@@ -376,7 +488,11 @@ def retail_price_text(spu) -> str | None:
 
 
 def serialize_search_row(
-    row: ProductSearchDocument, *, image_path: str = "", title: str | None = None
+    row: ProductSearchDocument,
+    *,
+    image_path: str = "",
+    title: str | None = None,
+    cart_offer_public_id: str = "",
 ) -> dict:
     detail = None
     try:
@@ -405,6 +521,9 @@ def serialize_search_row(
         "family_max_price": (
             str(row.family_max_price) if row.family_max_price is not None else None
         ),
+        # 卡片【+】应加购的 Offer（2026-11-29）：与上面卡片显示价同口径。
+        # 空串 = 本页没解析到可购买 Offer，前端回退传 ``spu_public_id``。
+        "cart_offer_public_id": cart_offer_public_id,
     }
 
 
@@ -494,6 +613,8 @@ def recommendation_documents(
         localize_locale=localize_locale,
         localize_market=localize_market,
     )
+    # 卡片【+】要加购与卡片显示价一致的 Offer（每页固定 1–2 条查询，见函数注释）。
+    cart_offer_ids = _cart_offer_public_ids(rows, market=market)
     return {
         "market": market.code,
         "locale": locale_code,
@@ -507,6 +628,7 @@ def recommendation_documents(
                 row,
                 image_path=image_paths.get(row.spu_id, ""),
                 title=localized_titles.get(row.spu_id),
+                cart_offer_public_id=cart_offer_ids.get(row.spu_id, ""),
             )
             for row in rows
         ],

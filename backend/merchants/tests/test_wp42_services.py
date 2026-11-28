@@ -150,6 +150,21 @@ class AutoSuspendTests(TestCase):
         MerchantOrder.objects.filter(pk=order.pk).update(status=MerchantOrder.Status.SHIPPED)
         self.assertEqual(auto_suspend_overdue_merchants(), [])
 
+    def test_canceled_parent_order_not_counted(self):
+        """2026-11-29：父单已取消的子单不算商家超时（自动封店 + 封店预检同口径）。"""
+
+        from merchant_ops.views_merchants import _overdue_pending_info
+
+        self._make_pending_order(days_ago=30)
+        Order.objects.filter(pk=self.buyer_order.pk).update(status=Order.Status.CANCELED)
+
+        info = _overdue_pending_info(self.merchant, 4)
+        self.assertFalse(info["overdue"])
+        self.assertIsNone(info["overdue_days"])
+        self.assertEqual(auto_suspend_overdue_merchants(), [])
+        self.merchant.refresh_from_db()
+        self.assertEqual(self.merchant.onboarding_status, Merchant.OnboardingStatus.ACTIVE)
+
 
 class PublicMerchantApiTests(TestCase):
     def setUp(self):
