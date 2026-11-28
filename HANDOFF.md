@@ -2,6 +2,36 @@
 
 > 本文档是新会话的第一入口。每次任务结束前必须更新；详细纪律见 `AGENTS.md`。
 
+## 0pk. 管理端可搜索下拉框（AppPicker）全站改造（2026-11-28，✅ 完成，未 commit）
+
+- **用户要求**：admin-web 所有涉及输入「商家 / 用户 / 商品」的输入框全部改成可搜索下拉框（combobox），支持按 ID 和名称查询，下拉项同时显示名称与 ID 全号（商品 UUID 36 位整号不截断）。只动 admin-web 与其依赖的后端 admin 查询（merchant-web 由另一并行会话处理，未触碰）。
+- **组件**：新增 `admin-web/src/components/AppPicker.vue`（App* 惯例命名）。API：props `modelValue`（单选=ID 字符串 / `multiple` 时 ID 数组）、`fetcher(q,page)`（调用方注入端点，返回 `{items,page,total,has_next}`）、`optionLabel/optionId/optionMeta`、`placeholder/disabled/clearable/initialItems/pageSize/emptyText/inputId`；emits `update:modelValue` + `change(option|null)`。行为：输入 300ms 防抖远程搜索（服务端分页，`加载更多`按钮，商品池 2.3 万不拉全量）、下拉项两行=名称+ID 全号（word-break 不截断）、键盘↑↓/Enter/Esc、点击外部关闭、清空按钮、加载/空/错误态、多选 chips（名称+UUID 换行不截断，× 移除，顺序=选择顺序）。**定位用 `Teleport to body` + fixed（触发器 getBoundingClientRect，scroll 捕获阶段+resize 实时重算，空间不足自动上翻，z-index 90）**——任务书原建议「外层 relative + absolute」在 AppModal/AppDrawer 的 `overflow-y:auto` 滚动容器里必被裁切，故改 Teleport 方案；实测弹窗内下拉溢出 body 边界正常渲染、不被裁切。
+- **改造接入（17 处）**——表单 9 处：AutoOrdersView 向导步骤1买家/步骤2商家/步骤3商品（搜索框+卡片候选→AppPicker+已选摘要卡，提交 account_id/merchant_id/offer_id 不变，唯一规格自动选中逻辑保留）、NotificationsView 推送弹窗选店铺+选店铺订单（订单项 label=订单号·商品，meta=买家·金额；好评标题自动回填保留）、FinanceView 新建钱包充值选商家（meta=钱包余额）、SupportView 发起客服会话选店铺、CatalogView 库存调整「销售报价公开标识」裸 ID 输入（新端点，见下）、ActivityPagesView 楼层选品（multiple，chips 种子来自 section.products，PUT products 契约不变）；单实体列表筛选 8 处：MerchantsView/BuyersView/ProductPoolView/ActivityProductsView/DepositsView/GrowthView/MerchantListingsView×2（商家+商品）——**选中即按该实体 ID 过滤列表**（@change 自动 load），绑定值直接复用原 `state.q`/`merchantQuery`/`productQuery`（后端 q 已支持编号）。**混合域筛选保留自由文本**（AutoOrdersView 列表「商品/买家/商家」、FinanceView 提现「商家/收款人/卡号」、MerchantOrdersView、AfterSalesView、SupportView 会话筛选、NotificationsView 列表、CatalogView search-documents、ReviewsView）：这些输入域含非实体字段（卡号/单号/问题描述），不能收敛为单实体下拉，但后端 q 已补编号匹配。只读展示处未动。
+- **后端改动（零迁移，只改查询逻辑 + 1 个只读新端点）**：① q 匹配扩展（名称外追加编号 LIKE）：`/merchants`、`/buyers/accounts`、`/products`（部分 UUID icontains）、`/merchant-options`、`/notifications/merchants`、`/notifications/orders`（精确→icontains，部分订单号可搜）、`/finance/merchants`、`/deposits`（**修了占位提示「店铺 ID」实际搜不到的旧缺陷**）、`/finance/withdrawals`、`/growth`（同修）、`/auto-orders` 列表（买家/商家编号）、`/auto-orders/options`（SPU UUID）、`/orders` 商家订单、`/service` 售后、`/support/conversations`。② **新增** `GET /api/v1/admin/offers`（`common/admin_views.py` `AdminOfferSearchView` + `config/urls.py` 路由）：报价搜索（报价 UUID 整号/部分号+商品标题子查询+商家名称/编号），分页 meta 带 has_next，`view_permissions=["offers.manage"]`（无 offers.view 权限码），供 CatalogView 库存调整下拉。
+- **踩坑与修复**：① AppPicker 初版 `onInput` 没把 DOM 输入值同步回 `query`（受控 `:value=displayText`），导致搜索词永远是空串——已修（`query.value = event.target.value`），**改动受控输入时必须同步 DOM 值**。② Playwright `fill("")` 对该受控输入偶发不触发（真用户键盘清空正常），自动化测试清空输入用 Ctrl+A+Backspace。③ AppPicker 打开时必拉第一页（不复用上次关键字结果）；换商家/店铺后由调用方清空下游选择（NotificationsView 清 productId、AutoOrders 清 product/offerId）。
+- **快照**：改动的全部 28 个文件已快照到 `var/admin_pickers_20261128/backup/`（目录结构与仓库根一致 + README 恢复说明），防并行会话回滚。**仓库里 AppModal.vue/CrawlersView.vue/catalog/models.py 等是其它会话的未 commit 改动，不在本快照内。**
+- **验证（按验证纪律仅针对性验证）**：
+  * 后端：`manage.py test merchant_ops.tests.test_admin_picker_search --keepdb` → **Ran 18 tests, OK**（部分 JYM/JYU 编号、部分/整 UUID、offers 新端点命中+403、排除兜底/草稿店铺）；ruff 改动文件过（`common/admin_views.py` 有一处 **pre-existing** F821 CrawlerAccount 未定义——stash 验证 HEAD 上就存在，非本次引入）；`manage.py check` 0 issue。
+  * 前端：`npx vite build` exit 0；改动 14 个 vue 文件 + admin.css eslint 0 error 0 warning、prettier 全过。
+  * 浏览器（5173 超管 lshm2026admin@qq.com，1440×900）逐点实测：MerchantsView 筛选（整号 JYM2XG3RN5AO0 精确命中→选中列表过滤 1 行→清空恢复 20 行；部分号 2XG3RN、名称 POWCAN 命中；下拉项=名称+JYM 全号+加载更多）；FinanceView 充值弹窗（AppModal 内搜索 HOMCOM 双结果、**下拉 Teleport 到 body 不被弹窗裁切**、选中回填、未提交真实保存）；NotificationsView 好评推送（店铺+店铺订单两级、部分订单号 ID26B0 精确命中、选中自动填标题，未发送）；SupportView 发起会话（未创建）；BuyersView（部分号 2Z6EROUWBE 命中→过滤 1 行）；DepositsView/GrowthView（名称+编号+meta 命中→过滤）；ProductPoolView（默认 20 候选+加载更多→40、部分 UUID 前缀 e6c123da 唯一命中、点外部关闭）；ActivityProductsView（候选跟随活动页签、选中过滤）；MerchantListingsView（商家编号过滤 1 行+商品名称搜索叠加过滤）；CatalogView 库存调整（3.4 万报价中部分 UUID 唯一命中、名称/商家可搜、44px 对齐、**未执行调整**）；AutoOrdersView 向导 1→4 步全链路（买家邮箱搜索、商家、商品搜索+已选卡、唯一规格自动选中、底栏摘要正确，**未创建任务**）；ActivityPagesView 多选（6 个已选 chips 回显名称+全 UUID、搜索追加→7、× 移除→6、**未保存选品**）；Esc 可关下拉。全部 13 个改动页面 console error = 0。**所有涉及保存的链路都只验证到提交前一步，无任何数据写入。**
+  * 环境：8000 后端被仓库 watcher 自动重启过一次（我的手工 `runserver --noreload` 后台任务因端口被占而退出——**改后端文件后 watcher 会自动重启，不必手工重启**；核对方式 `curl /api/v1/admin/offers` 应 401 非 404）。
+- **遗留**：① 混合域筛选（见上）仍是自由文本，如用户也要下拉化需再拆分设计；② AppPicker 单选回填是单行 input，超长名称靠 input 原生横向滚动（下拉项/chips 全文不截断）；③ ProductPoolView 等筛选改造后原「回车直接搜列表」变为「回车选中下拉项」，如需保留回车=自由文本搜索可加 freeText 模式；④ HANDOFF 旧节 0ap2/0pg 的相关约束（活动商品页列结构、prod 索引 staged 包）继续有效。
+
+## 0pg. 商品池/活动商品慢查询产线实锤 + 修复包备料（2026-11-28，✅ 诊断+备料完成；**staged 未 commit，等用户批准执行**）
+
+- **任务**：用户反馈产线管理端【商品池管理】【活动商品管理】查询慢；产线地面真值实锤根因 + 备好只含性能修复的 staged 提交。全程只读（未改 prod DB / 未 commit / 未 push / 未重启）。
+- **根因实锤（两个未提交改动叠加缺失，prod 只拉 git 所以两样都没有）**：
+  1. 3 个列表索引未提交：prod `SHOW INDEX FROM spu` 无 `spu_created_id_idx/spu_status_created_idx/spu_activity_created_idx`；prod catalog 迁移只应用到 **0022**（showmigrations 实核，0023/0024/0025 不存在）。
+  2. **`views_catalog.py` 列表查询优化也未提交**（任务书最初只点了索引；实测 prod 后修正）：prod 文件 line178 仍 `select_related("local_category","detail")`、line208 仍无条件 `distinct()` → `SELECT DISTINCT 全列（含 spu_detail 191.7MB JSON）` 把 22,975 行整行塞临时表去重+filesort。
+- **prod 实测（MySQL 8.4.11，EXPLAIN ANALYZE；原始证据 `var/perf_prod_20261128/prod_evidence/`）**：池默认页 SQL **4,507/6,180/5,435ms**（冷 11.5s，`spu type=ALL key=NULL Using temporary; Using filesort`）、第 2 页 4,562ms、深页 OFFSET2000 4,070ms、page_size=100 4,251ms、status=ACTIVE 4,604ms、q=coffee 138-282ms、活动 tab 61-106ms、每页 COUNT 146-486ms；一次请求 ≈ **5-7 秒/页**。排除项：RTT 0.947ms/查询（非瓶颈）、COUNT 是第二瓶颈、join 表索引正常、22,975 行纯扫描不慢（去 DISTINCT 轻列形态实测 32ms 证明）。prod 口径：22,975 SPU / ACTIVE 22,585 / 活动 166 / q=coffee 306。prod git `5f59057` 干净。
+- **预期效果**（dev after.json + prod 同形状实测）：列表 SQL 个位 ms（反向索引扫描）、COUNT 26-35ms、q 子查询形态 116-126ms（LIKE '%..%' 不可走索引属遗留，dev 同结论勿加覆盖索引）。
+- **备料（staged 未 commit，`var/perf_prod_20261128/`）**：恰 3 文件——`models.py`（仅 3 索引 Meta，+12 行，零 i18n 泄漏）、`views_catalog.py`（仅 10 个性能 hunk，剔除了 2 处「可搜索下拉框」特性位，零 picker 泄漏）、`0025_spu_admin_list_indexes.py`（**dependencies 改 0022**，用 hash-object+update-index 入 index，工作区那份 dep-0024 版留给 i18n 会话未动）。staged 版 = 工作区减去 i18n/picker，逐字节断言（`build_staged_patch.py` 可重跑）。
+- **自检（临时 worktree HEAD+staged patch，隔离主工作区）**：`makemigrations --check` No changes detected；`sqlmigrate catalog 0025` = 恰 3 条 CREATE INDEX（纯增量 DDL）；queryset 形态探针 4 场景全部 no-DISTINCT/无 spu_detail join/q 子查询。**隔离 fresh 测试库跑 94 测试未能执行**：dev MySQL 用户无建库权限（1044 Access denied on test_test_stagecheck/test_joybuy_stagecheck），共享 test_joybuy 已带 i18n schema（name_ja NOT NULL）漂移 → staged 模型插入报 1364，属测试库漂移非代码问题，未动共享测试库；等价证据链 = 同内容代码在 perf 会话 94/94 + verify_equivalence 10 场景。
+- **执行清单（待批准，详见 `var/perf_prod_20261128/README.md`）**：commit（3 文件）→ push → 服务器 `git pull --ff-only` → mysqldump `--single-transaction` 备份 → `migrate catalog`（应只 Applying 0025）→ 重启 joybuy-api（保险）→ SHOW INDEX/EXPLAIN 复测 + 管理端实测 → 数字回写本小节。
+- **坑（不得再踩）**：①str(qs.query) 生成的 SQL 参数不带引号（LIKE %coffee% 语法错）——捕获真实 SQL 必须用 CaptureQueriesContext 执行查询捕获；②prod spu_detail 无独立 id 列（OneToOne 主键即 spu_id），手写对比 SQL 别选 spu_detail.id；③并行会话推进了本地 HEAD（53f8272→c18c5af，支付页 icon 链），但与本次 3 文件无交集（`git diff 53f8272..HEAD -- <3路径>` 为空），staged 仍干净；④i18n 链将来入库必须把其 0025 改名（如 0027 且 dep 0024），避免与已入库的 0022-dep 版同名冲突；⑤`git apply --cached` 会整文件原子失败不落半截，先 `--check` 再 apply。
+- **产物**：`var/perf_prod_20261128/`（README=执行清单、diagnosis_report=前后对照表+排除项、build_staged_patch.py、staged/*.patch + 0025(0022-dep) + 0001 全量导出、prod_evidence/=prod 只读原证）。恢复：index 被并行会话清掉时 `git apply --cached var/perf_prod_20261128/staged/0001-perf-spu-admin-list.patch` 一键重放。
+
+
 ## 0ap2. 活动商品管理列表列对齐商品池（2026-11-28，✅ 完成，未 commit）
 
 - **用户要求**：活动商品管理的列表展示与商品池管理一致，但**去掉【编辑】【下架】按钮与【商家数】列**，同样展示**图片 / 商品名称 / 商品 SPU id**。
@@ -427,6 +457,14 @@
 - 汽车 8 条未迁移（fashion 6：车衣/CarPlay 转接/车载支架/雨刷；safety 2：千斤顶/破窗器），列在报告里。
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
+
+## 0d1a. 未登录访问 /account/* 直接 302 回登录页（2026-11-28，✅ 已提交 e14225a 并推送）
+
+- 用户要求：未登录打开 `http://127.0.0.1:3000/account` 直接重定向回登录页（旧行为是渲染 `.profile-signed-out` 登录提示卡）。
+- 实现：新增全局路由中间件 `storefront/middleware/account-auth.global.js` —— `to.path` 以 `/account` 开头且 `isAuthenticated` 为假时 `navigateTo('/auth/login', { redirectCode: 302 })`。SSR 与 SPA 导航都生效；会话由既有 `buyer-session.server.js` 插件在渲染前 await，中间件里 `isAuthenticated` 是首帧可靠值，**零额外请求**。
+- 验证（curl + 浏览器双路）：匿名 `curl -I /account` → **302 + `location: /auth/login`**（`/account/orders` 同样 302）；m.localhost 手机 host 同样 302；登录页本身不受影响（200）。浏览器里带登录态 cookie 打开 `/account` 正常进入（`profile-signed-out` 卡不再出现）。
+- 提交时注意：`e14225a` 把并行会话的 `catalog/0025` 索引迁移、`views_catalog.py` 等一起带进去了（git add 时它们已在暂存区），commit message 只写了本任务 —— 内容正确但口径不纯，下次并行改动多时**逐文件 add**。
+- 回滚：`git revert e14225a` 或删 `storefront/middleware/account-auth.global.js`（注意会连带 revert 0025 迁移等并行文件，需按段落摘除）。
 
 ## 0d0z. 立即购买结账页去掉「单独购买」提示条（2026-11-28，✅ 已提交 d2a3adc 并推送）
 
