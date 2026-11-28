@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 
 import { useLocale } from '../composables/useLocale'
+import { noAutofill } from '../utils/noAutofill'
 
 // 页脚 1:1 复刻真站 footer_jdiFooter（需求 12.1，实测见
 // var/footer_rework_20261119/measurement.md）：
@@ -151,7 +152,7 @@ function subscribe() {
                 type="email"
                 name="email"
                 :placeholder="t('footer.emailPlaceholder')"
-                autocomplete="email"
+                v-bind="noAutofill"
               />
               <button class="footer-middle__subscribe" type="submit">
                 {{ t('footer.subscribe') }}
@@ -489,15 +490,21 @@ function subscribe() {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
+  gap: 12px;
   padding-block: var(--space-5);
   font-size: var(--font-size-sm);
 }
 
+/* 2026-11-28（用户拍板）：icon 统一 38x24、圆角白卡外框、间距 12px */
 .footer-support__icon {
   display: block;
+  width: 38px;
   height: 24px;
-  width: auto;
+  object-fit: contain;
+  padding: 2px 3px;
+  border: 1px solid #e6e8ec;
+  border-radius: 4px;
+  background: #fff;
 }
 
 /* © 行 + 法规段落 */
