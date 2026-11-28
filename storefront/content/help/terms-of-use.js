@@ -159,14 +159,14 @@ const en = [
       },
       {
         t: 'Privacy Policy',
-        href: 'https://www.joyfumi.com/help/privacy-policy',
+        href: '/pages/privacy-policy',
       },
       {
         t: ' and ',
       },
       {
         t: 'Cookie Policy',
-        href: 'https://www.joyfumi.com/help/cookie-policy',
+        href: '/pages/cookie-policy',
       },
       {
         t: '.',
@@ -622,14 +622,14 @@ const zh = [
       },
       {
         t: '隐私政策',
-        href: 'https://www.joyfumi.com/help/privacy-policy',
+        href: '/pages/privacy-policy',
       },
       {
         t: '和',
       },
       {
         t: 'Cookie 政策的约束',
-        href: 'https://www.joyfumi.com/help/cookie-policy',
+        href: '/pages/cookie-policy',
       },
       {
         t: '。',
@@ -933,9 +933,12 @@ const zh = [
   },
 ]
 
+import { jaTitle as jaPageTitle, jaBlocks as jaPageBlocks } from './terms-of-use.ja.js'
 export const termsOfUsePage = {
   slug: 'terms-of-use',
   title: { en: 'Terms of Use', zh: 'Joybuy 使用条款' },
   hasArchive: false,
   blocks: { en, zh },
+  jaTitle: jaPageTitle,
+  jaBlocks: jaPageBlocks,
 }

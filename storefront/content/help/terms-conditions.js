@@ -1249,19 +1249,6 @@ const zh = [
         br: 1,
       },
       {
-        t: '更多交货相关详细信息，请',
-      },
-      {
-        t: '点击此处',
-        href: 'https://www.joyfumi.com/customer-service-centre',
-      },
-      {
-        t: '（客服门户）页面查看。',
-      },
-      {
-        br: 1,
-      },
-      {
         br: 1,
       },
       {

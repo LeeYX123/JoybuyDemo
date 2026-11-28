@@ -379,21 +379,6 @@ const en = [
     type: 'p',
     segments: [
       {
-        t: 'For a full overview of all the cookies we use, please be referred to ',
-      },
-      {
-        t: 'View Cookies',
-        href: 'https://www.joyfumi.com/help/Joybuycookies',
-      },
-      {
-        t: '.',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
         t: '4 How can you delete cookies or change your cookie settings?',
         b: 1,
       },
@@ -735,21 +720,6 @@ const zh = [
     segments: [
       {
         t: '未经您的同意，我们不会放置追踪 Cookie。',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: '有关我们使用的所有 Cookie 的完整概览，请参阅',
-      },
-      {
-        t: 'Cookie 列表',
-        href: 'https://www.joyfumi.com/help/Joybuycookies',
-      },
-      {
-        t: '。',
       },
     ],
   },

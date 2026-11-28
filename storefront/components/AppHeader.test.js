@@ -35,6 +35,11 @@ vi.mock('../composables/useBuyerAuth', async () => {
   const { ref } = await import('vue')
   const authenticated = ref(false)
   const applicationStatus = ref(null)
+  // 需求 13.5-6：session payload 带 display_name（后端生成 user+数字+字母）。
+  // 需求 C：payload 也带 auth_provider；mock 里默认**不带**该字段 —— 组件对缺省
+  // 值按 EMAIL 处理（老 payload 语义），因此默认登录态是 6 行（含【修改密码】）。
+  const DEFAULT_ACCOUNT = { email: 'buyer@example.com', display_name: 'user4323txlb' }
+  const account = ref({ ...DEFAULT_ACCOUNT })
   return {
     __setAuthenticated: (value) => {
       authenticated.value = value
@@ -42,10 +47,15 @@ vi.mock('../composables/useBuyerAuth', async () => {
     __setApplicationStatus: (value) => {
       applicationStatus.value = value
     },
+    // 传入 'GOOGLE' / 'FACEBOOK' 切到 OAuth 渠道账号；传 null 回到缺省（EMAIL 语义）。
+    __setAuthProvider: (value) => {
+      account.value = value
+        ? { ...DEFAULT_ACCOUNT, auth_provider: value }
+        : { ...DEFAULT_ACCOUNT }
+    },
     useBuyerAuth: () => ({
       isAuthenticated: authenticated,
-      // 需求 13.5-6：session payload 带 display_name（后端生成 user+数字+字母）。
-      account: ref({ email: 'buyer@example.com', display_name: 'user4323txlb' }),
+      account,
       merchantApplicationStatus: applicationStatus,
       logout: vi.fn(),
       refresh: vi.fn(async () => {}),
@@ -53,7 +63,11 @@ vi.mock('../composables/useBuyerAuth', async () => {
   }
 })
 
-import { __setApplicationStatus, __setAuthenticated } from '../composables/useBuyerAuth'
+import {
+  __setApplicationStatus,
+  __setAuthProvider,
+  __setAuthenticated,
+} from '../composables/useBuyerAuth'
 import AppHeader from './AppHeader.vue'
 
 const RouterLinkStub = {
@@ -91,6 +105,8 @@ const mountedWrappers = []
 beforeEach(() => {
   __setAuthenticated(false)
   __setApplicationStatus(null)
+  // 每个用例回到缺省 session（无 auth_provider → 组件按 EMAIL 处理）。
+  __setAuthProvider(null)
 })
 
 afterEach(() => {
@@ -318,15 +334,52 @@ describe('AppHeader', () => {
     await settle()
 
     const items = wrapper.findAll('.account-menu__item')
+    // 需求 C（2026-11-28）：EMAIL 账号在【退出登录】上方多一行【修改密码】，
+    // 因此缺省（无 auth_provider → EMAIL 语义）是 6 行。
     expect(items.map((item) => item.text().trim())).toEqual([
+      'My orders',
+      'Reviews and Q&A',
+      'Favourites',
+      'Addresses',
+      'Change password',
+      'Sign out',
+    ])
+    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Apply for a shop')
+    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Merchant Center')
+  })
+
+  // 需求 C（2026-11-28）：OAuth 渠道（GOOGLE/FACEBOOK）账号没有平台密码，
+  // 下拉不显示【修改密码】——此时 5 行；点其它行（链接行 + 头像/用户区块）不报错。
+  // 注：不点【退出登录】，它的 handler 走 navigateTo 重定向到登录页。
+  it('hides the change-password row for OAuth accounts (5 rows)', async () => {
+    __setAuthenticated(true)
+    __setAuthProvider('GOOGLE')
+    const wrapper = mountHeader()
+    await settle()
+    await wrapper.get('.account-menu').trigger('mouseenter')
+    await settle()
+
+    const panel = wrapper.get('.account-menu__panel')
+    const rows = wrapper.findAll('.account-menu__item')
+    expect(rows.length).toBe(5)
+    expect(rows.map((row) => row.text().trim())).toEqual([
       'My orders',
       'Reviews and Q&A',
       'Favourites',
       'Addresses',
       'Sign out',
     ])
-    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Apply for a shop')
-    expect(wrapper.find('.account-menu__panel').text()).not.toContain('Merchant Center')
+    expect(panel.text()).not.toContain('Change password')
+    expect(wrapper.find('[data-testid="account-menu-changePassword"]').exists()).toBe(false)
+    // 修改密码弹窗也不应被打开（触发不了不存在的入口）。
+    expect(wrapper.find('.pwd-modal').exists()).toBe(false)
+
+    // 其余行照常可点：链接行不抛错、行结构完好（文字 + 右侧 icon）。
+    for (const row of rows) {
+      if (row.classes().includes('account-menu__item--sign-out')) continue
+      await row.trigger('click')
+      expect(row.find('.account-menu__icon').exists()).toBe(true)
+    }
   })
 
   // -------------------------------------------------------------------------
@@ -365,8 +418,9 @@ describe('AppHeader', () => {
     expect(wrapper.findAll('svg[viewBox="0 0 56 56"]').length).toBeGreaterThanOrEqual(2)
     expect(panel.get('.account-menu__name').text()).toBe('user4323txlb')
     // 每行左右对齐：文字在前、icon 在后。
+    // 需求 C：缺省 session（无 auth_provider → EMAIL）共 6 行（含【修改密码】）。
     const rows = wrapper.findAll('.account-menu__item')
-    expect(rows.length).toBe(5)
+    expect(rows.length).toBe(6)
     for (const row of rows) {
       expect(row.get('.account-menu__label').text().length).toBeGreaterThan(0)
       expect(row.find('.account-menu__icon').exists()).toBe(true)
@@ -434,7 +488,16 @@ describe('AppHeader', () => {
     expect(wrapper.find('.account-menu__name').exists()).toBe(true)
 
     const rows = wrapper.findAll('.account-menu__item')
-    expect(rows.length).toBe(5)
+    // 需求 C：EMAIL 账号多一行【修改密码】→ 6 行（4 个链接行 + 修改密码 + 退出登录）。
+    expect(rows.length).toBe(6)
+    expect(rows.map((row) => row.text().trim())).toEqual([
+      'My orders',
+      'Reviews and Q&A',
+      'Favourites',
+      'Addresses',
+      'Change password',
+      'Sign out',
+    ])
     for (const row of rows) {
       // icon 右对齐：icon 是行内最后一个子元素（文字在前，CSS space-between）。
       const last = row.element.children[row.element.children.length - 1]

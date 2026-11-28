@@ -373,21 +373,6 @@ export const jaBlocks = [
     type: 'p',
     segments: [
       {
-        t: '当社が使用するすべてのクッキーに関する詳細な概要については、以下をご覧ください。',
-      },
-      {
-        t: 'クッキーの確認',
-        href: 'https://www.joyfumi.com/help/Joybuycookies',
-      },
-      {
-        t: '.',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
         t: '4 クッキーを削除したり、クッキー設定を変更したりするにはどうすればよいですか？',
         b: 1,
       },
