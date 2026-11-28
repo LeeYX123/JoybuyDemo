@@ -131,9 +131,9 @@ def _clean_address_body(body):
     same required-field rules as POST.
     """
 
-    # 2026-11-28（结算地址表单改版）：前端删除【地址】栏，line1 由门牌号 +
-    # 地址行 2 组合，两者都可为空 → line1 改为可选；城市由前端兜底 London。
-    required = ("full_name", "phone", "city", "postcode")
+    # 2026-11-28 澄清：Address Line 1* 必填保留（删的是真站的 Address 查找框）。
+    # line1 恢复必填；城市由前端兜底 London。
+    required = ("full_name", "phone", "line1", "city", "postcode")
     missing = [field for field in required if not str(body.get(field) or "").strip()]
     if missing:
         return None, ("ADDRESS_INCOMPLETE", f"Missing: {', '.join(missing)}.")
@@ -144,7 +144,7 @@ def _clean_address_body(body):
         {
             "full_name": str(body["full_name"]).strip()[:160],
             "phone": str(body["phone"]).strip()[:32],
-            "line1": str(body.get("line1") or "").strip()[:200],
+            "line1": str(body["line1"]).strip()[:200],
             "line2": str(body.get("line2") or "").strip()[:200],
             "city": str(body["city"]).strip()[:100],
             "county": str(body.get("county") or "").strip()[:100],

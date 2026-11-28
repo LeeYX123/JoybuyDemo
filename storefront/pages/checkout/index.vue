@@ -41,16 +41,15 @@ const selectedAddress = computed(
 )
 
 // 2026-11-28 地址表单改版（用户拍板）：国家/地区改为【选择已有地址】下拉——
-// 选中即回填下方输入框并直接进入支付页；【地址】【县】【城镇/城市】栏删除；
-// 电话号码去掉 GB(+44) 前缀、纯输入框；所有输入框不做格式校验、仅必填非空。
-// line1 由【门牌号 + 地址行 2】组合（后端 line1 已改为可选），城市兜底 London。
+// 选中即回填下方输入框并直接进入支付页；【地址】查找框（真站 Address*）删除，
+// 但 Address Line 1*（必填，门牌号/楼栋/街道）保留——用户澄清纠正；
+// 电话号码去掉 GB(+44) 前缀、纯输入框；仅必填非空，无格式校验。城市兜底 London。
 const newAddress = ref({
   full_name: '',
   phone: '',
   postcode: '',
   line1: '',
   line2: '',
-  house_number: '',
   is_default: false,
 })
 
@@ -70,7 +69,6 @@ function onPickExisting() {
     postcode: address.postcode || '',
     line1: address.line1 || '',
     line2: address.line2 || '',
-    house_number: address.house_number || '',
     is_default: Boolean(address.is_default),
   }
   selectedAddressId.value = address.public_id
@@ -79,25 +77,20 @@ function onPickExisting() {
 
 async function saveAddress() {
   error.value = ''
-  // 仅非空校验（不做任何格式校验）；移动端表单仍是 3 字段（无邮编输入框），
-  // 邮编必填只在桌面端生效。line1 由门牌号 + 地址行 2 组合，两者都空时回退
-  // line1 本身（移动端表单直接编辑 line1，保持兼容）。
+  // 仅非空校验（不做任何格式校验）；移动端表单仍是 3 字段（无邮编/行1 之外的输入），
+  // 邮编必填只在桌面端生效；Address Line 1* 桌面端必填（用户澄清恢复）。
   const postcodeValue = (newAddress.value.postcode || '').trim()
   if (
     !newAddress.value.full_name.trim() ||
     !newAddress.value.phone.trim() ||
-    (!isMobileHost.value && !postcodeValue)
+    (!isMobileHost.value &&
+      (!postcodeValue || !newAddress.value.line1.trim()))
   ) {
     error.value = t('checkout.errorRequiredFields')
     return
   }
-  const composed = [newAddress.value.house_number, newAddress.value.line2]
-    .map((v) => (v || '').trim())
-    .filter(Boolean)
-    .join(' ')
   const payload = {
     ...newAddress.value,
-    line1: composed || newAddress.value.line1 || '',
     // 后端仍要求 city 非空（配送范围 GB）；城市栏已删，兜底默认值。
     city: 'London',
     postcode: postcodeValue || 'SW1A 1AA',
@@ -115,7 +108,6 @@ async function saveAddress() {
     postcode: '',
     line1: '',
     line2: '',
-    house_number: '',
     is_default: false,
   }
   pickExistingId.value = ''
@@ -379,17 +371,21 @@ useHead({ title: 'Checkout' })
             </label>
 
             <label class="address-form__field address-form__field--left">
+              <span>{{ t('checkout.addressLine1') }}</span>
+              <input
+                v-model="newAddress.line1"
+                type="text"
+                :placeholder="t('checkout.addressLine1Placeholder')"
+              />
+            </label>
+
+            <label class="address-form__field address-form__field--right">
               <span>{{ t('checkout.addressLine2') }}</span>
               <input
                 v-model="newAddress.line2"
                 type="text"
                 :placeholder="t('checkout.addressLine2Placeholder')"
               />
-            </label>
-
-            <label class="address-form__field address-form__field--right">
-              <span>{{ t('checkout.houseNumber') }}</span>
-              <input v-model="newAddress.house_number" type="text" />
             </label>
 
             <label class="address-form__switch address-form__field--left">
