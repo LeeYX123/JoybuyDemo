@@ -453,7 +453,7 @@ useHead({ title: 'Checkout' })
                       {{ item.title }}
                     </NuxtLink>
                     <p v-if="specFor(item)" class="quote-item__spec">{{ specFor(item) }}</p>
-                    <p class="quote-item__qty">Qty: {{ item.quantity }}</p>
+                    <p class="quote-item__qty">{{ t('detail.quantity') }}: {{ item.quantity }}</p>
                   </div>
                   <span class="quote-item__line">
                     {{ formatMoney(Number(item.price) * item.quantity) }}
