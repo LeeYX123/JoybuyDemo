@@ -2,6 +2,7 @@
 // 搜商家结果页（WP-42，文档「三、购物端 → 搜索结果页（搜商家）」）。
 // 原站 joybuy.co.uk 不支持搜商家；按商家店铺名称匹配，点击进入商家页。
 import { useLocale } from '../../composables/useLocale'
+import { noAutofillSearch } from '../../utils/noAutofill'
 
 const route = useRoute()
 const { t } = useLocale()
@@ -34,7 +35,12 @@ useHead(() => ({
         class="merchant-search__bar"
         @submit.prevent="navigateTo(`/merchants?q=${encodeURIComponent(query)}`)"
       >
-        <input v-model="query" type="search" :placeholder="t('merchant.searchPlaceholder')" />
+        <input
+          v-model="query"
+          type="search"
+          v-bind="noAutofillSearch"
+          :placeholder="t('merchant.searchPlaceholder')"
+        />
         <button type="submit" class="merchant-search__btn">{{ t('merchant.searchButton') }}</button>
       </form>
 

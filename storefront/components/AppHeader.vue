@@ -8,6 +8,7 @@ import { useLocale } from '../composables/useLocale'
 import { useMarketLocale } from '../composables/useMarketLocale'
 import { useMerchantEntry } from '../composables/useMerchantEntry'
 import { categoryHref } from '../utils/categoryLinks'
+import { noAutofillSearch } from '../utils/noAutofill'
 
 import AppCategoryPanel from './AppCategoryPanel.vue'
 import ChangePasswordModal from './account/ChangePasswordModal.vue'
@@ -393,7 +394,7 @@ const brandLogoUrl = '/images/logo.png'
             type="search"
             name="q"
             :placeholder="t('header.searchPlaceholder')"
-            autocomplete="off"
+            v-bind="noAutofillSearch"
           />
           <button class="search__submit" type="submit" :aria-label="t('header.search')">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">

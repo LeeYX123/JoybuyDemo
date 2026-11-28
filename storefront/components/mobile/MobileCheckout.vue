@@ -1,5 +1,6 @@
 <script setup>
 import { useLocale } from '../../composables/useLocale'
+import { noAutofill } from '../../utils/noAutofill'
 
 // Mobile checkout (docs/20 §4): address card (the 3-field form mirrors the
 // desktop showNewForm logic — for a fresh account with no addresses the form
@@ -89,6 +90,7 @@ const { t } = useLocale()
           <input
             :value="newAddress?.full_name || ''"
             :placeholder="t('checkout.fullNamePlaceholder')"
+            v-bind="noAutofill"
             required
             @input="emit('update-address-field', 'full_name', $event.target.value)"
           />
@@ -98,6 +100,7 @@ const { t } = useLocale()
           <input
             :value="newAddress?.line1 || ''"
             :placeholder="t('checkout.addressPlaceholder')"
+            v-bind="noAutofill"
             required
             @input="emit('update-address-field', 'line1', $event.target.value)"
           />
@@ -107,6 +110,7 @@ const { t } = useLocale()
           <input
             :value="newAddress?.phone || ''"
             :placeholder="t('checkout.phonePlaceholder')"
+            v-bind="noAutofill"
             required
             @input="emit('update-address-field', 'phone', $event.target.value)"
           />

@@ -5,6 +5,7 @@ import { navigateTo, useHead } from '#imports'
 import { useSearch } from '../../composables/useSearchApi'
 import { useCategoryTree } from '../../composables/useCategoryTree'
 import { useLocale } from '../../composables/useLocale'
+import { noAutofillSearch } from '../../utils/noAutofill'
 
 // Bestsellers page (docs/12 §5): brown hero, left 11-category nav without
 // expand arrows + price-range-only filter, right ranking segments per
@@ -98,6 +99,7 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
                 type="number"
                 min="0"
                 step="0.01"
+                v-bind="noAutofillSearch"
                 :value="minPrice"
                 :aria-label="t('promo.price') + ' ↓'"
               />
@@ -107,6 +109,7 @@ useHead(() => ({ title: 'Bestsellers | Joybuy' }))
                 type="number"
                 min="0"
                 step="0.01"
+                v-bind="noAutofillSearch"
                 :value="maxPrice"
                 :aria-label="t('promo.price') + ' ↑'"
               />

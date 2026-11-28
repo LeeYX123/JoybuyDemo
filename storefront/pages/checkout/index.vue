@@ -6,6 +6,7 @@ import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useCheckout } from '../../composables/useCheckout'
 import { useLocale } from '../../composables/useLocale'
 import { formatDisplayPrice } from '../../utils/display'
+import { noAutofill } from '../../utils/noAutofill'
 
 // Checkout aligned to docs/12 §7/§8: step 1 = 3-field address form
 // (Full name / Address / Phone, Save jumps straight to payment), step 2 =
@@ -356,6 +357,7 @@ useHead({ title: 'Checkout' })
               <input
                 v-model="newAddress.full_name"
                 type="text"
+                v-bind="noAutofill"
                 :placeholder="t('checkout.fullNamePlaceholder')"
               />
             </label>
@@ -366,6 +368,7 @@ useHead({ title: 'Checkout' })
               <input
                 v-model="newAddress.phone"
                 type="tel"
+                v-bind="noAutofill"
                 :placeholder="t('checkout.phonePlaceholder')"
               />
             </label>
@@ -375,6 +378,7 @@ useHead({ title: 'Checkout' })
               <input
                 v-model="newAddress.postcode"
                 type="text"
+                v-bind="noAutofill"
                 :placeholder="t('checkout.postcodePlaceholder')"
               />
             </label>
@@ -384,6 +388,7 @@ useHead({ title: 'Checkout' })
               <input
                 v-model="newAddress.line1"
                 type="text"
+                v-bind="noAutofill"
                 :placeholder="t('checkout.addressLine1Placeholder')"
               />
             </label>
@@ -393,6 +398,7 @@ useHead({ title: 'Checkout' })
               <input
                 v-model="newAddress.line2"
                 type="text"
+                v-bind="noAutofill"
                 :placeholder="t('checkout.addressLine2Placeholder')"
               />
             </label>

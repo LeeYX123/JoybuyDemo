@@ -6,6 +6,7 @@ import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
 import { useMobileView } from '../../composables/useMobileView'
 import { useUiToast } from '../../composables/useUiToast'
+import { noAutofill } from '../../utils/noAutofill'
 
 import AccountEmpty from '../../components/account/AccountEmpty.vue'
 import AccountShell from '../../components/account/AccountShell.vue'
@@ -463,38 +464,38 @@ useHead(() => ({ title: t('addresses.title') }))
 
           <label class="address-form__field">
             <span>{{ t('addresses.fullName') }} *</span>
-            <input v-model="form.full_name" type="text" autocomplete="name" required />
+            <input v-model="form.full_name" type="text" v-bind="noAutofill" required />
           </label>
 
           <label class="address-form__field">
             <span>{{ t('addresses.phone') }} *</span>
-            <input v-model="form.phone" type="tel" autocomplete="tel" required />
+            <input v-model="form.phone" type="tel" v-bind="noAutofill" required />
           </label>
 
           <label class="address-form__field">
             <span>{{ t('addresses.line1') }} *</span>
-            <input v-model="form.line1" type="text" autocomplete="address-line1" required />
+            <input v-model="form.line1" type="text" v-bind="noAutofill" required />
           </label>
 
           <label class="address-form__field">
             <span>{{ t('addresses.line2') }}</span>
-            <input v-model="form.line2" type="text" autocomplete="address-line2" />
+            <input v-model="form.line2" type="text" v-bind="noAutofill" />
           </label>
 
           <div class="address-form__row">
             <label class="address-form__field">
               <span>{{ t('addresses.city') }} *</span>
-              <input v-model="form.city" type="text" autocomplete="address-level2" required />
+              <input v-model="form.city" type="text" v-bind="noAutofill" required />
             </label>
             <label class="address-form__field">
               <span>{{ t('addresses.county') }}</span>
-              <input v-model="form.county" type="text" autocomplete="address-level1" />
+              <input v-model="form.county" type="text" v-bind="noAutofill" />
             </label>
           </div>
 
           <label class="address-form__field">
             <span>{{ t('addresses.postcode') }} *</span>
-            <input v-model="form.postcode" type="text" autocomplete="postal-code" required />
+            <input v-model="form.postcode" type="text" v-bind="noAutofill" required />
           </label>
 
           <label class="address-form__switch">

@@ -10,6 +10,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useLocale } from '../composables/useLocale'
+import { noAutofill } from '../utils/noAutofill'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -594,6 +595,7 @@ onBeforeUnmount(() => {
             ref="inputEl"
             v-model="draft"
             class="merchant-chat__input"
+            v-bind="noAutofill"
             rows="2"
             :maxlength="MAX_LENGTH"
             :placeholder="t('chat.placeholder')"

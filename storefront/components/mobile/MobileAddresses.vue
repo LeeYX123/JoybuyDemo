@@ -1,5 +1,6 @@
 <script setup>
 import { useLocale } from '../../composables/useLocale'
+import { noAutofill } from '../../utils/noAutofill'
 
 // Mobile address book (docs/20 §5.4): delivery/pickup tabs (same semantics as
 // the desktop page), one card per address (default marker, copy, edit,
@@ -101,7 +102,7 @@ function onField(name, event) {
               <span>{{ t('addresses.fullName') }} *</span>
               <input
                 type="text"
-                autocomplete="name"
+                v-bind="noAutofill"
                 :value="form.full_name"
                 required
                 @input="onField('full_name', $event)"
@@ -112,7 +113,7 @@ function onField(name, event) {
               <span>{{ t('addresses.phone') }} *</span>
               <input
                 type="tel"
-                autocomplete="tel"
+                v-bind="noAutofill"
                 :value="form.phone"
                 required
                 @input="onField('phone', $event)"
@@ -123,7 +124,7 @@ function onField(name, event) {
               <span>{{ t('addresses.line1') }} *</span>
               <input
                 type="text"
-                autocomplete="address-line1"
+                v-bind="noAutofill"
                 :value="form.line1"
                 required
                 @input="onField('line1', $event)"
@@ -134,7 +135,7 @@ function onField(name, event) {
               <span>{{ t('addresses.line2') }}</span>
               <input
                 type="text"
-                autocomplete="address-line2"
+                v-bind="noAutofill"
                 :value="form.line2"
                 @input="onField('line2', $event)"
               />
@@ -145,7 +146,7 @@ function onField(name, event) {
                 <span>{{ t('addresses.city') }} *</span>
                 <input
                   type="text"
-                  autocomplete="address-level2"
+                  v-bind="noAutofill"
                   :value="form.city"
                   required
                   @input="onField('city', $event)"
@@ -155,7 +156,7 @@ function onField(name, event) {
                 <span>{{ t('addresses.county') }}</span>
                 <input
                   type="text"
-                  autocomplete="address-level1"
+                  v-bind="noAutofill"
                   :value="form.county"
                   @input="onField('county', $event)"
                 />
@@ -166,7 +167,7 @@ function onField(name, event) {
               <span>{{ t('addresses.postcode') }} *</span>
               <input
                 type="text"
-                autocomplete="postal-code"
+                v-bind="noAutofill"
                 :value="form.postcode"
                 required
                 @input="onField('postcode', $event)"

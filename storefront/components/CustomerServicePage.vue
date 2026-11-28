@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 import { helpPageBySlug, helpPagePath } from '../content/helpPages'
 import { useLocale } from '../composables/useLocale'
+import { noAutofillSearch } from '../utils/noAutofill'
 
 // 批次 U（需求 17.5）：真站 customer-service 分类页版式（/customer-service/<Category>，
 // 如 Checkout & Payments / Returns & Refunds）。结构与字号全部来自 2026-11-20 真站实测
@@ -102,7 +103,7 @@ const CONTACT_EMAIL = 'Joybuyfumi@gmail.com'
             type="text"
             :placeholder="t('help.csSearchPlaceholder')"
             :aria-label="t('help.csSearchLabel')"
-            autocomplete="off"
+            v-bind="noAutofillSearch"
           />
           <button class="cs-page__search-btn" type="button" :aria-label="t('help.csSearchLabel')">
             <svg viewBox="0 0 17 17" width="17" height="17" fill="none" aria-hidden="true">

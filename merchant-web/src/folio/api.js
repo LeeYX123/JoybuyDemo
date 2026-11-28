@@ -1178,7 +1178,7 @@ function overrideActions() {
       `<p class="small">收款方式：${w.method}　${esc(maskAccount(w))}</p>` + // eslint-disable-line no-undef
       (w.coin ? `<p class="small">币种：${esc(w.coin)}　链类型：${esc(w.network)}</p>` : '') +
       // 0mf-d：钱包密码输入防浏览器自动填充/保存（同 base-3 setWalletPassword 组合）。
-      `<form id="withdrawPasswordForm" onsubmit="event.preventDefault();confirmWithdrawal()"><label class="field-label" for="withdrawWpin">钱包密码</label><input id="withdrawWpin" data-wpin="1" type="text" minlength="6" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" spellcheck="false" placeholder="请输入钱包密码" required style="width:100%;-webkit-text-security:disc"><p id="withdrawPasswordError" class="small red" role="alert"></p></form>`,
+      `<form id="withdrawPasswordForm" onsubmit="event.preventDefault();confirmWithdrawal()"><label class="field-label" for="withdrawWpin">钱包密码</label><input id="withdrawWpin" data-wpin="1" type="text" minlength="6" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="请输入钱包密码" required style="width:100%;-webkit-text-security:disc"><p id="withdrawPasswordError" class="small red" role="alert"></p></form>`,
       '<button class="primary" id="withdrawConfirmButton" type="submit" form="withdrawPasswordForm">确认提现</button>',
     )
     wpinGuard() // eslint-disable-line no-undef

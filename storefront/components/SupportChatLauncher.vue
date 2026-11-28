@@ -21,6 +21,7 @@ import { navigateTo, useRoute } from '#imports'
 
 import { useBuyerAuth } from '../composables/useBuyerAuth'
 import { useLocale } from '../composables/useLocale'
+import { noAutofill } from '../utils/noAutofill'
 
 const MAX_LENGTH = 2000
 const MAX_ORDERS = 3
@@ -929,6 +930,7 @@ onBeforeUnmount(() => {
                 ref="inputEl"
                 v-model="draft"
                 class="support-chat__input"
+                v-bind="noAutofill"
                 data-testid="support-chat-input"
                 rows="1"
                 :maxlength="MAX_LENGTH"

@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useLocale } from '../composables/useLocale'
 import { MARKET_OPTIONS } from '../composables/useMarketLocale'
+import { noAutofill } from '../utils/noAutofill'
 
 // Deliver-to drawer, rebuilt 1:1 against joybuy.co.uk (probe 2026-11-16).
 // Measured on the live site at 1440x900: paper 616px wide / full height,
@@ -585,7 +586,7 @@ function applySelection() {
                 class="address-drawer__postcode-input"
                 :class="{ 'address-drawer__postcode-input--invalid': validationError }"
                 type="text"
-                autocomplete="off"
+                v-bind="noAutofill"
                 maxlength="10"
                 :value="draftPostcode"
                 :placeholder="t('addressDrawer.postcodePlaceholder')"

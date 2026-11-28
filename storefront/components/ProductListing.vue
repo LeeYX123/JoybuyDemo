@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { noAutofillSearch } from '../utils/noAutofill'
+
 // Category/search listing page shared by /c/[slug] and /search.
 const props = defineProps({
   mode: {
@@ -186,6 +188,7 @@ useHead(() => ({ title: heading.value }))
                 type="number"
                 min="0"
                 step="0.01"
+                v-bind="noAutofillSearch"
                 :value="minPrice"
                 :aria-label="t('listing.price') + ' ↓'"
               />
@@ -195,6 +198,7 @@ useHead(() => ({ title: heading.value }))
                 type="number"
                 min="0"
                 step="0.01"
+                v-bind="noAutofillSearch"
                 :value="maxPrice"
                 :aria-label="t('listing.price') + ' ↑'"
               />

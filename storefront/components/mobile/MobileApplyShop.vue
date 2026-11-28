@@ -1,5 +1,6 @@
 <script setup>
 import { useLocale } from '../../composables/useLocale'
+import { noAutofill } from '../../utils/noAutofill'
 
 import ShopApplicationDetails from '../account/ShopApplicationDetails.vue'
 
@@ -106,6 +107,7 @@ function onFile(kind, event) {
               id="m-apply-user-name"
               class="m-apply__input"
               type="text"
+              v-bind="noAutofill"
               maxlength="60"
               required
               aria-required="true"
@@ -126,6 +128,7 @@ function onFile(kind, event) {
               id="m-apply-shop-name"
               class="m-apply__input"
               type="text"
+              v-bind="noAutofill"
               maxlength="60"
               required
               aria-required="true"
@@ -146,6 +149,7 @@ function onFile(kind, event) {
               id="m-apply-phone"
               class="m-apply__input"
               type="tel"
+              v-bind="noAutofill"
               maxlength="32"
               required
               aria-required="true"
@@ -166,6 +170,7 @@ function onFile(kind, event) {
               id="m-apply-referrer"
               class="m-apply__input"
               type="text"
+              v-bind="noAutofill"
               maxlength="32"
               :value="form.referrerCode"
               aria-describedby="m-apply-referrer-hint"
@@ -252,6 +257,7 @@ function onFile(kind, event) {
             <textarea
               id="m-apply-address"
               class="m-apply__input m-apply__address"
+              v-bind="noAutofill"
               rows="2"
               maxlength="255"
               required

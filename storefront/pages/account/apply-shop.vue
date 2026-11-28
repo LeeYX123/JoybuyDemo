@@ -5,6 +5,7 @@ import { useLocale } from '../../composables/useLocale'
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useMerchantEntry } from '../../composables/useMerchantEntry'
 import { useMobileView } from '../../composables/useMobileView'
+import { noAutofill } from '../../utils/noAutofill'
 
 import ShopApplicationDetails from '../../components/account/ShopApplicationDetails.vue'
 
@@ -415,6 +416,7 @@ useHead({ title: t('shopApply.title') })
                 v-model="userName"
                 class="shop-apply__input"
                 type="text"
+                v-bind="noAutofill"
                 maxlength="60"
                 required
                 aria-required="true"
@@ -434,6 +436,7 @@ useHead({ title: t('shopApply.title') })
                 v-model="shopName"
                 class="shop-apply__input"
                 type="text"
+                v-bind="noAutofill"
                 maxlength="60"
                 required
                 aria-required="true"
@@ -453,6 +456,7 @@ useHead({ title: t('shopApply.title') })
                 v-model="phone"
                 class="shop-apply__input"
                 type="tel"
+                v-bind="noAutofill"
                 maxlength="32"
                 required
                 aria-required="true"
@@ -472,6 +476,7 @@ useHead({ title: t('shopApply.title') })
                 v-model="referrerCode"
                 class="shop-apply__input shop-apply__input--narrow"
                 type="text"
+                v-bind="noAutofill"
                 maxlength="32"
                 aria-describedby="shop-apply-referrer-hint"
               />
@@ -561,6 +566,7 @@ useHead({ title: t('shopApply.title') })
                 id="shop-apply-address"
                 v-model="residentialAddress"
                 class="shop-apply__input shop-apply__address"
+                v-bind="noAutofill"
                 rows="2"
                 maxlength="255"
                 required

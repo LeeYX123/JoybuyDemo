@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useLocale } from '../../composables/useLocale'
+import { noAutofill } from '../../utils/noAutofill'
 
 // 需求 C（2026-11-28）：【修改密码】弹窗——桌面 AppHeader 头像下拉与手机
 // 账号页共用。校验：新密码 ≥8 位且与确认一致；旧密码错误走后端
@@ -116,7 +117,7 @@ async function submit() {
             <input
               v-model="oldPassword"
               type="password"
-              autocomplete="current-password"
+              v-bind="noAutofill"
               :placeholder="t('account.changePassword.oldPlaceholder')"
               data-testid="pwd-old"
               required
@@ -127,7 +128,7 @@ async function submit() {
             <input
               v-model="newPassword"
               type="password"
-              autocomplete="new-password"
+              v-bind="noAutofill"
               minlength="8"
               :placeholder="t('account.changePassword.newPlaceholder')"
               data-testid="pwd-new"
@@ -139,7 +140,7 @@ async function submit() {
             <input
               v-model="confirmPassword"
               type="password"
-              autocomplete="new-password"
+              v-bind="noAutofill"
               :placeholder="t('account.changePassword.confirmPlaceholder')"
               data-testid="pwd-confirm"
               required

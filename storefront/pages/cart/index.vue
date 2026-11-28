@@ -5,6 +5,7 @@ import { navigateTo, useHead } from '#imports'
 import { useCart } from '~/composables/useCart'
 import { useLocale } from '../../composables/useLocale'
 import { useMarketLocale } from '../../composables/useMarketLocale'
+import { noAutofillSearch } from '../../utils/noAutofill'
 
 // 批次 D（功能需求迭代文档03 11.9）：购物车页 1:1 复刻 Joybuy /cart。
 // 批次 G（12.3）：按商家分组渲染白卡（后端 item.merchant 增量字段）；
@@ -437,6 +438,7 @@ const mobileRows = computed(() =>
                         <input
                           type="number"
                           class="cart-item__step-value"
+                          v-bind="noAutofillSearch"
                           min="1"
                           :max="QUANTITY_MAX"
                           :value="item.quantity"
