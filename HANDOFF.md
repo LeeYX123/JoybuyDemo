@@ -17,7 +17,7 @@
   * 环境：8000 后端被仓库 watcher 自动重启过一次（我的手工 `runserver --noreload` 后台任务因端口被占而退出——**改后端文件后 watcher 会自动重启，不必手工重启**；核对方式 `curl /api/v1/admin/offers` 应 401 非 404）。
 - **遗留**：① 混合域筛选（见上）仍是自由文本，如用户也要下拉化需再拆分设计；② AppPicker 单选回填是单行 input，超长名称靠 input 原生横向滚动（下拉项/chips 全文不截断）；③ ProductPoolView 等筛选改造后原「回车直接搜列表」变为「回车选中下拉项」，如需保留回车=自由文本搜索可加 freeText 模式；④ HANDOFF 旧节 0ap2/0pg 的相关约束（活动商品页列结构、prod 索引 staged 包）继续有效。
 
-## 0pg. 商品池/活动商品慢查询产线实锤 + 修复包备料（2026-11-28，✅ 诊断+备料完成；**staged 未 commit，等用户批准执行**）
+## 0pg. 商品池/活动商品慢查询产线实锤 + 修复包备料 + **已执行上库**（2026-11-28，✅ 用户批准后完成部署与复测；**池默认页 e2e ~5-7s → 81.7ms**）
 
 - **任务**：用户反馈产线管理端【商品池管理】【活动商品管理】查询慢；产线地面真值实锤根因 + 备好只含性能修复的 staged 提交。全程只读（未改 prod DB / 未 commit / 未 push / 未重启）。
 - **根因实锤（两个未提交改动叠加缺失，prod 只拉 git 所以两样都没有）**：
@@ -7745,3 +7745,12 @@ payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
    白色小卡底（.site-footer__support--icons）。
 验证：eslint + tests/ 162/162；Playwright 截图页脚 11 icon 正常、
 支付行 4 项正确。后端枚举保留 WECHAT_PAY 等旧值（历史订单数据兼容，UI 已不展示）。
+
+## checkout 页脚统一为全量页脚（2026-11-28 22:38，✅ 完成，commit cfa82a1）
+
+用户拍板：页脚全站统一，每个页面（含 checkout 地址页/支付页）都要展示
+【了解我们】【我们的政策】【帮助中心】等完整栏目。
+- 删除 AppFooter 对 /checkout 的精简分支（simplified 计算属性 + slogan 行
+  + v-if/v-else 结构 + 相关样式），checkout 使用与其他页面相同的全量页脚
+  （三栏栏目 + We support 官方 icon 行 + © 行 + 法规段落）。
+验证：eslint 通过、tests/ 162/162、Playwright 截图 checkout 页脚三栏齐全。
