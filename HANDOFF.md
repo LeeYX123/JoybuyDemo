@@ -589,6 +589,33 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d1e. 加购价对齐卡价 / 商家页去【+】/ 清 9 条种子单 / 封店口径（2026-11-29，✅ 已提交 f928154 并推送）
+
+### 1. 卡片【+】加购价 == 卡片显示价
+- 问题：同款族卡片显示 `family_max_price`（族内最高价），但【+】只传 `spu_public_id` → 后端取本 SPU **最低价** → 卡 $99.99 / 车 $49.99。
+- 修法：`search_services.py` 新增 `_cart_offer_public_ids(rows, market)`，序列化新增 **`cart_offer_public_id`**：显示价（`family_max_price` 否则 `price_min`）→ 本 SPU 同价可购 Offer → 族内成员同价可购 Offer → 本 SPU 最低价 → 空串。前端 `ProductCard.vue` 有值走 `offer_public_id`、空值回退 `spu_public_id`。
+- 实测：卡 $99.99 → 车 $99.99（族内成员 Offer）；非族商品与旧行为一致；族内最高价 Offer 下架时回退最低价可加购、不报错。
+- 查询成本：每页固定 **+1**（有族价差页 +2），与页大小无关（单测断言 24 件页与 1 件页查询数相同）。
+- 坑：族内最高价 Offer 下架后 `family_max_price` 是搜索文档快照、不会自变，卡片可能暂显高价而购物车按最低价（**不重建索引**，用户接受）。
+
+### 2. 商家店铺页删除装饰性【+】
+`pages/merchants/[slug].vue` 的 `shop-product-card__add` 整块 + CSS 删除，只保留整卡跳详情；源码 grep 0 命中（`.nuxt/.output` 旧产物仍含，重建后消失）。
+
+### 3. 剩余 9 条 demo 种子单清掉（数据）
+- id 48–53、225–227 → `CANCELED`（`cancel_reason=demo_seed_cleanup_20261129`）：`PENDING_PAYMENT 9→0`、`CANCELED 34→43`、`PAID 24` 与总行数 67 不变；子表行数全不变。
+- **遗留资金痕迹未动**：结算流水 id 36/41/161（+1.69 / +1.69 / +49.99）与 6 条发货扣成本流水（合计 -317.98），净影响 **-260.20**；要彻底抹除需反向调三家商家余额（待用户拍板）。
+- 产物 `var/demo_seed_orders_20261129/`（`cancel.py` / `rollback.py` / `backup_before.json`）。
+
+### 4. 封店/超时口径排除取消单
+- `merchant_ops/views_merchants._overdue_pending_info` 与 `merchants/services.auto_suspend_overdue_merchants` 均加 `exclude(order__status=CANCELED)`：33 条挂在取消父单的 PENDING 子单不再计入超时；merchant 1/11 从 `overdue=True` 变 `False`。
+- HOMCOM 仍判超时（4 条 doc02-e2e 的真实 PAID 老单），属真实超时。新增回归用例 `test_canceled_parent_order_not_counted`。
+- 顺带发现（未修）：`auto_suspend` 在 autocommit 下 `select_for_update` 会抛 `TransactionManagementError`（惰性清扫一直被 try/except 吞掉），既有问题。
+
+### 环境坑（新）
+1. **「kill :8000 看护会拉起」在本机不成立**：杀掉后 4 秒内没有进程被拉起，之前看到的"存活"是更早启动的旧进程。需手动 `Start-Process .venv\Scripts\python.exe -ArgumentList 'manage.py','runserver','0.0.0.0:8000','--noreload'`（工作目录 backend）。
+2. **Git push 报 `cannot spawn ssh`**：`C:\Windows\System32\OpenSSH\ssh.exe` 不存在（PATH 里有该目录但无文件）。用 Git 自带的：`GIT_SSH="/c/Program Files/Git/usr/bin/ssh.exe" git push origin main`。
+3. 共享 `test_joybuy` 库会被并行 `TransactionTestCase` 清掉 seed 数据 → 针对性验证优先用 `DJANGO_DATABASE_ENGINE=sqlite` 隔离跑。
+
 ## 0d1d. 订单收尾：入口三态 / 去「已取消」/ 清理待付款单 / 商家侧父单过滤（2026-11-29，✅ 已提交 609f4a3 / 128ed82 并推送）
 
 ### 1. 买家订单入口与「已取消」口径
