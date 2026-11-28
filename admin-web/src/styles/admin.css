@@ -531,6 +531,21 @@
   margin-left: auto;
 }
 
+/* 筛选条里的可搜索下拉框（AppPicker）与同排 input/select 等高（33px）。
+   组件 scoped 样式是 35px（表单基准），这里按上下文覆盖，保证同排控件对齐。 */
+.toolbar .app-picker {
+  flex: 0 1 250px;
+  min-width: 210px;
+}
+
+.toolbar .app-picker__trigger {
+  min-height: 33px;
+}
+
+.toolbar .app-picker__trigger.is-multiple {
+  min-height: 33px;
+}
+
 .tabs {
   display: flex;
   gap: 0;
@@ -782,6 +797,7 @@
 
 .drawer__head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 12px;
   padding: 18px 24px 14px;
@@ -799,13 +815,15 @@
 }
 
 .drawer__body {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 24px;
 }
 
 .drawer__foot {
   display: flex;
+  flex: none;
   justify-content: flex-end;
   gap: 7px;
   padding: 14px 24px;
@@ -825,40 +843,46 @@
   backdrop-filter: blur(1px);
 }
 
+/* 弹窗：header / body / footer 三段式 flex——body 是唯一滚动区，
+   footer 常驻弹窗底部（滚动时按钮不动）。 */
 .modal {
+  display: flex;
+  flex-direction: column;
   width: min(650px, 96vw);
-  max-height: 90vh;
-  overflow: auto;
-  padding: 24px;
+  max-height: min(90vh, 100%);
+  overflow: hidden;
+  padding: 0;
   border-radius: 5px;
   background: #ffffff;
   box-shadow: var(--shadow-pop);
 }
 
-.modal__head,
-.modal__foot {
-  padding: 0;
-}
-
 .modal__head {
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  flex: none;
+  margin-bottom: 0;
+  padding: 20px 24px 14px;
   border-bottom: 1px solid #e7edf5;
   font-size: 16px;
   font-weight: 600;
 }
 
 .modal__body {
-  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px;
+  overscroll-behavior: contain;
 }
 
 .modal__foot {
   display: flex;
+  flex: none;
   justify-content: flex-end;
   gap: 7px;
-  margin-top: 20px;
-  padding-top: 16px;
+  margin-top: 0;
+  padding: 14px 24px;
   border-top: 1px solid #e7edf5;
+  background: #ffffff;
 }
 
 /* ---------- 详情栅格 ---------- */
@@ -921,6 +945,26 @@
   border-radius: 3px;
   object-fit: cover;
   background: #f4f7fb;
+}
+
+/* 列表里的横幅缩略图（活动卡片 / 活动页 hero）：固定框 + 等比裁切。
+   2026-11-28：这两页此前一直没有 .campaign-thumb 样式（图片不显示时看不出来），
+   图片恢复后按原始尺寸（最大 4000px）撑破表格，这里补上统一尺寸。 */
+.campaign-thumb {
+  display: block;
+  width: 120px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  object-fit: cover;
+  background: #f4f7fb;
+}
+
+.campaign-thumb--empty {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #8493a9;
 }
 
 .thumb--lg {
@@ -1210,6 +1254,23 @@
   color: #6b84a6;
 }
 
+/* ---------- 吸底操作条（页内长表单） ---------- */
+/* 整页表单（非弹窗）的保存/取消条：页面滚动时贴在视口底部，
+   实底背景避免下层内容透出；文档滚动容器即视口，故 bottom: 0 有效。 */
+.form-sticky-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #e7edf5;
+  background: #ffffff;
+  box-shadow: 0 -4px 14px #0c182b0f;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1100px) {
   .admin-main {
@@ -1258,6 +1319,54 @@
   }
 
   .admin-content {
+    padding: 16px;
+  }
+}
+
+/* 窄屏：弹窗/抽屉底栏按钮不换行、可横铺，触达高度 ≥44px。 */
+@media (max-width: 768px) {
+  .modal-mask {
+    padding: 12px;
+  }
+
+  .modal {
+    width: 100%;
+  }
+
+  .modal__head {
+    padding: 16px 16px 12px;
+  }
+
+  .modal__body {
+    padding: 14px 16px;
+  }
+
+  .modal__foot,
+  .drawer__foot {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 12px 16px;
+  }
+
+  .modal__foot > .btn,
+  .drawer__foot > .btn,
+  .form-sticky-bar > .btn {
+    flex: 1 1 0;
+    min-height: 44px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .form-sticky-bar {
+    flex-wrap: nowrap;
+    padding: 10px 12px;
+  }
+
+  .drawer__head {
+    padding: 14px 16px;
+  }
+
+  .drawer__body {
     padding: 16px;
   }
 }

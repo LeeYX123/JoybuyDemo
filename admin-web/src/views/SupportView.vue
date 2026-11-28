@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
 
@@ -61,8 +62,13 @@ const groupCounts = computed(() => ({
 
 const createOpen = ref(false)
 const createBusy = ref(false)
-const createForm = reactive({ merchantQuery: '', merchantId: '' })
-const merchantOptions = ref([])
+const createError = ref('')
+const createForm = reactive({ merchantId: '' })
+
+// 2026-11-28 可搜索下拉框：发起会话选店铺改为 AppPicker 远程搜索。
+function fetchSupportMerchants(q) {
+  return apiRequest(`/notifications/merchants?q=${encodeURIComponent(q)}`)
+}
 
 async function load() {
   state.loading = true
@@ -123,23 +129,14 @@ async function resolve() {
   }
 }
 
-async function searchMerchants() {
-  if (!createForm.merchantQuery.trim()) {
-    merchantOptions.value = []
-    return
-  }
-  try {
-    const payload = await apiRequest(
-      `/notifications/merchants?q=${encodeURIComponent(createForm.merchantQuery.trim())}`,
-    )
-    merchantOptions.value = payload.items
-  } catch {
-    merchantOptions.value = []
-  }
-}
-
 async function submitCreate() {
   createBusy.value = true
+  createError.value = ''
+  if (!createForm.merchantId) {
+    createError.value = '请先选择一个店铺。'
+    createBusy.value = false
+    return
+  }
   try {
     const payload = await adminWrite('/support/conversations', {
       merchant_id: createForm.merchantId,
@@ -148,7 +145,7 @@ async function submitCreate() {
     current.value = payload.conversation
     await load()
   } catch (error) {
-    state.error = error.message
+    createError.value = error.message
   } finally {
     createBusy.value = false
   }
@@ -156,12 +153,6 @@ async function submitCreate() {
 
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(5, 16) : '—'
-}
-
-function pickMerchant(option) {
-  createForm.merchantId = option.id
-  createForm.merchantQuery = option.name
-  merchantOptions.value = []
 }
 
 // ---------------------------------------------------------------- 买家咨询
@@ -592,25 +583,15 @@ onBeforeUnmount(() => {
       @cancel="createOpen = false"
       @confirm="submitCreate"
     >
+      <p v-if="createError" class="notice notice--error">{{ createError }}</p>
       <div class="field">
-        <label for="support-merchant">店铺（输入名称搜索）</label>
-        <input
-          id="support-merchant"
-          v-model="createForm.merchantQuery"
-          type="search"
-          @input="searchMerchants"
+        <label for="support-merchant">店铺（输入名称或编号搜索）</label>
+        <AppPicker
+          v-model="createForm.merchantId"
+          input-id="support-merchant"
+          :fetcher="fetchSupportMerchants"
+          placeholder="输入店铺名称或编号"
         />
-        <div v-if="merchantOptions.length" class="thumb-row">
-          <button
-            v-for="option in merchantOptions"
-            :key="option.id"
-            type="button"
-            class="btn btn--sm"
-            @click="pickMerchant(option)"
-          >
-            {{ option.name }}
-          </button>
-        </div>
         <span class="field__hint">每个商家只有一条平台客服会话，重复创建会直接复用。</span>
       </div>
     </AppModal>

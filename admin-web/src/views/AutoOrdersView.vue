@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -19,8 +20,6 @@ const TASK_STATUS_LABELS = {
 }
 
 const STEP_LABELS = ['选择买家', '选择商家', '选择商品', '规格数量时间', '确认创建']
-// 商品分页：每页 4 张卡片（客户端分页，options 端点最多返回 30 件可售商品）。
-const PRODUCT_PAGE_SIZE = 4
 
 const state = reactive({
   status: 'ALL',
@@ -38,20 +37,121 @@ const createBusy = ref(false)
 const createError = ref('')
 const wizard = reactive({
   step: 1,
-  buyerQuery: '',
-  buyers: [],
   buyer: null,
-  merchantQuery: '',
-  merchants: [],
   merchant: null,
-  products: [],
   product: null,
   offerId: '',
   quantity: 1,
   triggerAt: '',
-  balanceWarning: '',
 })
-const productPage = ref(1)
+
+// 2026-11-28 可搜索下拉框：向导选 买家/商家 改为 AppPicker 远程搜索，
+// 支持按名称与编号（JYU / JYM）查询，下拉项显示名称 + ID 全号。
+function fetchWizardBuyers(q) {
+  return apiRequest(`/buyers/accounts?whitelisted=1&q=${encodeURIComponent(q)}`)
+}
+
+function fetchWizardMerchants(q) {
+  return apiRequest(`/merchants?status=ACTIVE&q=${encodeURIComponent(q)}`)
+}
+
+// 步骤 3【选择商品】恢复旧版版式：顶部搜索 + 下方该商家已上架商品卡片区。
+// 卡片区走服务端分页（每页 PRODUCT_PAGE_SIZE 件，不整店全量拉取）；
+// 顶部搜索与卡片列表共用同一数据源 /auto-orders/options（q 在服务端过滤）。
+const PRODUCT_PAGE_SIZE = 8
+const productState = reactive({
+  q: '',
+  page: 1,
+  items: [],
+  meta: {},
+  loading: false,
+  error: '',
+})
+
+function productParams() {
+  const params = new URLSearchParams({
+    merchant_id: wizard.merchant ? wizard.merchant.id : '',
+    page: String(productState.page),
+    page_size: String(PRODUCT_PAGE_SIZE),
+  })
+  if (productState.q.trim()) params.set('q', productState.q.trim())
+  return params
+}
+
+async function loadWizardProducts(resetPage = false) {
+  if (!wizard.merchant) {
+    productState.items = []
+    productState.meta = {}
+    return
+  }
+  if (resetPage) productState.page = 1
+  productState.loading = true
+  productState.error = ''
+  try {
+    const payload = await apiRequest(`/auto-orders/options?${productParams()}`)
+    productState.items = payload.items || []
+    productState.meta = payload
+  } catch (error) {
+    productState.error = error.message
+    productState.items = []
+    productState.meta = {}
+  } finally {
+    productState.loading = false
+  }
+}
+
+let productSearchTimer = null
+function onProductSearchInput() {
+  if (productSearchTimer) clearTimeout(productSearchTimer)
+  productSearchTimer = setTimeout(() => {
+    loadWizardProducts(true)
+  }, 300)
+}
+
+function goProductPage(page) {
+  productState.page = page
+  loadWizardProducts()
+}
+
+function resetProductState() {
+  productState.q = ''
+  productState.page = 1
+  productState.items = []
+  productState.meta = {}
+  productState.error = ''
+}
+
+function onBuyerPicked(option) {
+  wizard.buyer = option || null
+}
+
+function onMerchantPicked(option) {
+  wizard.merchant = option || null
+  // 换商家后清空商品/规格选择，并把商品区重置（第一页、清空搜索词）。
+  wizard.product = null
+  wizard.offerId = ''
+  resetProductState()
+}
+
+function pickProductCard(row) {
+  wizard.product = row
+  // 只有唯一规格时自动选中；多规格留给第 4 步手动选择（原契约保留）。
+  wizard.offerId = row.offers.length === 1 ? row.offers[0].offer_id : ''
+}
+
+// AppPicker 的清空按钮只发 update:modelValue（空值），这里同步清理向导状态。
+function onWizardBuyerCleared(id) {
+  if (!id) wizard.buyer = null
+}
+
+function onWizardMerchantCleared(id) {
+  if (!id) {
+    wizard.merchant = null
+    wizard.product = null
+    wizard.offerId = ''
+    resetProductState()
+  }
+}
 
 const detail = reactive({ open: false, value: null, loading: false })
 const cancelTarget = ref(null)
@@ -92,91 +192,15 @@ function goPage(page) {
 function openCreate() {
   Object.assign(wizard, {
     step: 1,
-    buyerQuery: '',
-    buyers: [],
     buyer: null,
-    merchantQuery: '',
-    merchants: [],
     merchant: null,
-    products: [],
     product: null,
     offerId: '',
     quantity: 1,
     triggerAt: '',
-    balanceWarning: '',
   })
-  productPage.value = 1
   createError.value = ''
   createOpen.value = true
-}
-
-async function searchBuyers() {
-  try {
-    const payload = await apiRequest(
-      `/buyers/accounts?whitelisted=1&q=${encodeURIComponent(wizard.buyerQuery.trim())}`,
-    )
-    wizard.buyers = payload.items
-  } catch {
-    wizard.buyers = []
-  }
-}
-
-async function searchMerchants() {
-  try {
-    const payload = await apiRequest(
-      `/merchants?status=ACTIVE&q=${encodeURIComponent(wizard.merchantQuery.trim())}`,
-    )
-    wizard.merchants = payload.items
-  } catch {
-    wizard.merchants = []
-  }
-}
-
-// 已下架商品不展示（doc02 拍板）。
-async function loadProducts() {
-  if (!wizard.merchant) return
-  try {
-    const params = new URLSearchParams({ merchant_id: wizard.merchant.id })
-    if (wizard.merchantQuery.trim()) params.set('q', wizard.merchantQuery.trim())
-    const payload = await apiRequest(`/auto-orders/options?${params}`)
-    wizard.products = payload.items
-    productPage.value = 1
-  } catch {
-    wizard.products = []
-  }
-}
-
-function pickBuyer(row) {
-  wizard.buyer = row
-}
-
-function pickMerchant(row) {
-  if (wizard.merchant && wizard.merchant.id !== row.id) {
-    // 换商家后商品要重新拉取，清掉旧的商品/规格选择。
-    wizard.product = null
-    wizard.offerId = ''
-  }
-  wizard.merchant = row
-  // 清空搜索词：进入第 3 步时它是商品搜索框，残留商家名会误过滤商品。
-  wizard.merchantQuery = ''
-  loadProducts()
-}
-
-function pickProduct(row) {
-  wizard.product = row
-  wizard.offerId = row.offers.length === 1 ? row.offers[0].offer_id : wizard.offerId
-}
-
-// 商品分页（客户端）。
-const pagedProducts = computed(() => {
-  const start = (productPage.value - 1) * PRODUCT_PAGE_SIZE
-  return wizard.products.slice(start, start + PRODUCT_PAGE_SIZE)
-})
-const productTotalPages = computed(() =>
-  Math.max(1, Math.ceil(wizard.products.length / PRODUCT_PAGE_SIZE)),
-)
-function goProductPage(n) {
-  productPage.value = n
 }
 
 // 步骤导航：已完成步骤可点击回跳（只能往后，不能跳步往前——doc02 流程约束）。
@@ -210,7 +234,12 @@ function nextStep() {
       return
     }
   }
+  const previousStep = wizard.step
   wizard.step++
+  // 进入【选择商品】时按已选商家拉第一页卡片（换商家时已在 onMerchantPicked 重置）。
+  if (previousStep === 2) {
+    if (!productState.items.length && !productState.loading) loadWizardProducts(true)
+  }
 }
 
 const footSummary = computed(() => {
@@ -226,7 +255,6 @@ const wizardSummary = computed(() => {
   const offer = wizard.product?.offers.find((item) => item.offer_id === wizard.offerId)
   return {
     buyer: wizard.buyer?.account || '—',
-    balance: wizard.buyer?.balance || '—',
     merchant: wizard.merchant?.name || '—',
     product: wizard.product?.title || '—',
     spec: offer ? specText(offer) : '—',
@@ -443,82 +471,73 @@ onMounted(load)
         <div class="rail-body">
           <p v-if="createError" class="notice notice--error">{{ createError }}</p>
 
-          <!-- 步骤 1：选择买家 -->
+          <!-- 步骤 1：选择买家（可搜索下拉框 + 已选卡片） -->
           <template v-if="wizard.step === 1">
             <div class="wizard-field">
               <label class="wizard-field__label" for="wizard-buyer">白名单用户</label>
-              <input
-                id="wizard-buyer"
-                v-model="wizard.buyerQuery"
-                type="search"
-                placeholder="输入买家邮箱搜索（仅白名单）"
-                @input="searchBuyers"
+              <AppPicker
+                input-id="wizard-buyer"
+                :model-value="wizard.buyer?.id || ''"
+                :fetcher="fetchWizardBuyers"
+                placeholder="输入买家邮箱 / 用户名 / 用户编号搜索"
+                @update:model-value="onWizardBuyerCleared"
+                @change="onBuyerPicked"
               />
-              <p class="field__hint">只能选择白名单用户的账号；卡片上直接显示可用余额。</p>
+              <p class="field__hint">只能选择白名单用户的账号；选中卡片显示用户编号。</p>
             </div>
-            <div class="pick-list">
-              <button
-                v-for="row in wizard.buyers"
-                :key="row.id"
-                type="button"
-                class="pick-item"
-                :class="{ 'is-sel': wizard.buyer && wizard.buyer.id === row.id }"
-                @click="pickBuyer(row)"
-              >
+            <div v-if="wizard.buyer" class="pick-list">
+              <div class="pick-item is-sel">
                 <span class="ava ava--buyer">{{
-                  (row.account || '?').slice(0, 1).toUpperCase()
+                  (wizard.buyer.account || '?').slice(0, 1).toUpperCase()
                 }}</span>
                 <span class="meta">
-                  <b>{{ row.account || row.name }}</b>
-                  <span class="sub">可用余额 ¥ {{ row.balance }}</span>
-                </span>
-                <span class="pick-check" aria-hidden="true">✓</span>
-              </button>
-              <p v-if="!wizard.buyers.length" class="empty-state">输入关键字搜索白名单用户。</p>
-            </div>
-          </template>
-
-          <!-- 步骤 2：选择商家 -->
-          <template v-else-if="wizard.step === 2">
-            <div class="wizard-field">
-              <label class="wizard-field__label" for="wizard-merchant">商家</label>
-              <input
-                id="wizard-merchant"
-                v-model="wizard.merchantQuery"
-                type="search"
-                placeholder="输入商家名称搜索"
-                @input="searchMerchants"
-              />
-              <p class="field__hint">卡片展示头像、店铺 ID 与接单状态。</p>
-            </div>
-            <div class="pick-list">
-              <button
-                v-for="row in wizard.merchants"
-                :key="row.id"
-                type="button"
-                class="pick-item"
-                :class="{ 'is-sel': wizard.merchant && wizard.merchant.id === row.id }"
-                @click="pickMerchant(row)"
-              >
-                <span class="ava">
-                  <img v-if="row.avatar" :src="row.avatar" alt="" />
-                  <template v-else>{{ merchantInitial(row) }}</template>
-                </span>
-                <span class="meta">
-                  <b>{{ row.name }}</b>
+                  <b>{{ wizard.buyer.account || wizard.buyer.name }}</b>
                   <span class="sub">
-                    <span class="mono">ID {{ row.id }}</span>
-                    <span>{{ row.status === 'ACTIVE' ? '接单中' : row.status }}</span>
-                    <span>信誉分 {{ row.credit_score ?? '—' }}</span>
+                    <span class="mono">{{ wizard.buyer.id }}</span>
                   </span>
                 </span>
                 <span class="pick-check" aria-hidden="true">✓</span>
-              </button>
-              <p v-if="!wizard.merchants.length" class="empty-state">没有匹配的商家。</p>
+              </div>
             </div>
           </template>
 
-          <!-- 步骤 3：选择商品（带缩略图与分页） -->
+          <!-- 步骤 2：选择商家（可搜索下拉框 + 已选卡片） -->
+          <template v-else-if="wizard.step === 2">
+            <div class="wizard-field">
+              <label class="wizard-field__label" for="wizard-merchant">商家</label>
+              <AppPicker
+                input-id="wizard-merchant"
+                :model-value="wizard.merchant?.id || ''"
+                :fetcher="fetchWizardMerchants"
+                placeholder="输入商家名称或店铺编号搜索"
+                :option-meta="(option) => `信誉分 ${option.credit_score ?? '—'}`"
+                @update:model-value="onWizardMerchantCleared"
+                @change="onMerchantPicked"
+              />
+              <p class="field__hint">仅接单中的商家可被选择；编号 JYM 开头，可整号或部分号搜索。</p>
+            </div>
+            <div v-if="wizard.merchant" class="pick-list">
+              <div class="pick-item is-sel">
+                <span class="ava">
+                  <img v-if="wizard.merchant.avatar" :src="wizard.merchant.avatar" alt="" />
+                  <template v-else>{{ merchantInitial(wizard.merchant) }}</template>
+                </span>
+                <span class="meta">
+                  <b>{{ wizard.merchant.name }}</b>
+                  <span class="sub">
+                    <span class="mono">ID {{ wizard.merchant.id }}</span>
+                    <span>{{
+                      wizard.merchant.status === 'ACTIVE' ? '接单中' : wizard.merchant.status
+                    }}</span>
+                    <span>信誉分 {{ wizard.merchant.credit_score ?? '—' }}</span>
+                  </span>
+                </span>
+                <span class="pick-check" aria-hidden="true">✓</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 步骤 3：选择商品（顶部搜索 + 下方该商家已上架商品卡片区，服务端分页） -->
           <template v-else-if="wizard.step === 3">
             <div class="wizard-field">
               <label class="wizard-field__label" for="wizard-product"
@@ -526,28 +545,35 @@ onMounted(load)
               >
               <input
                 id="wizard-product"
-                v-model="wizard.merchantQuery"
+                v-model="productState.q"
                 type="search"
-                placeholder="输入商品名称搜索"
-                @input="loadProducts"
+                placeholder="输入商品名称或商品编号搜索"
+                @input="onProductSearchInput"
               />
-              <p class="field__hint">已下架商品不展示；卡片带缩略图、价格与规格数，支持分页。</p>
+              <p class="field__hint">
+                下方为该商家已上架的可售商品（已下架不展示）；点卡片选中，共
+                {{ productState.meta.total ?? 0 }} 件。
+              </p>
             </div>
-            <div class="product-grid">
+
+            <p v-if="productState.error" class="notice notice--error">{{ productState.error }}</p>
+            <p v-if="productState.loading" class="inline-loading">加载中…</p>
+            <div v-else class="product-grid">
               <button
-                v-for="row in pagedProducts"
+                v-for="row in productState.items"
                 :key="row.id"
                 type="button"
                 class="product-card"
                 :class="{ 'is-sel': wizard.product && wizard.product.id === row.id }"
-                @click="pickProduct(row)"
+                @click="pickProductCard(row)"
               >
                 <span class="thumb">
                   <img v-if="row.image" :src="row.image" alt="" />
                   <span v-else class="thumb-empty">无图</span>
                 </span>
                 <span class="cardbody">
-                  <b :title="row.title">{{ row.title }}</b>
+                  <b>{{ row.title }}</b>
+                  <span class="cell-sub mono">{{ row.id }}</span>
                   <span class="spec-chips">
                     <span
                       v-for="(offer, index) in row.offers.slice(0, 3)"
@@ -567,41 +593,18 @@ onMounted(load)
                 </span>
                 <span class="pick-check" aria-hidden="true">✓</span>
               </button>
-              <p v-if="!pagedProducts.length" class="empty-state">该商家没有可售商品。</p>
+              <p v-if="!productState.items.length" class="empty-state">
+                {{ productState.q.trim() ? '没有匹配的商品。' : '该商家没有可售商品。' }}
+              </p>
             </div>
-            <div class="product-pager">
-              <button
-                type="button"
-                aria-label="上一页"
-                :disabled="productPage <= 1"
-                @click="goProductPage(productPage - 1)"
-              >
-                ‹
-              </button>
-              <button
-                v-for="n in productTotalPages"
-                :key="n"
-                type="button"
-                :class="{ 'is-on': productPage === n }"
-                @click="goProductPage(n)"
-              >
-                {{ n }}
-              </button>
-              <button
-                type="button"
-                aria-label="下一页"
-                :disabled="productPage >= productTotalPages"
-                @click="goProductPage(productPage + 1)"
-              >
-                ›
-              </button>
-              <span class="pager-total"
-                >共 {{ wizard.products.length }} 件商品 · 第 {{ productPage }}/{{
-                  productTotalPages
-                }}
-                页</span
-              >
-            </div>
+
+            <AppPager
+              :page="productState.meta.page || 1"
+              :page-size="productState.meta.page_size || PRODUCT_PAGE_SIZE"
+              :total="productState.meta.total || 0"
+              :has-next="productState.meta.has_next"
+              @change="goProductPage"
+            />
           </template>
 
           <!-- 步骤 4：规格数量时间 -->
@@ -637,9 +640,7 @@ onMounted(load)
                 >触发时间（按电脑/服务器时间）</label
               >
               <input id="wizard-trigger" v-model="wizard.triggerAt" type="datetime-local" />
-              <p class="field__hint">
-                到触发时间自动下单；买家余额不足或规格已失效时任务标记失败并给出原因。
-              </p>
+              <p class="field__hint">到触发时间自动下单；规格已失效时任务标记失败并给出原因。</p>
             </div>
           </template>
 
@@ -648,7 +649,7 @@ onMounted(load)
             <dl class="detail-grid">
               <div>
                 <dt>买家</dt>
-                <dd>{{ wizardSummary.buyer }}（余额 ¥ {{ wizardSummary.balance }}）</dd>
+                <dd>{{ wizardSummary.buyer }}</dd>
               </div>
               <div>
                 <dt>商家</dt>
@@ -672,33 +673,35 @@ onMounted(load)
               </div>
             </dl>
             <p class="hint-text">
-              触发时间按电脑（服务器）时间判定；到点自动下单，若买家余额不足或规格已失效，任务会标记失败并给出原因。
+              触发时间按电脑（服务器）时间判定；到点自动下单，若规格已失效，任务会标记失败并给出原因。
             </p>
           </template>
         </div>
       </div>
 
-      <!-- 底部已选摘要栏 + 上一步/下一步 -->
-      <div class="wizard-foot">
-        <span class="foot-sum" :title="footSummary">{{ footSummary }}</span>
-        <div class="foot-actions">
-          <button type="button" class="btn" :disabled="wizard.step === 1" @click="prevStep">
-            ← 上一步
-          </button>
-          <button v-if="wizard.step < 5" type="button" class="btn btn--primary" @click="nextStep">
-            下一步 →
-          </button>
-          <button
-            v-else
-            type="button"
-            class="btn btn--primary"
-            :disabled="createBusy"
-            @click="submitCreate"
-          >
-            {{ createBusy ? '创建中…' : '创建任务' }}
-          </button>
+      <template #footer>
+        <!-- 底部已选摘要栏 + 上一步/下一步：固定在抽屉底栏，随步骤内容滚动时不移动 -->
+        <div class="wizard-foot">
+          <span class="foot-sum" :title="footSummary">{{ footSummary }}</span>
+          <div class="foot-actions">
+            <button type="button" class="btn" :disabled="wizard.step === 1" @click="prevStep">
+              ← 上一步
+            </button>
+            <button v-if="wizard.step < 5" type="button" class="btn btn--primary" @click="nextStep">
+              下一步 →
+            </button>
+            <button
+              v-else
+              type="button"
+              class="btn btn--primary"
+              :disabled="createBusy"
+              @click="submitCreate"
+            >
+              {{ createBusy ? '创建中…' : '创建任务' }}
+            </button>
+          </div>
         </div>
-      </div>
+      </template>
     </AppDrawer>
 
     <AppDrawer :open="detail.open" title="任务详情" @close="detail.open = false">
@@ -707,7 +710,7 @@ onMounted(load)
         <dl class="detail-grid">
           <div>
             <dt>买家</dt>
-            <dd>{{ detail.value.buyer.name }}（余额 ¥ {{ detail.value.buyer.balance }}）</dd>
+            <dd>{{ detail.value.buyer.name }}（{{ detail.value.buyer.id }}）</dd>
           </div>
           <div>
             <dt>商家 / 商品</dt>
@@ -962,7 +965,7 @@ onMounted(load)
   opacity: 1;
 }
 
-/* ===== 商品卡片 + 分页 ===== */
+/* ===== 商品卡片（已选商品展示） ===== */
 .product-grid {
   display: flex;
   flex-direction: column;
@@ -1067,42 +1070,6 @@ onMounted(load)
   font-size: 12px;
 }
 
-.product-pager {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.product-pager button {
-  min-width: 26px;
-  height: 26px;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 4px;
-  background: #fff;
-  color: var(--ink, #18263b);
-  font-size: 12px;
-  display: grid;
-  place-items: center;
-}
-
-.product-pager button.is-on {
-  background: var(--primary, #2563eb);
-  border-color: var(--primary, #2563eb);
-  color: #fff;
-}
-
-.product-pager button[disabled] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.pager-total {
-  color: var(--muted, #78869a);
-  font-size: 12px;
-  margin-left: 6px;
-}
-
 /* ===== 规格行 ===== */
 .spec-row {
   display: flex;
@@ -1141,12 +1108,11 @@ onMounted(load)
 /* ===== 底部已选摘要栏 + 上一步/下一步 ===== */
 .wizard-foot {
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 11px 18px;
-  border-top: 1px solid var(--border, #e2e8f0);
-  background: #fafbfd;
+  min-width: 0;
 }
 
 .foot-sum {

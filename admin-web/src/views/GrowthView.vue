@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
 
@@ -16,6 +17,12 @@ const state = reactive({
   error: '',
   notice: '',
 })
+
+// 2026-11-28 可搜索下拉框：筛选改为选商家（名称/编号均可搜）。
+// 数据源就是本页的 /growth 接口（权限一致）。
+function fetchGrowthMerchantOptions(q) {
+  return apiRequest(`/growth?q=${encodeURIComponent(q)}`)
+}
 
 // 每个商家单独的调整记录抽屉（不再和列表同屏展示）。
 const recordDrawer = reactive({ open: false, merchant: null, items: [], loading: false, error: '' })
@@ -132,11 +139,12 @@ onMounted(() => {
 
     <div class="panel">
       <div class="toolbar">
-        <input
+        <AppPicker
           v-model="state.q"
-          type="search"
-          placeholder="店铺名称 / 店铺 ID"
-          @keyup.enter="load(true)"
+          :fetcher="fetchGrowthMerchantOptions"
+          placeholder="选择商家（名称 / 编号搜索）"
+          :option-meta="(option) => `关注 ${option.followers}`"
+          @change="load(true)"
         />
         <button type="button" class="btn" @click="load(true)">查询</button>
         <button type="button" class="btn" @click="resetFilters">重置</button>

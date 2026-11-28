@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -53,8 +54,12 @@ const actionForm = reactive({ fee: '0.00', reference: '', reason: '' })
 const rechargeOpen = ref(false)
 const rechargeBusy = ref(false)
 const rechargeError = ref('')
-const rechargeForm = reactive({ merchantQuery: '', merchantId: '', amount: '', note: '' })
-const merchantOptions = ref([])
+const rechargeForm = reactive({ merchantId: '', amount: '', note: '' })
+
+// 2026-11-28 可搜索下拉框：充值选商家改为 AppPicker 远程搜索（名称/编号均可查）。
+function fetchRechargeMerchants(q) {
+  return apiRequest(`/finance/merchants?q=${encodeURIComponent(q)}`)
+}
 
 async function loadSummary() {
   try {
@@ -139,30 +144,14 @@ async function submitAction() {
   }
 }
 
-async function searchMerchants() {
-  if (!rechargeForm.merchantQuery.trim()) {
-    merchantOptions.value = []
-    return
-  }
-  try {
-    const payload = await apiRequest(
-      `/finance/merchants?q=${encodeURIComponent(rechargeForm.merchantQuery.trim())}`,
-    )
-    merchantOptions.value = payload.items
-  } catch {
-    merchantOptions.value = []
-  }
-}
-
-function pickMerchant(option) {
-  rechargeForm.merchantId = option.id
-  rechargeForm.merchantQuery = option.name
-  merchantOptions.value = []
-}
-
 async function submitRecharge() {
   rechargeBusy.value = true
   rechargeError.value = ''
+  if (!rechargeForm.merchantId) {
+    rechargeError.value = '请先选择一个商家。'
+    rechargeBusy.value = false
+    return
+  }
   try {
     await adminWrite('/finance/recharges', {
       merchant_id: rechargeForm.merchantId,
@@ -171,7 +160,6 @@ async function submitRecharge() {
     })
     rechargeOpen.value = false
     rechargeForm.merchantId = ''
-    rechargeForm.merchantQuery = ''
     rechargeForm.amount = ''
     rechargeForm.note = ''
     await Promise.all([load(), loadSummary()])
@@ -475,25 +463,14 @@ onMounted(() => {
       <p v-if="rechargeError" class="notice notice--error">{{ rechargeError }}</p>
       <div class="form-grid">
         <div class="field">
-          <label for="recharge-merchant">商家</label>
-          <input
-            id="recharge-merchant"
-            v-model="rechargeForm.merchantQuery"
-            type="search"
-            placeholder="输入店铺名称搜索"
-            @input="searchMerchants"
+          <label for="recharge-merchant">商家（输入名称或编号搜索）</label>
+          <AppPicker
+            v-model="rechargeForm.merchantId"
+            input-id="recharge-merchant"
+            :fetcher="fetchRechargeMerchants"
+            placeholder="输入店铺名称或编号"
+            :option-meta="(option) => `余额 ¥ ${option.wallet_balance}`"
           />
-          <div v-if="merchantOptions.length" class="thumb-row">
-            <button
-              v-for="option in merchantOptions"
-              :key="option.id"
-              type="button"
-              class="btn btn--sm"
-              @click="pickMerchant(option)"
-            >
-              {{ option.name }}（余额 ¥ {{ option.wallet_balance }}）
-            </button>
-          </div>
         </div>
         <div class="field">
           <label for="recharge-amount">充值金额</label>

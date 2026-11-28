@@ -57,7 +57,8 @@ const NAV = [
       { to: '/campaign-cards', label: '活动卡片', icon: 'grid', module: 'cms.campaign' },
       { to: '/activity-pages', label: '活动页 / 店铺页', icon: 'grid', module: 'cms.campaign' },
       { to: '/notifications', label: '平台通知推送', icon: 'bell', module: 'notifications' },
-      { to: '/support', label: '客服中心', icon: 'chat', module: 'support' },
+      // 2026-11-28 用户要求：平台管理端暂不开放【客服中心】——
+      // 导航项已隐藏（路由同页重定向回落地页，SupportView 代码保留以便恢复）。
     ],
   },
   {

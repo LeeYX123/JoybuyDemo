@@ -650,7 +650,10 @@ const hasLoginPending = computed(() => loginPendingIds.value.size > 0)
           </p>
           <CategoryTreePicker v-model="selectedCategories" :categories="tree.categories" />
         </div>
-        <button type="button" @click="submitCreate">创建任务</button>
+        <div class="create-form__actions form-sticky-bar">
+          <button type="button" @click="showCreate = false">取消</button>
+          <button type="button" class="create-form__submit" @click="submitCreate">创建任务</button>
+        </div>
       </div>
 
       <AdminTable
@@ -1067,6 +1070,24 @@ h1 {
 .group-form {
   border-left: 3px solid var(--colour-accent, #1a56db);
   padding-left: var(--space-3);
+}
+
+/* 新建任务表单很长（含类目树），保存/取消条吸在视口底部：
+   负边距抵消 create-form 的 padding，让实底条铺满表单内宽。 */
+.create-form__actions {
+  grid-column: 1 / -1;
+  margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.create-form__actions .create-form__submit {
+  background: var(--colour-accent, #1a56db);
+  border-color: var(--colour-accent, #1a56db);
+  color: #ffffff;
+}
+
+.create-form__actions .create-form__submit:hover {
+  filter: brightness(1.08);
 }
 
 .create-form__account-hint {

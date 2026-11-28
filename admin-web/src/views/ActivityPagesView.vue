@@ -10,6 +10,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import AppModal from '@/components/AppModal.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import ImageUploader from '@/components/ImageUploader.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -62,14 +63,25 @@ const sectionForm = reactive({
 })
 
 const pickerOpen = ref(false)
-const pickerQuery = ref('')
-const pickerRows = ref([])
-const pickerLoading = ref(false)
 const pickerSelected = ref([])
+// 多选下拉的 chips 种子：已选商品回显名称（打开选品弹窗时填充）。
+const pickerInitialItems = ref([])
+const pickerBusySearch = ref(false)
 
-const kindLabel = computed(() =>
-  state.kind === 'STORE' ? '店铺页' : '活动页',
-)
+// 2026-11-28 可搜索下拉框：楼层选品改为 AppPicker 多选远程搜索（名称/商品 UUID），
+// 商品池 2 万+ 全部走服务端搜索，勾选顺序即保存顺序。
+async function fetchPickerProducts(q, page) {
+  pickerBusySearch.value = true
+  try {
+    const params = new URLSearchParams({ page: String(page) })
+    if (q.trim()) params.set('q', q.trim())
+    return await apiRequest(`/products?${params.toString()}`)
+  } finally {
+    pickerBusySearch.value = false
+  }
+}
+
+const kindLabel = computed(() => (state.kind === 'STORE' ? '店铺页' : '活动页'))
 
 async function load() {
   state.loading = true
@@ -249,42 +261,29 @@ async function removeSection(section) {
 
 async function openPicker(section) {
   pickerSelected.value = (section.products || []).map((item) => item.spu_public_id)
-  pickerQuery.value = ''
-  pickerRows.value = []
+  // 已选商品作为 chips 种子回显（名称来自楼层商品快照）。
+  pickerInitialItems.value = (section.products || []).map((item) => ({
+    id: item.spu_public_id,
+    name: item.title || item.spu_public_id,
+  }))
   pickerOpen.value = true
-  await searchProducts()
-}
-
-async function searchProducts() {
-  pickerLoading.value = true
-  try {
-    const query = new URLSearchParams({ page: '1' })
-    if (pickerQuery.value.trim()) query.set('q', pickerQuery.value.trim())
-    const payload = await apiRequest(`/products?${query.toString()}`)
-    pickerRows.value = payload.items || []
-  } catch (error) {
-    state.error = error.message
-  } finally {
-    pickerLoading.value = false
-  }
-}
-
-function togglePick(row) {
-  const index = pickerSelected.value.indexOf(row.id)
-  if (index >= 0) pickerSelected.value.splice(index, 1)
-  else pickerSelected.value.push(row.id)
 }
 
 async function savePicks() {
   const section = detail.value.sections.find((item) => item.public_id === pickerSectionId.value)
   if (!section) return
-  await adminWrite(
-    `/activity-pages/${detail.value.public_id}/sections/${section.public_id}/products`,
-    { products: pickerSelected.value },
-    'PUT',
-  )
-  pickerOpen.value = false
-  await refreshDetail()
+  pickerBusySearch.value = true
+  try {
+    await adminWrite(
+      `/activity-pages/${detail.value.public_id}/sections/${section.public_id}/products`,
+      { products: pickerSelected.value },
+      'PUT',
+    )
+    pickerOpen.value = false
+    await refreshDetail()
+  } finally {
+    pickerBusySearch.value = false
+  }
 }
 
 const pickerSectionId = ref('')
@@ -342,7 +341,11 @@ onMounted(load)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in state.items" :key="row.public_id" :class="{ 'row--off': !row.enabled }">
+            <tr
+              v-for="row in state.items"
+              :key="row.public_id"
+              :class="{ 'row--off': !row.enabled }"
+            >
               <td>
                 <img v-if="row.hero_image" :src="row.hero_image" alt="" class="campaign-thumb" />
                 <span v-else class="campaign-thumb campaign-thumb--empty">无图</span>
@@ -362,7 +365,9 @@ onMounted(load)
                 </span>
               </td>
               <td class="actions-col">
-                <button type="button" class="btn btn--sm" @click="openDetail(row)">分区与选品</button>
+                <button type="button" class="btn btn--sm" @click="openDetail(row)">
+                  分区与选品
+                </button>
                 <button type="button" class="btn btn--sm" @click="openEditPage(row)">编辑</button>
               </td>
             </tr>
@@ -438,15 +443,23 @@ onMounted(load)
           </button>
         </div>
         <div v-if="!detail.sections.length" class="empty-state">还没有分区。</div>
-        <div v-for="(section, index) in detail.sections" :key="section.public_id" class="section-row">
+        <div
+          v-for="(section, index) in detail.sections"
+          :key="section.public_id"
+          class="section-row"
+        >
           <div class="section-row__head">
-            <strong>{{ index + 1 }}. {{ section.kind === 'BANNER' ? '图片模块' : '商品楼层' }}</strong>
+            <strong
+              >{{ index + 1 }}. {{ section.kind === 'BANNER' ? '图片模块' : '商品楼层' }}</strong
+            >
             <span v-if="section.title" class="cell-sub">{{ section.title }}</span>
             <span class="cell-sub">商品 {{ (section.products || []).length }}</span>
           </div>
           <img v-if="section.image_url" :src="section.image_url" alt="" class="section-row__img" />
           <div class="section-row__actions">
-            <button type="button" class="btn btn--sm" @click="openEditSection(section)">编辑</button>
+            <button type="button" class="btn btn--sm" @click="openEditSection(section)">
+              编辑
+            </button>
             <button
               v-if="section.kind === 'PRODUCTS'"
               type="button"
@@ -490,7 +503,12 @@ onMounted(load)
         </label>
         <label v-if="sectionForm.kind === 'PRODUCTS'" class="field">
           <span class="field__label">标题字色（选填，默认 #a33838）</span>
-          <input v-model="sectionForm.title_color" type="text" maxlength="32" placeholder="#ffffff" />
+          <input
+            v-model="sectionForm.title_color"
+            type="text"
+            maxlength="32"
+            placeholder="#ffffff"
+          />
         </label>
         <label v-if="sectionForm.kind === 'PRODUCTS'" class="field">
           <span class="field__label">标题底色（选填，留空 = 纯文字标题）</span>
@@ -526,37 +544,30 @@ onMounted(load)
       <p v-if="sectionError" class="notice notice--error">{{ sectionError }}</p>
     </AppModal>
 
-    <!-- 选品 -->
+    <!-- 选品：可搜索多选下拉（勾选顺序即保存顺序） -->
     <AppModal
       :open="pickerOpen"
       title="楼层选品（按勾选顺序保存）"
       confirm-text="保存选品"
-      :busy="pickerLoading"
+      :busy="pickerBusySearch"
       @cancel="pickerOpen = false"
       @confirm="savePicks"
     >
-      <div class="picker__bar">
-        <input
-          v-model="pickerQuery"
-          type="text"
-          placeholder="搜索商品标题 / 商品 ID"
-          @keyup.enter="searchProducts"
+      <div class="field">
+        <label for="section-product-picker">商品（输入商品名称或商品编号搜索，可多选）</label>
+        <AppPicker
+          v-model="pickerSelected"
+          input-id="section-product-picker"
+          multiple
+          :fetcher="fetchPickerProducts"
+          :initial-items="pickerInitialItems"
+          :option-meta="(option) => (option.price ? `¥ ${option.price}` : '')"
+          placeholder="输入商品名称 / 商品编号搜索"
         />
-        <button type="button" class="btn btn--sm" @click="searchProducts">搜索</button>
-        <span class="cell-sub">已选 {{ pickerSelected.length }} 个</span>
-      </div>
-      <p v-if="pickerLoading" class="inline-loading">加载中…</p>
-      <div v-else class="picker__list">
-        <label v-for="row in pickerRows" :key="row.id" class="picker__row">
-          <input
-            type="checkbox"
-            :checked="pickerSelected.includes(row.id)"
-            @change="togglePick(row)"
-          />
-          <img v-if="row.images && row.images.length" :src="row.images[0]" alt="" />
-          <span class="picker__title">{{ row.name }}</span>
-          <span class="cell-sub">{{ row.price || '—' }}</span>
-        </label>
+        <span class="field__hint"
+          >已选 {{ pickerSelected.length }} 个商品，顺序即楼层展示顺序；点已选卡片上的 ×
+          可移除。</span
+        >
       </div>
     </AppModal>
   </div>
@@ -594,36 +605,5 @@ onMounted(load)
   margin-top: 8px;
   display: flex;
   gap: 8px;
-}
-
-.picker__bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.picker__list {
-  max-height: 360px;
-  overflow: auto;
-}
-
-.picker__row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 0;
-  border-bottom: 1px solid #f1f2f4;
-}
-
-.picker__row img {
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-}
-
-.picker__title {
-  flex: 1;
-  font-size: 13px;
 }
 </style>

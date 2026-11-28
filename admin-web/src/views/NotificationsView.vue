@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import ImageUploader from '@/components/ImageUploader.vue'
 import AppPager from '@/components/AppPager.vue'
 import { adminWrite } from '@/composables/useAdminApi'
@@ -37,8 +38,6 @@ const compose = reactive({
   kind: 'NORMAL',
   target: 'ALL',
   merchantId: '',
-  merchantQuery: '',
-  productQuery: '',
   productId: '',
   title: '',
   content: '',
@@ -46,8 +45,24 @@ const compose = reactive({
   images: '',
 })
 
-const merchantOptions = ref([])
-const productOptions = ref([])
+// 2026-11-28 可搜索下拉框：推送选店铺/店铺订单改为 AppPicker 远程搜索。
+function fetchComposeMerchants(q) {
+  return apiRequest(`/notifications/merchants?q=${encodeURIComponent(q)}`)
+}
+
+// 店铺订单数据源：依赖已选店铺；未选店铺时返回空列表。
+async function fetchComposeOrders(q) {
+  if (!compose.merchantId) return { items: [] }
+  return apiRequest(
+    `/notifications/orders?merchant_id=${encodeURIComponent(compose.merchantId)}&q=${encodeURIComponent(q)}`,
+  )
+}
+
+function onComposeMerchantPicked(option) {
+  if (!option) return
+  // 换店铺后旧订单选择失效。
+  compose.productId = ''
+}
 
 async function load(resetPage = false) {
   if (resetPage) state.page = 1
@@ -99,51 +114,25 @@ async function sendReply() {
   }
 }
 
-async function searchMerchants() {
-  if (!compose.merchantQuery.trim()) {
-    merchantOptions.value = []
-    return
-  }
-  try {
-    const payload = await apiRequest(
-      `/notifications/merchants?q=${encodeURIComponent(compose.merchantQuery.trim())}`,
-    )
-    merchantOptions.value = payload.items
-  } catch {
-    merchantOptions.value = []
-  }
-}
-
-async function pickMerchant(option) {
-  compose.merchantId = option.id
-  compose.merchantQuery = option.name
-  merchantOptions.value = []
-  if (compose.kind === 'REVIEW') await searchOrders()
-}
-
-// 迭代02：好评推送改选【店铺订单】（已完成 + 未评价），支持按订单号搜索。
-async function searchOrders() {
-  if (!compose.merchantId) return
-  try {
-    const params = new URLSearchParams({ merchant_id: compose.merchantId })
-    if (compose.productQuery.trim()) params.set('q', compose.productQuery.trim())
-    const payload = await apiRequest(`/notifications/orders?${params}`)
-    productOptions.value = payload.items
-  } catch {
-    productOptions.value = []
-  }
-}
-
-function pickProduct(option) {
-  compose.productId = option.id
-  compose.productQuery = `${option.order_no} · ${option.product}`
-  productOptions.value = []
-  if (!compose.title) compose.title = '您收到一个商品好评'
+// 迭代02：好评推送选【店铺订单】（已完成 + 未评价），AppPicker 按订单号/商品名搜索。
+function onComposeOrderPicked(option) {
+  if (option && !compose.title) compose.title = '您收到一个商品好评'
 }
 
 async function submitCompose() {
   composeBusy.value = true
   composeError.value = ''
+  // 下拉框化后保留原必填语义：指定店铺/好评推送必须先选店铺，好评还需选订单。
+  if ((compose.kind === 'REVIEW' || compose.target === 'ONE') && !compose.merchantId) {
+    composeError.value = '请先选择店铺。'
+    composeBusy.value = false
+    return
+  }
+  if (compose.kind === 'REVIEW' && !compose.productId) {
+    composeError.value = '请先选择店铺订单。'
+    composeBusy.value = false
+    return
+  }
   try {
     if (compose.kind === 'REVIEW') {
       await adminWrite('/notifications', {
@@ -173,8 +162,6 @@ async function submitCompose() {
       kind: 'NORMAL',
       target: 'ALL',
       merchantId: '',
-      merchantQuery: '',
-      productQuery: '',
       productId: '',
       title: '',
       content: '',
@@ -459,47 +446,27 @@ onMounted(load)
         class="field"
         style="margin-top: 12px"
       >
-        <label for="compose-merchant">店铺（输入名称搜索）</label>
-        <input
-          id="compose-merchant"
-          v-model="compose.merchantQuery"
-          type="search"
-          placeholder="店铺名称"
-          @input="searchMerchants"
+        <label for="compose-merchant">店铺（输入名称或编号搜索）</label>
+        <AppPicker
+          v-model="compose.merchantId"
+          input-id="compose-merchant"
+          :fetcher="fetchComposeMerchants"
+          placeholder="输入店铺名称或编号"
+          @change="onComposeMerchantPicked"
         />
-        <div v-if="merchantOptions.length" class="thumb-row">
-          <button
-            v-for="option in merchantOptions"
-            :key="option.id"
-            type="button"
-            class="btn btn--sm"
-            @click="pickMerchant(option)"
-          >
-            {{ option.name }}
-          </button>
-        </div>
       </div>
 
       <div v-if="compose.kind === 'REVIEW'" class="field" style="margin-top: 12px">
-        <label for="compose-product">店铺订单（已完成且未评价，按订单号搜索）</label>
-        <input
-          id="compose-product"
-          v-model="compose.productQuery"
-          type="search"
-          placeholder="先选店铺，再输入订单号搜索"
-          @input="searchOrders"
+        <label for="compose-order">店铺订单（已完成且未评价，可按订单号/商品搜索）</label>
+        <AppPicker
+          v-model="compose.productId"
+          input-id="compose-order"
+          :fetcher="fetchComposeOrders"
+          :placeholder="compose.merchantId ? '输入订单号或商品名搜索' : '请先选择店铺'"
+          :option-label="(option) => `${option.order_no} · ${option.product}`"
+          :option-meta="(option) => `${option.buyer} · ¥ ${option.amount}`"
+          @change="onComposeOrderPicked"
         />
-        <div v-if="productOptions.length" class="thumb-row">
-          <button
-            v-for="option in productOptions"
-            :key="option.id"
-            type="button"
-            class="btn btn--sm"
-            @click="pickProduct(option)"
-          >
-            {{ option.order_no }} · {{ option.product }} · {{ option.amount }}
-          </button>
-        </div>
         <span class="field__hint"
           >只能推送该店已完成且未评价的订单；星级默认五星，可另选；图片最多 5 张。</span
         >

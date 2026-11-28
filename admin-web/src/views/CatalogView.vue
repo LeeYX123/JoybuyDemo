@@ -2,8 +2,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import AdminTable from '@/components/AdminTable.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import { adminGet, adminWrite } from '@/composables/useAdminApi'
 import { useStaffAuth } from '@/composables/useStaffAuth'
+import { apiRequest } from '@/lib/api'
 import { actionLabel, fieldLabel, valueLabel } from '@/lib/locale'
 
 // Catalog administration: searchable product documents, the source-vs-
@@ -28,6 +30,24 @@ const inventoryForm = reactive({
 })
 
 const canManageOffers = computed(() => hasPermission('offers.manage'))
+
+// 2026-11-28 可搜索下拉框：库存调整的报价改为 AppPicker 远程搜索，
+// 支持按商品标题 / 报价 UUID（整号或部分号）/ 商家名称 / 商家编号查询。
+async function fetchOffers(q, page) {
+  const params = new URLSearchParams({ page: String(page) })
+  if (q.trim()) params.set('q', q.trim())
+  return apiRequest(`/offers?${params.toString()}`)
+}
+
+function offerLabel(option) {
+  const spec =
+    option.specification && Object.keys(option.specification).length
+      ? Object.entries(option.specification)
+          .map(([key, value]) => `${key}:${value}`)
+          .join(' / ')
+      : '默认规格'
+  return `${option.product?.name || '商品'}（${spec}）`
+}
 
 async function loadItems() {
   loading.value = true
@@ -88,6 +108,10 @@ async function overrideAction(action, diff) {
 async function submitInventory() {
   error.value = ''
   message.value = ''
+  if (!inventoryForm.offer_public_id) {
+    error.value = '请先选择一个销售报价。'
+    return
+  }
   if (!inventoryForm.idempotency_key.trim()) {
     inventoryForm.idempotency_key = `manual-${Date.now()}`
   }
@@ -165,10 +189,20 @@ const diffColumns = [
     <section v-if="canManageOffers" class="panel" aria-labelledby="inventory-title">
       <h2 id="inventory-title">库存调整</h2>
       <form class="panel-form" @submit.prevent="submitInventory">
-        <label>
-          销售报价公开标识
-          <input v-model="inventoryForm.offer_public_id" placeholder="请输入报价标识" required />
-        </label>
+        <div class="field">
+          <label for="inventory-offer">销售报价（按商品名 / 商家 / 报价编号搜索）</label>
+          <AppPicker
+            v-model="inventoryForm.offer_public_id"
+            input-id="inventory-offer"
+            :fetcher="fetchOffers"
+            :option-label="offerLabel"
+            :option-meta="
+              (option) =>
+                `${option.merchant?.name || ''} · ¥ ${option.price} · 库存 ${option.inventory}`
+            "
+            placeholder="输入商品名称 / 商家名称或编号 / 报价编号搜索"
+          />
+        </div>
         <label>
           增减数量（正/负）
           <input v-model.number="inventoryForm.quantity_delta" type="number" required />
@@ -272,6 +306,11 @@ h1 {
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-md);
   font: inherit;
+}
+
+/* 库存调整行的可搜索下拉框与同排 44px 输入框对齐。 */
+.panel-form :deep(.app-picker__trigger) {
+  min-height: 44px;
 }
 
 .notice {

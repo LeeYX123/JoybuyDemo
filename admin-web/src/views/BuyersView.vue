@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
 
@@ -18,6 +19,12 @@ const state = reactive({
   error: '',
   notice: '',
 })
+
+// 2026-11-28 可搜索下拉框：筛选改为选用户（用户名/邮箱/手机号/编号均可搜），
+// 选中即按该用户编号（JYU）过滤。
+function fetchBuyerFilterOptions(q) {
+  return apiRequest(`/buyers/accounts?q=${encodeURIComponent(q)}`)
+}
 
 const detail = ref(null)
 const detailLoading = ref(false)
@@ -247,11 +254,11 @@ onMounted(load)
 
     <div class="panel">
       <div class="toolbar">
-        <input
+        <AppPicker
           v-model="state.q"
-          type="search"
-          placeholder="用户名 / 邮箱 / 手机号 / 用户 ID"
-          @keyup.enter="load(true)"
+          :fetcher="fetchBuyerFilterOptions"
+          placeholder="选择用户（用户名 / 邮箱 / 手机号 / 编号）"
+          @change="load(true)"
         />
         <select v-model="state.whitelisted" @change="load(true)">
           <option value="">全部账号</option>

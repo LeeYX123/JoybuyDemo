@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -25,24 +26,21 @@ const state = reactive({
   error: '',
 })
 
-const merchantOptions = ref([])
 const detail = ref(null)
 const removeTarget = ref(null)
 const removing = ref(false)
 
-async function searchMerchants() {
-  if (!state.merchantQuery.trim()) {
-    merchantOptions.value = []
-    return
-  }
-  try {
-    const payload = await apiRequest(
-      `/merchant-options?q=${encodeURIComponent(state.merchantQuery.trim())}`,
-    )
-    merchantOptions.value = payload.items
-  } catch {
-    merchantOptions.value = []
-  }
+// 2026-11-28 可搜索下拉框：两个筛选改为 AppPicker——
+// 商家候选走 /merchant-options（选中传商家编号，后端按编号精确匹配）；
+// 商品候选走 /products（名称/UUID 搜索，选中传商品 UUID 精确匹配）。
+function fetchListingMerchantOptions(q) {
+  return apiRequest(`/merchant-options?q=${encodeURIComponent(q)}`)
+}
+
+function fetchListingProductOptions(q, page) {
+  const params = new URLSearchParams({ page: String(page) })
+  if (q.trim()) params.set('q', q.trim())
+  return apiRequest(`/products?${params.toString()}`)
 }
 
 async function load(resetPage = false) {
@@ -97,13 +95,6 @@ function resetFilters() {
   state.merchantQuery = ''
   state.productQuery = ''
   state.status = ''
-  merchantOptions.value = []
-  load(true)
-}
-
-function pickMerchant(option) {
-  state.merchantQuery = option.name
-  merchantOptions.value = []
   load(true)
 }
 
@@ -133,34 +124,21 @@ onMounted(load)
       </div>
 
       <div class="toolbar">
-        <input
+        <AppPicker
           v-model="state.merchantQuery"
-          type="search"
-          placeholder="商家名称 / 店铺 ID"
-          @input="searchMerchants"
-          @keyup.enter="load(true)"
+          :fetcher="fetchListingMerchantOptions"
+          placeholder="选择商家（名称 / 编号搜索）"
+          @change="load(true)"
         />
-        <input
+        <AppPicker
           v-model="state.productQuery"
-          type="text"
-          placeholder="商品 ID（精确匹配）"
-          @keyup.enter="load(true)"
+          :fetcher="fetchListingProductOptions"
+          placeholder="选择商品（名称 / 商品编号搜索）"
+          :option-meta="(option) => (option.price ? `¥ ${option.price}` : '')"
+          @change="load(true)"
         />
         <button type="button" class="btn" @click="load(true)">查询</button>
         <button type="button" class="btn" @click="resetFilters">重置</button>
-      </div>
-
-      <div v-if="merchantOptions.length" class="toolbar" style="border-bottom: 0; padding-top: 0">
-        <span class="cell-sub">匹配到的商家：</span>
-        <button
-          v-for="option in merchantOptions"
-          :key="option.id"
-          type="button"
-          class="btn btn--sm"
-          @click="pickMerchant(option)"
-        >
-          {{ option.name }}
-        </button>
       </div>
 
       <p v-if="state.error" class="notice notice--error" style="margin: 16px 20px">

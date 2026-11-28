@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import ImageUploader from '@/components/ImageUploader.vue'
 import AppPager from '@/components/AppPager.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -42,6 +43,14 @@ const parentCategories = computed(() =>
     .filter((item) => (item.depth ?? 0) === 0)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
 )
+
+// 2026-11-28 可搜索下拉框：筛选改为选商品（名称/UUID 均可搜，服务端分页搜索）。
+// 商品池 2 万+，禁止全量拉取。
+function fetchProductFilterOptions(q, page) {
+  const params = new URLSearchParams({ page: String(page) })
+  if (q.trim()) params.set('q', q.trim())
+  return apiRequest(`/products?${params.toString()}`)
+}
 
 const detail = ref(null)
 const detailLoading = ref(false)
@@ -375,11 +384,12 @@ onMounted(() => {
       </div>
 
       <div class="toolbar">
-        <input
+        <AppPicker
           v-model="state.q"
-          type="search"
-          placeholder="商品名称或商品 ID"
-          @keyup.enter="load(true)"
+          :fetcher="fetchProductFilterOptions"
+          placeholder="选择商品（名称 / 商品编号搜索）"
+          :option-meta="(option) => (option.price ? `¥ ${option.price}` : '')"
+          @change="load(true)"
         />
         <select v-model="state.category" @change="load(true)">
           <option value="">全部品类</option>

@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import AppDrawer from '@/components/AppDrawer.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppPager from '@/components/AppPager.vue'
+import AppPicker from '@/components/AppPicker.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { adminWrite } from '@/composables/useAdminApi'
 import { apiRequest } from '@/lib/api'
@@ -58,6 +59,11 @@ const createForm = reactive({
 const statusLabel = computed(() =>
   Object.fromEntries(TABS.filter((tab) => tab.key).map((tab) => [tab.key, tab.label])),
 )
+
+// 2026-11-28 可搜索下拉框：筛选改为选商家（名称/编号均可搜），选中即按该商家编号过滤。
+async function fetchMerchantFilterOptions(q) {
+  return apiRequest(`/merchants?q=${encodeURIComponent(q)}`)
+}
 
 async function load(resetPage = false) {
   if (resetPage) state.page = 1
@@ -414,11 +420,11 @@ onMounted(() => {
       </div>
 
       <div class="toolbar">
-        <input
+        <AppPicker
           v-model="state.q"
-          type="search"
-          placeholder="店铺名称或店铺 ID"
-          @keyup.enter="load(true)"
+          :fetcher="fetchMerchantFilterOptions"
+          placeholder="选择店铺（名称 / 编号搜索）"
+          @change="load(true)"
         />
         <button type="button" class="btn" @click="load(true)">查询</button>
         <button type="button" class="btn" @click="resetFilters">重置</button>

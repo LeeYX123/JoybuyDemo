@@ -23,7 +23,6 @@ const LANDING_CANDIDATES = [
   { path: '/activities', module: 'activities' },
   { path: '/banners', module: 'cms.banners' },
   { path: '/notifications', module: 'notifications' },
-  { path: '/support', module: 'support' },
   { path: '/buyers', module: 'buyers' },
   { path: '/growth', module: 'merchants.growth' },
   { path: '/staff', module: 'staff.roles' },
@@ -148,10 +147,18 @@ const router = createRouter({
           meta: { title: '平台通知推送', module: 'notifications' },
         },
         {
+          // 2026-11-28 用户要求：平台管理端暂不开放【客服中心】。
+          // 侧边导航已隐藏，旧书签/直链也不可达：beforeEnter 先确保会话已载入，
+          // 再跳到第一个有权限的模块（与登录落地一致）。SupportView.vue 代码
+          // 保留，恢复时把 component 指回组件并删掉该 beforeEnter 即可。
           path: 'support',
           name: 'support',
-          component: () => import('@/views/SupportView.vue'),
-          meta: { title: '客服中心', module: 'support' },
+          beforeEnter: async () => {
+            const { loaded, loadSession, canView } = useStaffAuth()
+            if (!loaded.value) await loadSession()
+            const target = LANDING_CANDIDATES.find((item) => canView(item.module))
+            return target ? target.path : '/no-access'
+          },
         },
         {
           path: 'growth',
