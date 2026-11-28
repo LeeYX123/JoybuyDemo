@@ -21,6 +21,7 @@ from merchant_ops.models import (
     MerchantWithdrawal,
 )
 from merchant_ops.services import MerchantOpsError, request_withdrawal, set_wallet_password
+from orders.models import MerchantOrder
 
 LEDGER_KINDS = (
     MerchantWalletEntry.Kind.RECHARGE,
@@ -75,6 +76,8 @@ def _ledger_payload(entry: MerchantWalletEntry) -> dict:
 def _withdrawal_payload(withdrawal: MerchantWithdrawal) -> dict:
     return {
         "id": str(withdrawal.public_id),
+        # 可读申请单号（设计稿「申请单号 / 时间」列展示 WD+日期+序号，避免 36 位 UUID 撑破表格）。
+        "serial": f"WD{withdrawal.created_at:%Y%m%d}{withdrawal.pk:06d}",
         "method": withdrawal.method,
         "currency": withdrawal.currency,
         "amount": money_str(withdrawal.amount),
@@ -167,6 +170,18 @@ class MerchantWalletView(MerchantAPIView):
             income=Sum("amount", filter=Q(amount__gt=0)),
             expense=Sum("amount", filter=Q(amount__lt=0)),
         )
+        # 设计稿钱包指标卡：今日回款（当天订单回款合计）与店铺总收益（已发货订单累计毛利）。
+        settlement_today = MerchantWalletEntry.objects.filter(
+            merchant=merchant,
+            kind=MerchantWalletEntry.Kind.ORDER_SETTLEMENT,
+            occurred_at__date=timezone.localdate(),
+        ).aggregate(total=Sum("amount"))["total"] or 0
+        shipped_orders = MerchantOrder.objects.filter(
+            merchant=merchant, shipped_at__isnull=False
+        ).only("items_total", "cost_total")
+        profit_total = sum(
+            (order.items_total or 0) - (order.cost_total or 0) for order in shipped_orders
+        )
         return Response(
             {
                 "balance": money_str(merchant.wallet_balance),
@@ -179,6 +194,8 @@ class MerchantWalletView(MerchantAPIView):
                     # 支出合计按绝对值展示，符号由明细行的正负表达。
                     "expense": money_str(abs(totals["expense"] or 0)),
                 },
+                "settlement_today": money_str(settlement_today),
+                "shipping_profit_total": money_str(profit_total),
                 "entries": [_ledger_payload(entry) for entry in entries],
                 "withdrawals": [_withdrawal_payload(item) for item in withdrawals],
                 **meta,

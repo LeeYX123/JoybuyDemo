@@ -126,9 +126,11 @@ window.ordersPages = 1
 window.ordersTotal = 0
 window.ordersPageNo = 1
 window.ordersLoading = false
+window.ordersPageSize = 8
 window.walletPages = 1
 window.walletTotal = 0
 window.walletLoading = false
+window.walletPageSize = 8
 
 // ---------------------------------------------------------------------------
 // 格式化工具
@@ -162,7 +164,8 @@ function fmtDateCN(d) {
 }
 
 function moneyNumber(n) {
-  return '¥ ' + num(n).toLocaleString('en-US', { minimumFractionDigits: 2 })
+  // 2026-11-29 用户拍板：商家端金额符号与设计稿一致，统一 `$`（与购物端「全站 $」同口径）。
+  return '$ ' + num(n).toLocaleString('en-US', { minimumFractionDigits: 2 })
 }
 
 // 无图商品 → 静态稿 art() 八款示意 SVG 的类型映射（现成函数，只喂类型）。
@@ -217,6 +220,15 @@ window.FolioData = {
     return fmtDateCN(new Date())
   },
 
+  // 设计稿钱包四卡：今日回款 / 店铺总收益（后端 /merchant/wallet 的聚合字段）。
+  settlementToday() {
+    return num((state.wallet || {}).settlement_today)
+  },
+
+  storeProfitTotal() {
+    return num((state.wallet || {}).shipping_profit_total)
+  },
+
   bars(key, month) {
     const chart = state.charts[month ? 'month' : 'week']
     if (!chart || !Array.isArray(chart.order_bars) || !chart.order_bars.length) {
@@ -250,19 +262,23 @@ window.FolioData = {
     const chart = state.charts[month ? 'month' : 'week']
     const rows = (chart && chart.category_share ? chart.category_share : []).slice(0, 4)
     const totalSum = rows.reduce((s, r) => s + num(r.count), 0)
+    // 无订单时按设计稿的四个品类占位为 0%，避免出现 4 行「其他 0%」的占位噪音。
+    if (!rows.length || totalSum === 0) {
+      return {
+        names: ['电子产品', '家居生活', '活动商品', '户外运动'],
+        vals: [0, 0, 0, 0],
+        total: '0',
+      }
+    }
     const names = []
     const vals = []
     let assigned = 0
     rows.forEach((r) => {
       names.push(r.category || '其他')
-      const pct = totalSum > 0 ? Math.round((num(r.count) / totalSum) * 100) : 0
+      const pct = Math.round((num(r.count) / totalSum) * 100)
       vals.push(pct)
       assigned += pct
     })
-    while (names.length < 4) {
-      names.push('其他')
-      vals.push(0)
-    }
     // 百分比取整后可能不等于 100，差额补到第一个非零片，保证 conic-gradient 闭合。
     const drift = 100 - assigned
     const idx = vals.findIndex((v) => v > 0)
@@ -401,6 +417,8 @@ function draftWithdrawal(w) {
   const chain = w.chain || null
   return {
     id: w.id,
+    // 可读申请单号（后端 WD+日期+序号）；旧接口无该字段时退回 UUID。
+    serial: w.serial || w.id,
     amount: num(w.amount),
     method: w.method === 'CHAIN' || chain ? '数字货币链上转账' : '银行卡',
     account: (bank && bank.account) || (chain && chain.address) || '',
@@ -497,9 +515,11 @@ function syncPagerGlobals() {
   window.ordersPages = pageCountOf(state.ordersPage)
   window.ordersTotal = num(state.ordersPage.total)
   window.ordersLoading = Boolean(state.ordersPage.loading)
+  window.ordersPageSize = ORDERS_PAGE_SIZE
   window.walletPages = pageCountOf(state.entriesPage)
   window.walletTotal = num(state.entriesPage.total)
   window.walletLoading = Boolean(state.entriesPage.loading)
+  window.walletPageSize = PAGE_SIZE
 }
 
 // 当前页码回写静态稿的全局变量（历史栈 viewState 依赖它们）。
@@ -968,7 +988,8 @@ function populateGlobals() {
       a.kind === 'LIMITED' ? '限时活动' : '常驻活动',
       timeRange,
       a.description || '',
-      (a.title || '活动').slice(0, 4),
+      // 卡片主图占位取活动名前 4 字；先剥掉演示前缀，避免出现「[dem」这种半截标签。
+      String(a.title || '活动').replace(/^\[\s*demo\s*\]\s*/i, '').slice(0, 4) || '活动',
     ]
     item.__id = a.id
     return item

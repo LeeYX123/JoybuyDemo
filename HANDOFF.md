@@ -8113,3 +8113,60 @@ object-fit contain），icon 间隔 12px。验证：eslint + 截图 11 icon 一�
 
 **下一步**：如需更强保证，可在有真实已存地址/密码的 Chrome profile 上人工复验一遍；
 HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径限定未随代码提交。
+
+
+## 商家端桌面版对齐设计稿（2026-11-29，✅ 完成，未 commit）
+
+**任务**：用户提供 `商家端及平台管理端文档/海外电商商家端.html`（设计稿），指出商家端页面「还有些地方和 HTML 不一样」，要求一模一样的复刻。
+
+**做法**：先用 Playwright 把设计稿（file:// 打开，逐个 nav 点击）与当前实现（127.0.0.1:5174，测试商家 123456@joybuy.com）逐页截图 + 抽取每页可见文本/字号/字重/颜色/坐标做 diff。
+证据与方法留在 `var/merchant_fidelity_20261128/`：`shoot.cjs`（成对截图 ref/ cur/）、`extract.cjs` + `cmp.py`（dom.json → diff2.txt）、`sweep.cjs`（10 路由 console/pageerror 清扫）。
+
+**关键发现（重要，不要重蹈）**：设计稿与《01_商家端开发文档》有多处**互相矛盾**，我们原来的实现大多是按文档做的：
+| 位置 | 设计稿 | 01 文档 |
+|---|---|---|
+| 钱包页 | 密码卡+4 指标卡+独立提现记录表+资金明细 | M05「不恢复统计卡」「不要拆成另一个提现处理表」 |
+| 订单详情 | 状态/金额摘要 + 字段清单 + 金额卡 + 进度卡 | M04-06 顶部突出发货成本合计 |
+| 店铺ID | 店铺 ID + 「不可修改」标签 | M02-04「不显示不可修改说明」+ 复制按钮 |
+| 订单页顶部 | 无日期区间筛选 | M04-01 要求日期区间筛选 |
+| 看板 | 无关注变动记录入口 | M01-03 要求关注变动记录 |
+| 活动中心 | 无推荐返佣卡 | M08 要求推荐码/返佣 |
+| 金额符号 | $ | 未规定（我们原来用 ¥） |
+
+**用户 2026-11-29 拍板（4 项，已按此实现）**：①钱包页按 HTML 复刻；②订单详情按 HTML 复刻（8 节点进度放进「订单进度」卡）；③金额符号统一 `$`；④HTML 没有的区块全部去掉。
+
+**改动文件（merchant-web 4 + backend 1）**：
+1. `merchant-web/src/folio/base-1.js`：`money()` → `'$'+toLocaleString(min2,max2)`（无空格，与设计稿一致）；保证金演示行 `− $ 500.00`。
+2. `merchant-web/src/folio/base-2.js`：新增 `pieGradient(vals)`（按真实占比生成 conic-gradient，空数据给 `#e9ecf1` 灰底）；dashboard 改用它。**必须定义在 base-2**：base-2 末尾就会 render 一次看板，那时 base-3 还没加载，放 base-3 会 `pieGradient is not defined`。
+3. `merchant-web/src/folio/base-3.js`：
+   - `merchantWalletPageView()` 重写为设计稿版式：钱包密码卡（security-icon/未设置 tag/说明/设置按钮）→ 4 指标卡（当前钱包余额 / 今日回款 / 今日新增收益 / 店铺总收益）→ 提现申请记录表（申请单号/时间两行、提现方式、收款信息、提现金额、状态、处理明细）→ 资金明细表（时间、交易类型、关联订单/单号、金额变动 +/−、账户、状态，失败原因仍显示在状态格里）+ `.foot` 分页。
+   - `detailPage()` 重写为设计稿版式：摘要卡（订单状态 tag / 订单金额 / 发货按钮）+ 订单与商品信息（`.detail-product` + `dl` 行：订单编号/下单时间/支付方式/收货人/收件地区/商品成本价）+ 订单金额卡（订单金额 / 发货成本（合计）/ 预计订单收益）+ `merchantProgressCard()`（8 节点 `track-item`，未确认收货才显示）。
+   - 订单列表：列名改 商品名称/订单状态、订单号 `span.mono`、下单时间两行、去掉日期区间输入（`queryDates('order')` 不再用于订单）、底部改 `pagerFoot()`。
+   - 新增 `pagerFoot(total,size,page,pages,loading,prev,next)`（左「共 N 条记录」右「每页 N 条 ‹ p ›」，设计稿 `.foot` 样式）。
+   - 看板去掉「关注变动记录/收益核对记录」工具条（`dashboard=dashboardWithAudit`）；店铺ID 改「不可修改」标签（`复制店铺ID` 按钮移除）；活动中心去掉「推荐新商家入驻」卡（`pages[8]` 包装器删除）；上架中心 section 标题去掉件数；聊天发送按钮右对齐（`.chat-attachment-controls` + justify-content:flex-end）。
+4. `merchant-web/src/folio/api.js`：`FolioData.settlementToday()/storeProfitTotal()` 读 `/merchant/wallet` 新字段；`window.ordersPageSize/walletPageSize` 全局；`draftWithdrawal` 保留后端 `serial`；`categoryPie` 空数据返回设计稿四品类 0%（不再补 4 个「其他」）；活动卡占位文字剥 `[demo]` 前缀；`moneyNumber` 的 `¥` → `$`。
+5. `backend/merchant_ops/views_merchant_wallet.py`：`GET /merchant/wallet` 增加 `settlement_today`（当天订单回款合计）与 `shipping_profit_total`（已发货订单累计毛利）；`_withdrawal_payload` 增加可读单号 `serial = WD + YYYYmmdd + 6 位序号`（设计稿「申请单号」列）。
+
+**验证（按验证纪律只做针对性验证）**：
+- Playwright 逐页截图 + DOM 文本/样式 diff（11 页：ref vs cur），剩余差异均为**数据**差异（订单号/通知文案/条数）或下列刻意保留项；
+- 10 个路由 console error / pageerror **0**（`var/merchant_fidelity_20261128/sweep.cjs`）；
+- 文本断言：订单页 3 行且列名为 商品名称/订单状态、金额 `$49.99`；钱包页四卡 + 两张表 + `共 5 条记录 / 每页 8 条`；保证金页启用态三卡 + 明细；看板信誉分 `100.00 / 100`、饼图按真实品类 `电子产品 100%`；
+- `npm run build`（merchant-web）通过；`npx eslint merchant-web/src/folio/api.js` 仅剩 1 个既有 error（`API_BASE_URL` unused，HEAD 就存在），无新增；
+- 后端：`manage.py check` 通过；`_withdrawal_payload` 实测 `serial=WD20261128000005`；`/merchant/wallet` 实测 `settlement_today=49.99`、`shipping_profit_total=185.44`。
+- **未跑**后端单测：`test_joybuy` 测试库当时正被并行批次占用（另有人在跑 `catalog.tests.test_search`），Django 报 `Unknown database` / `Table already exists`，避免互相打断故跳过。改的是聚合字段与序列化，建议后续补跑 `merchant_ops.tests.test_merchant_modules.WalletTests`。
+
+**dev 数据变更（测试商家 id=800，勿当脏数据清理）**：
+- 16 个 SPU 的 `cost_price` 用 retail×0.62 补齐（`seed_merchant_demo` 遇到 `cost_price=None` 会 TypeError 崩，命令本身未修）；
+- 跑过 `seed_merchant_demo --merchant 测试商家 --with-deposit`（订单/流水/售后/通知/保证金各一套）；
+- 三个演示订单父单 `Order.status` 从 PENDING_PAYMENT（被扫单扫成 CANCELED）改回 `PAID`，否则商家端订单列表为空；
+- Django 8000 曾有**两个 runserver 同时监听**（另有一份 --noreload 老进程），已全部杀掉重启为单实例，`var/django_8000.log` 为日志。
+
+**刻意未对齐（引用时可解释）**：
+- 订单 tab 仍「待发货」：三态口径（买家/商家/管理端同源，见 0d1c），设计稿是「待处理」；
+- 看板图表无「↗ 12.3%」增长率：设计稿是常量，后端没有环比数据，不造假；
+- 近一周/近一月仍是分段切换：设计稿的 `rangeToggle()` 只是个静态「近一周」标签（不能切换），文档 M01-02 要求可切换；
+- 消息页没有「添加图片」：设计稿是本地 base64 演示，后端无图片消息存储；
+- 保证金页没有「启用/关闭示例」按钮：设计稿演示开关，实际规则由平台后台配置；
+- 品类芯片是文档的 12 个品类（设计稿是旧的 10 个标签）。
+
+**坑**：`base-2.js` 里的 `chatPage` 是死代码（最终生效的是 base-3 的 `chatPage`），改聊天逻辑要改 base-3；`ViewImage` 对内容相同的截图会返回「identical」缓存，判定页面要行数时用 `locator('tbody tr').count()` 或 `innerText` 更可靠。
