@@ -273,7 +273,7 @@ const cardBrands = [
   { value: 'MASTERCARD', icon: '/images/pdp-services/payment-mastercard.svg', label: 'Mastercard' },
   { value: 'AMEX', icon: '/images/pdp-services/payment-american-express.svg', label: 'American Express' },
   { value: 'UNIONPAY', icon: '/images/pdp-services/payment-unionpay.svg', label: '银联' },
-  { value: 'MAESTRO', icon: '/images/about/pay-maestro.png', label: 'Maestro' },
+  { value: 'MAESTRO', icon: '/images/pdp-services/payment-maestro.svg', label: 'Maestro' },
   { value: 'JCB', icon: '/images/pdp-services/payment-jcb.svg', label: 'JCB' },
   { value: 'DISCOVER', icon: '/images/pdp-services/payment-discover.svg', label: 'Discover' },
   { value: 'DINERS', icon: '/images/pdp-services/payment-dinersclub.svg', label: 'Diners Club' },
