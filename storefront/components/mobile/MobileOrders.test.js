@@ -10,8 +10,9 @@ import MobilePageHeader from './MobilePageHeader.vue'
 // stub defaults en).
 const tabs = [
   { key: 'all', label: 'All' },
-  { key: 'pending_payment', label: 'Pending payment' },
-  { key: 'to_receive', label: 'To receive' },
+  { key: 'to_ship', label: 'To ship' },
+  { key: 'shipped', label: 'Shipped' },
+  { key: 'completed', label: 'Completed' },
 ]
 
 const orders = [
@@ -66,9 +67,9 @@ describe('MobileOrders', () => {
     // Tab row: labels only (2026-11-28 状态 tab 去数量), selected tab gets
     // the active underline class.
     const tabButtons = wrapper.findAll('.m-orders__tab')
-    expect(tabButtons).toHaveLength(3)
+    expect(tabButtons).toHaveLength(4)
     expect(tabButtons[0].classes()).toContain('m-orders__tab--active')
-    expect(tabButtons[1].text()).toContain('Pending payment')
+    expect(tabButtons[1].text()).toContain('To ship')
     expect(wrapper.find('.m-orders__tab-count').exists()).toBe(false)
 
     // Cards: badge + number + image + total + detail link.
@@ -79,7 +80,7 @@ describe('MobileOrders', () => {
     expect(cards[0].find('.m-orders__img').attributes('src')).toBe('/images/mug.jpg')
     expect(cards[0].find('.m-orders__total').text()).toContain('£25.80')
     await tabButtons[1].trigger('click')
-    expect(wrapper.emitted().tab[0]).toEqual(['pending_payment'])
+    expect(wrapper.emitted().tab[0]).toEqual(['to_ship'])
     expect(cards[0].find('.m-orders__detail').attributes('to')).toBe(
       '/account/orders/abc12345-6789',
     )

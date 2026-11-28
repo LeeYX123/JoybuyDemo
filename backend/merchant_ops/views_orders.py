@@ -16,6 +16,19 @@ from orders.models import MerchantOrder
 STATUS_TABS = {"PENDING", "SHIPPED", "COMPLETED"}
 
 
+def _three_state(order: MerchantOrder) -> str:
+    """对外三态（待发货 / 已发货 / 已完成），与买家端 ``_order_state`` 同口径。
+
+    progress<1 待发货、1–6 已发货、>=7 或子单 status=COMPLETED 已完成。
+    """
+
+    if order.status == MerchantOrder.Status.COMPLETED or order.progress >= 7:
+        return "COMPLETED"
+    if order.progress >= 1:
+        return "SHIPPED"
+    return "TO_SHIP"
+
+
 def _parse_datetime(raw, *, field="时间"):
     if raw in (None, ""):
         return None
@@ -43,6 +56,8 @@ def _payload(order: MerchantOrder, *, detail=False) -> dict:
         "currency": order.currency,
         "status": order.status,
         "progress": order.progress,
+        # 对外三态标签（管理端/商家端列表与详情同源），见 ``_three_state``。
+        "state": _three_state(order),
         "node_times": list(order.node_times or []),
         "node_labels": list(MerchantOrder.NODE_LABELS),
         "items_total": money_str(order.items_total),
@@ -92,7 +107,23 @@ def _filtered_orders(request):
     queryset = MerchantOrder.objects.select_related("order__account", "merchant")
     status = (request.query_params.get("status") or "").strip().upper()
     if status and status != "ALL" and status in STATUS_TABS:
-        queryset = queryset.filter(status=status)
+        # 2026-11-28 三态口径（待发货 / 已发货 / 已完成）与买家端
+        # ``orders/order_views.py::_order_state`` 一致：progress<1 待发货、
+        # 1–6 已发货、>=7 或子单 status=COMPLETED 已完成。这里按节点阈值过滤，
+        # 不能直接 ``filter(status=...)``——已点「发货」但仍在「待出库」
+        # （progress=0, status=SHIPPED）的订单对外仍属待发货。
+        if status == "PENDING":
+            queryset = queryset.filter(progress__lt=1).exclude(
+                status=MerchantOrder.Status.COMPLETED
+            )
+        elif status == "SHIPPED":
+            queryset = queryset.filter(progress__gte=1, progress__lt=7).exclude(
+                status=MerchantOrder.Status.COMPLETED
+            )
+        elif status == "COMPLETED":
+            queryset = queryset.filter(
+                Q(status=MerchantOrder.Status.COMPLETED) | Q(progress__gte=7)
+            )
     query = (request.query_params.get("q") or "").strip()
     if query:
         condition = (

@@ -241,12 +241,17 @@ class OrderPlacementTests(CheckoutOrderTestBase):
         self.assertEqual(listing["items"][0]["unit_price"], "25.0000")
         self.assertEqual(listing["items"][0]["spu_public_id"], str(self.spu.public_id))
 
-        # Paid but not shipped yet: present in All, no dedicated Joybuy tab.
+        # 已付款未发货：待发货（progress=-1）。
         Order.objects.filter(pk=order.pk).update(status=Order.Status.PAID)
         listing = self.client.get(reverse("orders")).json()["orders"][0]
-        self.assertEqual(listing["state"], "PROCESSING")
+        self.assertEqual(listing["state"], "TO_SHIP")
 
         from orders.models import MerchantOrder
+
+        # progress=0（仅到「待出库」）仍属待发货。
+        order.merchant_orders.update(progress=0, status=MerchantOrder.Status.SHIPPED)
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "TO_SHIP")
 
         order.merchant_orders.update(
             progress=2, status=MerchantOrder.Status.SHIPPED
@@ -259,3 +264,47 @@ class OrderPlacementTests(CheckoutOrderTestBase):
         )
         listing = self.client.get(reverse("orders")).json()["orders"][0]
         self.assertEqual(listing["state"], "COMPLETED")
+
+        # 详情接口与列表同口径。
+        detail = self.client.get(
+            reverse("order-detail", kwargs={"public_id": order.public_id})
+        ).json()
+        self.assertEqual(detail["state"], "COMPLETED")
+
+    def test_buyer_order_state_collapses_multi_merchant_suborders(self):
+        """多商家子单：全部 >=7 才已完成；否则任一 >=1 即已发货；否则待发货。"""
+
+        from merchants.models import Merchant
+        from orders.models import MerchantOrder
+
+        order = self.place()
+        Order.objects.filter(pk=order.pk).update(status=Order.Status.PAID)
+        first = order.merchant_orders.get()
+        MerchantOrder.objects.filter(pk=first.pk).update(
+            status=MerchantOrder.Status.PENDING, progress=-1
+        )
+        other_merchant = Merchant.objects.create(
+            slug="order-state-second-shop", display_name="Second shop"
+        )
+        second = MerchantOrder.objects.create(
+            order=order,
+            merchant=other_merchant,
+            currency="GBP",
+            items_total=order.total,
+            cost_total=0,
+            status=MerchantOrder.Status.SHIPPED,
+            progress=0,
+        )
+
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "TO_SHIP", "两个子单都未出库 -> 待发货")
+
+        MerchantOrder.objects.filter(pk=second.pk).update(progress=3)
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "SHIPPED", "任一子单 >=1 -> 已发货")
+
+        order.merchant_orders.update(
+            progress=7, status=MerchantOrder.Status.COMPLETED
+        )
+        listing = self.client.get(reverse("orders")).json()["orders"][0]
+        self.assertEqual(listing["state"], "COMPLETED", "全部子单 >=7 -> 已完成")

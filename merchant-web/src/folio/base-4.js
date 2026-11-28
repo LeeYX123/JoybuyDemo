@@ -142,7 +142,8 @@
     intro.addEventListener('click', (event) => {
       const button = event.target.closest('[data-dash-route]');
       if (!button) return;
-      if (button.hasAttribute('data-shipping')) orderFilter = '待处理';
+      // 2026-11-28 三态口径：待发货（含未发货 / 待出库），与 base-2/3 的 orderGroup 一致。
+      if (button.hasAttribute('data-shipping')) orderFilter = '待发货';
       if (button.dataset.order !== undefined) selected = Number(button.dataset.order);
       goFromShell(Number(button.dataset.dashRoute));
     });

@@ -32,7 +32,7 @@ const orders = computed(() => (Array.isArray(data.value?.orders) ? data.value.or
 
 const STATUS_CLASSES = {
   PENDING_PAYMENT: 'pending',
-  PROCESSING: 'pending',
+  TO_SHIP: 'pending',
   SHIPPED: 'shipped',
   COMPLETED: 'completed',
   CANCELED: 'canceled',
@@ -40,7 +40,7 @@ const STATUS_CLASSES = {
 
 const STATUS_KEYS = {
   PENDING_PAYMENT: 'orders.statusPendingPayment',
-  PROCESSING: 'orders.statusProcessing',
+  TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
   CANCELED: 'orders.statusCanceled',
@@ -53,7 +53,7 @@ const notifications = computed(() =>
     publicId: order.public_id,
     // 2026-11-27 全站编号改造：显示完整订单号（JYO+YYYYMMDD+6 位），不截断。
     number: String(order.public_id || '').toUpperCase(),
-    statusLabel: t(STATUS_KEYS[order.state] || 'orders.statusProcessing'),
+    statusLabel: t(STATUS_KEYS[order.state] || 'orders.statusToShip'),
     statusClass: STATUS_CLASSES[order.state] || 'pending',
     date: String(order.created_at || '')
       .slice(0, 16)

@@ -10,10 +10,30 @@ import { apiRequest } from '@/lib/api'
 
 const TABS = [
   { key: '', label: '全部订单' },
-  { key: 'PENDING', label: '待处理' },
+  // 2026-11-28 统一三态口径：待发货 / 已发货 / 已完成（与买家端、商家端一致，
+  // 详见 backend/orders/order_views.py::_order_state）。
+  { key: 'PENDING', label: '待发货' },
   { key: 'SHIPPED', label: '已发货' },
   { key: 'COMPLETED', label: '已完成' },
 ]
+
+// 三态阈值（progress = 8 节点里已到达的节点下标，-1 = 未发货）：
+//   progress < 1            → 待发货（含「待出库」）
+//   1 <= progress <= 6      → 已发货（已出库 → 已签收）
+//   progress >= 7 / 已完成  → 已完成（用户确认收货）
+// 后端 payload 已带 `state`；这里保留兜底推导，避免旧缓存 payload 缺字段。
+const STATE_LABELS = {
+  TO_SHIP: ['待发货', 'warn'],
+  SHIPPED: ['已发货', 'info'],
+  COMPLETED: ['已完成', 'ok'],
+}
+
+function threeState(row) {
+  if (row.state) return row.state
+  if (row.status === 'COMPLETED' || row.progress >= 7) return 'COMPLETED'
+  if (row.progress >= 1) return 'SHIPPED'
+  return 'TO_SHIP'
+}
 
 const NODE_LABELS = [
   '待出库',
@@ -311,7 +331,12 @@ function formatPaymentMethod(value) {
               >
                 ¥ {{ row.profit }}
               </td>
-              <td><StatusTag :value="row.status" /></td>
+              <!-- 状态列统一展示对外三态（待发货/已发货/已完成），
+                   与买家端订单页、商家端口径一致；内部子单状态放副行备查。 -->
+              <td>
+                <StatusTag :value="threeState(row)" :labels="STATE_LABELS" />
+                <span class="cell-sub">{{ row.status }}</span>
+              </td>
               <td>
                 {{ row.progress >= 0 ? NODE_LABELS[row.progress] : '未发货' }}
                 <span v-if="row.settled" class="cell-sub">已回款</span>
@@ -394,7 +419,13 @@ function formatPaymentMethod(value) {
           </div>
           <div>
             <dt>状态</dt>
-            <dd><StatusTag :value="detail.status" /></dd>
+            <dd>
+              <StatusTag :value="threeState(detail)" :labels="STATE_LABELS" />
+              <span class="cell-sub">
+                {{ detail.progress >= 0 ? NODE_LABELS[detail.progress] : '未发货' }} · 子单
+                {{ detail.status }}
+              </span>
+            </dd>
           </div>
           <div>
             <dt>下单时间</dt>

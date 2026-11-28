@@ -34,7 +34,7 @@ const ORDERS_URL = '/api/v1/orders'
 
 const ORDER_STATUS_KEYS = {
   PENDING_PAYMENT: 'orders.statusPendingPayment',
-  PROCESSING: 'orders.statusProcessing',
+  TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
   CANCELED: 'orders.statusCanceled',
@@ -520,7 +520,7 @@ function orderAmount(order) {
 }
 
 function orderStateLabel(order) {
-  return t(ORDER_STATUS_KEYS[order?.state] || 'orders.statusProcessing')
+  return t(ORDER_STATUS_KEYS[order?.state] || 'orders.statusToShip')
 }
 
 function orderLine(order) {

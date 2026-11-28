@@ -273,7 +273,7 @@ describe('SupportChatLauncher 发送订单', () => {
     expect(checkboxes).toHaveLength(3)
     expect(dialog.text()).toContain('#AAAA1111')
     expect(dialog.text()).toContain('$12.50')
-    expect(dialog.text()).toContain('To receive')
+    expect(dialog.text()).toContain('Shipped')
 
     const confirm = wrapper.get('[data-testid="support-chat-order-confirm"]')
     expect(confirm.attributes('disabled')).toBeDefined()
@@ -289,7 +289,7 @@ describe('SupportChatLauncher 发送订单', () => {
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain(ORDERS[0].public_id)
     expect(lines[0]).toContain('$12.50')
-    expect(lines[0]).toContain('To receive')
+    expect(lines[0]).toContain('Shipped')
     expect(lines[1]).toContain(ORDERS[1].public_id)
     expect(lines[1]).toContain('$40.00')
     expect(lines[1]).toContain('Pending payment')

@@ -86,14 +86,20 @@ async function confirmReceipt() {
   }
 }
 
+// 2026-11-28 三态口径：详情与列表同源，优先用后端 `state`
+// （TO_SHIP/SHIPPED/COMPLETED）；取消 / 未付款仍按原状态展示。
 const STATUS_KEYS = {
+  TO_SHIP: 'orders.statusToShip',
+  SHIPPED: 'orders.statusShipped',
+  COMPLETED: 'orders.statusCompleted',
   PAID: 'orders.statusPaid',
   PENDING_PAYMENT: 'orders.statusPendingPayment',
   CANCELED: 'orders.statusCanceled',
 }
 
-function statusLabel(status) {
-  return t(STATUS_KEYS[status] || 'orders.statusProcessing')
+function statusLabel(order) {
+  const key = order?.state || order?.status
+  return t(STATUS_KEYS[key] || 'orders.statusToShip')
 }
 
 // Mobile detail view model (docs/20 §5.2): status card / address / items /
@@ -103,7 +109,7 @@ const mobileOrder = computed(() => {
   const shipping = order.value.shipping_address
   return {
     number: String(order.value.public_id || '').toUpperCase(),
-    statusLabel: statusLabel(order.value.status),
+    statusLabel: statusLabel(order.value),
     placedAt: order.value.created_at?.slice(0, 16).replace('T', ' ') || '',
     paymentMethod: order.value.payment_method || '',
     total: formatDisplayPrice(order.value.total),
@@ -157,7 +163,7 @@ useHead(() => ({
         <dl class="order-detail__meta">
           <div>
             <dt>{{ t('orders.status') }}</dt>
-            <dd>{{ statusLabel(order.status) }}</dd>
+            <dd>{{ statusLabel(order) }}</dd>
           </div>
           <div>
             <dt>{{ t('orders.placedAt') }}</dt>

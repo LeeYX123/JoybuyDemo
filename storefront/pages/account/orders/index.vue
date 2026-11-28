@@ -12,10 +12,9 @@ import AccountPager from '../../../components/account/AccountPager.vue'
 import AccountShell from '../../../components/account/AccountShell.vue'
 import AccountTabs from '../../../components/account/AccountTabs.vue'
 
-// My orders rebuilt from joybuy.co.uk/profile/my-orders: the reference page
-// shows exactly five tabs (全部 / 待付款 / 待收货 / 已完成 / 已取消) — there is no
-// 待发货 tab — and one card per order with a header row, item thumbnails,
-// per-line prices and a total + detail action. Backend `state` drives the tab.
+// 2026-11-28 统一三态口径：全部 / 待发货 / 已发货 / 已完成。
+// 状态由后端 `state` 按物流节点阈值给出（progress<1=待发货、1–6=已发货、
+// >=7=已完成）；取消单 / 未付款单只在【全部】里出现，卡片仍带状态徽标。
 const { t } = useLocale()
 const { isAuthenticated } = useBuyerAuth()
 const route = useRoute()
@@ -40,7 +39,7 @@ const { data, status } = await useFetch(ordersUrl, {
 
 const orders = computed(() => (Array.isArray(data.value?.orders) ? data.value.orders : []))
 
-const TAB_KEYS = ['all', 'pending_payment', 'to_receive', 'completed', 'canceled']
+const TAB_KEYS = ['all', 'to_ship', 'shipped', 'completed']
 const initialTab = String(route.query?.tab || '')
 const activeTab = ref(TAB_KEYS.includes(initialTab) ? initialTab : 'all')
 
@@ -48,19 +47,17 @@ const activeTab = ref(TAB_KEYS.includes(initialTab) ? initialTab : 'all')
 // 真站 tab 无计数；接口未动）。
 const tabs = computed(() => [
   { key: 'all', label: t('orders.tabAll') },
-  { key: 'pending_payment', label: t('orders.tabPendingPayment') },
-  { key: 'to_receive', label: t('orders.tabToReceive') },
+  { key: 'to_ship', label: t('orders.tabToShip') },
+  { key: 'shipped', label: t('orders.tabShipped') },
   { key: 'completed', label: t('orders.tabCompleted') },
-  { key: 'canceled', label: t('orders.tabCanceled') },
 ])
 
 const filteredOrders = computed(() => {
   if (activeTab.value === 'all') return orders.value
   const wanted = {
-    pending_payment: 'PENDING_PAYMENT',
-    to_receive: 'SHIPPED',
+    to_ship: 'TO_SHIP',
+    shipped: 'SHIPPED',
     completed: 'COMPLETED',
-    canceled: 'CANCELED',
   }[activeTab.value]
   return orders.value.filter((order) => order.state === wanted)
 })
@@ -87,14 +84,14 @@ function goToPage(next) {
 
 const STATUS_KEYS = {
   PENDING_PAYMENT: 'orders.statusPendingPayment',
-  PROCESSING: 'orders.statusProcessing',
+  TO_SHIP: 'orders.statusToShip',
   SHIPPED: 'orders.statusShipped',
   COMPLETED: 'orders.statusCompleted',
   CANCELED: 'orders.statusCanceled',
 }
 
 function stateLabel(order) {
-  return t(STATUS_KEYS[order.state] || 'orders.statusProcessing')
+  return t(STATUS_KEYS[order.state] || 'orders.statusToShip')
 }
 
 function stateClass(order) {

@@ -98,11 +98,23 @@ def _order_gallery_images(spu_public_ids):
 
 
 def _order_state(order) -> str:
-    """Buyer-facing state for the Joybuy order tabs.
+    """买家端三态口径（2026-11-28 统一）：待发货 / 已发货 / 已完成。
 
-    Joybuy's UK order page groups orders as All / Pending payment / To receive
-    / Completed / Canceled. A paid order that has not shipped yet belongs to
-    "All" only, which is why PROCESSING is a separate internal state.
+    按 ``MerchantOrder.progress`` 的物流节点阈值判定（8 节点：
+    0 待出库、1 已出库、2 已揽收、3 运输中、4 到达网点、5 派送中、
+    6 已签收、7 用户确认收货）：
+
+    - ``TO_SHIP``  待发货：已付款且 progress < 1（未发货 / 仅到「待出库」）；
+    - ``SHIPPED``  已发货：progress 在 1–6（已出库 → 已签收）；
+    - ``COMPLETED`` 已完成：progress >= 7（用户确认收货）或子单 status=COMPLETED。
+
+    多商家子单：所有子单都完成才算 COMPLETED；否则任一子单 >=1 即 SHIPPED；
+    否则 TO_SHIP。取消单 / 未付款单不参与三态，原样返回 ``CANCELED`` /
+    ``PENDING_PAYMENT``（买家订单页只在【全部】tab 里展示它们）。
+
+    管理端 / 商家端的同一口径分别见
+    ``admin-web/src/views/MerchantOrdersView.vue`` 与
+    ``merchant-web/src/folio/base-3.js``，改阈值时三处必须一起改。
     """
 
     if order.status == Order.Status.CANCELED:
@@ -115,9 +127,9 @@ def _order_state(order) -> str:
             suborder.status == "COMPLETED" or suborder.progress >= 7 for suborder in suborders
         ):
             return "COMPLETED"
-        if any(suborder.status == "SHIPPED" or suborder.progress >= 1 for suborder in suborders):
+        if any(suborder.progress >= 1 for suborder in suborders):
             return "SHIPPED"
-    return "PROCESSING"
+    return "TO_SHIP"
 
 
 def _order_items_payload(order, images):
@@ -221,7 +233,9 @@ def order_detail(request, public_id):
     if account is None:
         return _error(request, "AUTH_REQUIRED", "Sign in required.", 401)
     order = (
-        Order.objects.filter(account=account, public_id=public_id).prefetch_related("items").first()
+        Order.objects.filter(account=account, public_id=public_id)
+        .prefetch_related("items", "merchant_orders")
+        .first()
     )
     if order is None:
         return _error(request, "ORDER_NOT_FOUND", "Order not found.", 404)
@@ -235,6 +249,8 @@ def order_detail(request, public_id):
         {
             "public_id": str(order.public_id),
             "status": order.status,
+            # 与列表同一口径（待发货 / 已发货 / 已完成），详情页据此展示徽标。
+            "state": _order_state(order),
             "total": str(order.total),
             "currency": order.currency.code,
             "payment_method": order.payment_method,

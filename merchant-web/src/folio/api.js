@@ -189,8 +189,15 @@ const WD_STATE = {
   APPROVED: '审核通过',
   TRANSFERRING: '转账中',
   FAILED: '转账失败',
-  PAID: '已到账',
+  // 2026-11-28 用户口径：管理端点【转账成功】后商家端显示「转账成功」（原「已到账」）。
+  // 推荐返佣的「已到账」是另一套状态（REF_STATE），不受影响。
+  PAID: '转账成功',
 }
+
+// 提现「占用余额」的原始枚举（不再拿中文状态做条件判断，避免文案调整后错位）。
+const WD_OPEN_STATES = ['PENDING', 'APPROVED', 'TRANSFERRING']
+// 提现已完结（转账成功）的原始枚举：详情里据此展示「实际到账金额」。
+const WD_PAID_STATES = ['PAID']
 
 const AFTER_STATE = {
   PENDING: '待处理',
@@ -410,7 +417,8 @@ function draftWithdrawal(w) {
     fee: num(w.fee),
     net: num(w.net_amount),
     // 未完结的提现申请占用可用余额，钱包页「冻结金额」直接汇总这个字段。
-    frozen: ['待审核', '审核通过', '转账中'].includes(WD_STATE[w.state] || w.state) ? num(w.amount) : 0,
+    // 用原始枚举判断（勿改回中文比较：PAID 文案已改为「转账成功」）。
+    frozen: WD_OPEN_STATES.includes(w.state) ? num(w.amount) : 0,
     history: (w.history || []).map(
       (h) => `${fmtDT(h.at).slice(5, 16)} ${h.action}${h.note ? '，' + h.note : ''}`,
     ),
@@ -450,7 +458,9 @@ function ensureProductIndex(built, { id, name, category, price, cost }) {
 
 const ORDER_STATUS = {
   全部订单: '',
-  待处理: 'PENDING',
+  // 2026-11-28 三态口径：列表筛选用「待发货」，对应后端子单状态 PENDING
+  // （progress<1，含未发货与仅到「待出库」）。
+  待发货: 'PENDING',
   已发货: 'SHIPPED',
   已完成: 'COMPLETED',
 }
@@ -1048,6 +1058,11 @@ function overrideActions() {
     const rawState = withdrawal
       ? withdrawal.state
       : e.state === 'COMPLETED' ? '已完成' : e.state === 'FAILED' ? '失败' : '处理中'
+    // 2026-11-28 用户要求：转账失败/打回原因要能在【资金明细】里直接看到。
+    // 优先取提现单 reason；提现单不在当前缓存页时从流水 note 兜底
+    // （后端退回流水写法为「提现退回 XXXXXXXX：原因」）。
+    const noteReason = /^提现退回[^：]*：([\s\S]+)$/.exec(String(e.note || ''))
+    const reason = withdrawal ? String(withdrawal.reason || '') : noteReason ? noteReason[1] : ''
     return {
       time: fmtDT(e.occurred_at),
       type: WALLET_TYPE[e.kind] || e.kind,
@@ -1055,6 +1070,8 @@ function overrideActions() {
       order: e.order_id || '—',
       amount: num(e.amount),
       state: rawState,
+      // 仅提现类且确有原因的行带值；无原因保持空串（列表不占位）。
+      reason,
       // 提现申请只在本页能查到对应提现单时才接到「提现处理明细」。
       payout: withdrawal ? withdrawal.id : null,
     }
