@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { navigateTo, useHead } from '#imports'
+import { navigateTo, useHead, useRoute } from '#imports'
 
 import { useBuyerAuth } from '../../composables/useBuyerAuth'
 import { useCheckout } from '../../composables/useCheckout'
@@ -15,6 +15,18 @@ import { formatDisplayPrice } from '../../utils/display'
 const { addressList, createAddress, getQuote, placeOrder } = await useCheckout()
 const { account } = useBuyerAuth()
 const { t } = useLocale()
+
+// 立即购买（2026-11-28）：PDP 带 ?offer=<offer_public_id>&qty=<n> 进来的
+// 独立直购上下文——quote 与下单两步都透传给后端（不读写购物车），页面
+// 顶部提示「正在单独购买该商品」；无 offer 参数时保持原购物车结账路径。
+const route = useRoute()
+const directPurchase = computed(() => {
+  const offerPublicId = String(route.query.offer || '').trim()
+  if (!offerPublicId) return null
+  const parsedQty = Number(route.query.qty)
+  const quantity = Number.isInteger(parsedQty) && parsedQty >= 1 && parsedQty <= 99 ? parsedQty : 1
+  return { offerPublicId, quantity }
+})
 
 const step = ref('address') // address | payment
 const selectedAddressId = ref('')
@@ -117,7 +129,7 @@ async function useSelectedAddress() {
 }
 
 async function enterPayment() {
-  const response = await getQuote(selectedAddressId.value)
+  const response = await getQuote(selectedAddressId.value, directPurchase.value)
   if (response?.error) {
     error.value = response.error.message || 'Could not build the quote.'
     return
@@ -130,7 +142,11 @@ async function payNow() {
   submitting.value = true
   error.value = ''
   // WP-42（文档 M01 §1）：演示性质支付——选择任一支付方式点【下单】即支付成功。
-  const response = await placeOrder(selectedAddressId.value, paymentMethod.value.toUpperCase())
+  const response = await placeOrder(
+    selectedAddressId.value,
+    paymentMethod.value.toUpperCase(),
+    directPurchase.value,
+  )
   submitting.value = false
   if (response?.error) {
     const code = response.error?.code || ''
@@ -236,73 +252,93 @@ useHead({ title: 'Checkout' })
     <section class="checkout" aria-labelledby="checkout-title">
       <h1 id="checkout-title" class="visually-hidden">{{ t('checkout.title') }}</h1>
 
+      <div v-if="directPurchase" class="checkout__direct-note" role="status">
+        {{ t('checkout.buyingSolo') }}
+      </div>
+
       <div v-if="error" class="checkout__error" role="alert">{{ error }}</div>
 
-      <!-- Step 1: delivery address (2026-11-28 改版：选择已有地址 + 精简表单，
-           无格式校验、仅必填非空；字段变更记录见脚本区注释）。 -->
+      <!-- Step 1: delivery address（2026-11-28 二次改版：字段口径不变——
+           选择已有地址下拉 / 无地址·县·城市栏 / 电话无前缀 / 仅必填非空；
+           版式 1:1 对齐真站 checkout 灰底白卡 + 两列 40px 输入框 + 全宽红 Save）。 -->
       <section v-if="step === 'address'" class="checkout__step" aria-labelledby="address-heading">
-        <div v-if="!selectedAddressId" class="checkout__warning" role="status">
-          {{ t('checkout.noticeRequired') }}
+        <div class="checkout__card">
+          <div v-if="!selectedAddressId" class="checkout__warning" role="status">
+            <svg class="checkout__warning-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <circle cx="8" cy="8" r="7" fill="#F9B22A" />
+              <rect x="7.25" y="4" width="1.5" height="5.4" rx="0.75" fill="#fff" />
+              <circle cx="8" cy="11.4" r="0.9" fill="#fff" />
+            </svg>
+            {{ t('checkout.noticeRequired') }}
+          </div>
+          <h2 id="address-heading">{{ t('checkout.addAddress') }}</h2>
+
+          <form class="address-form" novalidate @submit.prevent="saveAddress">
+            <!-- 原【国家/地区】位：选择已有地址，选中即回填并直接进入支付页。 -->
+            <label class="address-form__field address-form__field--left">
+              <span>{{ t('checkout.pickExisting') }}</span>
+              <select v-model="pickExistingId" @change="onPickExisting">
+                <option value="">{{ pickExistingPlaceholder }}</option>
+                <option
+                  v-for="address in addressList"
+                  :key="address.public_id"
+                  :value="address.public_id"
+                >
+                  {{ address.full_name }}，{{ address.line1 }} {{ address.postcode }}
+                </option>
+              </select>
+            </label>
+
+            <label class="address-form__field address-form__field--left">
+              <span>{{ t('checkout.fullName') }}</span>
+              <input
+                v-model="newAddress.full_name"
+                type="text"
+                :placeholder="t('checkout.fullNamePlaceholder')"
+              />
+            </label>
+
+            <label class="address-form__field address-form__field--right">
+              <span>{{ t('checkout.phone') }}</span>
+              <!-- 去掉 GB(+44) 前缀选择：纯输入框，任意内容。 -->
+              <input
+                v-model="newAddress.phone"
+                type="tel"
+                :placeholder="t('checkout.phonePlaceholder')"
+              />
+            </label>
+
+            <label class="address-form__field address-form__field--left">
+              <span>{{ t('checkout.postcode') }}</span>
+              <input
+                v-model="newAddress.postcode"
+                type="text"
+                :placeholder="t('checkout.postcodePlaceholder')"
+              />
+            </label>
+
+            <label class="address-form__field address-form__field--left">
+              <span>{{ t('checkout.addressLine2') }}</span>
+              <input
+                v-model="newAddress.line2"
+                type="text"
+                :placeholder="t('checkout.addressLine2Placeholder')"
+              />
+            </label>
+
+            <label class="address-form__field address-form__field--right">
+              <span>{{ t('checkout.houseNumber') }}</span>
+              <input v-model="newAddress.house_number" type="text" />
+            </label>
+
+            <label class="address-form__switch address-form__field--left">
+              <input v-model="newAddress.is_default" type="checkbox" />
+              <span>{{ t('checkout.setDefault') }}</span>
+            </label>
+
+            <button class="address-form__save" type="submit">{{ t('checkout.save') }}</button>
+          </form>
         </div>
-        <h2 id="address-heading">{{ t('checkout.addAddress') }}</h2>
-
-        <form class="address-form" novalidate @submit.prevent="saveAddress">
-          <!-- 国家/地区改为选择已有地址：选中即回填表单并直接进入支付页。 -->
-          <label class="address-form__field">
-            <span>{{ t('checkout.pickExisting') }}</span>
-            <select v-model="pickExistingId" @change="onPickExisting">
-              <option value="">{{ pickExistingPlaceholder }}</option>
-              <option
-                v-for="address in addressList"
-                :key="address.public_id"
-                :value="address.public_id"
-              >
-                {{ address.full_name }}，{{ address.line1 }} {{ address.postcode }}
-              </option>
-            </select>
-          </label>
-
-          <label class="address-form__field">
-            <span>{{ t('checkout.fullName') }}</span>
-            <input
-              v-model="newAddress.full_name"
-              type="text"
-              :placeholder="t('checkout.fullNamePlaceholder')"
-            />
-          </label>
-
-          <label class="address-form__field">
-            <span>{{ t('checkout.phone') }}</span>
-            <!-- 去掉 GB(+44) 前缀选择：纯输入框，任意内容。 -->
-            <input v-model="newAddress.phone" type="tel" :placeholder="t('checkout.phonePlaceholder')" />
-          </label>
-
-          <label class="address-form__field">
-            <span>{{ t('checkout.postcode') }}</span>
-            <input
-              v-model="newAddress.postcode"
-              type="text"
-              :placeholder="t('checkout.postcodePlaceholder')"
-            />
-          </label>
-
-          <label class="address-form__field">
-            <span>{{ t('checkout.addressLine2') }}</span>
-            <input v-model="newAddress.line2" type="text" />
-          </label>
-
-          <label class="address-form__field">
-            <span>{{ t('checkout.houseNumber') }}</span>
-            <input v-model="newAddress.house_number" type="text" />
-          </label>
-
-          <label class="address-form__switch">
-            <input v-model="newAddress.is_default" type="checkbox" />
-            <span>{{ t('checkout.setDefault') }}</span>
-          </label>
-
-          <button class="address-form__save" type="submit">{{ t('checkout.save') }}</button>
-        </form>
       </section>
 
       <!-- Step 2: payment page (docs/12 §8). -->
@@ -408,95 +444,128 @@ useHead({ title: 'Checkout' })
   font-size: var(--font-size-sm);
 }
 
-/* 请输入您的收货地址提示条（真站截图同款浅黄底）。 */
-.checkout__warning {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+/* 立即购买（直购上下文）：浅蓝提示条——告知这是单独购买、购物车不受影响。 */
+.checkout__direct-note {
   margin-bottom: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
-  background: #fff8e1;
-  color: #8a6d1a;
+  background: var(--colour-surface);
+  box-shadow: rgb(0 0 0 / 4%) 0 2px 12px 0;
+  color: var(--colour-text-secondary);
   font-size: var(--font-size-sm);
 }
 
-.address-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-block: var(--space-3);
+/* 结算地址卡（2026-11-28 二次改版，1:1 对齐真站 checkout）：
+   灰底画布 + 白卡 + 浅黄提示条 + 两列 40px 输入框 + 全宽红 Save。 */
+.checkout__step {
+  padding: 24px;
+  border-radius: 8px;
+  background: #f7f8fa;
 }
 
-.address-option {
+.checkout__card {
+  padding: 24px 32px 32px;
+  border-radius: 8px;
+  background: var(--colour-surface);
+}
+
+.checkout__warning {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-height: 44px;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #fef6e8;
+  color: #1a1a1a;
+  font-size: 13px;
 }
 
-.address-unsupported {
-  color: var(--colour-error);
+.checkout__warning-icon {
+  flex: none;
 }
 
-/* 3-field address form (docs/12 §7): two-column grid, black Save bottom-right. */
+.checkout__step .checkout__card h2 {
+  margin: 0 0 20px;
+  font-size: 18px;
+  font-weight: var(--font-weight-bold);
+  color: #1a1a1a;
+}
+
 .address-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3) var(--space-4);
-  max-width: 46rem;
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--colour-surface);
-  box-shadow: rgb(0 0 0 / 4%) 0 2px 12px 0;
+  gap: 20px 24px;
+}
+
+.address-form__field--left {
+  grid-column: 1;
+}
+
+.address-form__field--right {
+  grid-column: 2;
 }
 
 .address-form__field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  font-size: var(--font-size-sm);
-  color: var(--colour-text-secondary);
+  gap: 8px;
+}
+
+.address-form__field > span {
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  color: #1a1a1a;
 }
 
 .address-form__field input,
 .address-form__field select {
-  min-height: 44px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--colour-border);
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #ccced2;
   border-radius: 4px;
   font: inherit;
+  font-size: 14px;
   background: var(--colour-surface);
-  color: var(--colour-text);
+  color: #1a1a1a;
 }
 
-/* 选择已有地址下拉（原国家/地区位）：占位/选项文字颜色与输入框一致。 */
-.address-form__field select {
-  appearance: auto;
+.address-form__field input::placeholder {
+  color: #a8aab4;
+}
+
+.address-form__field input:focus,
+.address-form__field select:focus {
+  border-color: #1a1a1a;
+  outline: none;
 }
 
 .address-form__switch {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-sm);
-  color: var(--colour-text-secondary);
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 13px;
+  color: #1a1a1a;
 }
 
-/* 保存按钮红色主按钮（真站截图同款）。 */
+/* 全宽红 Save（真站同款 #CC0C1C）。 */
 .address-form__save {
-  grid-column: 2;
-  justify-self: end;
-  min-width: 88px;
-  min-height: 40px;
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 40px;
   border: 0;
   border-radius: 4px;
   background: #cc0c1c;
   color: var(--colour-white);
   cursor: pointer;
   font: inherit;
-  font-weight: var(--font-weight-semibold);
+  font-size: 14px;
+  font-weight: var(--font-weight-bold);
+}
+
+.address-form__save:hover {
+  background: #b50b19;
 }
 
 .checkout__secondary,
