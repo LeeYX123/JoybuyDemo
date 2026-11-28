@@ -255,9 +255,8 @@ function mobileSaveAddress() {
 }
 // 2026-11-28 二次改版：去掉微信支付；Google Pay / Apple Pay 左侧带 icon；
 // 银行卡品牌组单独渲染（见模板，8 品牌）。
-// 2026-11-28 行列表按真站 checkout 对齐：Google Pay/微信支付/PayPal/
-// Klarna/Revolut Pay/NewPay（真站行顺序），每行左侧品牌 icon；
-// 余额支付保留（演示需求，不扣款只记录）。
+// 2026-11-28 行列表最终口径（用户拍板）：只保留 余额支付/Google Pay/
+// PayPal/Klarna，icon 为官方 logo（Wikimedia Commons 下载）。
 const paymentMethods = computed(() => [
   {
     value: 'balance',
@@ -265,11 +264,8 @@ const paymentMethods = computed(() => [
     note: balanceDisplay.value ? `Balance: ${balanceDisplay.value}` : '',
   },
   { value: 'google_pay', label: 'Google Pay', icon: '/images/pdp-services/payment-google-pay.svg' },
-  { value: 'wechat_pay', label: '微信支付', icon: '/images/pdp-services/payment-wechat-pay.svg' },
   { value: 'paypal', label: 'PayPal', icon: '/images/pdp-services/payment-paypal.svg' },
   { value: 'klarna', label: t('checkout.klarna'), icon: '/images/pdp-services/payment-klarna.svg' },
-  { value: 'revolut_pay', label: 'Revolut Pay', icon: '/images/pdp-services/payment-revolut.svg' },
-  { value: 'new_pay', label: 'NewPay', icon: '/images/pdp-services/payment-newpay.svg' },
 ])
 
 // 2026-11-28 支付页改版：银行卡下按品牌直记支付方式，选中哪个品牌图标，

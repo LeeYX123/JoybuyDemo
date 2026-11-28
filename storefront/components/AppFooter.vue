@@ -48,13 +48,19 @@ const columns = computed(() => [
   },
 ])
 
+// 2026-11-28：8 个银行卡品牌 + Google Pay/PayPal/Klarna（真站结算页口径），
+// 全部为官方 logo SVG（Wikimedia Commons 下载，本地托管）。
 const paymentBrands = [
   { name: 'Visa', icon: '/images/pdp-services/payment-visa.svg' },
   { name: 'Mastercard', icon: '/images/pdp-services/payment-mastercard.svg' },
+  { name: 'Maestro', icon: '/images/pdp-services/payment-maestro.svg' },
   { name: 'American Express', icon: '/images/pdp-services/payment-american-express.svg' },
-  { name: 'PayPal', icon: '/images/pdp-services/payment-paypal.svg' },
+  { name: 'Diners Club', icon: '/images/pdp-services/payment-dinersclub.svg' },
+  { name: 'Discover', icon: '/images/pdp-services/payment-discover.svg' },
+  { name: 'JCB', icon: '/images/pdp-services/payment-jcb.svg' },
+  { name: 'UnionPay', icon: '/images/pdp-services/payment-unionpay.svg' },
   { name: 'Google Pay', icon: '/images/pdp-services/payment-google-pay.svg' },
-  { name: 'Apple Pay', icon: '/images/pdp-services/payment-apple-pay.svg' },
+  { name: 'PayPal', icon: '/images/pdp-services/payment-paypal.svg' },
   { name: 'Klarna', icon: '/images/pdp-services/payment-klarna.svg' },
 ]
 
@@ -71,11 +77,19 @@ function subscribe() {
   <footer class="site-footer" :class="{ 'site-footer--simplified': simplified }">
     <div v-if="simplified" class="site-footer__inner site-footer__slogan-row">
       <p class="site-footer__slogan"><strong>Joybuy</strong> | {{ t('footer.tagline') }}</p>
-      <p class="site-footer__support">
+      <!-- 2026-11-28：底部【支付方式】改为官方品牌 icon（8 银行卡品牌 + GPay/PayPal/Klarna）。 -->
+      <p class="site-footer__support site-footer__support--icons">
         {{ t('footer.weSupport') }}
-        <span v-for="brand in paymentBrands" :key="brand.name" class="site-footer__brand">{{
-          brand.name
-        }}</span>
+        <img
+          v-for="brand in paymentBrands"
+          :key="brand.name"
+          class="footer-support__icon"
+          :src="brand.icon"
+          :alt="brand.name"
+          width="38"
+          height="24"
+          loading="lazy"
+        />
       </p>
     </div>
     <div v-else class="site-footer__inner">
@@ -275,6 +289,20 @@ function subscribe() {
   margin: 0;
   color: var(--colour-muted);
   font-size: var(--font-size-sm);
+}
+
+/* icon 变体：11 个官方 logo 换行排布，白色小卡底衬托官方 logo。 */
+.site-footer__support--icons {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.site-footer__support--icons .footer-support__icon {
+  height: 22px;
+  padding: 3px 6px;
+  border: 1px solid #e6e8ec;
+  border-radius: 4px;
+  background: #fff;
 }
 
 .site-footer__brand {
