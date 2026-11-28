@@ -250,6 +250,25 @@ window.FolioData = {
     return (source || []).reduce((sum, c) => sum + num(c.unread), 0)
   },
 
+  // 顶部「平台通知」红标：普通通知看 readNotices，商品好评看 reviews[].merchantRead，
+  // 同样每次 render 现读——点开一条通知 / 全部已读后立刻反映。
+  navNoticeUnread() {
+    let notices = null
+    let readIdx = null
+    try {
+      if (Array.isArray(systemNotices)) notices = systemNotices // eslint-disable-line no-undef
+      if (Array.isArray(readNotices)) readIdx = readNotices // eslint-disable-line no-undef
+    } catch {
+      // 首帧 base 脚本还没执行，退回接口返回值
+    }
+    const normalTotal = notices ? notices.length : state.notifications.filter((n) => n.kind !== 'REVIEW').length
+    const normalRead = readIdx
+      ? readIdx.length
+      : state.notifications.filter((n) => n.kind !== 'REVIEW' && n.read).length
+    const reviewUnread = (state.reviews || []).filter((r) => !r.merchantRead).length
+    return Math.max(0, normalTotal - normalRead) + reviewUnread
+  },
+
   bars(key, month) {
     const chart = state.charts[month ? 'month' : 'week']
     if (!chart || !Array.isArray(chart.order_bars) || !chart.order_bars.length) {

@@ -70,8 +70,15 @@
       : ''
     const langLabel = selectedLanguage === 'English' ? 'EN' : '中文'
     const chosen = ' style="color:var(--red);font-weight:650"'
+    // 平台通知：未读数 > 0 才显示红标（数量实时来自 FolioData.navNoticeUnread）。
+    const noticeUnread = typeof window.FolioData?.navNoticeUnread === 'function'
+      ? window.FolioData.navNoticeUnread()
+      : 0
+    const noticeBadge = noticeUnread > 0
+      ? `<span class="topnotice-badge" aria-label="${noticeUnread} 条未读通知">${noticeUnread}</span>`
+      : ''
     topright.innerHTML =
-      '<button onclick="go(10)">♧ 平台通知 <span class="red">●</span></button>' +
+      `<button onclick="go(10)">♧ 平台通知 ${noticeBadge}</button>` +
       '<button onclick="support()">♧ 联系客服</button>' +
       '<span style="color:#e2e5e9">│</span>' +
       `<span class="folio-shell-menu"><button type="button" class="folio-shell-trigger" aria-haspopup="true" aria-expanded="false">${profileAvatar('avatar')}<span>账号</span><span style="color:#9aa0ab">⌄</span></button>` +

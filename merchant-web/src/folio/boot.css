@@ -103,3 +103,21 @@ html[data-folio-guest] body > header {
   color: var(--ink);
   font-size: 12px;
 }
+
+/* 顶部「平台通知」未读数红标（静态稿只有一个装饰圆点 ●，这里换成真实条数） */
+.topright .topnotice-badge {
+  display: inline-block;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: 5px;
+  border-radius: 8px;
+  background: var(--red, #df2636);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  vertical-align: 1px;
+}

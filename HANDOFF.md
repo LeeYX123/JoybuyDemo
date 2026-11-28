@@ -8212,3 +8212,17 @@ HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径�
 **验证（真实数据）**：`123456@joybuy.com` 店铺 800 —— 看板徽标 `[1,1]`（未发货 1 单、未读会话 1 条），与 `/merchant/orders` 的 `counts.PENDING=1`、`/merchant/conversations` 的 `support_unread=1 + buyer 1` 一致；点开买家会话 → 徽标变 `[1]`（消息徽标消失），console/pageerror 0；`npm run build` 通过，api.js eslint 只剩既有 `API_BASE_URL` unused。
 
 **注意（验收/复现用）**：未读是后端 `SupportConversation.merchant_last_read_at` 与消息时间的比较值，**打开会话（GET 详情）就会标已读**；`MerchantChatThread.merchant_unread` 是买家侧的另一套字段，改它不会影响商家端徽标。演示时如果徽标是 0，重置 `SupportConversation.objects.filter(merchant_id=800).update(merchant_last_read_at=None)` 即可。
+
+
+## 顶部「平台通知」红点改为未读条数（2026-11-29，✅ 完成）
+
+**需求**：右上角【平台通知】旁原来是个常显的装饰红点 `●`，改成「未读通知数 > 0 才显示、显示具体条数」。
+
+**改动（3 个文件）**：
+- `api.js`：`FolioData.navNoticeUnread()`——普通通知 `systemNotices.length - readNotices.length`（点开一条即 push 已读），商品好评 `state.reviews[].merchantRead` 为 false 的条数；两者相加，每次 render 现读。
+- `merchant-desktop.js`：`paintTopright()` 里把 `♧ 平台通知 <span class="red">●</span>` 换成「未读>0 才输出」的 `<span class="topnotice-badge">N</span>`（带 `aria-label="N 条未读通知"`）。
+- `boot.css`：新增 `.topright .topnotice-badge`（16px 高红色胶囊、10px 白字、tabular-nums、`--red` 取设计稿主色）。
+
+**验证（测试商家 800，真实数据）**：初始 2 条未读（1 条 NORMAL + 1 条 REVIEW）→ 顶栏红标 `2`；点开普通通知 → `1`；再点开商品好评 → 红标消失（DOM 里无 `.topnotice-badge`）；console/pageerror 0；`npm run build` 通过，eslint 只剩既有 `API_BASE_URL` unused。
+**复位演示数据**：`MerchantNotification.objects.filter(merchant_id=800).update(read_at=None)`（通知）+ `SupportConversation...update(merchant_last_read_at=None)`（会话未读）。
+**未动**：手机壳（`base-4.js` 铃铛、`merchant-mobile.js` 导航）仍是原样，无红标需求前不改。
