@@ -7673,3 +7673,16 @@ UnionPay/PayPal/WeChat/Google Pay/Apple Pay/Klarna）存本地 pdp-services/
 Diners 按同款 32x20 卡片风格生成（Maestro 克隆 Mastercard SVG 改色，
 payment-maestro.svg 新建替代 about/pay-maestro.png）。
 验证：eslint + tests/ 162/162；Playwright 截图核对图标与真站一致。
+
+## 支付方式最终对齐真站（2026-11-28 22:15，✅ 完成，commit d8398fa）
+
+用 WorkBuddy 内置浏览器（用户登录态）实拍真站立即购买结算页：
+- 银行卡 8 品牌（顺序核对过）：Visa/Mastercard/Maestro/AmEx/Diners/
+  Discover/JCB/银联 —— **第 8 个是银联不是 Cartes Bancaires**（上一轮
+  低分辨率截图误判，用户指出后放大核对确认）；
+- 行列表（真站顺序）：Google Pay/微信支付/PayPal/Klarna/Revolut Pay/
+  NewPay，每行左侧真站 SVG icon；余额支付保留（不扣款只记录）；
+- 后端 PAYMENT_METHODS += PAYPAL/REVOLUT_PAY/NEW_PAY；管理端映射同步；
+- 新 SVG：payment-revolut.svg/payment-newpay.svg（真站风格手绘）。
+验证：56/56 + 162/162；Playwright 截图 8 品牌+行列表与真站一致。
+教训：品牌图标辨识要用高倍局部截图逐个核对，别凭小图猜。
