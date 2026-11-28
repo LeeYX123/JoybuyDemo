@@ -11,9 +11,20 @@ from audit.services import record_audit
 from merchant_ops.api_utils import OpsAPIView, csv_response, iso, money_str, paginate
 from merchant_ops.services import advance_progress, complete_all_nodes
 from orders.commerce_payloads import payment_payloads, refund_payloads, shipment_payloads
-from orders.models import MerchantOrder
+from orders.models import MerchantOrder, Order
 
 STATUS_TABS = {"PENDING", "SHIPPED", "COMPLETED"}
+
+
+def _exclude_canceled_parent(queryset):
+    """剔除「父单已取消」的商家子单（2026-11-29）。
+
+    买家端已无取消入口，历史 ``PENDING_PAYMENT`` 父单统一置为 ``CANCELED``；
+    ``MerchantOrder`` 只有待处理/已发货/已完成三态、没有 CANCELED，只能按
+    父单关系排除，否则平台/商家订单列表里会出现「取消单待发货」。
+    """
+
+    return queryset.exclude(order__status=Order.Status.CANCELED)
 
 
 def _three_state(order: MerchantOrder) -> str:
@@ -104,7 +115,9 @@ def _payload(order: MerchantOrder, *, detail=False) -> dict:
 
 
 def _filtered_orders(request):
-    queryset = MerchantOrder.objects.select_related("order__account", "merchant")
+    queryset = _exclude_canceled_parent(
+        MerchantOrder.objects.select_related("order__account", "merchant")
+    )
     status = (request.query_params.get("status") or "").strip().upper()
     if status and status != "ALL" and status in STATUS_TABS:
         # 2026-11-28 三态口径（待发货 / 已发货 / 已完成）与买家端
@@ -171,6 +184,13 @@ class AdminMerchantOrderDetailView(OpsAPIView):
         if order is None:
             raise StaffApiError(
                 business_code="ORDER_NOT_FOUND", message="订单不存在。", status_code=404
+            )
+        if order.order.status == Order.Status.CANCELED:
+            # 父单已取消的子单不对外开放（列表已排除），旧链接与深链一律 404。
+            raise StaffApiError(
+                business_code="MERCHANT_ORDER_NOT_FOUND",
+                message="订单已取消，无需处理。",
+                status_code=404,
             )
         return order
 

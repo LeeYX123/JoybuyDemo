@@ -104,6 +104,10 @@ class MerchantOverviewView(MerchantAPIView):
         ).count()
         pending = MerchantOrder.objects.filter(
             merchant=merchant, status=MerchantOrder.Status.PENDING
+        ).exclude(
+            # 2026-11-29：父单已取消（Order.status=CANCELED）的子单不再是「待发货」，
+            # 与商家订单列表 `views_merchant_orders._visible_orders` 同口径。
+            order__status=Order.Status.CANCELED
         )
         pending_count = pending.count()
         # 迭代02：待发货金额 = 待处理订单的成本价合计（与管理端商家列表一致）。

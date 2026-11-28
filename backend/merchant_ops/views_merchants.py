@@ -29,7 +29,7 @@ from merchants.services import (
     set_merchant_suspension,
     update_merchant_profile,
 )
-from orders.models import MerchantOrder
+from orders.models import MerchantOrder, Order
 
 STATUS_TABS = {
     "PENDING_REVIEW",
@@ -145,6 +145,8 @@ def _pending_aggregate(merchant_ids) -> dict:
             merchant_id__in=merchant_ids,
             status=MerchantOrder.Status.PENDING,
         )
+        # 2026-11-29：父单已取消的子单不算「待处理」（与商家端订单列表/看板同口径）。
+        .exclude(order__status=Order.Status.CANCELED)
         .values("merchant_id")
         .annotate(count=Count("id"), amount=Sum("cost_total"))
     )

@@ -15,13 +15,25 @@ from merchant_ops.api_utils import csv_response, iso, money_str, paginate
 from merchant_ops.merchant_context import MerchantAPIView
 from merchant_ops.services import MerchantOpsError, ship_merchant_order
 from orders.commerce_payloads import payment_payloads, refund_payloads, shipment_payloads
-from orders.models import MerchantOrder
+from orders.models import MerchantOrder, Order
 
 STATUS_TABS = (
     MerchantOrder.Status.PENDING,
     MerchantOrder.Status.SHIPPED,
     MerchantOrder.Status.COMPLETED,
 )
+
+
+def _visible_orders(queryset):
+    """剔除「父单已取消」的商家子单（2026-11-29）。
+
+    买家端已无取消入口，历史 ``PENDING_PAYMENT`` 父单统一置为 ``CANCELED``；
+    ``MerchantOrder`` 只有待处理/已发货/已完成三态、没有 CANCELED，所以
+    只能按父单关系排除，否则商家侧还会看到这些取消单的「待发货」。
+    列表、计数、详情、发货入口统一走这个过滤，保持口径一致。
+    """
+
+    return queryset.exclude(order__status=Order.Status.CANCELED)
 
 
 def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
@@ -80,8 +92,8 @@ def _order_payload(order: MerchantOrder, *, detail: bool = False) -> dict:
 
 
 def _filtered_queryset(request):
-    queryset = MerchantOrder.objects.select_related("order", "merchant").filter(
-        merchant=request.merchant
+    queryset = _visible_orders(
+        MerchantOrder.objects.select_related("order", "merchant").filter(merchant=request.merchant)
     )
     status = (request.query_params.get("status") or "").strip().upper()
     if status and status != "ALL" and status in STATUS_TABS:
@@ -113,6 +125,13 @@ def _resolve_order(request, public_id) -> MerchantOrder:
         raise StaffApiError(
             business_code="ORDER_NOT_FOUND", message="订单不存在或不属于当前店铺。", status_code=404
         )
+    if order.order.status == Order.Status.CANCELED:
+        # 父单已取消的子单对外不可见：旧链接直接 404，避免商家进详情继续发货。
+        raise StaffApiError(
+            business_code="MERCHANT_ORDER_NOT_FOUND",
+            message="订单已取消，无需处理。",
+            status_code=404,
+        )
     return order
 
 
@@ -121,11 +140,9 @@ class MerchantOrdersView(MerchantAPIView):
 
     def get(self, request):
         rows, meta = paginate(_filtered_queryset(request), request)
-        counts = {
-            key: MerchantOrder.objects.filter(merchant=request.merchant, status=key).count()
-            for key in STATUS_TABS
-        }
-        counts["ALL"] = MerchantOrder.objects.filter(merchant=request.merchant).count()
+        scoped = _visible_orders(MerchantOrder.objects.filter(merchant=request.merchant))
+        counts = {key: scoped.filter(status=key).count() for key in STATUS_TABS}
+        counts["ALL"] = scoped.count()
         return Response(
             {"items": [_order_payload(order) for order in rows], "counts": counts, **meta}
         )

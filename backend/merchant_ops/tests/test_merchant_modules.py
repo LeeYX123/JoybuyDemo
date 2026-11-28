@@ -339,6 +339,24 @@ class MerchantOrderTests(MerchantModuleTestBase):
         self.assertEqual(payload["status"], "SHIPPED")
         self.assertFalse(payload["can_ship"])
 
+    def test_canceled_parent_order_is_hidden(self):
+        """父单已取消（Order.status=CANCELED）的子单不再出现在商家待处理列表。"""
+
+        canceled = self.make_order()
+        visible = self.make_order()
+        Order.objects.filter(pk=canceled.order_id).update(status=Order.Status.CANCELED)
+
+        response = self.get("/api/v1/merchant/orders?status=PENDING")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([item["id"] for item in body["items"]], [str(visible.public_id)])
+        self.assertEqual(body["counts"]["PENDING"], 1)
+        self.assertEqual(body["counts"]["ALL"], 1)
+
+        detail = self.get(f"/api/v1/merchant/orders/{canceled.public_id}")
+        self.assertEqual(detail.status_code, 404)
+        self.assertEqual(detail.json()["error"]["code"], "MERCHANT_ORDER_NOT_FOUND")
+
 
 class WalletTests(MerchantModuleTestBase):
     def test_wallet_password_must_be_six_digits(self):
