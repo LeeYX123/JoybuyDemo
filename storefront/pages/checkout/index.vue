@@ -546,9 +546,16 @@ useHead({ title: 'Checkout' })
   margin-block: var(--space-6);
 }
 
-.checkout__step h2,
+/* 模块标题（配送至/汇总/支付方式）：24px/700/32px（用户指定）。 */
 .pay-card h3,
 .checkout__summary h3 {
+  margin: 0 0 var(--space-3);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+}
+
+.checkout__step h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
@@ -916,7 +923,7 @@ useHead({ title: 'Checkout' })
 
 /* 2026-11-28：小计加黑加粗 + 行距加大；订单合计更大更粗（含价格）。 */
 .quote-totals__row {
-  padding-block: var(--space-2);
+  margin-block: 24px;
 }
 
 .quote-totals__row dt {
@@ -935,8 +942,8 @@ useHead({ title: 'Checkout' })
 }
 
 .quote-totals__total {
-  margin-top: var(--space-3);
-  padding-block: var(--space-2) 0;
+  margin-top: 0;
+  padding-block: 24px;
   border-top: 1px solid var(--colour-border);
 }
 
