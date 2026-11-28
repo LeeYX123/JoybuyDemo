@@ -253,26 +253,30 @@ function mobileSaveAddress() {
   if (showNewForm.value) saveAddress()
   else useSelectedAddress()
 }
+// 2026-11-28 二次改版：去掉微信支付；Google Pay / Apple Pay 左侧带 icon；
+// 银行卡品牌组单独渲染（见模板，8 品牌）。
 const paymentMethods = computed(() => [
   {
     value: 'balance',
     label: t('checkout.balancePay'),
     note: balanceDisplay.value ? `Balance: ${balanceDisplay.value}` : '',
   },
-  { value: 'google_pay', label: 'Google Pay', note: '' },
-  { value: 'apple_pay', label: 'Apple Pay', note: '' },
-  { value: 'wechat_pay', label: t('checkout.wechatPay'), note: '' },
+  { value: 'google_pay', label: 'Google Pay', icon: '/images/pdp-services/payment-google-pay.svg' },
+  { value: 'apple_pay', label: 'Apple Pay', icon: '/images/pdp-services/payment-apple-pay.svg' },
   { value: 'klarna', label: t('checkout.klarna'), note: '' },
 ])
 
-// 2026-11-28 支付页改版：银行卡下按品牌直记支付方式（VISA/MASTERCARD/
-// AMEX/UNIONPAY），选中哪个品牌图标，订单就记哪个支付方式，管理端可见。
-// 白名单演示口径：任选即支付成功，不产生真实付款环节。
+// 2026-11-28 支付页改版：银行卡下按品牌直记支付方式，选中哪个品牌图标，
+// 订单就记哪个支付方式，管理端可见。白名单演示口径：任选即支付成功。
 const cardBrands = [
   { value: 'VISA', icon: '/images/pdp-services/payment-visa.svg', label: 'Visa' },
   { value: 'MASTERCARD', icon: '/images/pdp-services/payment-mastercard.svg', label: 'Mastercard' },
   { value: 'AMEX', icon: '/images/pdp-services/payment-american-express.svg', label: 'American Express' },
   { value: 'UNIONPAY', icon: '/images/pdp-services/payment-unionpay.svg', label: '银联' },
+  { value: 'MAESTRO', icon: '/images/about/pay-maestro.png', label: 'Maestro' },
+  { value: 'JCB', icon: '/images/pdp-services/payment-jcb.svg', label: 'JCB' },
+  { value: 'DISCOVER', icon: '/images/pdp-services/payment-discover.svg', label: 'Discover' },
+  { value: 'DINERS', icon: '/images/pdp-services/payment-dinersclub.svg', label: 'Diners Club' },
 ]
 
 useHead({ title: 'Checkout' })
@@ -430,8 +434,8 @@ useHead({ title: 'Checkout' })
                       class="quote-item__img"
                       :src="metaFor(item).image"
                       :alt="item.title"
-                      width="72"
-                      height="72"
+                      width="96"
+                      height="96"
                     />
                     <span
                       v-else
@@ -455,23 +459,9 @@ useHead({ title: 'Checkout' })
 
             <div class="pay-card">
               <h3>{{ t('checkout.paymentMethod') }}</h3>
-              <ul class="pay-methods">
-                <li v-for="method in paymentMethods" :key="method.value">
-                  <label class="pay-methods__option">
-                    <input
-                      v-model="paymentMethod"
-                      type="radio"
-                      name="payment"
-                      :value="method.value"
-                    />
-                    <span class="pay-methods__label">{{ method.label }}</span>
-                    <span v-if="method.note" class="pay-methods__note">{{ method.note }}</span>
-                  </label>
-                </li>
-              </ul>
 
-              <!-- 银行卡：品牌 icon 直选（VISA/Mastercard/AmEx/银联），
-                   选中即记录对应支付方式，无卡号输入框。 -->
+              <!-- 2026-11-28 二次改版：银行卡分组提到最前，8 个品牌 icon
+                   （真站口径），选中即记录对应支付方式，无卡号输入框。 -->
               <h3 class="pay-brands__title">{{ t('checkout.cardTitle') }}</h3>
               <div class="pay-brands" role="radiogroup" :aria-label="t('checkout.cardTitle')">
                 <label
@@ -489,6 +479,27 @@ useHead({ title: 'Checkout' })
                   <img :src="brand.icon" :alt="brand.label" />
                 </label>
               </div>
+
+              <ul class="pay-methods">
+                <li v-for="method in paymentMethods" :key="method.value">
+                  <label class="pay-methods__option">
+                    <input
+                      v-model="paymentMethod"
+                      type="radio"
+                      name="payment"
+                      :value="method.value"
+                    />
+                    <img
+                      v-if="method.icon"
+                      class="pay-methods__icon"
+                      :src="method.icon"
+                      :alt="method.label"
+                    />
+                    <span class="pay-methods__label">{{ method.label }}</span>
+                    <span v-if="method.note" class="pay-methods__note">{{ method.note }}</span>
+                  </label>
+                </li>
+              </ul>
             </div>
           </div>
 
@@ -496,7 +507,7 @@ useHead({ title: 'Checkout' })
             <h3>{{ t('checkout.summary') }}</h3>
             <!-- 2026-11-28：优惠明细/配送费行移除，仅保留 小计 + 订单合计。 -->
             <dl class="quote-totals">
-              <div>
+              <div class="quote-totals__row">
                 <dt>{{ t('checkout.subtotal') }}</dt>
                 <dd>{{ formatMoney(quote?.subtotal) }}</dd>
               </div>
@@ -508,8 +519,15 @@ useHead({ title: 'Checkout' })
             <button class="pay-now" type="button" :disabled="submitting || !quote" @click="payNow">
               {{ submitting ? t('checkout.paying') : t('checkout.payNow') }}
             </button>
+            <!-- 条款声明（2026-11-28）：使用条款/隐私与Cookie政策可点击跳转。 -->
             <p class="checkout__notice">
-              {{ t('checkout.termsNotice') }}
+              {{ t('checkout.termsPrefix') }}
+              <NuxtLink class="checkout__notice-link" to="/pages/terms-conditions">
+                {{ t('checkout.termsTerms') }}
+              </NuxtLink>{{ t('checkout.termsMiddle') }}
+              <NuxtLink class="checkout__notice-link" to="/pages/privacy-policy">
+                {{ t('checkout.termsPrivacy') }}
+              </NuxtLink>{{ t('checkout.termsSuffix') }}
             </p>
           </aside>
         </div>
@@ -755,8 +773,8 @@ useHead({ title: 'Checkout' })
 
 .quote-item__img {
   display: block;
-  width: 72px;
-  height: 72px;
+  width: 96px;
+  height: 96px;
   border: 1px solid #eef0f2;
   border-radius: 4px;
   object-fit: cover;
@@ -805,8 +823,8 @@ useHead({ title: 'Checkout' })
 .quote-item__line {
   flex: none;
   align-self: center;
-  font-size: 14px;
-  font-weight: var(--font-weight-semibold);
+  font-size: 16px;
+  font-weight: var(--font-weight-bold);
   color: #1a1a1a;
 }
 
@@ -891,6 +909,20 @@ useHead({ title: 'Checkout' })
   margin-block: var(--space-3);
 }
 
+/* 2026-11-28：小计加黑加粗 + 行距加大；订单合计更大更粗（含价格）。 */
+.quote-totals__row {
+  padding-block: var(--space-2);
+}
+
+.quote-totals__row dt {
+  font-weight: var(--font-weight-bold);
+  color: #1a1a1a;
+}
+
+.quote-totals__row dd {
+  color: #1a1a1a;
+}
+
 .quote-totals > div {
   display: flex;
   justify-content: space-between;
@@ -898,8 +930,21 @@ useHead({ title: 'Checkout' })
 }
 
 .quote-totals__total {
+  margin-top: var(--space-3);
+  padding-block: var(--space-2) 0;
   border-top: 1px solid var(--colour-border);
+}
+
+.quote-totals__total dt {
+  font-size: 16px;
   font-weight: var(--font-weight-bold);
+  color: #1a1a1a;
+}
+
+.quote-totals__total dd {
+  font-size: 20px;
+  font-weight: var(--font-weight-bold);
+  color: #1a1a1a;
 }
 
 /* Pay now: full-width red button, 48px, radius 8 (docs/12 §8). */
@@ -928,6 +973,18 @@ useHead({ title: 'Checkout' })
   margin-top: var(--space-3);
   color: var(--colour-muted);
   font-size: var(--font-size-sm);
+}
+
+.checkout__notice-link {
+  color: var(--colour-text);
+  text-decoration: underline;
+}
+
+.pay-methods__icon {
+  width: 28px;
+  height: 20px;
+  object-fit: contain;
+  flex: none;
 }
 
 @media (max-width: 64rem) {
