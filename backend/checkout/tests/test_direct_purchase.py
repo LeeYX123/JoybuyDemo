@@ -123,8 +123,9 @@ class DirectQuoteTests(DirectPurchaseTestBase):
             }
         ).json()
         self.assertEqual(data["subtotal"], "10.0000")
-        self.assertEqual(data["shipping_method"], "STANDARD")
-        self.assertEqual(data["total"], "13.9900")
+        # 2026-11-28 全站免邮：直购同样运费 0。
+        self.assertEqual(data["shipping_method"], "FREE")
+        self.assertEqual(data["total"], "10.0000")
 
     def test_direct_quote_default_quantity_is_one(self):
         data = self.quote(

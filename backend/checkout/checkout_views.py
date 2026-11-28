@@ -24,11 +24,11 @@ STANDARD_SHIPPING = Decimal("3.99")
 
 
 def compute_shipping(subtotal, currency: str) -> tuple[str, str]:
+    # 2026-11-28 用户拍板：全站免邮——任意金额运费一律 0（原满额免邮/3.99
+    # 标准运费档位作废）。保留 UNAVAILABLE 分支以兼容非 GBP 演示币种。
     if currency != "GBP" or subtotal is None:
         return "0.0000", "UNAVAILABLE"
-    if subtotal >= FREE_SHIPPING_THRESHOLD:
-        return "0.0000", "FREE"
-    return str(STANDARD_SHIPPING), "STANDARD"
+    return "0.0000", "FREE"
 
 
 def _parse_direct_quantity(value) -> int | None:

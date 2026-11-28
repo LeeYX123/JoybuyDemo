@@ -87,14 +87,16 @@ class CheckoutQuoteTests(CheckoutOrderTestBase):
         self.assertEqual(data["shipping_method"], "FREE")
 
     def test_quote_below_threshold_charges_standard_shipping(self):
+        # 2026-11-28 全站免邮：任意金额运费 0，订单总额 = 小计。
         self.add_to_cart(quantity=1, price="10.00")
         data = self.client.post(
             reverse("checkout-quote"),
             data=json.dumps({"address_public_id": str(self.address.public_id)}),
             content_type="application/json",
         ).json()
-        self.assertIn(data["shipping_cost"], {"3.9900", "3.99"})
-        self.assertEqual(data["total"], "13.9900")
+        self.assertEqual(data["shipping_cost"], "0.0000")
+        self.assertEqual(data["shipping_method"], "FREE")
+        self.assertEqual(data["total"], "10.0000")
 
     def test_unserviceable_and_unknown_addresses_are_rejected(self):
         # 2026-11-28 配送范围放开：任意地址（含海外/任意邮编）都可报价。
