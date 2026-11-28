@@ -9,7 +9,8 @@ import uuid
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Func, IntegerField, Prefetch, Q, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.response import Response
 
@@ -20,6 +21,7 @@ from catalog.detail_views import _spec_options_payload, _video_payload
 from catalog.models import (
     LOCAL_PARENT_MERCHANT_CATEGORY,
     LocalCategory,
+    Sku,
     Spu,
     SpuDetail,
     SpuTranslation,
@@ -72,7 +74,11 @@ def _primary_images(spu_ids) -> dict:
 
 
 def _title_for(spu: Spu) -> str:
-    translations = list(spu.translations.all())
+    # 列表视图用 Prefetch(to_attr="list_translations") 只取标题列，避免把
+    # spu_translation.description 长文本也拉回来；详情视图仍用 translations.all()。
+    translations = getattr(spu, "list_translations", None)
+    if translations is None:
+        translations = list(spu.translations.all())
     for locale in ("zh-CN", "zh", "en-GB", "en"):
         for translation in translations:
             if translation.locale == locale and translation.title:
@@ -81,6 +87,13 @@ def _title_for(spu: Spu) -> str:
 
 
 AI_SUMMARY_PREVIEW_LEN = 80
+
+
+def _preview_ai_summary(ai_summary) -> str:
+    text = (ai_summary or "").strip()
+    if len(text) > AI_SUMMARY_PREVIEW_LEN:
+        text = text[:AI_SUMMARY_PREVIEW_LEN] + "…"
+    return text
 
 
 def _detail_summary(detail, *, video_count=0) -> dict:
@@ -95,16 +108,63 @@ def _detail_summary(detail, *, video_count=0) -> dict:
             "ai_summary": "",
             "source_updated_at": None,
         }
-    ai_summary = (detail.ai_summary or "").strip()
-    if len(ai_summary) > AI_SUMMARY_PREVIEW_LEN:
-        ai_summary = ai_summary[:AI_SUMMARY_PREVIEW_LEN] + "…"
     return {
         "has_detail": True,
         "video_count": video_count,
         "section_count": len(detail.content_sections or []),
         "spec_table_count": len(detail.specification_tables or []),
-        "ai_summary": ai_summary,
+        "ai_summary": _preview_ai_summary(detail.ai_summary),
         "source_updated_at": iso(detail.source_observed_at or detail.updated_at),
+    }
+
+
+def _detail_summaries(spu_ids) -> dict:
+    """批量取列表页的详情摘要（2026-11-28 性能优化）。
+
+    列表只需要「区块数 / 规格表数 / AI 摘要预览 / 来源时间」，不需要
+    ``content_sections`` / ``specification_tables`` 的整块 JSON。之前列表
+    用 ``select_related("detail")`` 会把这两个大字段连同规格选项一起
+    SELECT 出来，这里改成只算 ``JSON_LENGTH``，单页只传 ai_summary 文本。
+    """
+
+    if not spu_ids:
+        return {}
+    rows = (
+        SpuDetail.objects.filter(spu_id__in=spu_ids)
+        .annotate(
+            section_count=Coalesce(
+                Func(F("content_sections"), function="JSON_LENGTH"),
+                Value(0),
+                output_field=IntegerField(),
+            ),
+            spec_table_count=Coalesce(
+                Func(F("specification_tables"), function="JSON_LENGTH"),
+                Value(0),
+                output_field=IntegerField(),
+            ),
+        )
+        .values(
+            "spu_id",
+            "ai_summary",
+            "source_observed_at",
+            "updated_at",
+            "section_count",
+            "spec_table_count",
+        )
+    )
+    return {row["spu_id"]: row for row in rows}
+
+
+def _detail_summary_from_row(row, *, video_count=0) -> dict:
+    if row is None:
+        return _detail_summary(None, video_count=video_count)
+    return {
+        "has_detail": True,
+        "video_count": video_count,
+        "section_count": row["section_count"] or 0,
+        "spec_table_count": row["spec_table_count"] or 0,
+        "ai_summary": _preview_ai_summary(row["ai_summary"]),
+        "source_updated_at": iso(row["source_observed_at"] or row["updated_at"]),
     }
 
 
@@ -172,15 +232,51 @@ class AdminProductPoolView(OpsAPIView):
     required_permissions = ["catalog.pool.manage"]
     view_permissions = ["catalog.pool.view"]
 
+    # 列表只取页面真正用到的列（编辑弹窗也从行数据回填 description/images/specs）。
+    # 不包含 SpuDetail 的 JSON 大字段——详情摘要由 ``_detail_summaries`` 用
+    # JSON_LENGTH 单独算，见 2026-11-28 性能优化。
+    list_fields = (
+        "id",
+        "public_id",
+        "local_category_id",
+        "status",
+        "cost_price",
+        "retail_price",
+        "is_activity",
+        "merchant_category",
+        "description",
+        "image_urls",
+        "specs",
+        "created_at",
+        "local_category__public_id",
+        "local_category__name",
+        "local_category__name_zh",
+        "local_category__name_en",
+        "local_category__path",
+    )
+
     def _queryset(self, request):
-        # select_related("detail")：OneToOne 左连接不产生重复行，列表摘要
-        # （区块数/规格表数/AI 预览）直接取自该行，避免每页再发一次查询。
-        queryset = Spu.objects.select_related("local_category", "detail").prefetch_related(
-            "translations"
+        # 2026-11-28：不再 select_related("detail")（OneToOne 的整行大 JSON
+        # 会被一起 SELECT），只按需取摘要；translations 只 preload 标题列。
+        queryset = (
+            Spu.objects.select_related("local_category")
+            .prefetch_related(
+                Prefetch(
+                    "translations",
+                    queryset=SpuTranslation.objects.only("spu_id", "locale", "title"),
+                    to_attr="list_translations",
+                )
+            )
+            .only(*self.list_fields)
         )
         query = (request.query_params.get("q") or "").strip()
         if query:
-            condition = Q(translations__title__icontains=query)
+            # 用子查询代替 translations JOIN：原写法为了去重必须 DISTINCT，
+            # 而 DISTINCT + ORDER BY + LIMIT 会让 MySQL 把 2.3 万行整行放进
+            # 临时表做 filesort（实测单条 SQL 588ms）。子查询不会产生重复行。
+            condition = Q(
+                pk__in=SpuTranslation.objects.filter(title__icontains=query).values("spu_id")
+            )
             try:
                 condition |= Q(public_id=uuid.UUID(query))
             except ValueError:
@@ -205,7 +301,9 @@ class AdminProductPoolView(OpsAPIView):
             queryset = queryset.filter(status=status)
         if request.query_params.get("activity") in {"1", "true"}:
             queryset = queryset.filter(is_activity=True)
-        return queryset.distinct().order_by("-created_at", "-pk")
+        # 原 ``.distinct()`` 是无条件加的（为了 translations JOIN 去重），但没有
+        # q 时并不需要；q 改成子查询后任何时候都不会有重复行，这里不再 distinct。
+        return queryset.order_by("-created_at", "-pk")
 
     def get(self, request):
         rows, meta = paginate(self._queryset(request), request)
@@ -218,7 +316,10 @@ class AdminProductPoolView(OpsAPIView):
             .values_list("sku__spu_id", "total")
         )
         sku_counts = dict(
-            Spu.objects.filter(pk__in=ids).annotate(total=Count("skus")).values_list("pk", "total")
+            Sku.objects.filter(spu_id__in=ids)
+            .values("spu_id")
+            .annotate(total=Count("pk"))
+            .values_list("spu_id", "total")
         )
         video_counts = dict(
             SpuVideo.objects.filter(spu_id__in=ids)
@@ -226,6 +327,7 @@ class AdminProductPoolView(OpsAPIView):
             .annotate(total=Count("pk"))
             .values_list("spu_id", "total")
         )
+        detail_summaries = _detail_summaries(ids)
         for spu in rows:
             spu.sku_total = sku_counts.get(spu.pk, 0)
         return Response(
@@ -235,8 +337,8 @@ class AdminProductPoolView(OpsAPIView):
                         spu,
                         images=[images[spu.pk]] if spu.pk in images else [],
                         stores=store_counts.get(spu.pk, 0),
-                        detail_summary=_detail_summary(
-                            getattr(spu, "detail", None),
+                        detail_summary=_detail_summary_from_row(
+                            detail_summaries.get(spu.pk),
                             video_count=video_counts.get(spu.pk, 0),
                         ),
                     )

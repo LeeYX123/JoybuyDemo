@@ -543,6 +543,18 @@ class Spu(models.Model):
                 name="spu_category_status_idx",
             ),
             models.Index(fields=["brand", "status"], name="spu_brand_status_idx"),
+            # --- 2026-11-28 管理端商品池列表性能 ---
+            # 列表默认排序是 ORDER BY created_at DESC, id DESC；没有排序索引时
+            # MySQL 会把全部 ~2.3 万行放进 filesort（EXPLAIN: type=ALL key=None）。
+            # 二级索引反向扫描即可满足 DESC 排序，避免排序与临时表。
+            models.Index(fields=["created_at", "id"], name="spu_created_id_idx"),
+            # /products?status=ACTIVE 的「可售/已下架」tab：等值筛选 + 同序排序。
+            models.Index(fields=["status", "created_at", "id"], name="spu_status_created_idx"),
+            # /activity-products 的「活动商品」tab：is_activity=1 + 同序排序。
+            models.Index(
+                fields=["is_activity", "created_at", "id"],
+                name="spu_activity_created_idx",
+            ),
         ]
 
 
