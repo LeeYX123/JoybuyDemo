@@ -139,6 +139,109 @@ class CartServiceTests(CartTestBase):
         self.assertEqual(snapshot["items"][0]["issue"], "SKU_NOT_AVAILABLE")
         self.assertEqual(snapshot["subtotal"], None)
 
+    def test_add_by_spu_public_id_picks_lowest_price_offer_and_merges(self):
+        """列表卡片【+】只传 spu_public_id：按当前市场最低价 ACTIVE Offer 加购。"""
+
+        from catalog.product_services import get_or_create_sku_from_source
+        from offers.market_services import resolve_market_context
+        from offers.services import import_offer_from_source
+
+        request = self.factory.get("/api/v1/cart/items")
+        request.COOKIES = {"joybuy-market": "GB", "joybuy-locale": "en-GB"}
+        market_context = resolve_market_context(request)
+
+        # 同 SPU 第二个（更便宜）的 ACTIVE offer。
+        second_sku, _ = get_or_create_sku_from_source(
+            spu=self.spu,
+            source_system="joybuy",
+            source_id="cart-sku-second",
+            specification={},
+            skip_attribute_validation=True,
+        )
+        cheaper, _ = import_offer_from_source(
+            sku=second_sku,
+            merchant=self.merchant,
+            market=self.market,
+            currency=self.currency,
+            source_system="joybuy",
+            source_id="cart-offer-cheaper",
+            current_price="8.00",
+        )
+        Offer.objects.filter(pk=cheaper.pk).update(status=Offer.Status.ACTIVE)
+
+        context = self.anonymous_context(token="tok-spu-add")
+        add_item(
+            context,
+            spu_public_id=str(self.spu.public_id),
+            quantity=1,
+            market=market_context.market,
+        )
+        add_item(
+            context,
+            spu_public_id=str(self.spu.public_id),
+            quantity=2,
+            market=market_context.market,
+        )
+        cart = Cart.objects.get(anonymous_token="tok-spu-add")
+        rows = cart.items.select_related("offer")
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.get().offer_id, cheaper.pk)
+        self.assertEqual(rows.get().quantity, 3)
+
+    def test_add_by_spu_public_id_rejects_spu_without_active_offer(self):
+        from offers.market_services import resolve_market_context
+
+        request = self.factory.get("/api/v1/cart/items")
+        request.COOKIES = {"joybuy-market": "GB"}
+        market_context = resolve_market_context(request)
+        context = self.anonymous_context(token="tok-spu-missing")
+
+        Offer.objects.filter(pk=self.offer.pk).update(status=Offer.Status.INACTIVE)
+        with self.assertRaises(CartError) as raised:
+            add_item(
+                context,
+                spu_public_id=str(self.spu.public_id),
+                quantity=1,
+                market=market_context.market,
+            )
+        self.assertEqual(raised.exception.code, "SKU_NOT_AVAILABLE")
+        with self.assertRaises(CartError):
+            add_item(context, quantity=1, market=market_context.market)
+
+    def test_serialize_cart_localizes_title_with_request_locale(self):
+        """购物车行标题跟随请求 locale，无译文回退 en-GB（不落其它语言）。"""
+
+        from catalog.models import SpuTranslation
+        from offers.market_services import resolve_market_context
+
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="en-GB", defaults={"title": "English title"}
+        )
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="zh-CN", defaults={"title": "中文标题"}
+        )
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="de-DE", defaults={"title": "Deutscher Titel"}
+        )
+
+        context = self.anonymous_context(token="tok-title")
+        add_item(context, offer_public_id=str(self.offer.public_id), quantity=1)
+        cart = Cart.objects.get(anonymous_token="tok-title")
+
+        def title_for(locale_code):
+            request = self.factory.get("/api/v1/cart")
+            request.COOKIES = {"joybuy-market": "GB", "joybuy-locale": locale_code}
+            market_context = resolve_market_context(request)
+            return serialize_cart(
+                cart, market=market_context.market, locale=market_context.locale
+            )["items"][0]["title"]
+
+        self.assertEqual(title_for("zh-CN"), "中文标题")
+        self.assertEqual(title_for("en-GB"), "English title")
+        # ja-JP 没有译文：显式回退 en-GB，绝不落到已存在的 de-DE 行。
+        self.assertEqual(title_for("ja-JP"), "English title")
+        self.assertEqual(title_for("ko-KR"), "English title")
+
     def test_merge_folds_anonymous_cart_into_buyer_cart(self):
         anonymous_context = self.anonymous_context(token="tok-merge")
         add_item(anonymous_context, offer_public_id=str(self.offer.public_id), quantity=2)

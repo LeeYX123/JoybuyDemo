@@ -12,12 +12,23 @@ from cart.services import (
     serialize_cart,
     update_item,
 )
+from offers.market_services import resolve_market_context
 
 
 def _cart_response(request, *, status=200):
     context = resolve_cart_context(request)
     cart = get_or_create_cart(context)
-    response = JsonResponse(serialize_cart(cart), status=status)
+    # 行标题本地化：请求市场/语言与搜索/PDP 同一 helper（market 参数 →
+    # joybuy-market cookie；locale 参数 → joybuy-locale cookie → 市场默认）。
+    market_context = resolve_market_context(request)
+    response = JsonResponse(
+        serialize_cart(
+            cart,
+            market=market_context.market if market_context else None,
+            locale=market_context.locale if market_context else None,
+        ),
+        status=status,
+    )
     from cart.services import _apply_anonymous_cookie
 
     _apply_anonymous_cookie(response, context)
@@ -66,11 +77,17 @@ def cart_items(request):
             status=400,
         )
     context = resolve_cart_context(request)
+    # 加购入参二选一（2026-11-28）：`offer_public_id`（详情页，保持原样）或
+    # `spu_public_id`（列表卡片【+】，搜索接口不给 offer id）。SPU 路径按当前
+    # 请求市场解析成最低价可购买 ACTIVE Offer，之后走同一条 add 逻辑。
+    market_context = resolve_market_context(request)
     try:
         add_item(
             context,
             offer_public_id=str(body.get("offer_public_id") or ""),
             quantity=body.get("quantity", 1),
+            spu_public_id=str(body.get("spu_public_id") or ""),
+            market=market_context.market if market_context else None,
         )
     except CartError as exc:
         return _error(request, exc)

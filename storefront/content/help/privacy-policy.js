@@ -562,21 +562,7 @@ const en = [
         br: 1,
       },
       {
-        t: 'c. We may contact you via email to invite you to review any services and/or products you received from us in order to collect your feedback and improve our services and products. We use an external company, Trustpilot A/S (“',
-      },
-      {
-        t: 'Trustpilot',
-        b: 1,
-      },
-      {
-        t: '”), to collect your feedback which means that we will share your name, email address and reference number with Trustpilot for such purpose. If you want to read more about how Trustpilot process your data, you can find their Privacy Policy here [',
-      },
-      {
-        t: 'https://uk.legal.trustpilot.com/end-user-privacy-terms',
-        href: 'https://uk.legal.trustpilot.com/end-user-privacy-terms',
-      },
-      {
-        t: ']. We may also use such reviews in other promotional material and media for our advertising and promotional purposes.',
+        t: 'c. If required to do so by law, we will also disclose your Personal Data to third parties, on a need-to-know basis to competent authorities, such as the authorities of the country of transit or destination for customs clearance where such disclosure is required in order to comply with legal requests, where required or legally permitted to establish, exercise or defend legal rights; in order to enforce or apply our terms of supply and other agreements with you; or to protect the rights, property, or safety of Joybuy, our customers, or others, in as far as required by the laws of the respective country; and',
       },
       {
         br: 1,
@@ -585,16 +571,7 @@ const en = [
         br: 1,
       },
       {
-        t: 'd. If required to do so by law, we will also disclose your Personal Data to third parties, on a need-to-know basis to competent authorities, such as the authorities of the country of transit or destination for customs clearance where such disclosure is required in order to comply with legal requests, where required or legally permitted to establish, exercise or defend legal rights; in order to enforce or apply our terms of supply and other agreements with you; or to protect the rights, property, or safety of Joybuy, our customers, or others, in as far as required by the laws of the respective country; and',
-      },
-      {
-        br: 1,
-      },
-      {
-        br: 1,
-      },
-      {
-        t: 'e. We will disclose your Personal Data to third parties, on a need-to-know basis, incidentally, for instance in case of a merger, acquisition, asset transfer or similar transaction of where this is needed to comply with the law or to protect our own rights, properties and safety – in which case we will disclose your Personal Data to the prospective buyer of such business or assets subject to the terms of this Policy.',
+        t: 'd. We will disclose your Personal Data to third parties, on a need-to-know basis, incidentally, for instance in case of a merger, acquisition, asset transfer or similar transaction of where this is needed to comply with the law or to protect our own rights, properties and safety – in which case we will disclose your Personal Data to the prospective buyer of such business or assets subject to the terms of this Policy.',
       },
       {
         br: 1,
@@ -627,29 +604,6 @@ const en = [
       },
       {
         t: '") that may not – by law – provide the same level of data protection as you are used to in the European Union or UK. In those cases, we will ensure that there are appropriate safeguards in place to protect your Personal Data. ',
-      },
-      {
-        br: 1,
-      },
-      {
-        br: 1,
-      },
-      {
-        t: "6.2 Transfers of your Personal Data to a country outside the EEA and UK may in the first place be legitimised on the basis of an 'adequacy decision'. This is a decision by the European Commission (for the EEA) and the Secretary of State (in the UK), which states that a certain country offers a materially equivalent level of data protection to that provided for under data protection law in the EEA / UK (as applicable). See this ",
-      },
-      {
-        t: 'link',
-        href: 'https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/adequacy-decisions_en',
-      },
-      {
-        t: ' for the current list of adequacy decisions that apply to transfers from the EEA and this ',
-      },
-      {
-        t: 'link',
-        href: 'https://www.gov.uk/government/publications/uk-approach-to-international-data-transfers/international-data-transfers-building-trust-delivering-growth-and-firing-up-innovation',
-      },
-      {
-        t: ' for transfers from the UK.',
       },
       {
         br: 1,
@@ -772,21 +726,7 @@ const en = [
         href: 'mailto:Joybuyfumi@gmail.com',
       },
       {
-        t: ' and state Privacy Query in the subject line. For more information on your privacy rights, please see this webpage of the UK Information Commissioner’s Office (ICO) ',
-      },
-      {
-        t: 'https://ico.org.uk/',
-        href: 'https://ico.org.uk/',
-      },
-      {
-        t: ', and ',
-      },
-      {
-        t: 'this webpage',
-        href: 'https://commission.europa.eu/law/law-topic/data-protection/information-individuals_en',
-      },
-      {
-        t: ' of the European Commission.',
+        t: ' and state Privacy Query in the subject line.',
       },
       {
         br: 1,
@@ -875,43 +815,6 @@ const en = [
       },
       {
         t: 'h. Automated decision-making: You have the right not to be subject to a decision based solely on automated processing, which significantly impacts you (“which produces legal effects concerning you or similarly significantly affects you”). We use profiling for personalised recommendations (see Section 4.3), but this does not constitute automated decision-making under Article 22A UK GDPR and Article 22 GDPR as recommendations do not produce legal effects or similarly significantly affect you. You have the right to object to this profiling (see Section 4.3 and 8.1(e)).',
-      },
-      {
-        br: 1,
-      },
-      {
-        br: 1,
-      },
-      {
-        t: 'i. Right to complaint: In addition to the above mentioned, rights you have the right to lodge a complaint with a supervisory authority, in the UK this is the Information Commissioner (ICO). Please see this webpage ',
-      },
-      {
-        t: 'https://ico.org.uk/',
-        href: 'https://ico.org.uk/',
-      },
-      {
-        t: ' for an overview of the supervisory authorities, and information about your rights and our obligations in relation to your Personal Data, as well as how to deal with any ',
-      },
-      {
-        t: 'complaints',
-        href: 'https://ico.org.uk/make-a-complaint/',
-      },
-      {
-        t: ' that you have about our processing of your Personal Data. However, if you have a complaint, we would appreciate the chance to deal with your concerns before you approach the supervisory authority, by contacting us at ',
-      },
-      {
-        t: 'Joybuyfumi@gmail.com',
-        href: 'mailto:Joybuyfumi@gmail.com',
-      },
-      {
-        t: '. If you are based in the EEA, you can find your supervisory authority here ',
-      },
-      {
-        t: 'https://edpb.europa.eu/about-edpb/about-edpb/members_en',
-        href: 'https://edpb.europa.eu/about-edpb/about-edpb/members_en',
-      },
-      {
-        t: '. You have the right to lodge a complaint with a supervisory authority in particular in the EU Member State of your habitual residence, place of work or of an alleged infringement of the GDPR at all times.',
       },
       {
         br: 1,
@@ -1535,26 +1438,13 @@ const zh = [
         br: 1,
       },
       {
-        t: 'c. 我们可能会通过电子邮件联系您，邀请您评价您从我们这里获得的任何服务和/或产品，以便收集您的反馈并改进我们的服务和产品。我们使用外部公司Trustpilot A/S（"Trustpilot"）收集您的反馈，这意味着我们将为此目的与Trustpilot共享您的姓名、电子邮件地址和参考编号。如果您想了解更多关于Trustpilot如何处理您数据的信息，可以在此处[',
-      },
-      {
-        t: 'https://uk.legal.trustpilot.com/end-user-privacy-terms',
-        href: 'https://uk.legal.trustpilot.com/end-user-privacy-terms',
-      },
-      {
-        t: ']找到他们的隐私政策。我们还可能将此类评价用于其他宣传材料和媒体，以进行广告和推广。',
+        t: 'c. 如果法律要求，我们还将根据需要知晓的原则，向主管当局等第三方披露您的个人数据，例如为了遵守法律要求而需要向过境国或目的国海关披露以进行清关；在法律要求或允许的情况下，用于建立、行使或捍卫合法权利；为了执行或适用我们的供应条款和与您的其他协议；或在各个国家法律要求的范围内，为了保护Joybuy、我们的客户或其他人的权利、财产或安全；以及',
       },
       {
         br: 1,
       },
       {
-        t: 'd. 如果法律要求，我们还将根据需要知晓的原则，向主管当局等第三方披露您的个人数据，例如为了遵守法律要求而需要向过境国或目的国海关披露以进行清关；在法律要求或允许的情况下，用于建立、行使或捍卫合法权利；为了执行或适用我们的供应条款和与您的其他协议；或在各个国家法律要求的范围内，为了保护Joybuy、我们的客户或其他人的权利、财产或安全；以及',
-      },
-      {
-        br: 1,
-      },
-      {
-        t: 'e. 我们可能会在特殊情况下，根据需要知晓的原则向第三方披露您的个人数据，例如在合并、收购、资产转让或类似交易中，或者当需要遵守法律或保护我们自身的权利、财产和安全时——在这种情况下，我们将根据本政策的条款向该业务或资产的潜在买方披露您的个人数据。',
+        t: 'd. 我们可能会在特殊情况下，根据需要知晓的原则向第三方披露您的个人数据，例如在合并、收购、资产转让或类似交易中，或者当需要遵守法律或保护我们自身的权利、财产和安全时——在这种情况下，我们将根据本政策的条款向该业务或资产的潜在买方披露您的个人数据。',
       },
     ],
   },
@@ -1571,28 +1461,6 @@ const zh = [
     segments: [
       {
         t: '6.1 我们上文提到的一些接收方位于英国和欧洲经济区以外的国家，这些国家的法律可能无法提供您在欧盟或英国所习惯的同等级别的数据保护。在这种情况下，我们将确保采取适当的保障措施来保护您的个人数据。',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
-        t: '6.2 将您的个人数据传输到欧洲经济区和英国以外的国家，首先可以基于"充分性决定"进行合法化。这是欧盟委员会（针对欧洲经济区）和国务大臣（针对英国）做出的决定，声明某个国家提供的对数据的保护水平实质上等同于欧洲经济区/英国数据保护法规定的保护水平（如适用）。请参阅此',
-      },
-      {
-        t: '链接',
-        href: 'https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/adequacy-decisions_en',
-      },
-      {
-        t: ' 获取当前适用于从欧洲经济区传输的充分性决定列表，以及此',
-      },
-      {
-        t: '链接',
-        href: 'https://www.gov.uk/government/publications/uk-approach-to-international-data-transfers/international-data-transfers-building-trust-delivering-growth-and-firing-up-innovation',
-      },
-      {
-        t: ' 获取适用于英国的信息。',
       },
     ],
   },
@@ -1716,21 +1584,7 @@ const zh = [
         href: 'mailto:Joybuyfumi@gmail.com',
       },
       {
-        t: '，并在主题行注明"隐私查询"。有关您隐私权利的更多信息，请参阅英国信息专员办公室 (ICO) 的此网页 ',
-      },
-      {
-        t: 'https://ico.org.uk/',
-        href: 'https://ico.org.uk/',
-      },
-      {
-        t: ' 以及欧盟委员会的',
-      },
-      {
-        t: '此网页',
-        href: 'https://commission.europa.eu/law/law-topic/data-protection/information-individuals_en',
-      },
-      {
-        t: '。',
+        t: '，并在主题行注明"隐私查询"。',
       },
       {
         br: 1,
@@ -1792,40 +1646,6 @@ const zh = [
       },
       {
         t: 'h. 自动化决策： 您有权不受仅基于自动化处理做出的、对您产生重大影响（"产生法律效力或类似地严重影响您"）的决定的约束。我们使用画像进行个性化推荐（见第 4.3 节），但这不构成英国通用数据保护条例第 22A 条以及通用数据保护条例第22条所指的自动化决策，因为推荐不会产生法律效力或类似地严重影响您。您有权反对这种画像（见第 4.3 节和第 8.1(e) 节）。',
-      },
-      {
-        br: 1,
-      },
-      {
-        t: 'i. 投诉权： 除上述权利外，您还有权向监管机构提出投诉，在英国是信息专员办公室 (ICO)。请参阅此网页 ',
-      },
-      {
-        t: 'https://ico.org.uk/',
-        href: 'https://ico.org.uk/',
-      },
-      {
-        t: ' 获取监管机构概览，以及有关您个人数据的权利和我们义务的信息，以及如何处理您对我们处理您个人数据提出的任何',
-      },
-      {
-        t: '投诉',
-        href: 'https://ico.org.uk/make-a-complaint/',
-      },
-      {
-        t: '。但是，如果您有投诉，在您联系监管机构之前，我们希望有机会通过 ',
-      },
-      {
-        t: 'Joybuyfumi@gmail.com',
-        href: 'mailto:Joybuyfumi@gmail.com',
-      },
-      {
-        t: ' 联系我们来处理您的关切。如果您位于欧洲经济区，您可以在此处找到您的监管机构 ',
-      },
-      {
-        t: 'https://edpb.europa.eu/about-edpb/about-edpb/members_en',
-        href: 'https://edpb.europa.eu/about-edpb/about-edpb/members_en',
-      },
-      {
-        t: '。您有权随时向您惯常居住地、工作地或涉嫌违反通用数据保护条例行为发生地的欧盟成员国的监管机构提出投诉。',
       },
     ],
   },
@@ -1955,9 +1775,12 @@ const zh = [
   },
 ]
 
+import { jaTitle as jaPageTitle, jaBlocks as jaPageBlocks } from './privacy-policy.ja.js'
 export const privacyPolicyPage = {
   slug: 'privacy-policy',
   title: { en: 'Privacy Policy', zh: '隐私政策' },
   hasArchive: true,
   blocks: { en, zh },
+  jaTitle: jaPageTitle,
+  jaBlocks: jaPageBlocks,
 }

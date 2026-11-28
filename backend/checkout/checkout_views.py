@@ -15,6 +15,7 @@ from django.http import JsonResponse
 from cart.models import MAX_QTY_PER_ITEM
 from cart.services import get_or_create_cart, resolve_cart_context, serialize_cart
 from checkout.models import Address, is_supported_postcode
+from offers.market_services import resolve_market_context
 from offers.models import Offer
 
 FREE_SHIPPING_THRESHOLD = getattr(settings, "CHECKOUT_FREE_SHIPPING_THRESHOLD", None) or Decimal(
@@ -47,7 +48,7 @@ def _parse_direct_quantity(value) -> int | None:
     return quantity
 
 
-def serialize_direct_purchase(offer: Offer, quantity: int) -> dict:
+def serialize_direct_purchase(offer: Offer, quantity: int, *, market=None, locale=None) -> dict:
     """立即购买（Buy now）的独立直购快照（2026-11-28）。
 
     与 ``serialize_cart`` 同形（items/subtotal/currency/needs_attention），
@@ -56,16 +57,19 @@ def serialize_direct_purchase(offer: Offer, quantity: int) -> dict:
     UNAVAILABLE → SKU_NOT_AVAILABLE；quantity 超 local_inventory →
     INSUFFICIENT_STOCK 并钳到库存）。额外带 ``total``（小计 + 运费）供
     place_order 直购路径做余额校验/扣款；购物车快照路径维持现状不动。
+
+    ``market``/``locale``：结账页请求上下文，行标题与购物车同源本地化
+    （2026-11-28 修复中文站仍显示英文商品名）；不传的调用方（订单快照）
+    保持旧的「第一条译文」口径。
     """
 
-    from cart.services import merchant_entry
+    from cart.services import merchant_entry, resolve_item_title
 
-    translation = offer.sku.spu.translations.order_by("pk").first()
     entry = {
         "public_id": "",
         "offer_public_id": str(offer.public_id),
         "spu_public_id": str(offer.sku.spu.public_id),
-        "title": translation.title if translation else "",
+        "title": resolve_item_title(offer.sku.spu, market, locale),
         "quantity": quantity,
         "price": str(offer.current_price),
         "currency": offer.currency.code,
@@ -304,6 +308,10 @@ def checkout_quote(request):
     # 立即购买（2026-11-28）：请求带 offer_public_id 时走「独立直购上下文」——
     # 不读写购物车，快照只有一个 offer（与购物车行同口径的 issue/needs_attention
     # 判定）；不带时保持原购物车快照路径，行为不变。
+    # 请求市场/语言只用于行标题本地化（与 PDP/购物车同源口径）。
+    market_context = resolve_market_context(request)
+    market = market_context.market if market_context else None
+    locale = market_context.locale if market_context else None
     offer_public_id = str(body.get("offer_public_id") or "").strip()
     if offer_public_id:
         quantity = _parse_direct_quantity(body.get("quantity"))
@@ -316,11 +324,11 @@ def checkout_quote(request):
         )
         if direct_offer is None:
             return _error(request, "SKU_NOT_AVAILABLE", "This item is no longer available.", 404)
-        snapshot = serialize_direct_purchase(direct_offer, quantity)
+        snapshot = serialize_direct_purchase(direct_offer, quantity, market=market, locale=locale)
     else:
         context = resolve_cart_context(request)
         cart = get_or_create_cart(context)
-        snapshot = serialize_cart(cart)
+        snapshot = serialize_cart(cart, market=market, locale=locale)
     if snapshot["needs_attention"] or not snapshot["items"]:
         return _error(
             request,

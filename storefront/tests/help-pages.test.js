@@ -363,7 +363,9 @@ describe('helpPages data', () => {
     expect(text).toContain('Jingdong Retail (UK) Limited')
     expect(text).toContain('15830555')
     expect(text).toContain('Floor 3, 20 King Street')
-    expect(text).toContain('European Commission')
+    // 2026-11-28：隐私政策按要求删除 6.2（充分性决定）与 8.1 的 ICO/欧盟委员会句子后，
+    // 正文已无 “European Commission” 字样（仅 6.2 / 8.1 出现过）；改断言仍保留的 EEA 表述。
+    expect(text).toContain('European Economic Area')
     for (const banned of ['(demo)', 'Asian Economic Area', 'Demo address']) {
       expect(text).not.toContain(banned)
     }

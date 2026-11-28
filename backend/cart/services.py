@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from django.db import transaction
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from cart.models import MAX_QTY_PER_ITEM, Cart, CartItem, generate_anonymous_token
@@ -79,7 +80,58 @@ def _validate_offer(offer) -> None:
         raise CartItemInvalid("SKU_NOT_AVAILABLE", "This SKU is not available to buy.")
 
 
-def add_item(context, *, offer_public_id: str, quantity: int) -> Cart:
+def _offer_for_spu(spu_public_id: str, market, *, lock: bool = False) -> Offer:
+    """按卡片 ``price_min`` 口径挑 SPU 的可购买 Offer（2026-11-28）。
+
+    搜索接口的 item 不带 offer id，卡片【+】只能传 ``spu_public_id``。这里沿
+    请求市场的 offer 市场链（``market`` → 回退市场，与搜索索引 ``min_price``
+    同源）取「最低价 + ACTIVE + 有库存」的 Offer；链上没有可购买 Offer 时
+    抛既有的 ``SKU_NOT_AVAILABLE``。最低价那一行若缺货会顺延到下一条，避免
+    卡片有价却加不进车。
+    """
+
+    from catalog.models import Spu
+    from offers.market_services import offer_market_chain
+
+    if market is None:
+        raise CartItemInvalid("SKU_NOT_AVAILABLE", "This SKU is not available to buy.")
+    spu = Spu.objects.filter(public_id=spu_public_id).first() if spu_public_id else None
+    if spu is None:
+        raise CartItemInvalid("SKU_NOT_AVAILABLE", "This SKU is not available to buy.")
+
+    for candidate_market in offer_market_chain(market):
+        queryset = Offer.objects.select_related("currency").filter(
+            sku__spu=spu,
+            market=candidate_market,
+            status=Offer.Status.ACTIVE,
+            local_inventory__gte=1,
+        )
+        if lock:
+            queryset = queryset.select_for_update()
+        offer = (
+            queryset.exclude(source_availability=Offer.SourceAvailability.UNAVAILABLE)
+            .order_by("current_price", "pk")
+            .first()
+        )
+        if offer is not None:
+            return offer
+    raise CartItemInvalid("SKU_NOT_AVAILABLE", "This SKU is not available to buy.")
+
+
+def add_item(
+    context,
+    *,
+    offer_public_id: str = "",
+    quantity: int,
+    spu_public_id: str = "",
+    market=None,
+) -> Cart:
+    """加购：``offer_public_id``（原路径）或 ``spu_public_id``（卡片【+】）二选一。
+
+    SPU 路径先解析成当前市场的最低价可购买 Offer，之后与 offer 路径走完全
+    同一条逻辑（白名单、匿名购物车、库存、重复行合并数量）。
+    """
+
     if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
         raise CartItemInvalid(message="Quantity must be a positive integer.")
     if quantity > MAX_QTY_PER_ITEM:
@@ -91,12 +143,17 @@ def add_item(context, *, offer_public_id: str, quantity: int) -> Cart:
         raise CartItemInvalid("NOT_WHITELISTED", "当前账号不在购买白名单内，无法加购。")
 
     with transaction.atomic():
-        offer = (
-            Offer.objects.select_for_update()
-            .select_related("currency")
-            .filter(public_id=offer_public_id)
-            .first()
-        )
+        if offer_public_id:
+            offer = (
+                Offer.objects.select_for_update()
+                .select_related("currency")
+                .filter(public_id=offer_public_id)
+                .first()
+            )
+        elif spu_public_id:
+            offer = _offer_for_spu(spu_public_id, market, lock=True)
+        else:
+            raise CartItemInvalid("SKU_NOT_AVAILABLE", "This SKU is not available to buy.")
         _validate_offer(offer)
         if quantity > offer.local_inventory:
             raise CartItemInvalid("INSUFFICIENT_STOCK", "Not enough stock for this quantity.")
@@ -176,24 +233,61 @@ def merchant_entry(offer) -> dict:
     }
 
 
-def serialize_cart(cart: Cart) -> dict:
+def resolve_item_title(spu, market, locale) -> str:
+    """购物车/直购行标题：与 PDP 同源的本地化口径（2026-11-28）。
+
+    ``market``/``locale`` 缺失（订单快照等老调用方）时保持旧行为：按 pk
+    取第一条 ``SpuTranslation``（历史快照逐字节不变）。给了请求上下文就走
+    :func:`catalog.localization_services.resolve_product_content`
+    —— ``SpuMarketContent`` CURRENT+locale 优先，其次 ``SpuTranslation``，
+    请求 locale 没有译文时显式回退 en-GB（绝不落到 de/fr 等其它语言）。
+    """
+
+    if market is None or locale is None:
+        translation = spu.translations.order_by("pk").first()
+        return translation.title if translation else ""
+
+    from catalog.localization_services import resolve_product_content
+
+    return resolve_product_content(spu, market, locale).title
+
+
+def serialize_cart(cart: Cart, *, market=None, locale=None) -> dict:
     """Live re-validation: prices come from the current offer, invalid rows
-    are flagged instead of silently dropped so the buyer can act on them."""
+    are flagged instead of silently dropped so the buyer can act on them.
+
+    ``market``/``locale`` 是请求上下文（购物车 API / checkout_quote 传入），
+    用于行标题的本地化；不传时保持旧的「第一条译文」快照口径。
+    """
 
     items = []
     subtotal = None
     changed = False
     currency_code = ""
-    for item in cart.items.select_related(
+    rows = cart.items.select_related(
         "offer", "offer__currency", "offer__sku__spu", "offer__merchant"
-    ):
+    )
+    if market is not None and locale is not None:
+        # 固定 +2 条查询（与行数无关）：resolve_product_content 只读
+        # spu.market_contents / spu.translations，过滤到请求 locale 就够。
+        from catalog.models import SpuMarketContent, SpuTranslation
+
+        rows = rows.prefetch_related(
+            Prefetch(
+                "offer__sku__spu__market_contents",
+                queryset=SpuMarketContent.objects.select_related("locale").filter(
+                    locale=locale
+                ),
+            ),
+            Prefetch("offer__sku__spu__translations", queryset=SpuTranslation.objects.all()),
+        )
+    for item in rows:
         offer = item.offer
-        translation = offer.sku.spu.translations.order_by("pk").first()
         entry = {
             "public_id": str(item.public_id),
             "offer_public_id": str(offer.public_id),
             "spu_public_id": str(offer.sku.spu.public_id),
-            "title": translation.title if translation else "",
+            "title": resolve_item_title(offer.sku.spu, market, locale),
             "quantity": item.quantity,
             "price": str(offer.current_price),
             "currency": offer.currency.code,

@@ -188,6 +188,37 @@ class DirectQuoteTests(DirectPurchaseTestBase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "AUTH_REQUIRED")
 
+    def test_direct_quote_localizes_title_per_request_locale(self):
+        """结账页商品名跟随请求 locale（2026-11-28：中文站仍显示英文的修复）。"""
+
+        from catalog.models import SpuTranslation
+
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="en-GB", defaults={"title": "English title"}
+        )
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="zh-CN", defaults={"title": "中文标题"}
+        )
+        SpuTranslation.objects.update_or_create(
+            spu=self.spu, locale="de-DE", defaults={"title": "Deutscher Titel"}
+        )
+        payload = {
+            "address_public_id": str(self.address.public_id),
+            "offer_public_id": str(self.offer.public_id),
+            "quantity": 1,
+        }
+
+        def title_for(locale_code):
+            self.client.cookies["joybuy-locale"] = locale_code
+            data = self.quote(payload).json()
+            return data["items"][0]["title"]
+
+        self.assertEqual(title_for("zh-CN"), "中文标题")
+        self.assertEqual(title_for("en-GB"), "English title")
+        # ja-JP 无译文：回退 en-GB，绝不落到已存在的 de-DE 行。
+        self.assertEqual(title_for("ja-JP"), "English title")
+        self.assertEqual(title_for("ko-KR"), "English title")
+
     def test_serialize_direct_purchase_matches_cart_row_shape(self):
         snapshot = serialize_direct_purchase(self.offer, 2)
         cart = self.add_cart_item(self.offer, 2)

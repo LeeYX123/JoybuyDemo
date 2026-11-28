@@ -411,18 +411,6 @@ const en = [
     type: 'p',
     segments: [
       {
-        t: '4.2 Within your browser you can change your cookie preferences and choose whether you wish to accept cookies or not. The choices you can make and how you make them differs per browser, such as denying all third-party cookies. For further information on how you can change your browser settings, please see: ',
-      },
-      {
-        t: 'www.aboutcookies.org/how-to-control-cookies/',
-        href: 'https://www.aboutcookies.org/how-to-manage-and-delete-cookies',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
         t: '5 Contact Details',
         b: 1,
       },
@@ -786,22 +774,6 @@ const zh = [
     type: 'p',
     segments: [
       {
-        t: '4.2 在浏览器中，您可以更改 Cookie 偏好设置，并选择是否接受 Cookie。您可以做出的选择以及操作方式因浏览器而异，例如拒绝所有第三方 Cookie。有关如何更改浏览器设置的更多信息，请参阅：',
-      },
-      {
-        t: 'https://www.aboutcookies.org/how-to-manage-and-delete-cookies',
-        href: 'https://www.aboutcookies.org/how-to-manage-and-delete-cookies',
-      },
-      {
-        t: '',
-        href: 'https://www.joyfumi.com/help/Joybuycookies',
-      },
-    ],
-  },
-  {
-    type: 'p',
-    segments: [
-      {
         t: '5. 联系方式',
         b: 1,
       },
@@ -850,9 +822,12 @@ const zh = [
   },
 ]
 
+import { jaTitle as jaPageTitle, jaBlocks as jaPageBlocks } from './cookie-policy.ja.js'
 export const cookiePolicyPage = {
   slug: 'cookie-policy',
   title: { en: 'Cookie Policy', zh: 'Cookie 政策' },
   hasArchive: false,
   blocks: { en, zh },
+  jaTitle: jaPageTitle,
+  jaBlocks: jaPageBlocks,
 }

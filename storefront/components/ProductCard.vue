@@ -1,6 +1,8 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useCartActions } from '../composables/useCart'
 import { useLocale } from '../composables/useLocale'
+import { useUiToast } from '../composables/useUiToast'
 import { useWishlist } from '../composables/useWishlist'
 
 const { t } = useLocale()
@@ -151,6 +153,49 @@ onMounted(() => {
 function toggleWishlist() {
   return toggle(spuPublicId.value)
 }
+
+// 卡片【+】加购（2026-11-28 用户口径）：原来是跳详情页的 NuxtLink，现在直接
+// 加入购物车、**不跳转**。搜索接口的 item 不带 offer id，所以传 spu_public_id，
+// 由后端按当前市场解析最低价 ACTIVE Offer（与卡片 price_min 同口径）。
+// 状态机：idle → adding（禁用、「加入中」）→ added（✓，1.5s 回落 idle）；
+// 失败回 idle 并 toast（白名单拦截用既有 gate 文案，其它用通用失败文案）。
+// 用 useCartActions（只写不读）——每张卡都调 useCart() 会各自发一次
+// key='cart' 的读请求，SSR 下每个子请求都会新建匿名购物车。
+const { addItem } = useCartActions()
+const { show: showToast } = useUiToast()
+const addState = ref('idle')
+let addTimer = null
+
+async function addToCart() {
+  if (!spuPublicId.value || addState.value === 'adding') return
+  addState.value = 'adding'
+  let response
+  try {
+    response = await addItem({ spu_public_id: spuPublicId.value }, 1)
+  } catch {
+    response = null
+  }
+  if (addTimer) clearTimeout(addTimer)
+  if (response && !response.error) {
+    addState.value = 'added'
+    addTimer = setTimeout(() => {
+      addState.value = 'idle'
+    }, 1500)
+    return
+  }
+  addState.value = 'idle'
+  const code = response?.error?.code
+  showToast(
+    code === 'NOT_WHITELISTED' ? t('gate.messageWhitelist') : t('product.addToCartFailed'),
+    {
+      type: 'error',
+    },
+  )
+}
+
+onBeforeUnmount(() => {
+  if (addTimer) clearTimeout(addTimer)
+})
 </script>
 
 <template>
@@ -226,11 +271,33 @@ function toggleWishlist() {
           />
           <span>{{ t('product.soldByJoybuy') }}</span>
         </span>
-        <NuxtLink class="product-card__add" :to="href" :aria-label="t('detail.addToCart')">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <button
+          class="product-card__add"
+          :class="{
+            'product-card__add--busy': addState === 'adding',
+            'product-card__add--done': addState === 'added',
+          }"
+          type="button"
+          :disabled="addState === 'adding'"
+          :aria-label="t('detail.addToCart')"
+          @click.stop.prevent="addToCart"
+        >
+          <span v-if="addState === 'adding'" class="product-card__add-label">
+            {{ t('product.addingToCart') }}
+          </span>
+          <svg
+            v-else-if="addState === 'added'"
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+          >
+            <path d="M9.6 17.4 4.8 12.6l1.6-1.6 3.2 3.2 8-8 1.6 1.6-9.6 9.6Z" fill="currentColor" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
           </svg>
-        </NuxtLink>
+        </button>
       </div>
     </div>
   </article>
@@ -472,12 +539,38 @@ function toggleWishlist() {
   width: 40px;
   height: 40px;
   flex-shrink: 0;
+  border: 0;
   border-radius: 50%;
   background: var(--colour-surface-soft);
   color: var(--colour-text);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
 }
 
 .product-card__add:hover {
   background: var(--colour-hover);
+}
+
+/* 加入中：圆形按钮临时变成胶囊显示「加入中」，宽度随文案自适应。 */
+.product-card__add--busy {
+  width: auto;
+  min-width: 40px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  cursor: progress;
+  opacity: 0.8;
+}
+
+.product-card__add-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* 成功：1.5s 的 ✓ 反馈（绿色），之后回落【+】。 */
+.product-card__add--done {
+  background: var(--colour-success-soft);
+  color: var(--colour-success);
 }
 </style>

@@ -1249,12 +1249,6 @@ const zh = [
         br: 1,
       },
       {
-        t: '5.6 若商家未按时提供交货所需的必要信息或指示，（i）则将视为违约，且无需向其发出违约通知；（ii）Joybuy有权存放产品（相关费用和风险由客户承担），或者将产品转售给第三方。',
-      },
-      {
-        br: 1,
-      },
-      {
         t: '更多交货相关详细信息，请',
       },
       {
@@ -1716,19 +1710,6 @@ const zh = [
         t: '• 第16条 关于产品交付的消费者撤回权',
         b: 1,
       },
-      {
-        br: 1,
-      },
-      {
-        t: '16.1 客户根据任何合同条款撤回、退回任何产品或申请退款的权利，应以',
-      },
-      {
-        t: '《售后服务政策》',
-        href: 'https://www.joyfumi.com/customer-service/Returns%20&%20Refunds',
-      },
-      {
-        t: '的规定为准。',
-      },
     ],
   },
   {
@@ -1946,9 +1927,12 @@ const zh = [
   },
 ]
 
+import { jaTitle as jaPageTitle, jaBlocks as jaPageBlocks } from './terms-conditions.ja.js'
 export const termsConditionsPage = {
   slug: 'terms-conditions',
   title: { en: 'Terms of Sale', zh: '销售条款' },
   hasArchive: false,
   blocks: { en, zh },
+  jaTitle: jaPageTitle,
+  jaBlocks: jaPageBlocks,
 }
