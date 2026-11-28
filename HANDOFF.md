@@ -7907,3 +7907,8 @@ var(--space-1)（4px）选择器优先级（0,1,1）高于 .quote-totals__total
 验证：eslint 通过；Playwright 断言（标题/全选/1 组合并/灰字 2 items/
 合计行/11 icon/白底 rgb(255,255,255)）全过；tests/ 中 minihome 2 个失败
 为并行任务 ProductCard.vue 改动所致（已 stash 验证与本改动无关）。
+
+## 支付页 Qty 标签多语言（2026-11-28 23:33，✅ 完成，commit 162595a）
+
+商品行硬编码 'Qty:' 改为复用 detail.quantity key（数量/Quantity/…×7），
+渲染「数量: 1」。验证：eslint + Playwright 流程正常。
