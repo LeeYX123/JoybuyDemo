@@ -464,6 +464,7 @@ useHead({ title: 'Checkout' })
 }
 
 .checkout__card {
+  max-width: 808px;
   padding: 24px 32px 32px;
   border-radius: 8px;
   background: var(--colour-surface);
@@ -549,9 +550,9 @@ useHead({ title: 'Checkout' })
   color: #1a1a1a;
 }
 
-/* 全宽红 Save（真站同款 #CC0C1C）。 */
+/* Save 按钮宽度 = 左列输入框宽度（用户要求，2026-11-28）。 */
 .address-form__save {
-  grid-column: 1 / -1;
+  grid-column: 1;
   width: 100%;
   height: 40px;
   border: 0;
