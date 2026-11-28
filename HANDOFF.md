@@ -103,6 +103,16 @@
 >   * 坑：①checkout/quote 对无购物车返回 400 CART_INVALID——PDP 加购点击对**非白名单买家静默无效**（gateBlocked/NOT_WHITELISTED 拦截，无 toast）；验证时把测试买家 `purchase_whitelisted` 0→1（单字段数据修改，演示口径内，见遗留）。②register/login 页对已登录用户会重定向走，脚本等待 #auth-identifier 会超时——先 networkidle 再判断。
 > - **遗留**：①prod 缺 APPROVED 申请数据（正向链/管理端申请审核链路待真实数据）；②测试数据残留：2 个 `deploy0mf-*@joybuy.test` 买家（其一为误注册未用）、1 条地址（Deploy Test/SW1A 1AA）、白名单标志=1（仅限该测试买家），如需清理走 admin 或手工 DELETE；③admin-web 支付方式映射展示（MerchantOrdersView）无登录冒烟（无 admin 凭据）。
 
+## 0mf-d. 钱包密码防浏览器自动填充/保存 + 未设密码时申请提现先弹设置框（2026-11-28，✅ dev 10/10 PASS，**未 commit 待用户指示**，只动 merchant-web）
+
+> **需求 1 改动（防自动填充组合，全部活代码输入点 4 个）**：钱包密码是 6 位数字 PIN，输入框统一改为 `type="text"` + 内联 `-webkit-text-security:disc`（视觉圆点不变）+ `autocomplete="off"` + `spellcheck="false"` + id 改为不含 password 字样（oldWpin/newWpin/confirmWpin/withdrawWpin）+ `data-wpin="1"`。涉及：`base-3.js setWalletPassword`（3 输入）+ `api.js verifyWithdrawalModal`（1 输入）。**保留 <form>**（保 Enter 提交 UX；type=text 下 Chrome 不做密码管理，「密码填入下拉」与「保存密码气泡」都不会出现）。**Firefox 兜底**：`wpinGuard()`（base-3 定义，两处弹层打开时调用）对非 WebKit 内核回退 type="password"+autocomplete="new-password"。**清值**：`base-1.js closeModal` 关闭前清空 #overlay 内所有 [data-wpin] 值（覆盖 X/遮罩/Esc/关闭按钮全部关闭路径）；提交成功路径 DOM 随弹层销毁。**不落盘**：明文永不进 localStorage——真实路径（api.js 覆盖）不写本地；`walletSecurityV1` 是演示 digest 残留且在 wipeDemoStorage 清单（api.js:48），base-3 死代码里的 setItem 被覆盖不可达。
+> - **活代码盘点坑（勿再踩）**：base-3.js 存在**多代定义**——`withdrawModal` 有两处（31 行旧定义已被 85 行覆盖，31 行是死代码），`verifyWithdrawalModal/confirmWithdrawal/saveWalletPassword` 各有两代 + ops 包装，最终生效者 = **api.js overrideActions 的覆盖**（boot 末尾执行）；首次把「未设密码门」加在 31 行死代码上导致验证失败，已改到 85 行活定义。`resetPasswordForm/completeWalletReset`（166/167 行）为不可达死代码（requestWalletReset 被 api.js 覆盖为联系客服引导）。
+> - **需求 2 改动（未设密码 → 先设 → 自动接提现）**：活代码 `withdrawModal`（base-3:85）入口加门：`walletSecurity` 为空 → 置 `window.__wpinThenWithdraw=true` → 打开设置密码框；`api.js saveWalletPassword` 成功后消费意图 → `await refreshWallet()`（轻量重拉 balance/wallet_password_configured/locked_until）→ `withdrawModal()` 自动接申请提现弹层；已设路径行为不变。`base-1 closeModal` 对意图兜底清除（用户取消设置即作废，防止下次无关的设置动作误触发自动接续）。后端零改动（GET /merchant/wallet 的 wallet_password_configured / POST /merchant/wallet/password 本就存在）。
+> - **验证（dev 端到端 Playwright，经切换链以 merchant 1042 登录；截图 var/desktop_folio_20261128/dev_wallet/）：10/10 PASS**——W2 点申请提现先弹设置框（属性断言 type=text/autocomplete=off/spellcheck=false/data-wpin/computed -webkit-text-security=disc，overlay 内无任何 password 型输入）；W3 5 位数字被 minlength 原生校验拦截（validity.valid=false，密码 POST 0 次）；W4 设置成功 → toast「钱包密码已设置」→ **自动打开申请提现弹层**（POST /merchant/wallet/password 200 + refreshWallet GET 均在日志）；W5 全程**零 withdrawals POST**（未提交提现单）；W6 已设路径直接进提现框；W7 修改框 3 输入同套属性；W8 `localStorage.walletSecurityV1`=null（无本地持久化）；W9 console/pageerror/HTTP 失败=0。`npm run build` exit 0。圆点视觉见 W7_dots_visual.png（•••••• 与 password 视觉一致）。
+> - **验证手段与局限**：headless Chromium 不渲染 Chrome「保存密码」气泡，「无保存提示」以属性层断言替代（type=text + autocomplete=off + 无 password 型输入 → Chrome 密码管理器不介入）；有头浏览器的实际气泡表现建议用户抽查一次。自动填充下拉同理以 autocomplete=off + 非密码 id 断言。
+> - **dev 数据变更（注明）**：merchant 1042（电子星星）`wallet_password_hash` 空 → 已设（测试值 123456）；failures/locked_until 未动。如需重测未设路径：UPDATE 清空 hash 即可（0mf-c 曾用 ORM 快照/恢复同一手法）。
+> - **遗留**：无阻塞项。本任务**未 commit**（等用户指示）；快照在 var/desktop_folio_20261128/backup/wallet_20261128/。
+
 ## 0sg. 产线同步活动页 48 页 + 首页 16 卡 + 2 张 minihome banner（2026-11-28，✅ 完成并三层验证，未 commit HANDOFF）
 
 - **任务**：把另一 agent 准备的物料（git 5586087/74f5caa、活动页包、2 banner 图）同步到 DO 产线并验证。全程按「先干跑再 apply」。
@@ -7653,3 +7663,13 @@ UNIONPAY + Payment 记录一致。
 验证：56/56 + 162/162；E2E 余额订单 PAID 后余额 500 不变、无流水；
 银联订单记录 UNIONPAY。真站 8 品牌来源：真站支付区因购物车空不渲染，
 按 Joybuy 常见口径配置（probe 脚本留档 scripts/probe_checkout_brands.py）。
+
+## 支付 icon 换真站内联 SVG（2026-11-28 21:58，✅ 完成，commit 24bf20d）
+
+用户指出真站支付 icon 不是图片是内联 SVG。scripts/extract_payment_svgs.py
+从真站 /profile 底部按 aria-label 提取 9 个品牌 SVG（Visa/Mastercard/AmEx/
+UnionPay/PayPal/WeChat/Google Pay/Apple Pay/Klarna）存本地 pdp-services/
+同名文件——页脚/PDP/购物车引用处一并升级。真站没有的 Maestro/JCB/Discover/
+Diners 按同款 32x20 卡片风格生成（Maestro 克隆 Mastercard SVG 改色，
+payment-maestro.svg 新建替代 about/pay-maestro.png）。
+验证：eslint + tests/ 162/162；Playwright 截图核对图标与真站一致。
