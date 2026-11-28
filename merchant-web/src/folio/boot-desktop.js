@@ -1,22 +1,23 @@
 // ---------------------------------------------------------------------------
 // folio/boot-desktop.js — 商家端桌面版（index.html）的唯一入口脚本。
 //
-// 与手机版 boot.js 同构（登录门 → 空态屏 → 选店 → bootEngine），差异点：
+// 与手机版 boot.js 同构（会话门 → 空态屏 → 选店 → bootEngine），差异点：
 // 1. 打标 window.__FOLIO_DESKTOP__ = true：api.js 据此注入 base-1..3 +
 //    merchant-desktop.js（不注入 base-4 / merchant-mobile.js 手机壳）；
 // 2. 路由直接用 location.pathname（桌面 index.html 就是 SPA 根，vite dev /
 //    nginx 都有 history fallback），不做 ?p= 映射，不做 <760/>780 换文档协议
 //    （那是 mobile 侧职责）；
-// 3. 登录屏 / 空态屏标记来源：最小复制自 src/folio/boot.js showLogin/showEmptyShop
-//    （boot.js 60-97 行，文案改为桌面版口径；boot.js 本身一字未动，手机路径零影响）。
+// 3. 无登录屏：商家端不再提供登录表单（入口唯一化到购物端【切换商家端】）。
+//    未登录 → 重定向回商城；只有「已登录但无绑定店铺」的空态屏（视觉复制自
+//    boot.js，按钮为返回商城）。
 // ---------------------------------------------------------------------------
 import './boot.css'
 import { apiRequest, setCurrentShop } from '../lib/api.js'
 import {
   bootEngine,
-  loginRequest,
   loadShops,
   logoutRequest,
+  storefrontUrl,
 } from './api.js'
 
 // api.js 的 bootEngine 在注入引擎前读取该标记，必须最先就位。
@@ -42,8 +43,6 @@ function routeFromPath(path) {
     '/activities': 8,
     '/messages': 9,
     '/notifications': 10,
-    '/login': 0,
-    '/no-shop': 0,
   }
   return { route: map[path] === undefined ? 0 : map[path] }
 }
@@ -67,38 +66,10 @@ function canonicalPath(entry) {
 }
 
 // ---------------------------------------------------------------------------
-// 登录屏 / 空态屏（复制自 boot.js 56-97 行；文案改桌面版口径）
+// 空态屏（已登录但无绑定店铺；视觉复制自 boot.js，按钮为返回商城）
 // ---------------------------------------------------------------------------
 function authScreenHtml(title, subtitle, inner) {
   return `<div class="folio-auth"><div class="folio-auth-card"><span class="folio-auth-mark">寰</span><h1>${title}</h1><p class="folio-auth-sub">${subtitle}</p>${inner}</div></div>`
-}
-
-function showLogin() {
-  document.documentElement.dataset.folioGuest = ''
-  const app = document.getElementById('app')
-  app.innerHTML = authScreenHtml(
-    '商家工作台',
-    '寰球优选 · 商家端桌面版，请使用商家账号登录',
-    `<form id="folioLoginForm"><label class="folio-field"><span>邮箱</span><input id="folioEmail" type="email" autocomplete="username" placeholder="请输入商家账号邮箱" required></label><label class="folio-field"><span>密码</span><input id="folioPassword" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="folioLoginError" class="folio-error" role="alert"></p><button type="submit" class="primary folio-submit">登录</button></form>`,
-  )
-  const form = document.getElementById('folioLoginForm')
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault()
-    const error = document.getElementById('folioLoginError')
-    const button = form.querySelector('.folio-submit')
-    error.textContent = ''
-    button.disabled = true
-    try {
-      await loginRequest(
-        document.getElementById('folioEmail').value.trim(),
-        document.getElementById('folioPassword').value,
-      )
-      location.replace('/dashboard')
-    } catch (err) {
-      error.textContent = err.message || '登录失败，请稍后再试。'
-      button.disabled = false
-    }
-  })
 }
 
 function showEmptyShop() {
@@ -107,11 +78,11 @@ function showEmptyShop() {
   app.innerHTML = authScreenHtml(
     '商家工作台',
     '',
-    `<p class="folio-empty-text">该账号还没有绑定店铺</p><p class="folio-empty-hint">请联系平台客服完成店铺入驻与绑定后再登录。</p><button type="button" class="primary folio-submit" id="folioLogoutButton">退出登录</button>`,
+    `<p class="folio-empty-text">该账号还没有绑定店铺</p><p class="folio-empty-hint">请联系平台客服完成店铺入驻与绑定后再回来。</p><button type="button" class="primary folio-submit" id="folioBackToMallButton">返回商城</button>`,
   )
-  document.getElementById('folioLogoutButton').addEventListener('click', async () => {
+  document.getElementById('folioBackToMallButton').addEventListener('click', async () => {
     await logoutRequest()
-    location.replace('/login')
+    location.replace(storefrontUrl())
   })
 }
 
@@ -121,13 +92,12 @@ function showEmptyShop() {
 async function main() {
   const entry = routeFromPath(location.pathname)
 
-  // 1. 登录门。
+  // 1. 会话门：未登录（直链/书签/会话过期）不渲染任何登录表单，直接回商城。
   document.documentElement.dataset.folioBoot = 'pending'
   const session = await apiRequest('/admin/auth/session').catch(() => null)
   if (!session || !session.authenticated) {
-    // 已登录访问 /login 才会走到这里之前被拦截；未登录统一渲染登录屏（含 /login）。
-    showLogin()
     delete document.documentElement.dataset.folioBoot
+    location.replace(storefrontUrl())
     return
   }
 
@@ -144,7 +114,7 @@ async function main() {
   const initialShop = shops.some((s) => s.id === remembered) ? remembered : shops[0].id
   setCurrentShop(initialShop)
 
-  // 3. 地址条规范化：/login、未知路径、越界订单号都在引擎落位后统一还原成规范路径。
+  // 3. 地址条规范化：未知路径、越界订单号都在引擎落位后统一还原成规范路径。
   if (location.pathname !== canonicalPath(entry)) {
     history.replaceState(null, '', canonicalPath(entry))
   }

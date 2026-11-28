@@ -7,7 +7,7 @@
 // 1. header topright 接线到静态稿「最终覆盖态」：平台通知 go(10) / 联系客服
 //    support() / 店铺头像+店名 / 切换回商城（.web-storefront-switch → 真实
 //    POST /merchant/switch-to-mall，照抄 merchant-mobile.js 256-275 行实现）；
-//    账号区加轻量下拉（编辑店铺资料 / 退出登录 → POST /admin/auth/logout → /login）；
+//    账号区加轻量下拉（编辑店铺资料 / 退出登录 → POST /admin/auth/logout → 回商城）；
 //    中文/EN 与手机版同口径：只写 localStorage joybuy.merchant.language。
 // 2. 路由同步：go(i) 包装 → history.pushState 真实路径；popstate → 按路径回跳；
 //    /orders/:id 深链由 __JOYPLAY_ACTIONS__.openOrder（api.js 桌面分支）落位；

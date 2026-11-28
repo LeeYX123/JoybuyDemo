@@ -70,6 +70,21 @@
 - **坑（不得再踩）**：①base-3 compactCopy 会删 welcome-strip/bottomnote/banner/support-context——桌面断言与排查别依赖 welcome-strip（本轮 02/15 两例假 FAIL 都源于此）；②未知路径冷启动断言要等 `.stats .stat` 这类settled 元素，boot 期 #app 里有 base-2 自渲染的瞬态 DOM（含 welcome-strip，visibility:hidden），waitForSelector 会撞上瞬态节点后永远等不到 visible；③切换回商城的 route 拦截 redirect_url **必须指回本站**，给 localhost:3000 会让引擎真的导航走、后续检查全挂；④folio classic 脚本（merchant-desktop/merchant-mobile）共享 base 全局词法，eslint 用文件级 `/* eslint-disable no-undef */`，行内 disable 会变 unused-directive 噪声；⑤Playwright/Node 装仓库外 %TEMP%（本轮复用 /tmp/pw_scratch_20261128）；⑥**并行会话会 checkout 回滚他人未提交改动（2026-11-28 18:45 实锤：本任务 3 个已跟踪文件改动+git rm 暂存被整体回滚，靠上下文重放与 var/ 备份恢复）——重要未提交改动必须同步留 `var/<task>/backup/` 快照（含恢复命令 README），并尽早请用户 commit，不要假设工作区状态会保持到下一轮**。
 - **遗留/下一步**：①**产线未部署**：merchant.joyfumi.com 仍是 Vue 桌面版，需重建 merchant-web 并发布 dist（nginx 需保证 `/src/folio/*.js` 可达——dist 已自带，或沿用服务器旧拷贝方式）；产线静态资源若有 CDN 缓存需刷新。②`<760` 桌面→手机自动切换本次按拍板未做：同域窄窗口访问 `/` 会得到桌面 folio 紧凑断点（800px 断点可用），m.\* 主机与直连 /mobile.html 不受影响；若用户要回该协议再开任务（改 boot-desktop.js 一处）。③popstate 用 baseGo：后退到列表页筛选/页码回默认（与点侧栏一致），未做深度视图栈恢复（手机版有，桌面可选优化）。④popstate 深链依赖 nginx/vite 的 SPA fallback（dev/preview 默认支持；产线 nginx 对 merchant 域名的 history fallback 需在部署时确认）。⑤i18n.js/locale-en.js 仍是孤儿模块（用户已叫停接入），未删。
 
+## 0mf-b. 商家端移除登录页：入口唯一化购物端【切换商家端】，无会话/登出/过期一律回商城（2026-11-28，✅ dev 端到端 8/8 PASS，commit 见下方提交记录）
+
+> **改动清单（5 文件，最小 diff）**：
+> - `src/folio/api.js`：①新增 `storefrontUrl()` 单一来源（优先 `VITE_STOREFRONT_URL` > host 推导：localhost/127.0.0.1/*.localhost→同 host :3000、joyfumi.com 子域→https://www.joyfumi.com > 兜底 www）；②删除 `loginRequest`（登录表单移除后零引用）；③`__JOYPLAY_ACTIONS__.logout` 桌面/手机统一为 `logoutRequest() + location.replace(STOREFRONT_URL)`（原桌面→/login、手机→/mobile.html 均废除）。
+> - `src/folio/boot-desktop.js`：删 `showLogin()` 登录屏（含表单/提交逻辑）；未登录分支改为 `location.replace(storefrontUrl())`；空态屏按钮【退出登录→/login】改【返回商城→logout+storefrontUrl】，文案「再登录」→「再回来」；routeFromPath 移除 '/login'、'/no-shop' 映射。
+> - `src/folio/boot.js`（手机，最小 diff）：删 `showLogin()`；未登录分支同改回商城；空态屏按钮同改【返回商城】；其余（桌面切换协议/滞回/引擎注入序列）一字未动。
+> - `src/folio/merchant-desktop.js`：仅注释更新（退出登录 → 回商城）；功能走 `__JOYPLAY_ACTIONS__.logout`，无代码改动。
+> - `.env.example`：补 `VITE_STOREFRONT_URL` 说明（构建期烘焙；不配也能 host 推导，产线服务器构建不依赖 env）。
+> - **redirect_url 现状与落点**：`POST /account/merchant-console-session`（merchant_ops/views_shop_application.py 的 `_merchant_web_url`）返回 `{url}`（`MERCHANT_WEB_URL` 配置优先；否则 Origin host + MERCHANT_WEB_PORT 5174），storefront `useMerchantEntry.openMerchantConsole()` `window.location.assign(url)` → 商家端根路径 `/` → route 0 → /dashboard。prod .env 已配 `MERCHANT_WEB_URL=https://merchant.joyfumi.com`。**落点正确，后端/storefront 零改动**。
+> - **401 中途过期现状**：api.js 本就无「401→拉登录门」逻辑（ApiError 上抛中文提示），无需改动；登出/未登录路径已全部收口到回商城。
+> - **快照**：5 文件快照 `var/desktop_folio_20261128/backup/nologin_20261128/`（上一代 d682109 快照保留在 backup/ 根，未覆盖）。
+> - **验证（dev 全链端到端，Playwright，截图 var/desktop_folio_20261128/dev_nologin/）：8/8 PASS**——T1 无会话 5174/wallet→弹回 :3000 无登录表单；T2 买家 123456789@joybuy.com 登录→【切换商家端】→直达 5174/dashboard（stats=6，全程无登录表单）；T2b /orders 列表渲染 + 未知单号深链归一 /orders（dev 事实：切换目标商家 1042 无订单，真实 /orders/:id 详情渲染引擎未改动，沿用 d682109 已验证）；T4 手机 mobile.html 无会话→弹回；T5 手机带会话看板渲染（模块=10）+消息页可达；T3 登出→回商城→再访弹回（会话已清）；T6 console/pageerror/HTTP 失败=0；`npm run build` exit 0。
+> - **坑（勿再踩）**：①staff 会话 cookie path 限定 `/api/v1/`（STAFF_SESSION_COOKIE_PATH）——跨上下文搬运会话要用 `context.cookies()` 全量取（按裸 URL 过滤会漏掉它）；②dev 能走通正向切换链的买家=123456789@joybuy.com（dev 库唯一 APPROVED 申请的买家，密码=邮箱数字段 `123456789`，staff 131 绑 merchant 1042 ACTIVE）；chiq@joybuy.test 在 dev 无买家身份，lookup 未命中会转注册流。③dev storefront 登录两步式：#auth-identifier → button.auth-submit → #auth-password → button.auth-submit。④5174 被并行会话 vite 占用属常态——同工作树同代码可直接共用，自起服务须落回 5174（CSRF 白名单）。
+> - **遗留**：无阻塞项。生产部署待用户批准（本任务只 commit 代码）。
+
 ## 0sg. 产线同步活动页 48 页 + 首页 16 卡 + 2 张 minihome banner（2026-11-28，✅ 完成并三层验证，未 commit HANDOFF）
 
 - **任务**：把另一 agent 准备的物料（git 5586087/74f5caa、活动页包、2 banner 图）同步到 DO 产线并验证。全程按「先干跑再 apply」。

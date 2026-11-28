@@ -19,9 +19,26 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
-// 头部「切换去商城」的兜底地址：正常路径使用后端返回的 redirect_url
-// （含 storefront 地址 + 一次性 handoff token），这里仅在响应缺字段时兜底。
-const STOREFRONT_URL = (import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:3000').replace(/\/+$/, '')
+// 商城（storefront）地址：单一来源。
+// 优先级：构建期 VITE_STOREFRONT_URL > 按 host 推导 > 兜底产线 www。
+// 使用点：①头部「切换去商城」redirect_url 缺字段时的兜底；②未登录/登出/
+// 空店铺回商城（商家端不再提供登录表单，进商家端唯一入口是购物端
+// 【切换商家端】→ POST /account/merchant-console-session 签发 staff 会话）。
+export function storefrontUrl() {
+  const configured = String(import.meta.env.VITE_STOREFRONT_URL || '').trim().replace(/\/+$/, '')
+  if (configured) return configured
+  if (typeof location !== 'undefined') {
+    const host = location.hostname.toLowerCase()
+    // 本地开发：与商家端同 host 的 :3000（storefront dev 端口；m.localhost 手机壳同理）。
+    if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost')) {
+      return `${location.protocol}//${location.hostname}:3000`
+    }
+    // 产线：merchant.joyfumi.com / m.joyfumi.com 都回 www 商城。
+    if (host.endsWith('joyfumi.com')) return 'https://www.joyfumi.com'
+  }
+  return 'https://www.joyfumi.com'
+}
+const STOREFRONT_URL = storefrontUrl()
 
 // 静态稿会把演示数据写进 localStorage；启动时全部清掉并停用写入口。
 const DEMO_STORAGE_KEYS = [
@@ -1593,26 +1610,8 @@ function overrideActions() {
 let pendingAvatarFile = null
 
 // ---------------------------------------------------------------------------
-// 登录 / 空态 / 引导
+// 空态 / 引导（登录表单已移除：商家端无登录页，未登录一律回商城 storefrontUrl()）
 // ---------------------------------------------------------------------------
-export async function loginRequest(email, password) {
-  const fresh = await apiRequest('/admin/auth/session')
-  const response = await fetch(`${API_BASE_URL}/admin/auth/login`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': fresh.csrf_token || '',
-    },
-    body: JSON.stringify({ email, password }),
-  })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    throw new Error((payload && payload.error && payload.error.message) || '登录失败，请稍后再试。')
-  }
-  return payload
-}
-
 export async function logoutRequest() {
   try {
     await merchantWrite('/admin/auth/logout', {}, 'POST')
@@ -1677,15 +1676,12 @@ export async function bootEngine(entryRoute) {
     searchCatalog: (filters) => refreshCatalog(filters),
     searchListings: (filters) => refreshListings(filters),
     switchShop: (id) => switchShop(id),
-    logout: desktop
-      ? async () => {
-          await logoutRequest()
-          location.replace('/login')
-        }
-      : async () => {
-          await logoutRequest()
-          location.replace('/mobile.html')
-        },
+    // 登出：清 staff 会话后回商城（商家端没有登录页；再进商家端请从
+    // 购物端【切换商家端】进入）。桌面/手机统一行为。
+    logout: async () => {
+      await logoutRequest()
+      location.replace(STOREFRONT_URL)
+    },
     // 桌面版专属：/orders/:id 深链与浏览器前进/后退共用（merchant-desktop.js 调用）。
     ...(desktop ? { openOrder: (orderId) => openOrderById(orderId) } : {}),
   }

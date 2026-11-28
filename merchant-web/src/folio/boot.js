@@ -4,17 +4,18 @@
 // 职责：
 // 1. 桌面↔手机切换协议：非 m. 主机且视口 >780 → 弹回桌面文档（index.html），
 //    带 250ms 防抖滞回；入口路径 ?p= 映射到静态稿 route 并还原干净地址。
-// 2. 登录门：先 /admin/auth/session —— 未登录渲染 folio 视觉登录屏；
-//    已登录但无绑定店铺渲染空态屏；通过后才拉数据、按原顺序注入
-//    base-1..4.js + merchant-mobile.js（静态稿引擎），再由 api.js 接数据。
+// 2. 会话门：先 /admin/auth/session —— 未登录直接回商城（商家端不提供登录
+//    表单，入口唯一化到购物端【切换商家端】）；已登录但无绑定店铺渲染空态屏
+//    （按钮=返回商城）；通过后才拉数据、按原顺序注入 base-1..4.js +
+//    merchant-mobile.js（静态稿引擎），再由 api.js 接数据。
 // ---------------------------------------------------------------------------
 import './boot.css'
 import { apiRequest, setCurrentShop } from '../lib/api.js'
 import {
   bootEngine,
-  loginRequest,
   loadShops,
   logoutRequest,
+  storefrontUrl,
 } from './api.js'
 
 const MOBILE_HOST = typeof location !== 'undefined' && location.hostname.startsWith('m.')
@@ -51,38 +52,10 @@ function routeFromPath(path) {
 }
 
 // ---------------------------------------------------------------------------
-// 登录屏 / 空态屏（folio 视觉，颜色取 :root[data-design=studio] tokens）
+// 空态屏（folio 视觉，颜色取 :root[data-design=studio] tokens）；登录屏已移除
 // ---------------------------------------------------------------------------
 function authScreenHtml(title, subtitle, inner) {
   return `<div class="folio-auth"><div class="folio-auth-card"><span class="folio-auth-mark">寰</span><h1>${title}</h1><p class="folio-auth-sub">${subtitle}</p>${inner}</div></div>`
-}
-
-function showLogin() {
-  document.documentElement.dataset.folioGuest = ''
-  const app = document.getElementById('app')
-  app.innerHTML = authScreenHtml(
-    '商家工作台',
-    '寰球优选 · 商家端手机版，请使用商家账号登录',
-    `<form id="folioLoginForm"><label class="folio-field"><span>邮箱</span><input id="folioEmail" type="email" autocomplete="username" placeholder="请输入商家账号邮箱" required></label><label class="folio-field"><span>密码</span><input id="folioPassword" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="folioLoginError" class="folio-error" role="alert"></p><button type="submit" class="primary folio-submit">登录</button></form>`,
-  )
-  const form = document.getElementById('folioLoginForm')
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault()
-    const error = document.getElementById('folioLoginError')
-    const button = form.querySelector('.folio-submit')
-    error.textContent = ''
-    button.disabled = true
-    try {
-      await loginRequest(
-        document.getElementById('folioEmail').value.trim(),
-        document.getElementById('folioPassword').value,
-      )
-      location.reload()
-    } catch (err) {
-      error.textContent = err.message || '登录失败，请稍后再试。'
-      button.disabled = false
-    }
-  })
 }
 
 function showEmptyShop(logout) {
@@ -91,9 +64,9 @@ function showEmptyShop(logout) {
   app.innerHTML = authScreenHtml(
     '商家工作台',
     '',
-    `<p class="folio-empty-text">该账号还没有绑定店铺</p><p class="folio-empty-hint">请联系平台客服完成店铺入驻与绑定后再登录。</p><button type="button" class="primary folio-submit" id="folioLogoutButton">退出登录</button>`,
+    `<p class="folio-empty-text">该账号还没有绑定店铺</p><p class="folio-empty-hint">请联系平台客服完成店铺入驻与绑定后再回来。</p><button type="button" class="primary folio-submit" id="folioBackToMallButton">返回商城</button>`,
   )
-  document.getElementById('folioLogoutButton').addEventListener('click', logout)
+  document.getElementById('folioBackToMallButton').addEventListener('click', logout)
 }
 
 // ---------------------------------------------------------------------------
@@ -124,12 +97,12 @@ async function main() {
     }, 250)
   })
 
-  // 3. 登录门。
+  // 3. 会话门：未登录（直链/书签/会话过期）不渲染任何登录表单，直接回商城。
   document.documentElement.dataset.folioBoot = 'pending'
   const session = await apiRequest('/admin/auth/session').catch(() => null)
   if (!session || !session.authenticated) {
-    showLogin()
     delete document.documentElement.dataset.folioBoot
+    location.replace(storefrontUrl())
     return
   }
 
@@ -137,7 +110,7 @@ async function main() {
   if (!shops.length) {
     showEmptyShop(async () => {
       await logoutRequest()
-      location.reload()
+      location.replace(storefrontUrl())
     })
     delete document.documentElement.dataset.folioBoot
     return
