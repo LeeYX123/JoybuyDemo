@@ -32,14 +32,19 @@ useHead({ title: () => t('cart.title') })
 // 真站购物车 paymentLogos 顺序（var/header_footer_cart_20261119/measurement.md §2）：
 // Amex → Visa → Mastercard → (Maestro) → PayPal → WeChat → Google → Apple → Klarna →
 // (iDEAL/Bancontact)。本地无 Maestro/iDEAL/Bancontact SVG，取可用的 8 个按真站顺序。
+// 2026-11-28（用户拍板）：SSL 行展示 11 个官方 logo（8 银行卡品牌 +
+// Google Pay/PayPal/Klarna），与页脚口径一致，统一 38x24 卡片尺寸。
 const paymentIcons = [
-  { name: 'American Express', src: '/images/pdp-services/payment-american-express.svg' },
   { name: 'Visa', src: '/images/pdp-services/payment-visa.svg' },
   { name: 'Mastercard', src: '/images/pdp-services/payment-mastercard.svg' },
-  { name: 'PayPal', src: '/images/pdp-services/payment-paypal.svg' },
-  { name: 'WeChat Pay', src: '/images/pdp-services/payment-wechat-pay.svg' },
+  { name: 'Maestro', src: '/images/pdp-services/payment-maestro.svg' },
+  { name: 'American Express', src: '/images/pdp-services/payment-american-express.svg' },
+  { name: 'Diners Club', src: '/images/pdp-services/payment-dinersclub.svg' },
+  { name: 'Discover', src: '/images/pdp-services/payment-discover.svg' },
+  { name: 'JCB', src: '/images/pdp-services/payment-jcb.svg' },
+  { name: 'UnionPay', src: '/images/pdp-services/payment-unionpay.svg' },
   { name: 'Google Pay', src: '/images/pdp-services/payment-google-pay.svg' },
-  { name: 'Apple Pay', src: '/images/pdp-services/payment-apple-pay.svg' },
+  { name: 'PayPal', src: '/images/pdp-services/payment-paypal.svg' },
   { name: 'Klarna', src: '/images/pdp-services/payment-klarna.svg' },
 ]
 
@@ -76,6 +81,9 @@ const selectedCount = computed(() => {
     .reduce((sum, item) => sum + item.quantity, 0)
 })
 
+// 合计卡右上灰字「总计 X 件」：勾选商品的总件数（真站口径）。
+const selectedQuantitySum = selectedCount
+
 // 小计按「勾选中的有效商品 × 数量」实时计算（2026-11-26）：后端 subtotal 是全车合计，
 // 取消勾选/改数量/删除行时不会变，右侧金额必须跟着左侧勾选走。
 const selectedSubtotal = computed(() => {
@@ -105,7 +113,11 @@ const merchantGroups = computed(() => {
   const index = new Map()
   for (const item of items.value) {
     const merchant = item.merchant || DEFAULT_MERCHANT
-    const key = merchant.merchant_id || merchant.merchant_name || DEFAULT_MERCHANT.merchant_name
+    // 2026-11-28（用户反馈同行商家被拆成多组）：key 归一为店名——
+    // 个别行 merchant_id 缺失时走 name 兜底，同店必然合并成一组。
+    const key =
+      String(merchant.merchant_name || merchant.merchant_id || DEFAULT_MERCHANT.merchant_name).trim() ||
+      DEFAULT_MERCHANT.merchant_name
     let group = index.get(key)
     if (!group) {
       group = { key, merchant, items: [] }
@@ -294,11 +306,10 @@ const mobileRows = computed(() =>
 
           <template v-else>
             <div class="cart-card cart-card--head">
-              <!-- 需求 13.7-1：左侧 <h1> 去掉（真站 /cart 无标题；useHead 标签页标题保留）。
-                   真站此处为【配送/自提】tabs，按需求 11.9 去掉 -->
-              <!-- 批次 G：顶部全选 = 所有组全选（与组全选联动）。单商家时只有
-                   一张组卡，组头勾选已覆盖全部商品，故隐藏顶部行以保持批次 D 单卡观感 -->
-              <div v-if="merchantGroups.length > 1" class="cart-head__select-row">
+              <!-- 2026-11-28（用户拍板）：恢复【购物车】标题 + 恒显示【全选】；
+                   配送/自提 tabs 仍不渲染（需求 11.9 维持） -->
+              <h1 class="cart-head__title">{{ t('cart.pageTitle') }}</h1>
+              <div class="cart-head__select-row">
                 <label class="cart-checkbox">
                   <input
                     type="checkbox"
@@ -459,7 +470,7 @@ const mobileRows = computed(() =>
         <!-- 结算栏（真站 cartOrder） -->
         <aside class="cart-page__right">
           <div class="cart-summary">
-            <h2 class="cart-summary__title">{{ t('cart.summaryTitle') }}</h2>
+            <!-- 2026-11-28：标题移入 title-row（右侧灰字 总计 X 件），原独立 h2 删除 -->
 
             <div v-if="items.length === 0" class="cart-summary__empty" role="status">
               <CartEmptyIllustration />
@@ -467,9 +478,23 @@ const mobileRows = computed(() =>
             </div>
 
             <template v-else>
+              <!-- 2026-11-28（用户拍板）：合计标题右侧灰字 总计 X 件；
+                   行 = 商品总价 + 合计（真站口径，无 折扣/优惠券/运费） -->
+              <div class="cart-summary__title-row">
+                <h2 class="cart-summary__title">{{ t('cart.summaryTitle') }}</h2>
+                <span class="cart-summary__count">{{
+                  t('cart.totalItems', { count: selectedQuantitySum })
+                }}</span>
+              </div>
               <div class="cart-summary__subtotal">
                 <span class="cart-summary__subtotal-label">{{ t('cart.subtotal') }}</span>
                 <strong class="cart-summary__subtotal-value">{{
+                  formatMoney(selectedSubtotal) ?? '—'
+                }}</strong>
+              </div>
+              <div class="cart-summary__grand">
+                <span class="cart-summary__grand-label">{{ t('cart.total') }}</span>
+                <strong class="cart-summary__grand-value">{{
                   formatMoney(selectedSubtotal) ?? '—'
                 }}</strong>
               </div>
@@ -549,7 +574,16 @@ const mobileRows = computed(() =>
 
 /* 需求 13.7-1：h1 标题已删；多商家时头部卡只剩全选行 */
 .cart-card--head {
-  padding: 8px 0 16px;
+  padding: 16px 16px 16px;
+}
+
+/* 2026-11-28：购物车标题（真站口径 24px/700） */
+.cart-head__title {
+  margin: 0 0 12px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+  color: #1a1a1a;
 }
 
 .cart-page__notice {
@@ -571,7 +605,7 @@ const mobileRows = computed(() =>
 .cart-head__select-row {
   display: flex;
   align-items: center;
-  padding: 8px 16px 0;
+  padding: 0;
 }
 
 .cart-group__select-row {
@@ -907,8 +941,45 @@ const mobileRows = computed(() =>
   background: #fff;
 }
 
+.cart-summary__title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
 .cart-summary__title {
   font-size: 24px;
+  font-weight: 700;
+  line-height: 24px;
+  color: #1a1a1a;
+}
+
+/* 合计标题右侧灰字：总计 X 件 */
+.cart-summary__count {
+  color: #999;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* 合计行（真站：分隔线 + 左标签右大号加粗金额） */
+.cart-summary__grand {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--colour-border);
+}
+
+.cart-summary__grand-label {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
+  color: #1a1a1a;
+}
+
+.cart-summary__grand-value {
+  font-size: 20px;
   font-weight: 700;
   line-height: 24px;
   color: #1a1a1a;
@@ -995,14 +1066,31 @@ const mobileRows = computed(() =>
 
 .cart-summary__payment-icon {
   display: block;
-  width: 32px;
-  height: 20px;
+  width: 38px;
+  height: 24px;
+  object-fit: contain;
+  padding: 2px 4px;
+  border: 1px solid #e6e8ec;
+  border-radius: 4px;
+  background: #fff;
 }
 
 /* 需求 13.7-3：购物车底部精选好物（组件默认 6 列网格，此处只补与上方卡区的间距） */
+/* 2026-11-28（用户拍板）：白底、标题上下 padding 24px、与上方 32px 间隙
+   （.cart-page__picked 即组件根 .picked-for-you，白底直接落在根元素上） */
 .cart-page__picked {
-  margin-top: 24px;
-  padding-bottom: 8px;
+  margin-top: 32px;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0 24px 24px;
+}
+
+.cart-page__picked :deep(.picked-for-you__title) {
+  padding-block: 24px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+  color: #1a1a1a;
 }
 
 @media (max-width: 64rem) {
