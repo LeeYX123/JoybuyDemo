@@ -589,6 +589,20 @@
 - 产物 `var/new_nodes_20261127/`（`migrate.py`、`plan.json`、`backup_before.json`、`rollback.py`、`report`/logs）。回滚：`PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe var/new_nodes_20261127/rollback.py --apply`（先迁回商品再删节点，删前校验无引用）。
 - 坑：`json.dump` 不能序列化 `UUID`（`Spu.public_id`），首跑在写备份时抛错但事务已干净回滚（自增跳号 → 实际 id 240/241）；脚本里已改 `str(public_id)`，勿回退。
 
+## 0d1g. Crisp 会话标题加 emoji + 商家侧改显示商家 ID（2026-11-29，✅ 已提交 59504fe 并推送）
+
+- 用户口径：买家前面 🟢、商家前面 🟠、中间用 ➡️；商家侧**显示商家 ID（`Merchant.public_id`，`JYM`+10 位），不再显示店名**。
+- 三场景最终标题：
+  - 买家 ↔ 平台：`🟢 买家名 ➡️ JoyBuy客服`
+  - 买家 ↔ 商家：`🟢 买家名 ➡️ 🟠 JYMWMRIH9DQQJ`
+  - 商家 ↔ 平台：`🟠 JYMSAHELWJBZT ➡️ JoyBuy客服`
+- 实现：`crisp_mirror.build_session_title(left, right, left_role, right_role)` 负责 emoji 与箭头；新增 `merchant_title_name()`（取 public_id，空/取不到 → `商家`）与 `merchant_platform_meta_nickname()`，`queue_support_message_mirror` 与 `crisp_retitle` 共用。
+- 截断：`➡️` = U+27A1+U+FE0F 计 **2 码位**；固定部分先扣，只截左侧名字，右侧角色/ID 完整保留，总长 ≤40（新增 11 条用例，含长 ID / 长买家名 / ID 缺失退化）。
+- **历史会话已真 PATCH**（用户批准）：`crisp_retitle --apply --fetch` → 6 条可回写中 **5 改 + 1 已达标 + 0 失败**；GET 回读 6/6 PASS（emoji 未被 Crisp 清洗，长度合规）。回读脚本 `backend/var/crisp_title_emoji_20261129/readback.py`（只读 GET、零消息）。
+- 单测：`test_crisp_mirror` 45 / `test_support_chat` 21 / `test_merchant_chat` 22 = **88 OK**（sqlite 隔离）；`test_crisp_inbound` 3 例失败为 HEAD 既有（已 stash 复现）。
+- 坑：`patch_conversation_meta` 里的 `[:40]` **不是 emoji 安全截断**，长度必须由 builder 保证；`crisp_retitle` 仍有 7 条历史 UUID 键无法重算；`backend/var/crisp_title_check_20261127.py` 是旧口径残留脚本（引用已删除的常量），勿当现行证据。
+- 回滚：`git checkout -- backend/merchant_ops/{crisp_mirror.py,management/commands/crisp_retitle.py,tests/test_crisp_mirror.py,tests/test_support_chat.py,tests/test_merchant_chat.py}` + 重启 :8000；Crisp 历史标题按 session_id 用 `patch_conversation_meta` 回写旧值（旧值见执行报告）。
+
 ## 0d1f. 余额支付口径确认：只记录支付方式，不校验不扣款（2026-11-29，✅ 已提交 bb6abc2 并推送）
 
 - 用户口径：「余额不用修，购物车的余额不扣除了。只是当做记录支付方式而已。」
