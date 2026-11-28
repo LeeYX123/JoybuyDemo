@@ -285,8 +285,9 @@ class ReviewNotificationTests(Doc02Round2Base):
 
 
 class BuyerBalanceTests(Doc02Round2Base):
-    def test_balance_payment_deducts_buyer_balance(self):
-        from orders.order_services import OrderError, place_order
+    def test_balance_payment_records_method_without_deducting(self):
+        # 2026-11-28 用户拍板：余额支付只记录支付方式，不校验余额、不扣款。
+        from orders.order_services import place_order
 
         buyer = BuyerAccount.objects.create(
             email="r2-balance@joybuy.test",
@@ -336,20 +337,22 @@ class BuyerBalanceTests(Doc02Round2Base):
             payment_method="BALANCE",
         )
         self.assertEqual(order.status, Order.Status.PAID)
+        self.assertEqual(order.payment_method, "BALANCE")
         buyer.refresh_from_db()
-        self.assertEqual(buyer.balance, Decimal("70.00"))
-        entry = buyer.wallet_entries.order_by("-pk").first()
-        self.assertEqual(entry.kind, "PURCHASE")
-        self.assertEqual(entry.amount, Decimal("-30.00"))
+        self.assertEqual(buyer.balance, Decimal("100.00"))
+        self.assertFalse(buyer.wallet_entries.exists())
 
-        # 余额不足拒单
-        BuyerAccount.objects.filter(pk=buyer.pk).update(balance=Decimal("1.00"))
+        # 余额不足/为 0 也照样下单成功，余额一分不变（只记录支付方式）。
+        BuyerAccount.objects.filter(pk=buyer.pk).update(balance=Decimal("0.00"))
         buyer.refresh_from_db()
-        with self.assertRaises(OrderError) as raised:
-            place_order(
-                account=buyer,
-                cart_snapshot=snapshot,
-                address_snapshot={"public_id": str(address.public_id)},
-                payment_method="BALANCE",
-            )
-        self.assertEqual(raised.exception.code, "NOT_ENOUGH_BALANCE")
+        low_balance_order = place_order(
+            account=buyer,
+            cart_snapshot=snapshot,
+            address_snapshot={"public_id": str(address.public_id)},
+            payment_method="BALANCE",
+        )
+        self.assertEqual(low_balance_order.status, Order.Status.PAID)
+        self.assertEqual(low_balance_order.payment_method, "BALANCE")
+        buyer.refresh_from_db()
+        self.assertEqual(buyer.balance, Decimal("0.00"))
+        self.assertFalse(buyer.wallet_entries.exists())

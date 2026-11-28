@@ -162,7 +162,7 @@ function formatMoney(value) {
 }
 
 const balanceDisplay = computed(() => {
-  // 迭代02：余额支付真扣 BuyerAccount.balance，登录后展示真实余额。
+  // 余额仅作为支付方式记录，不扣款（2026-11-28 拍板）；这里只展示账户余额。
   return account.value?.balance != null ? formatDisplayPrice(account.value.balance) : null
 })
 

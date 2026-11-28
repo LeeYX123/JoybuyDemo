@@ -56,7 +56,8 @@ def serialize_direct_purchase(offer: Offer, quantity: int, *, market=None, local
     ``needs_attention`` 判定与购物车行完全同口径（offer 非 ACTIVE / 无库存 /
     UNAVAILABLE → SKU_NOT_AVAILABLE；quantity 超 local_inventory →
     INSUFFICIENT_STOCK 并钳到库存）。额外带 ``total``（小计 + 运费）供
-    place_order 直购路径做余额校验/扣款；购物车快照路径维持现状不动。
+    结账页展示；余额支付只记录 payment_method，不校验余额、不扣款
+    （2026-11-28 拍板），直购与购物车两条路径同口径。
 
     ``market``/``locale``：结账页请求上下文，行标题与购物车同源本地化
     （2026-11-28 修复中文站仍显示英文商品名）；不传的调用方（订单快照）

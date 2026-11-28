@@ -95,7 +95,8 @@ def _account_payload(account: BuyerAccount) -> dict:
         "auth_provider": account.auth_provider or BuyerAccount.AuthProvider.EMAIL,
         # docs/12 6-6: storefront gates Buy now / Add to cart on this flag.
         "purchase_whitelisted": account.purchase_whitelisted,
-        # 余额支付真扣，购物端结账页展示真实余额（与商家钱包是两套独立账户）。
+        # 余额仅作为支付方式记录，下单不校验、不扣款（2026-11-28 拍板）；
+        # 这里只把真实余额透出给购物端结账页展示（与商家钱包是两套独立账户）。
         "balance": str(account.balance),
         # 需求 12.2：申请店铺状态 + 已开通店铺 id（无申请时均为 None）。
         **_merchant_application_brief(account),

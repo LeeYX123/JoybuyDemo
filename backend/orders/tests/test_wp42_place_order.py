@@ -101,6 +101,34 @@ class PlaceOrderWp42Tests(TestCase):
         order = self._place(payment_method="")
         self.assertEqual(order.status, Order.Status.PENDING_PAYMENT)
 
+    def test_balance_payment_with_zero_balance_does_not_deduct(self):
+        """2026-11-28 拍板：余额支付只记录支付方式，余额为 0 也能下单且不扣款。
+
+        直购与购物车两条路径各下一次单，验证订单 payment_method='BALANCE'
+        且 BuyerAccount.balance 一分未变、不产生余额流水。
+        """
+        from decimal import Decimal
+
+        BuyerAccount.objects.filter(pk=self.account.pk).update(balance=Decimal("0.00"))
+        self.account.refresh_from_db()
+
+        cart_order = self._place(payment_method="BALANCE")
+        direct_order = place_order(
+            account=self.account,
+            cart_snapshot=None,
+            address_snapshot={"public_id": str(self.address.public_id)},
+            payment_method="BALANCE",
+            offer_public_id=str(self.offer.public_id),
+            quantity=1,
+        )
+
+        for order in (cart_order, direct_order):
+            self.assertEqual(order.status, Order.Status.PAID)
+            self.assertEqual(order.payment_method, "BALANCE")
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.balance, Decimal("0.00"))
+        self.assertFalse(self.account.wallet_entries.exists())
+
     def test_non_whitelisted_account_cannot_place_order(self):
         # 先在白名单状态下生成购物车快照，再移出白名单，验证下单侧拦截。
         snapshot = self._snapshot()
