@@ -8197,3 +8197,18 @@ HANDOFF 本次因「commit 只含 merchant-web/src 与 storefront/」的路径�
 - 品类芯片是文档的 12 个品类（设计稿是旧的 10 个标签）。
 
 **坑**：`base-2.js` 里的 `chatPage` 是死代码（最终生效的是 base-3 的 `chatPage`），改聊天逻辑要改 base-3；`ViewImage` 对内容相同的截图会返回「identical」缓存，判定页面要行数时用 `locator('tbody tr').count()` 或 `innerText` 更可靠。
+
+
+## 商家端导航徽标改为实时数据（2026-11-29，✅ 完成）
+
+**需求**：左侧【订单管理】【消息中心】旁的红色数字必须是真实数据——订单管理 = 未发货订单数，消息中心 = 未读消息数。
+
+**原来的问题**：数字虽然取自接口（`FolioData.counts.pending/unread`），但那是**首屏快照**：打开一个会话把未读清零、或发货后，徽标仍显示旧值，要整页刷新才变。
+
+**改动（2 个文件）**：
+- `merchant-web/src/folio/base-2.js`：新增 `navBadge(n)`（≤0 不渲染），导航模板改调 `FolioData.navPendingCount()` / `navUnreadCount()`，render 时现算。
+- `merchant-web/src/folio/api.js`：`FolioData.navPendingCount()` 读 `state.ordersPage.counts.PENDING`（后端三态：已付款且 progress<1）；`navUnreadCount()` 汇总全局 `conversations[].unread`（用 try/catch 兜住 base 脚本未加载时的 TDZ，退回 `state.conversations`）。
+
+**验证（真实数据）**：`123456@joybuy.com` 店铺 800 —— 看板徽标 `[1,1]`（未发货 1 单、未读会话 1 条），与 `/merchant/orders` 的 `counts.PENDING=1`、`/merchant/conversations` 的 `support_unread=1 + buyer 1` 一致；点开买家会话 → 徽标变 `[1]`（消息徽标消失），console/pageerror 0；`npm run build` 通过，api.js eslint 只剩既有 `API_BASE_URL` unused。
+
+**注意（验收/复现用）**：未读是后端 `SupportConversation.merchant_last_read_at` 与消息时间的比较值，**打开会话（GET 详情）就会标已读**；`MerchantChatThread.merchant_unread` 是买家侧的另一套字段，改它不会影响商家端徽标。演示时如果徽标是 0，重置 `SupportConversation.objects.filter(merchant_id=800).update(merchant_last_read_at=None)` 即可。

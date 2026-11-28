@@ -229,6 +229,27 @@ window.FolioData = {
     return num((state.wallet || {}).shipping_profit_total)
   },
 
+  // —— 顶部导航徽标（每次 render 现读，不再用首屏快照）——
+  // 订单管理 = 未发货订单数（后端 counts.PENDING：已付款且 progress<1）；
+  // 消息中心 = 未读会话数合计（打开会话时 base 层清零 + 服务端标记已读）。
+  navPendingCount() {
+    const counts = (state.ordersPage && state.ordersPage.counts) || {}
+    return num(counts.PENDING)
+  },
+
+  navUnreadCount() {
+    let list = []
+    try {
+      // base 脚本里的全局 conversations 才是「打开会话即清零」的那份数据；
+      // 用 try/catch 兜住脚本尚未加载时的 TDZ。
+      if (Array.isArray(conversations)) list = conversations // eslint-disable-line no-undef
+    } catch {
+      // 首帧 base 脚本还没执行，退回接口返回值
+    }
+    const source = list.length ? list : state.conversations
+    return (source || []).reduce((sum, c) => sum + num(c.unread), 0)
+  },
+
   bars(key, month) {
     const chart = state.charts[month ? 'month' : 'week']
     if (!chart || !Array.isArray(chart.order_bars) || !chart.order_bars.length) {
