@@ -628,56 +628,128 @@ class CrispMirrorServiceTests(TestCase):
 
 
 class CrispMetaTitleTests(TestCase):
-    """Inbox 会话标题口径（2026-11-27）：三个场景都保留双方身份，分隔符是字面 ``-->``。"""
+    """Inbox 会话标题口径（2026-11-29）：买家 🟢 / 商家 🟠，商家显示 public_id。"""
+
+    MERCHANT_ID = "JYM0012345678"
 
     def setUp(self):
         crisp_mirror._META_READY.clear()
         self.addCleanup(crisp_mirror._META_READY.clear)
 
-    def test_build_title_uses_literal_arrow_without_spaces(self):
-        title = crisp_mirror.build_session_title("小明", "会话测试店")
+    def test_build_title_uses_role_emoji_arrow(self):
+        title = crisp_mirror.build_session_title("小明", self.MERCHANT_ID)
 
-        self.assertEqual(title, "小明-->会话测试店")
+        self.assertEqual(title, "🟢 小明 ➡️ 🟠 JYM0012345678")
         self.assertNotIn(" · ", title)
-        self.assertNotIn(" ", title)
+        self.assertNotIn("-->", title)
+        self.assertEqual(title.count(crisp_mirror.META_TITLE_ARROW), 1)
 
     def test_merchant_chat_title_keeps_both_sides(self):
         thread = SimpleNamespace(
             buyer=SimpleNamespace(display_name="小明", email=""),
-            merchant=SimpleNamespace(display_name="会话测试店"),
+            merchant=SimpleNamespace(display_name="会话测试店", public_id=self.MERCHANT_ID),
         )
 
         self.assertEqual(
-            crisp_mirror.merchant_chat_meta_nickname(thread), "小明-->会话测试店"
+            crisp_mirror.merchant_chat_meta_nickname(thread), "🟢 小明 ➡️ 🟠 JYM0012345678"
         )
 
-    def test_merchant_chat_title_falls_back_to_generic_merchant_name(self):
+    def test_merchant_chat_title_uses_id_not_store_name(self):
         thread = SimpleNamespace(
             buyer=SimpleNamespace(display_name="小明", email=""),
-            merchant=SimpleNamespace(display_name="  "),
+            merchant=SimpleNamespace(display_name="非常有辨识度的店名", public_id=self.MERCHANT_ID),
         )
 
-        self.assertEqual(crisp_mirror.merchant_chat_meta_nickname(thread), "小明-->商家")
+        title = crisp_mirror.merchant_chat_meta_nickname(thread)
+
+        self.assertNotIn("非常有辨识度的店名", title)
+        self.assertIn(self.MERCHANT_ID, title)
+
+    def test_merchant_chat_title_falls_back_when_merchant_id_missing(self):
+        thread = SimpleNamespace(
+            buyer=SimpleNamespace(display_name="小明", email=""),
+            merchant=SimpleNamespace(display_name="会话测试店", public_id="  "),
+        )
+
+        self.assertEqual(crisp_mirror.merchant_chat_meta_nickname(thread), "🟢 小明 ➡️ 🟠 商家")
 
     def test_support_chat_title_appends_platform_name(self):
         thread = SimpleNamespace(buyer=SimpleNamespace(display_name="小明", email=""))
 
         title = crisp_mirror.support_chat_meta_nickname(thread)
 
-        self.assertEqual(title, "小明-->JoyBuy客服")
-        # 标题里的平台名是独立口径：与消息气泡的 CRISP_PLATFORM_NICKNAME 不同。
-        self.assertNotEqual(title.split("-->")[1], crisp_mirror.platform_nickname())
+        self.assertEqual(title, "🟢 小明 ➡️ JoyBuy客服")
+        # 平台侧在标题里**不带 emoji**，且与消息气泡昵称是独立口径。
+        self.assertTrue(title.endswith(f"{crisp_mirror.META_TITLE_ARROW} JoyBuy客服"))
+        self.assertNotEqual(crisp_mirror.META_TITLE_PLATFORM_NAME, crisp_mirror.platform_nickname())
 
-    def test_long_store_name_truncates_store_not_platform_suffix(self):
-        title = crisp_mirror.build_session_title("店" * 60, "JoyBuy客服")
+    def test_merchant_platform_title_uses_orange_emoji_on_left(self):
+        title = crisp_mirror.build_session_title(
+            self.MERCHANT_ID,
+            "JoyBuy客服",
+            left_role=crisp_mirror.META_TITLE_ROLE_MERCHANT,
+            right_role=crisp_mirror.META_TITLE_ROLE_PLATFORM,
+        )
+
+        self.assertEqual(title, "🟠 JYM0012345678 ➡️ JoyBuy客服")
+
+    def test_long_merchant_id_truncates_id_not_platform_suffix(self):
+        title = crisp_mirror.build_session_title(
+            "J" * 60,
+            "JoyBuy客服",
+            left_role=crisp_mirror.META_TITLE_ROLE_MERCHANT,
+            right_role=crisp_mirror.META_TITLE_ROLE_PLATFORM,
+        )
 
         self.assertEqual(len(title), crisp_mirror.META_NICKNAME_MAX_LENGTH)
-        self.assertTrue(title.endswith("-->JoyBuy客服"))
+        self.assertTrue(title.endswith(f" {crisp_mirror.META_TITLE_ARROW} JoyBuy客服"))
+        # emoji 与箭头的变体选择符/不变选择符完整：只截名字，不切固定部分。
+        self.assertTrue(title.startswith(f"{crisp_mirror.META_EMOJI_MERCHANT} "))
+        self.assertEqual(title.count("\ufe0f"), 1)
+
+    def test_long_buyer_name_keeps_right_emoji_and_arrow(self):
+        thread = SimpleNamespace(
+            buyer=SimpleNamespace(display_name="买" * 60, email=""),
+            merchant=SimpleNamespace(display_name="会话测试店", public_id=self.MERCHANT_ID),
+        )
+
+        title = crisp_mirror.merchant_chat_meta_nickname(thread)
+
+        self.assertEqual(len(title), crisp_mirror.META_NICKNAME_MAX_LENGTH)
+        self.assertTrue(title.endswith(f" {crisp_mirror.META_TITLE_ARROW} 🟠 {self.MERCHANT_ID}"))
+        self.assertTrue(title.startswith(f"{crisp_mirror.META_EMOJI_BUYER} "))
+        # 箭头是 U+27A1 + U+FE0F 两个码位，截断后仍完整出现（不残留孤立 U+27A1）。
+        self.assertEqual(title.count(crisp_mirror.META_TITLE_ARROW), 1)
+        self.assertEqual(title.count("\ufe0f"), 1)
+
+    def test_long_buyer_name_bp_keeps_platform_suffix(self):
+        thread = SimpleNamespace(buyer=SimpleNamespace(display_name="买" * 60, email=""))
+
+        title = crisp_mirror.support_chat_meta_nickname(thread)
+
+        self.assertEqual(len(title), crisp_mirror.META_NICKNAME_MAX_LENGTH)
+        self.assertTrue(title.endswith(f" {crisp_mirror.META_TITLE_ARROW} JoyBuy客服"))
+        self.assertTrue(title.startswith(f"{crisp_mirror.META_EMOJI_BUYER} "))
+
+    def test_overlong_right_name_truncated_but_keeps_emoji_prefix(self):
+        title = crisp_mirror.build_session_title("小明", "店" * 60)
+
+        self.assertEqual(len(title), crisp_mirror.META_NICKNAME_MAX_LENGTH)
+        self.assertEqual(
+            title,
+            f"{crisp_mirror.META_EMOJI_BUYER} 小 {crisp_mirror.META_TITLE_ARROW} "
+            f"{crisp_mirror.META_EMOJI_MERCHANT} " + "店" * 31,
+        )
 
     @override_settings(**CONFIGURED)
-    def test_meta_patch_keeps_platform_suffix_for_long_store_name(self):
-        long_store = "店" * 60
-        nickname = crisp_mirror.build_session_title(long_store, "JoyBuy客服")
+    def test_meta_patch_keeps_platform_suffix_for_long_merchant_id(self):
+        long_merchant_id = "JYM" * 20
+        nickname = crisp_mirror.build_session_title(
+            long_merchant_id,
+            "JoyBuy客服",
+            left_role=crisp_mirror.META_TITLE_ROLE_MERCHANT,
+            right_role=crisp_mirror.META_TITLE_ROLE_PLATFORM,
+        )
         responses = [{"data": {"session_id": "session-long"}}, {}, {}]
         with (
             mock.patch.object(crisp_mirror, "_http_post", side_effect=responses),
@@ -686,7 +758,7 @@ class CrispMetaTitleTests(TestCase):
             mirror_message(
                 "merchant:JYLONGTITLE",
                 "merchant_visitor",
-                long_store,
+                long_merchant_id,
                 "长店名",
                 None,
                 "601",
@@ -695,7 +767,10 @@ class CrispMetaTitleTests(TestCase):
 
         _path, meta_body = patch_http.call_args.args
         self.assertEqual(len(meta_body["nickname"]), crisp_mirror.META_NICKNAME_MAX_LENGTH)
-        self.assertTrue(meta_body["nickname"].endswith("-->JoyBuy客服"))
+        self.assertTrue(
+            meta_body["nickname"].endswith(f" {crisp_mirror.META_TITLE_ARROW} JoyBuy客服")
+        )
+        self.assertIn(crisp_mirror.META_EMOJI_MERCHANT, meta_body["nickname"])
 
 
 class CrispMirrorEndpointTests(TestCase):
@@ -800,10 +875,10 @@ class CrispMirrorEndpointTests(TestCase):
         # 批次 AA（Q8）：merchant: 线程里商家是访客身份（from=user），不再是 operator。
         self.assertEqual(final_body["from"], "user")
         self.assertEqual(final_body["user"], {"type": "website", "nickname": "接口镜像店"})
-        # 线程的访客是商家 → 会话 meta 标题 = 「店名-->JoyBuy客服」（2026-11-27 口径）。
+        # 线程的访客是商家 → 会话 meta 标题 = 「🟠 商家ID ➡️ JoyBuy客服」（2026-11-29 口径）。
         self.patch_http.assert_called_once()
         _meta_path, meta_body = self.patch_http.call_args.args
-        self.assertEqual(meta_body, {"nickname": "接口镜像店-->JoyBuy客服"})
+        self.assertEqual(meta_body, {"nickname": f"🟠 {self.merchant.public_id} ➡️ JoyBuy客服"})
         self.assertEqual(CrispMirrorLog.objects.get().status, CrispMirrorLog.Status.SENT)
 
     @override_settings(**CONFIGURED)

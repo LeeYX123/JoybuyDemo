@@ -222,13 +222,10 @@ class Command(BaseCommand):
                 return crisp_mirror.merchant_chat_meta_nickname(thread) if thread else None
             if kind == KIND_MERCHANT_PLATFORM and len(parts) >= 2:
                 # ``merchant:{public_id}``：同一商家只有一个会话（thread_key_for_conversation）。
-                merchant = Merchant.objects.filter(public_id=parts[1]).only("display_name").first()
+                merchant = Merchant.objects.filter(public_id=parts[1]).only("public_id").first()
                 if merchant is None:
                     return None
-                return crisp_mirror.build_session_title(
-                    merchant.display_name or crisp_mirror.META_TITLE_MERCHANT_FALLBACK,
-                    crisp_mirror.META_TITLE_PLATFORM_NAME,
-                )
+                return crisp_mirror.merchant_platform_meta_nickname(merchant)
         except Exception:  # noqa: BLE001 - 单条解析失败不能中断整批
             return None
         return None

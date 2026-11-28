@@ -5,8 +5,9 @@
 里以统一会话工作。设计约束（见 ``var/crisp_integration_research_20261122/research.md``）：
 
 - ``from=operator`` 无法指定操作者身份，且**客服端 Inbox 不认消息级 ``user.nickname``**
-  （只影响访客端 chatbox）→ 客服侧区分靠**会话 meta nickname**（``{买家} · {店名}``）；
-  消息正文保持干净，不用 ``[商家]``/``[平台]`` 前缀；消息 ``user.nickname`` 仍传（chatbox 加分项）；
+  （只影响访客端 chatbox）→ 客服侧区分靠**会话 meta nickname**（``🟢 买家 ➡️ 🟠 商家ID``
+  一类的三段式标题）；消息正文保持干净，不用 ``[商家]``/``[平台]`` 前缀；消息
+  ``user.nickname`` 仍传（chatbox 加分项）；
 - 会话 ``PATCH .../meta`` 补 ``nickname``/``email``，Inbox 列表不再显示 anonymous；
   历史会话 meta 为空时，下次发消息自动补写一次（进程内缓存，失败只 warning）；
 - 新建会话后必须有一条 ``from=user`` 的消息才会进 Inbox；
@@ -70,14 +71,23 @@ SESSION_OPENING_MESSAGE = "Conversation started"
 DEFAULT_PLATFORM_NICKNAME = "Joybuy 客服"
 # Crisp meta nickname 长度未实测，按调研建议本地截断，避免超长被拒。
 META_NICKNAME_MAX_LENGTH = 40
-# 2026-11-27：Inbox 会话标题统一「左-->右」（字面分隔符，前后无空格），三个场景都
-# 保留双方身份。平台侧在**标题**里固定写「JoyBuy客服」（注意大小写）——它与消息气泡上
-# 的 ``CRISP_PLATFORM_NICKNAME``（默认「Joybuy 客服」）是两个口径，不要合并/复用。
-META_TITLE_SEPARATOR = "-->"
+# 2026-11-29：Inbox 会话标题改为带角色 emoji 的「左 ➡️ 右」，三个场景都保留双方
+# 身份：买家在左用 🟢、商家在左（merchant: 线程）用 🟠，中间 `` ➡️ ``（前后各一空格）。
+# 平台侧在**标题**里固定写「JoyBuy客服」（注意大小写、且**不加 emoji**）——它与消息
+# 气泡上的 ``CRISP_PLATFORM_NICKNAME``（默认「Joybuy 客服」）是两个口径，不要合并/复用。
+# 注意 ``➡️`` 是 U+27A1 + U+FE0F 两个码位，``len()`` 算 2；截断只动名字，emoji/箭头
+# 属于固定部分，永远完整保留。
+META_EMOJI_BUYER = "🟢"
+META_EMOJI_MERCHANT = "🟠"
+META_TITLE_ARROW = "➡️"
 META_TITLE_PLATFORM_NAME = "JoyBuy客服"
-# 名牌缺失时的退化名：避免出现「-->JoyBuy客服」这种空头标题。
+# 名牌缺失时的退化名：避免出现「🟢  ➡️ JoyBuy客服」这种空头标题。
 META_TITLE_BUYER_FALLBACK = "买家"
 META_TITLE_MERCHANT_FALLBACK = "商家"
+# 标题里「左右两侧分别是谁」：决定 emoji 前缀。平台侧无 emoji。
+META_TITLE_ROLE_BUYER = "buyer"
+META_TITLE_ROLE_MERCHANT = "merchant"
+META_TITLE_ROLE_PLATFORM = "platform"
 
 
 class CrispRequestError(RuntimeError):
@@ -521,6 +531,21 @@ def thread_key_for_conversation(conversation: SupportConversation) -> str:
     return f"merchant:{conversation.merchant.public_id}"
 
 
+def merchant_platform_meta_nickname(merchant) -> str:
+    """``merchant:`` 线程的 Inbox 会话标题：``🟠 {商家ID} ➡️ JoyBuy客服``。
+
+    商家侧用 ``Merchant.public_id``（不展示店名），取不到 ID 时退化「商家」；
+    平台侧固定「JoyBuy客服」且不带 emoji。
+    """
+
+    return build_session_title(
+        merchant_title_name(merchant),
+        META_TITLE_PLATFORM_NAME,
+        left_role=META_TITLE_ROLE_MERCHANT,
+        right_role=META_TITLE_ROLE_PLATFORM,
+    )
+
+
 def queue_support_message_mirror(message: SupportMessage) -> None:
     """商家端/管理端聊天消息落库后调用：事务提交后再镜像，且绝不影响接口返回。
 
@@ -549,12 +574,9 @@ def queue_support_message_mirror(message: SupportMessage) -> None:
         "body": message.text,
         "occurred_at": message.created_at,
         "message_id": str(message.pk),
-        # 这条线程的「访客」是商家：会话 meta 标题 = 「店名-->JoyBuy客服」（2026-11-27
-        # 口径），Inbox 列表不再 anonymous，也一眼能看出是「商家 ↔ 平台客服」。
-        "session_nickname": build_session_title(
-            conversation.merchant.display_name or META_TITLE_MERCHANT_FALLBACK,
-            META_TITLE_PLATFORM_NAME,
-        ),
+        # 这条线程的「访客」是商家：会话 meta 标题 = 「🟠 商家ID ➡️ JoyBuy客服」
+        # （2026-11-29 口径：商家显示 public_id，不展示店名），Inbox 列表不再 anonymous。
+        "session_nickname": merchant_platform_meta_nickname(conversation.merchant),
     }
 
     def _run() -> None:
@@ -589,39 +611,92 @@ def merchant_chat_buyer_name(buyer) -> str:
     return "买家"
 
 
-def build_session_title(left_name: str, right_name: str) -> str:
-    """拼 Crisp Inbox 会话标题：``左名-->右名``（字面分隔符，前后无空格）。
+def _title_role_prefix(role: str) -> str:
+    """角色 emoji 前缀（``🟢 `` / ``🟠 ``）；平台侧不带 emoji，返回空串。"""
 
-    超长（``META_NICKNAME_MAX_LENGTH`` = 40）时**优先截左侧名牌**，让右侧角色名
-    （``JoyBuy客服`` / 店名）完整保留——否则会出现「慕思旗舰店-->JoyBuy客」这种
-    半截后缀。只有右侧自身就超过 40 字（店名极长）时才截右侧，此时左侧保留 1 字。
+    if role == META_TITLE_ROLE_BUYER:
+        return f"{META_EMOJI_BUYER} "
+    if role == META_TITLE_ROLE_MERCHANT:
+        return f"{META_EMOJI_MERCHANT} "
+    return ""
+
+
+def _title_role_fallback(role: str) -> str:
+    """名牌为空时的退化名：买家 → 「买家」，商家 → 「商家」。"""
+
+    if role == META_TITLE_ROLE_MERCHANT:
+        return META_TITLE_MERCHANT_FALLBACK
+    return META_TITLE_BUYER_FALLBACK
+
+
+def merchant_title_name(merchant) -> str:
+    """标题里的商家身份用 ``Merchant.public_id``（``JYM`` + 10 位），不展示店名。
+
+    2026-11-29 用户口径：Crisp 会话标题里商家统一显示 ID（店名可能重名/改名）。
+    取不到 ID（商家对象缺失或字段为空）时退化「商家」，绝不返回空串。
+    """
+
+    public_id = str(getattr(merchant, "public_id", "") or "").strip()
+    return public_id or META_TITLE_MERCHANT_FALLBACK
+
+
+def build_session_title(
+    left_name: str,
+    right_name: str,
+    left_role: str = META_TITLE_ROLE_BUYER,
+    right_role: str = META_TITLE_ROLE_MERCHANT,
+) -> str:
+    """拼 Crisp Inbox 会话标题：``{左emoji} 左名 ➡️ {右emoji} 右名``。
+
+    例：``🟢 小明 ➡️ 🟠 JYMWMRIH9DQQJ`` / ``🟢 小明 ➡️ JoyBuy客服`` /
+    ``🟠 JYMWMRIH9DQQJ ➡️ JoyBuy客服``（平台侧无 emoji；商家侧显示 public_id）。
+    角色前缀与箭头是**固定部分**，
+    超长（``META_NICKNAME_MAX_LENGTH`` = 40）时**优先截左侧名字**，右侧角色名与两侧
+    emoji/箭头完整保留——否则会出现「JYMWMRIH9DQQJ ➡️ JoyBuy客」这种半截后缀。只有
+    右侧自身就超过 40 字时才截右侧名字（其 emoji 前缀仍保留），左侧保留 1 字。
     """
 
     left = (left_name or "").strip()
     right = (right_name or "").strip()
+    left_prefix = _title_role_prefix(left_role)
+    right_prefix = _title_role_prefix(right_role)
+    fallback = _title_role_fallback(left_role)
     if not right:
-        return left[:META_NICKNAME_MAX_LENGTH]
-    separator = META_TITLE_SEPARATOR
-    room = META_NICKNAME_MAX_LENGTH - len(separator) - len(right)
+        return f"{left_prefix}{left or fallback}"[:META_NICKNAME_MAX_LENGTH]
+    separator = f" {META_TITLE_ARROW} "
+    right_label = f"{right_prefix}{right}"
+    room = META_NICKNAME_MAX_LENGTH - len(left_prefix) - len(separator) - len(right_label)
     if room >= 1:
-        head = left[:room] if left else META_TITLE_BUYER_FALLBACK
-        return f"{head}{separator}{right}"
-    head = (left or META_TITLE_BUYER_FALLBACK)[:1]
-    tail_room = max(META_NICKNAME_MAX_LENGTH - len(head) - len(separator), 0)
-    return f"{head}{separator}{right[:tail_room]}"
+        head = left[:room] if left else fallback
+        return f"{left_prefix}{head}{separator}{right_label}"
+    head = (left or fallback)[:1]
+    tail_room = max(
+        META_NICKNAME_MAX_LENGTH
+        - len(left_prefix)
+        - len(head)
+        - len(separator)
+        - len(right_prefix),
+        0,
+    )
+    return f"{left_prefix}{head}{separator}{right_prefix}{right[:tail_room]}"
 
 
 def merchant_chat_meta_nickname(thread) -> str:
-    """Inbox 会话标题：``{买家昵称}-->{商家店名}``。
+    """Inbox 会话标题：``🟢 {买家昵称} ➡️ 🟠 {商家ID}``。
 
     客服端 Inbox 的 operator 气泡只显示席位账号（不认 ``user.nickname``），所以把
-    「哪位买家 + 哪家店」放进会话 meta nickname，客服靠列表标题区分。店名为空时
-    退化为「商家」，不会出现空头标题。
+    「哪位买家 + 哪家店」放进会话 meta nickname，客服靠列表标题区分。商家侧用
+    ``Merchant.public_id``（不展示店名），取不到 ID 时退化为「商家」，不会出现空头标题。
     """
 
     buyer_name = merchant_chat_buyer_name(thread.buyer)
-    merchant_name = (thread.merchant.display_name or "").strip() or META_TITLE_MERCHANT_FALLBACK
-    return build_session_title(buyer_name, merchant_name)
+    merchant_name = merchant_title_name(thread.merchant)
+    return build_session_title(
+        buyer_name,
+        merchant_name,
+        left_role=META_TITLE_ROLE_BUYER,
+        right_role=META_TITLE_ROLE_MERCHANT,
+    )
 
 
 def queue_merchant_chat_mirror(message: MerchantChatMessage) -> None:
@@ -690,13 +765,18 @@ def thread_key_for_support_chat(thread) -> str:
 
 
 def support_chat_meta_nickname(thread) -> str:
-    """Inbox 会话标题 = ``{买家昵称}-->JoyBuy客服``（客服端只认 meta nickname）。
+    """Inbox 会话标题 = ``🟢 {买家昵称} ➡️ JoyBuy客服``（客服端只认 meta nickname）。
 
-    买家 ↔ 平台没有「店名」维度，右侧固定写平台客服名「JoyBuy客服」；客服回复时
-    标题也不变（仍以买家名开头）。
+    买家 ↔ 平台没有「店名」维度，右侧固定写平台客服名「JoyBuy客服」（不带 emoji）；
+    客服回复时标题也不变（仍以买家名开头）。
     """
 
-    return build_session_title(merchant_chat_buyer_name(thread.buyer), META_TITLE_PLATFORM_NAME)
+    return build_session_title(
+        merchant_chat_buyer_name(thread.buyer),
+        META_TITLE_PLATFORM_NAME,
+        left_role=META_TITLE_ROLE_BUYER,
+        right_role=META_TITLE_ROLE_PLATFORM,
+    )
 
 
 def queue_support_chat_mirror(message: SupportChatMessage) -> None:
