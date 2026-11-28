@@ -881,8 +881,8 @@ useHead({ title: 'Checkout' })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 40px;
+  width: 72px;
+  height: 44px;
   padding: 4px 8px;
   border: 1px solid #ccced2;
   border-radius: 4px;
