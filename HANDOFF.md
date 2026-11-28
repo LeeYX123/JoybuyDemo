@@ -1740,6 +1740,14 @@
 - **去重**：多次启动叠加出 **18 条看护 bash**（backend×5 / storefront×5 等），已按精确正则全部清掉后重启一套 —— 现在每服务恰好 2 条 bash（wrapper + script = 一条循环）。清理要点：正则必须锚定**命令结尾** `var/run_(backend|storefront|admin|merchant)_keepalive\.sh\s*$`，否则会把自己检查命令的临时 shell 一起杀掉；
 - 最终：四端口 `0.0.0.0` 监听（3000/5173/5174/8000），四端 200，health ok，容器 33060/63790/8025 均在；`127.0.0.1:5174` 旧实例已消失。
 
+### 追加（23:12）：看护守护条件修正（只认 `0.0.0.0:<port>`）
+- **现象**：管理端 5173 突然只有 `127.0.0.1:5173` 监听、局域网 `192.168.1.165:5173` 000，而 admin 看护在睡、日志无 keepalive 标记。
+- **根因**：另一会话用 `npx vite --port 5173`（不带 `--host`）重启了管理端 → 只绑回环；而看护原来的判据是「`:5173 ` 有 LISTENING」，被这个回环实例满足 → 循环永远不启动自己的 0.0.0.0 实例，LAN 一直断。
+- **修复**：四个 `var/run_*_keepalive.sh` 的守护判据全部改成**必须匹配 `0.0.0.0:<自己的端口> .*LISTENING`**（backend 8000 / storefront 3000 / admin 5173 / merchant 5174）。这样「只绑回环」的野实例不再能骗过看护，看护会补一个 0.0.0.0 实例（localhost 仍可用，LAN 也恢复）。
+- **操作**：杀掉只绑回环的 admin 实例（44564）→ 重启四套看护 → admin 由看护拉起为 `0.0.0.0:5173`（PID 57692）。
+- **验证**：四端口全部 `0.0.0.0` LISTENING；`192.168.1.165:3000/5173/5174` + `localhost:5173` + `:8000` health 全 200；每服务恰好 2 条 keepalive bash（一条循环）。
+- **注意**：改看护脚本后必须重启看护循环本身（bash 缓存循环体），否则还是旧判据。
+
 ## 0d55. 重启后冷启动（2026-11-28 01:06，✅ 完成 / 仓库零改动）
 
 ### 我们在做什么
@@ -7794,3 +7802,21 @@ var(--space-1)（4px）选择器优先级（0,1,1）高于 .quote-totals__total
 （0,1,0），把 24px 覆盖。移除通用规则里的 padding，行距由行类各自控制。
 教训：改具体行样式时检查同容器通用规则的选择器优先级。
 验证：eslint 通过 + Playwright 实拍间距正确。
+
+## 购物车页对齐真站（2026-11-28 23:05，✅ 完成，commit 5498730）
+
+用户 6 点需求落地（参照真站 /cart 实拍，scripts/probe_cart_real.py 留档）：
+1. 恢复【购物车】标题 + 全选恒显示（配送/自提 tab 维持移除）；
+2. 商家分组 key 归一为店名——修复同店商品被拆成多组（个别行
+   merchant_id 缺失时 key 回退 name 导致分组不一致）；
+3. 合计卡重构：合计 + 右侧灰字 总计 X 件（cart.totalItems {count} 插值）、
+   商品总价行、合计行（分隔线+20px 加粗）；无 折扣/优惠券/运费行；
+4. SSL 行 11 个官方 logo 统一 38x24 白卡；
+5. 精选好物：白底圆角、标题 padding-block 24px、与上方 32px 间隙
+   （注意 .cart-page__picked 即组件根 .picked-for-you，:deep 落空问题）；
+6. cart.subtotal 改 商品总价/Merchandise subtotal，新增 pageTitle/total/
+   totalItems ×7 语言；删除了 summary 里重复的原独立 h2。
+
+验证：eslint 通过；Playwright 断言（标题/全选/1 组合并/灰字 2 items/
+合计行/11 icon/白底 rgb(255,255,255)）全过；tests/ 中 minihome 2 个失败
+为并行任务 ProductCard.vue 改动所致（已 stash 验证与本改动无关）。
