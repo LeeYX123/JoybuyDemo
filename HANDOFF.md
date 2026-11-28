@@ -7786,3 +7786,11 @@ payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
 1. 模块标题（配送至/汇总/支付方式）：24px/700/32px（地址页 h2 不变）；
 2. 汇总：小计行 margin-block 24px、订单合计行 padding-block 24px。
 验证：eslint + tests/ 162/162 + 截图。
+
+## 订单合计 padding 修复（2026-11-28 22:56，✅ 完成，commit c4a390a）
+
+上一轮 24px 未生效根因：.quote-totals > div 的 padding-block
+var(--space-1)（4px）选择器优先级（0,1,1）高于 .quote-totals__total
+（0,1,0），把 24px 覆盖。移除通用规则里的 padding，行距由行类各自控制。
+教训：改具体行样式时检查同容器通用规则的选择器优先级。
+验证：eslint 通过 + Playwright 实拍间距正确。
