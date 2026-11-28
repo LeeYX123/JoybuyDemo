@@ -7780,3 +7780,9 @@ payment-*.svg；品牌卡片 72x44 contain 适配；银联=官方 UnionPay logo
 
 用户拍板：页脚 © 行移除 Personalised settings / Manage cookies 两个
 占位链接，只保留版权文字。验证：eslint + tests/ 162/162 + 截图确认。
+
+## 支付页标题/间距微调（2026-11-28 22:50，✅ 完成，commit 88f873f）
+
+1. 模块标题（配送至/汇总/支付方式）：24px/700/32px（地址页 h2 不变）；
+2. 汇总：小计行 margin-block 24px、订单合计行 padding-block 24px。
+验证：eslint + tests/ 162/162 + 截图。
